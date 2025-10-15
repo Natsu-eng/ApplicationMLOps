@@ -1,0 +1,38 @@
+# Environments
+.env
+.venv
+venv/
+env/
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# IDEs
+.vscode/
+.idea/
+.history/
+
+# Streamlit
+.streamlit/
+
+# Logs & Artifacts
+logs/
+*.log
+mlflow_artifacts/
+models_output/
+
+# Data files
+*.csv
+*.parquet
+*.xlsx
+*.xls
+*.json
+
+# Dependencies
+.eggs/
+*.egg-info/
+
+# Testing
+.pytest_cache/
+.coverage
