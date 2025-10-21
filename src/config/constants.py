@@ -104,14 +104,15 @@ MLFLOW_CONSTANTS = {
 
 
 #Configuration centralisée pour la détection d'anomalies visuelles (projet PIC).
+# Ajouter cette configuration
 ANOMALY_CONFIG = {
-    "target_size": (128, 128),  # Taille de redimensionnement des images
-    "normalize": True,          # Normalisation des pixels à [0,1]
-    "max_images_preview": 5,    # Nombre max d'images à afficher par catégorie
-    "default_data_dir": "data/mvtec_ad/bottle",  # Chemin par défaut du dataset
-    "supported_formats": [".png", ".jpg", ".jpeg"],  # Formats d'image acceptés
+    "max_images_preview": 5,
+    "target_size": (128, 128),
+    "normalize": True,
+    "supported_categories": ["bottle", "cable", "capsule", "carpet", "grid", 
+                           "leather", "metal_nut", "pill", "screw", "tile", 
+                           "toothbrush", "transistor", "wood", "zipper"]
 }
-
 
 # Constantes DB Postgres (optionnelles si utilisées ailleurs)
 DB_CONSTANTS = {

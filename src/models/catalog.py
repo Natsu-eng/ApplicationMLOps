@@ -1,3 +1,10 @@
+"""
+Catalogue des modèles pour régression, classification, clustering et détection d'anomalies.
+Mise à jour pour inclure les modèles de détection d'anomalies en vision par ordinateur.
+"""
+import logging
+from typing import Dict, Any, Optional, List
+import warnings
 from sklearn.linear_model import LinearRegression, LogisticRegression, Ridge, Lasso, ElasticNet
 from sklearn.ensemble import (
     RandomForestRegressor, RandomForestClassifier, 
@@ -13,26 +20,25 @@ from sklearn.decomposition import PCA, TruncatedSVD
 from sklearn.discriminant_analysis import LinearDiscriminantAnalysis, QuadraticDiscriminantAnalysis
 from sklearn.naive_bayes import GaussianNB, MultinomialNB, BernoulliNB
 from sklearn.neural_network import MLPRegressor, MLPClassifier
-
-import logging
-from typing import Dict, Any, Optional, List
-import warnings
+from src.models.computer_vision.anomaly_detection.autoencoders import AnomalyAutoEncoder
+from src.models.computer_vision.anomaly_detection.patch_core import PatchCore
+from src.models.computer_vision.anomaly_detection.siamese_networks import SiameseNetwork
 
 # Configuration
 warnings.filterwarnings("ignore")
+logger = logging.getLogger(__name__)
 
-# Fallbacks pour les librairies optionnelles
+# Fallbacks pour librairies optionnelles
 XGBRegressor, XGBClassifier, LGBMRegressor, LGBMClassifier = None, None, None, None
-
 try:
     from xgboost import XGBRegressor, XGBClassifier
 except ImportError:
-    logging.warning("XGBoost non disponible - installation: pip install xgboost")
+    logger.warning("XGBoost non disponible - installation: pip install xgboost")
 
 try:
     from lightgbm import LGBMRegressor, LGBMClassifier
 except ImportError:
-    logging.warning("LightGBM non disponible - installation: pip install lightgbm")
+    logger.warning("LightGBM non disponible - installation: pip install lightgbm")
 
 # Catalogue complet des modèles avec hyperparamètres et descriptions
 MODEL_CATALOG = {
@@ -261,6 +267,32 @@ MODEL_CATALOG = {
             },
             "description": "Réduction dimensionnelle pour matrices creuses ou grandes."
         }
+    },
+    "anomaly_detection": {
+        "AutoEncoder": {
+            "model": AnomalyAutoEncoder,
+            "params": {
+                "latent_dim": [32, 64, 128, 256],
+                "dropout_rate": [0.0, 0.1, 0.3]
+            },
+            "description": "Auto-encodeur pour détection d'anomalies, apprend à reconstruire les images normales."
+        },
+        "PatchCore": {
+            "model": PatchCore,
+            "params": {
+                "patch_size": [16, 32, 64],
+                "feature_dim": [128, 256, 512]
+            },
+            "description": "Modèle basé sur patchs pour détection d'anomalies, robuste aux défauts locaux."
+        },
+        "SiameseNetwork": {
+            "model": SiameseNetwork,
+            "params": {
+                "embedding_dim": [64, 128, 256],
+                "margin": [0.5, 1.0, 2.0]
+            },
+            "description": "Réseau siamois pour comparer paires d'images, adapté aux anomalies contrastées."
+        }
     }
 }
 
@@ -313,34 +345,64 @@ if LGBMClassifier:
         "description": "Boosting d'arbres rapide, efficace pour les classifications complexes."
     }
 
+def get_model_class(task_type: str, model_name: str) -> Optional[Any]:
+    """
+    Récupère la classe du modèle pour instantiation.
+    
+    Args:
+        task_type (str): Type de tâche ("regression", "classification", "clustering", "anomaly_detection").
+        model_name (str): Nom du modèle.
+    
+    Returns:
+        Optional[Any]: Classe du modèle ou None si non trouvé.
+    """
+    try:
+        if task_type not in MODEL_CATALOG:
+            logger.error(f"Type de tâche non supporté: {task_type}")
+            return None
+        
+        if model_name not in MODEL_CATALOG[task_type]:
+            logger.error(f"Modèle non trouvé: {model_name} pour {task_type}")
+            return None
+        
+        model_config = MODEL_CATALOG[task_type][model_name]
+        logger.info(f"✅ Classe récupérée pour le modèle '{model_name}' de type '{task_type}'")
+        return model_config["model"]
+    
+    except Exception as e:
+        logger.error(f"Erreur récupération classe modèle: {e}")
+        return None
+
 def get_model_config(task_type: str, model_name: str) -> Optional[Dict[str, Any]]:
     """
-    Récupère la configuration d'un modèle de façon sécurisée.  
+    Récupère la configuration d'un modèle de façon sécurisée.
+    
     Args:
         task_type: Type de tâche
-        model_name: Nom du modèle   
+        model_name: Nom du modèle
+    
     Returns:
         Configuration du modèle ou None si non trouvé
     """
     try:
         if not isinstance(task_type, str) or not isinstance(model_name, str):
-            logging.error("Les paramètres 'task_type' et 'model_name' doivent être des chaînes.")
+            logger.error("Les paramètres 'task_type' et 'model_name' doivent être des chaînes.")
             return None
         
         if task_type not in MODEL_CATALOG:
-            logging.error(f"Type de tâche non supporté: {task_type}")
+            logger.error(f"Type de tâche non supporté: {task_type}")
             return None
         
         if model_name not in MODEL_CATALOG[task_type]:
-            logging.error(f"Modèle non trouvé: {model_name} pour {task_type}")
+            logger.error(f"Modèle non trouvé: {model_name} pour {task_type}")
             return None
         
         model_config = MODEL_CATALOG[task_type][model_name]
-        logging.info(f"✅ Configuration récupérée pour le modèle '{model_name}' de type '{task_type}'")
+        logger.info(f"✅ Configuration récupérée pour le modèle '{model_name}' de type '{task_type}'")
         return model_config
         
     except Exception as e:
-        logging.error(f"Erreur récupération configuration modèle: {e}", exc_info=True)
+        logger.error(f"Erreur récupération configuration modèle: {e}")
         return None
 
 def get_available_models(task_type: str) -> List[str]:
@@ -356,7 +418,7 @@ def get_available_models(task_type: str) -> List[str]:
     try:
         return list(MODEL_CATALOG.get(task_type, {}).keys())
     except Exception as e:
-        logging.error(f"Erreur récupération modèles disponibles: {e}")
+        logger.error(f"Erreur récupération modèles disponibles: {e}")
         return []
 
 def validate_model_selection(task_type: str, model_names: List[str]) -> Dict[str, Any]:

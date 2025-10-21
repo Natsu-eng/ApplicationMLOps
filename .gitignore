@@ -36,3 +36,13 @@ models_output/
 # Testing
 .pytest_cache/
 .coverage
+
+# Jupyter Notebooks
+.ipynb_checkpoints/
+*.ipynb
+
+# mvtec_ad
+mvtec/
+src/data/mvtec_ad/
+
+

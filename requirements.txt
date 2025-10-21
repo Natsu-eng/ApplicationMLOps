@@ -1,60 +1,58 @@
+# Core / UI
+streamlit==1.35.0
+packaging==23.2
+pillow==10.3.0
 
-# --- Interface utilisateur ---
-streamlit==1.33.0           # Dashboard principal
+# Data / numerical
+numpy==1.26.4
+pandas==2.2.2
+scipy==1.11.4
+joblib==1.3.2
+statsmodels==0.14.1
 
-# --- Manipulation de données ---
-pandas==2.2.1               # Analyse et traitement des DataFrames
-numpy==1.26.4               # Calculs numériques (compatible SciPy <1.12)
-scipy==1.11.4               # ✅ Compatible avec ydata-profiling 4.7.0
-statsmodels==0.14.1         # Analyse statistique (OK avec scipy<=1.11)
-scikit-learn==1.4.2         # Machine learning de base
-openpyxl==3.1.2             # Lecture/écriture Excel
-pyarrow==14.0.2             # Parquet backend
-fastparquet==2024.2.0       # Alternative parquet backend
-joblib==1.3.2               # Sauvegarde de modèles et parallélisation
+# ML
+scikit-learn==1.3.2
+imbalanced-learn==0.12.0
+xgboost==2.0.3
+lightgbm==4.3.0
+catboost==1.2.5
 
-# --- Machine Learning avancé ---
-xgboost==2.0.3              # Boosting
-lightgbm==4.3.0             # Gradient boosting optimisé
-catboost==1.2.5             # Gradient boosting catégoriel
-imbalanced-learn==0.12.0    # Gestion de classes déséquilibrées
-shap==0.45.0                # Explicabilité des modèles (OK avec scipy<=1.11)
+# Deep learning
+tensorflow==2.16.2          # Keras intégré
+# PyTorch (CPU/CUDA as needed; use official install command for cuda)
+torch==2.2.2
+torchvision==0.17.2
+pytorch-msssim
 
-# --- Profiling, validation et qualité des données ---
-ydata-profiling==4.7.0      # Génération de rapports d’analyse (⚠️ nécessite scipy<1.12)
-pandera==0.18.0             # Validation des schémas de DataFrames
+# Vision / augmentation
+albumentations==1.4.3
+albucore==0.0.11
 
-# --- Visualisation ---
-matplotlib==3.8.3           # Visualisation
-plotly==5.19.0              # Graphiques interactifs
-kaleido==0.2.1              # Export statique de graphiques Plotly
+# Profiling / reporting
+ydata-profiling==4.7.0
+matplotlib==3.7.2
+seaborn==0.12.2
+plotly==5.15.0
+kaleido==0.2.1
 
-# --- Monitoring & logging ---
-psutil==5.9.8               # Surveillance CPU/mémoire
-mlflow==2.8.1               # Tracking d’expériences ML
-python-dotenv==0.21.0       # Chargement de variables d’environnement
-pytest==7.4.2               # Framework de tests
+# MLOps / tracking
+mlflow==2.8.1
+python-dotenv==0.21.0
+pydantic==2.12.0
 
-# --- Génération de rapports ---
-reportlab==4.1.0            # Génération de PDF
-
-# --- Dev utils & linting ---
-ruff==0.3.4                 # Linter ultra-rapide
-# imbalanced-learn est déjà spécifié plus haut (ne pas le redéclarer)
-psycopg2-binary==2.9.9      # Connexion à PostgreSQL
-
-# --- Dask complet pour calcul distribué ---
-#dask # Installation complète de Dask
-#dask[dataframe] # Support DataFrame
+# Extras / utils
+openpyxl==3.1.2
+pyarrow==14.0.2
+fastparquet==2024.2.0
+psutil==5.9.8
+reportlab==4.1.0
+psycopg2-binary==2.9.9
 
 # --- Dask complet pour calcul distribué ---
 dask
 dask[dataframe]
 
-# --- Pydantic pour compatibilité prod ---
-pydantic==2.12.0             # Compatible ydata-profiling 4.7.0 et MLflow
-
-# --- Setuptools pour éviter les warnings pkg_resources ---
-setuptools>=80.9.0,<81       # Évite la suppression de pkg_resources
-
+# Dev / test
+pytest==7.4.2
+ruff==0.3.4
 

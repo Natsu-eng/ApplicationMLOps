@@ -251,3 +251,35 @@ def setup_error_logging():
     error_logger.info("Journalisation des erreurs critiques initialisée")
 
     return error_logger
+
+# =======================================
+# LOGGING STRUCTURÉ VISION PAR ORDINATEUR
+# =======================================
+class StructuredLogger:
+    """Logger structuré pour production"""
+    
+    def __init__(self, name: str, level: int = logging.INFO):
+        self.logger = logging.getLogger(name)
+        self.logger.setLevel(level)
+        
+        if not self.logger.handlers:
+            handler = logging.StreamHandler()
+            formatter = logging.Formatter(
+                '%(asctime)s | %(name)s | %(levelname)s | %(message)s',
+                datefmt='%Y-%m-%d %H:%M:%S'
+            )
+            handler.setFormatter(formatter)
+            self.logger.addHandler(handler)
+    
+    def info(self, msg: str, **kwargs):
+        self.logger.info(f"{msg} | {kwargs}" if kwargs else msg)
+    
+    def warning(self, msg: str, **kwargs):
+        self.logger.warning(f"{msg} | {kwargs}" if kwargs else msg)
+    
+    def error(self, msg: str, **kwargs):
+        self.logger.error(f"{msg} | {kwargs}" if kwargs else msg)
+    
+    def debug(self, msg: str, **kwargs):
+        self.logger.debug(f"{msg} | {kwargs}" if kwargs else msg)
+

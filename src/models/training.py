@@ -3,8 +3,6 @@ Module d'entraînement robuste pour le machine learning.
 Supporte l'apprentissage supervisé et non-supervisé avec gestion MLOps avancée.
 Version Production - Corrigée pour MLflow/Streamlit
 """
-import pkg_resources
-import traceback
 import pandas as pd
 import numpy as np
 from sklearn.model_selection import train_test_split, cross_val_score, GridSearchCV, StratifiedKFold, KFold
@@ -14,14 +12,9 @@ import joblib
 import os
 import time
 import gc
-import psutil
 from typing import Dict, List, Any, Optional, Tuple
 import warnings
 from sklearn.exceptions import ConvergenceWarning
-import json
-from datetime import datetime
-import threading
-from contextlib import contextmanager
 
 # Import des modules déplacés
 from monitoring.performance_monitor import TrainingMonitor
