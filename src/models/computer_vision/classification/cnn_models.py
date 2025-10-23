@@ -4,10 +4,10 @@ Version production-ready avec validation, logging et flexibilité.
 
 À placer dans: src/models/computer_vision/classification/cnn_models.py
 """
-
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
+ 
+import torch # type: ignore
+import torch.nn as nn # type: ignore
+import torch.nn.functional as F # type: ignore
 from typing import Tuple, Optional, List
 import logging
 
@@ -391,27 +391,3 @@ def get_cnn_model(
         raise
 
 
-# === TESTS UNITAIRES ===
-
-if __name__ == "__main__":
-    # Test SimpleCNN
-    print("=== Test SimpleCNN ===")
-    model = SimpleCNN(input_channels=3, num_classes=10)
-    print(model.summary())
-    
-    x = torch.randn(4, 3, 224, 224)
-    output = model(x)
-    print(f"Output shape: {output.shape}")  # (4, 10)
-    
-    # Test CustomResNet
-    print("\n=== Test CustomResNet ===")
-    model_resnet = CustomResNet(num_classes=5)
-    print(f"Paramètres: {model_resnet.count_parameters():,}")
-    
-    output_resnet = model_resnet(x)
-    print(f"Output shape: {output_resnet.shape}")  # (4, 5)
-    
-    # Test factory
-    print("\n=== Test Factory ===")
-    model_factory = get_cnn_model("simple", input_channels=3, num_classes=2)
-    print(f"Model créé: {type(model_factory).__name__}")

@@ -24,10 +24,10 @@ from enum import Enum
 from pathlib import Path
 
 import numpy as np
-import torch
-import torch.nn as nn
-import torch.optim as optim
-from torch.utils.data import DataLoader
+import torch # type: ignore
+import torch.nn as nn # type: ignore
+import torch.optim as optim # type: ignore
+from torch.utils.data import DataLoader # type: ignore
 from sklearn.metrics import (
     accuracy_score, precision_score, recall_score, f1_score,
     roc_auc_score, confusion_matrix, classification_report
@@ -1672,7 +1672,7 @@ class MLflowIntegration:
         self.mlflow_available = False
         
         try:
-            import mlflow
+            import mlflow # type: ignore
             self.mlflow = mlflow
             self.mlflow_available = True
             mlflow.set_experiment(experiment_name)

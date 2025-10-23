@@ -1,70 +1,121 @@
 """
-Implémentation d'un réseau siamois pour la détection d'anomalies.
+Réseau siamois professionnel avec contrastive loss et weight tying.
 """
-import torch
-import torch.nn as nn
-import numpy as np
+import torch # type: ignore
+import torch.nn as nn # type: ignore
+import torch.nn.functional as F # type: ignore
+import torchvision.models as models # type: ignore
+from typing import Tuple, Optional
 import logging
-from typing import Dict, Any
 
 logger = logging.getLogger(__name__)
 
-class SiameseNetwork(nn.Module):
+class ProfessionalSiameseNetwork(nn.Module):
     """
-    Réseau siamois pour comparer paires d'images et détecter anomalies.
+    Réseau siamois complet avec contrastive learning.
     """
-    def __init__(self, input_shape: tuple = (3, 224, 224), embedding_dim: int = 128, margin: float = 1.0):
-        super(SiameseNetwork, self).__init__()
-        self.input_shape = input_shape
+    
+    def __init__(
+        self,
+        backbone_name: str = "resnet18",
+        embedding_dim: int = 128,
+        margin: float = 1.0
+    ):
+        super().__init__()
+        
         self.embedding_dim = embedding_dim
         self.margin = margin
         
-        # Réseau de feature extraction
-        self.feature_extractor = nn.Sequential(
-            nn.Conv2d(input_shape[0], 32, kernel_size=3, stride=1, padding=1),
-            nn.ReLU(),
-            nn.MaxPool2d(2, 2),
-            nn.Conv2d(32, 64, kernel_size=3, stride=1, padding=1),
-            nn.ReLU(),
-            nn.MaxPool2d(2, 2),
+        # Backbone partagé avec weight tying
+        self.backbone = self._get_backbone(backbone_name)
+        self.embedder = nn.Sequential(
+            nn.AdaptiveAvgPool2d(1),
             nn.Flatten(),
-            nn.Linear(64 * (input_shape[1] // 4) * (input_shape[2] // 4), embedding_dim),
-            nn.ReLU()
+            nn.Linear(512, embedding_dim),
+            nn.BatchNorm1d(embedding_dim),
+            nn.ReLU(inplace=True)
         )
+        
+    def _get_backbone(self, name: str) -> nn.Module:
+        """Backbone pré-entraîné avec feature extraction."""
+        if name == "resnet18":
+            model = models.resnet18(pretrained=True)
+            # Supprimer la dernière couche FC
+            model = nn.Sequential(*list(model.children())[:-1])
+        else:
+            raise ValueError(f"Backbone {name} non supporté")
+        
+        # Geler les premières couches
+        for param in list(model.parameters())[:-4]:  # Dégeler dernières couches
+            param.requires_grad = False
+            
+        return model
     
-    def forward(self, x1: torch.Tensor, x2: torch.Tensor = None) -> torch.Tensor:
-        try:
-            emb1 = self.feature_extractor(x1)
-            if x2 is not None:
-                emb2 = self.feature_extractor(x2)
-                return torch.norm(emb1 - emb2, dim=1)
-            return emb1
-        except Exception as e:
-            logger.error(f"Erreur dans forward SiameseNetwork: {e}")
-            raise
+    def forward(self, x1: torch.Tensor, x2: Optional[torch.Tensor] = None) -> torch.Tensor:
+        """Forward pass pour une ou deux images."""
+        embedding1 = self.embedder(self.backbone(x1))
+        embedding1 = F.normalize(embedding1, p=2, dim=1)
+        
+        if x2 is not None:
+            embedding2 = self.embedder(self.backbone(x2))
+            embedding2 = F.normalize(embedding2, p=2, dim=1)
+            return embedding1, embedding2
+        
+        return embedding1
     
-    def predict(self, X: np.ndarray) -> np.ndarray:
+    def contrastive_loss(
+        self, 
+        embedding1: torch.Tensor, 
+        embedding2: torch.Tensor, 
+        labels: torch.Tensor
+    ) -> torch.Tensor:
         """
-        Prédit les scores d'anomalie (distance à une référence normale).
+        Contrastive loss pour l'apprentissage siamois.
         
         Args:
-            X (np.ndarray): Images d'entrée (N, C, H, W).
-        
-        Returns:
-            np.ndarray: Scores d'anomalie (distance moyenne).
+            embedding1, embedding2: Embeddings des paires d'images
+            labels: 1 pour similaire, 0 pour différent
         """
-        try:
-            self.eval()
-            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-            self.to(device)
-            X_tensor = torch.tensor(X, dtype=torch.float32).to(device)
+        euclidean_distance = F.pairwise_distance(embedding1, embedding2)
+        
+        # Contrastive loss
+        loss_similar = labels * torch.pow(euclidean_distance, 2)
+        loss_dissimilar = (1 - labels) * torch.pow(
+            torch.clamp(self.margin - euclidean_distance, min=0.0), 2
+        )
+        
+        return torch.mean(loss_similar + loss_dissimilar)
+    
+    def predict_anomaly_score(
+        self, 
+        query_images: torch.Tensor, 
+        reference_embeddings: torch.Tensor
+    ) -> torch.Tensor:
+        """
+        Calcule les scores d'anomalie par rapport à des embeddings de référence.
+        
+        Args:
+            query_images: Images à évaluer
+            reference_embeddings: Embeddings des images normales de référence
+        """
+        self.eval()
+        with torch.no_grad():
+            query_embeddings = self.forward(query_images)
+            distances = torch.cdist(query_embeddings, reference_embeddings)
+            anomaly_scores = distances.min(dim=1)[0]  # Distance au plus proche voisin
             
-            # Utiliser une image normale moyenne comme référence (simplifié)
-            ref_tensor = X_tensor.mean(dim=0, keepdim=True)
-            
-            with torch.no_grad():
-                distances = self(X_tensor, ref_tensor.repeat(len(X), 1, 1, 1)).cpu().numpy()
-            return distances
-        except Exception as e:
-            logger.error(f"Erreur dans predict SiameseNetwork: {e}")
-            return np.zeros(len(X))
+        return anomaly_scores
+
+
+# Factory function pour une utilisation facile
+def get_siamese_network(
+    backbone_name: str = "resnet18",
+    embedding_dim: int = 128,
+    margin: float = 1.0
+) -> ProfessionalSiameseNetwork:
+    """Factory pour créer un réseau siamois."""
+    return ProfessionalSiameseNetwork(
+        backbone_name=backbone_name,
+        embedding_dim=embedding_dim,
+        margin=margin
+    )

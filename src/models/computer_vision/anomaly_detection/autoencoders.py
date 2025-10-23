@@ -6,9 +6,9 @@ Version production-ready avec architecture dynamique et monitoring.
 """
 
 import numpy as np
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
+import torch # type: ignore
+import torch.nn as nn # type: ignore
+import torch.nn.functional as F # type: ignore
 from typing import Tuple, Optional, Dict, Any, List
 import logging
 
@@ -394,7 +394,7 @@ class ConvAutoEncoder(nn.Module):
             elif method == "ssim":
                 # SSIM-based (inversé car SSIM élevé = similaire)
                 try:
-                    from pytorch_msssim import ssim
+                    from pytorch_msssim import ssim # type: ignore
                     ssim_val = ssim(x, reconstructed, data_range=1.0, size_average=False)
                     scores = 1 - ssim_val  # Inversion: anomalie = faible SSIM
                 except ImportError:

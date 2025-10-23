@@ -1,7 +1,9 @@
+import numpy as np
 from src.config.model_config import ModelConfig, ModelType
 from src.data.computer_vision_preprocessing import Result
 from utils.device_manager import DeviceManager
-import torch.nn as nn
+import torch.nn as nn # type: ignore
+import torch # type: ignore
 
 from src.shared.logging import StructuredLogger
 
@@ -14,7 +16,9 @@ logger = StructuredLogger(__name__)
 MODELS_AVAILABLE = {
     'cnn': False,
     'transfer': False,
-    'autoencoder': False
+    'autoencoder': False,
+    'patchcore': False,  # NOUVEAU
+    'siamese': False     # NOUVEAU
 }
 
 try:
@@ -51,6 +55,23 @@ except ImportError as e:
     VariationalAutoEncoder = None
     DenoisingAutoEncoder = None
 
+# NOUVEAUX IMPORTS - JUSTE LES 2 MODÈLES AJOUTÉS
+try:
+    from src.models.computer_vision.anomaly_detection.patch_core import ProfessionalPatchCore
+    MODELS_AVAILABLE['patchcore'] = True
+    logger.info("✅ Modèle PatchCore professionnel importé")
+except ImportError as e:
+    logger.warning(f"⚠️ Modèle PatchCore non disponible: {e}")
+    ProfessionalPatchCore = None
+
+try:
+    from src.models.computer_vision.anomaly_detection.siamese_networks import ProfessionalSiameseNetwork
+    MODELS_AVAILABLE['siamese'] = True
+    logger.info("✅ Modèle Siamese Network professionnel importé")
+except ImportError as e:
+    logger.warning(f"⚠️ Modèle Siamese Network non disponible: {e}")
+    ProfessionalSiameseNetwork = None
+
 
 # =======================
 # CONSTRUCTION DE MODÈLES
@@ -76,6 +97,9 @@ class ModelBuilder:
             ModelType.CONV_AUTOENCODER: self._build_conv_autoencoder,
             ModelType.VAE: self._build_variational_autoencoder,
             ModelType.DENOISING_AE: self._build_denoising_autoencoder,
+            # JUSTE LES 2 NOUVEAUX MODÈLES AJOUTÉS
+            ModelType.PATCH_CORE: self._build_patchcore,
+            ModelType.SIAMESE_NETWORK: self._build_siamese_network,
         }
     
     def build(self, config: ModelConfig) -> Result:
@@ -120,6 +144,7 @@ class ModelBuilder:
             logger.error(f"Erreur construction modèle: {e}", exc_info=True)
             return Result.err(f"Construction modèle échouée: {str(e)}")
     
+    # VOTRE CODE EXISTANT POUR LES 6 PREMIERS MODÈLES (JE NE TOUCHE PAS)
     def _build_simple_cnn(self, config: ModelConfig) -> nn.Module:
         """Builder pour SimpleCNN - UTILISE LE VRAI MODÈLE"""
         if SimpleCNN is not None:
@@ -156,7 +181,6 @@ class ModelBuilder:
             return TransferLearningModel(
                 model_name='resnet50',
                 num_classes=config.num_classes,
-               #input_channels=config.input_channels,
                 pretrained=config.pretrained,
                 freeze_layers=config.freeze_layers,
                 dropout_rate=config.dropout_rate,
@@ -215,12 +239,37 @@ class ModelBuilder:
         else:
             logger.warning("DenoisingAutoEncoder non disponible, utilisation placeholder")
             return self._build_placeholder_autoencoder(config)
-        
-
-    # ========================================================================
-    # PLACEHOLDERS (pour tests si vrais modèles non disponibles)
-    # ========================================================================
     
+    # JUSTE LES 2 NOUVELLES FONCTIONS AJOUTÉES
+    def _build_patchcore(self, config: ModelConfig) -> nn.Module:
+        """Builder pour ProfessionalPatchCore - UTILISE LE VRAI MODÈLE"""
+        if ProfessionalPatchCore is not None:
+            # Utilisation du VRAI modèle PatchCore professionnel
+            return ProfessionalPatchCore(
+                backbone_name=getattr(config, 'backbone_name', 'wide_resnet50_2'),
+                layers=getattr(config, 'patchcore_layers', ['layer2', 'layer3']),
+                faiss_index_type=getattr(config, 'faiss_index_type', 'Flat'),
+                coreset_ratio=getattr(config, 'coreset_ratio', 0.01),
+                num_neighbors=getattr(config, 'num_neighbors', 1)
+            )
+        else:
+            logger.warning("ProfessionalPatchCore non disponible, utilisation placeholder")
+            return self._build_placeholder_patchcore(config)
+    
+    def _build_siamese_network(self, config: ModelConfig) -> nn.Module:
+        """Builder pour ProfessionalSiameseNetwork - UTILISE LE VRAI MODÈLE"""
+        if ProfessionalSiameseNetwork is not None:
+            # Utilisation du VRAI modèle Siamese professionnel
+            return ProfessionalSiameseNetwork(
+                backbone_name=getattr(config, 'backbone_name', 'resnet18'),
+                embedding_dim=getattr(config, 'embedding_dim', 128),
+                margin=getattr(config, 'margin', 1.0)
+            )
+        else:
+            logger.warning("ProfessionalSiameseNetwork non disponible, utilisation placeholder")
+            return self._build_placeholder_siamese(config)
+
+    # VOS PLACEHOLDERS EXISTANTS (JE NE TOUCHE PAS)
     def _build_placeholder_cnn(self, config: ModelConfig) -> nn.Module:
         """Placeholder simple pour tests uniquement"""
         return nn.Sequential(
@@ -266,3 +315,65 @@ class ModelBuilder:
                 return self.decoder(z)
         
         return SimpleAutoencoder(config.input_channels, config.latent_dim)
+    
+    # JUSTE LES 2 NOUVEAUX PLACEHOLDERS AJOUTÉS
+    def _build_placeholder_patchcore(self, config: ModelConfig) -> nn.Module:
+        """Placeholder PatchCore pour tests uniquement"""
+        class SimplePatchCore(nn.Module):
+            def __init__(self, input_channels):
+                super().__init__()
+                self.feature_extractor = nn.Sequential(
+                    nn.Conv2d(input_channels, 32, 3, padding=1),
+                    nn.ReLU(),
+                    nn.MaxPool2d(2),
+                    nn.Conv2d(32, 64, 3, padding=1),
+                    nn.ReLU()
+                )
+                self.memory_bank = None
+            
+            def forward(self, x):
+                return self.feature_extractor(x)
+            
+            def fit(self, dataloader):
+                # Implémentation simplifiée pour tests
+                self.memory_bank = torch.randn(100, 64)  # Placeholder
+            
+            def predict(self, dataloader):
+                if self.memory_bank is None:
+                    raise ValueError("Modèle non entraîné")
+                return np.random.rand(32)  # Scores aléatoires pour tests
+        
+        return SimplePatchCore(config.input_channels)
+    
+    def _build_placeholder_siamese(self, config: ModelConfig) -> nn.Module:
+        """Placeholder Siamese Network pour tests uniquement"""
+        class SimpleSiamese(nn.Module):
+            def __init__(self, input_channels, embedding_dim=128):
+                super().__init__()
+                self.embedding_dim = embedding_dim
+                self.feature_extractor = nn.Sequential(
+                    nn.Conv2d(input_channels, 32, 3, padding=1),
+                    nn.ReLU(),
+                    nn.MaxPool2d(2),
+                    nn.Conv2d(32, 64, 3, padding=1),
+                    nn.ReLU(),
+                    nn.MaxPool2d(2),
+                    nn.Flatten(),
+                    nn.Linear(64 * (config.input_size[0]//4) * (config.input_size[1]//4), embedding_dim),
+                    nn.ReLU()
+                )
+            
+            def forward(self, x1, x2=None):
+                emb1 = self.feature_extractor(x1)
+                if x2 is not None:
+                    emb2 = self.feature_extractor(x2)
+                    return torch.norm(emb1 - emb2, dim=1) # 
+                return emb1
+            
+            def predict_anomaly_score(self, query_images, reference_embeddings):
+                # Implémentation simplifiée
+                query_emb = self.forward(query_images)
+                distances = torch.cdist(query_emb, reference_embeddings) 
+                return distances.min(dim=1)[0]
+        
+        return SimpleSiamese(config.input_channels)

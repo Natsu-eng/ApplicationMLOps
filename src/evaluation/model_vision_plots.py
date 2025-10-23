@@ -9,7 +9,7 @@ from sklearn.metrics import roc_curve, precision_recall_curve, confusion_matrix
 from typing import Optional, Dict, List
 from src.shared.logging import get_logger
 from src.config.constants import ANOMALY_CONFIG
-import mlflow
+import mlflow # type: ignore
 import tempfile
 import os
 

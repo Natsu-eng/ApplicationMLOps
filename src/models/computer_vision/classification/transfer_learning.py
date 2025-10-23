@@ -5,9 +5,9 @@ Version production-ready avec gestion flexible du fine-tuning.
 À placer dans: src/models/computer_vision/classification/transfer_learning.py
 """
 
-import torch
-import torch.nn as nn
-import torchvision.models as models
+import torch # type: ignore
+import torch.nn as nn # type: ignore
+import torchvision.models as models # type: ignore
 from typing import Optional, List, Dict, Any
 import logging
 
