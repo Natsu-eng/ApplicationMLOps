@@ -1,4 +1,5 @@
-import psutil
+import gc
+import psutil # type: ignore
 import time
 import logging
 from typing import Dict, Any, List
@@ -108,3 +109,8 @@ def is_system_healthy() -> Dict[str, Any]:
         logger.error(f"Erreur santé système: {str(e)[:100]}")
     
     return health
+
+# Définition locale de cleanup_memory (pour compatibilité et nettoyage mémoire)
+def cleanup_memory():
+    """Nettoyage mémoire simple et robuste."""
+    gc.collect()

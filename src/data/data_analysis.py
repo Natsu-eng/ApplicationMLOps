@@ -1,6 +1,7 @@
 """
 Module d'analyse de données robuste pour le machine learning.
 Optimisé pour la production avec gestion mémoire avancée et monitoring.
+src/data/data_analysis.py
 """
 
 import pandas as pd
@@ -807,18 +808,132 @@ def detect_useless_columns(
         logger.error(f"❌ Erreur critique: {e}")
         return []
 
+@conditional_cache(use_cache=True)
+@safe_execute(fallback_value={})
+@monitor_performance
+def compute_global_metrics(df: Union[pd.DataFrame, 'dd.DataFrame']) -> Dict[str, Any]:
+    """
+    Calcule les métriques globales du dataset.
+    """
+    try:
+        if df is None or df.empty:
+            return {}
+
+        # Si c'est un Dask DataFrame, on calcule les métriques de manière distribuée
+        if is_dask_dataframe(df):
+            n_rows = compute_if_dask(df.shape[0])
+            n_cols = compute_if_dask(df.shape[1])
+            missing_count = compute_if_dask(df.isnull().sum().sum())
+            duplicate_rows = compute_if_dask(df.duplicated().sum())
+        else:
+            n_rows = len(df)
+            n_cols = len(df.columns)
+            missing_count = df.isnull().sum().sum()
+            duplicate_rows = df.duplicated().sum()
+
+        total_cells = n_rows * n_cols
+        missing_percentage = (missing_count / total_cells * 100) if total_cells > 0 else 0
+
+        return {
+            'n_rows': n_rows,
+            'n_cols': n_cols,
+            'missing_count': missing_count,
+            'missing_percentage': missing_percentage,
+            'duplicate_rows': duplicate_rows,
+            'total_cells': total_cells
+        }
+
+    except Exception as e:
+        logger.error(f"Erreur dans compute_global_metrics: {e}")
+        return {}
+    
+@conditional_cache(use_cache=True)
+@safe_execute(fallback_value={})
+@monitor_performance
+def detect_outliers_iqr(data: pd.Series) -> Dict:
+    """Détection des outliers avec méthode IQR - Logique métier"""
+    Q1 = data.quantile(0.25)
+    Q3 = data.quantile(0.75)
+    IQR = Q3 - Q1
+    lower_bound = Q1 - 1.5 * IQR
+    upper_bound = Q3 + 1.5 * IQR
+    
+    outliers = data[(data < lower_bound) | (data > upper_bound)]
+    
+    return {
+        'outliers': outliers,
+        'bounds': {'lower': lower_bound, 'upper': upper_bound},
+        'stats': {'Q1': Q1, 'Q3': Q3, 'IQR': IQR},
+        'count': len(outliers),
+        'percentage': (len(outliers) / len(data)) * 100
+    }
+
+@conditional_cache(use_cache=True)
+@safe_execute(fallback_value={})
+@monitor_performance
+def calculate_correlation_significance(df: pd.DataFrame, var1: str, var2: str) -> Dict:
+    """Calcule la significativité des corrélations - Logique métier"""
+    try:
+        from scipy.stats import pearsonr, spearmanr
+        
+        data = df[[var1, var2]].dropna()
+        
+        if len(data) < 3:
+            return {'error': 'Données insuffisantes'}
+        
+        # Pearson pour relation linéaire
+        pearson_corr, pearson_p = pearsonr(data[var1], data[var2])
+        
+        # Spearman pour relation monotone
+        spearman_corr, spearman_p = spearmanr(data[var1], data[var2])
+        
+        return {
+            'pearson': {'correlation': pearson_corr, 'p_value': pearson_p},
+            'spearman': {'correlation': spearman_corr, 'p_value': spearman_p},
+            'sample_size': len(data)
+        }
+    except ImportError:
+        # Fallback sans scipy
+        correlation = data[var1].corr(data[var2])
+        return {
+            'pearson': {'correlation': correlation, 'p_value': None},
+            'spearman': {'correlation': correlation, 'p_value': None},
+            'sample_size': len(data),
+            'warning': 'SciPy non disponible, calculs limités'
+        }
+
+@conditional_cache(use_cache=True)
+@safe_execute(fallback_value={})
+@monitor_performance  
+def chi_square_test(contingency_table: pd.DataFrame) -> Dict:
+    """Test du chi-carré pour tables de contingence - Logique métier"""
+    try:
+        from scipy.stats import chi2_contingency
+        chi2, p_value, dof, expected = chi2_contingency(contingency_table)
+        return {
+            'chi2': chi2,
+            'p_value': p_value,
+            'degrees_of_freedom': dof,
+            'significant': p_value < 0.05
+        }
+    except Exception as e:
+        return {'error': str(e)}
 
 # Export des fonctions principales
 __all__ = [
-    'auto_detect_column_types',
-    'get_column_profile',
-    'get_data_profile',
-    'analyze_columns',
-    'detect_imbalance',
-    'get_target_and_task',
-    'get_relevant_features',
-    'detect_useless_columns',
-    'cleanup_memory',
-    'safe_sample',
-    'optimize_dataframe'
+    'auto_detect_column_types', # Pour détection types colonnes
+    'get_column_profile', # Pour le profil d'une colonne
+    'get_data_profile', # Pour le profil global du dataset
+    'analyze_columns', # Pour détection colonnes constantes/ID
+    'detect_imbalance', # Pour détection déséquilibre des classes
+    'get_target_and_task', # Pour détection type tâche ML
+    'get_relevant_features', # Pour sélection features pertinentes
+    'detect_useless_columns', # Pour détection colonnes inutiles
+    'cleanup_memory', # Nettoyage mémoire
+    'safe_sample', # Échantillonnage sécurisé
+    'optimize_dataframe', # Optimisation DataFrame
+    'compute_global_metrics', # Nouvelle fonction pour métriques globales
+    'detect_outliers_iqr', # Détection outliers IQR
+    'calculate_correlation_significance', # Pour corrélation et significativité
+    'chi_square_test' # Test du chi-carré
 ]

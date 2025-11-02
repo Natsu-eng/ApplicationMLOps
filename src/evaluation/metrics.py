@@ -24,7 +24,7 @@ from joblib import Parallel, delayed
 
 # Import des modules déplacés
 from monitoring.logging_utils import log_metrics
-from monitoring.state_managers import METRICS_STATE, MetricsStateManager
+from monitoring.state_managers import STATE
 from monitoring.decorators import monitor_performance, safe_metric_calculation
 from monitoring.system_monitor import get_system_metrics
 from helpers.metrics_validators import validate_input_data
@@ -90,7 +90,7 @@ def get_system_metrics() -> Dict[str, Any]:
             "total_memory_gb": round(psutil.virtual_memory().total / (1024 ** 3), 2),
             "disk_usage_percent": psutil.disk_usage('/').percent,
             "timestamp": time.time(),
-            "active_calculations": METRICS_STATE._active_calculations,
+            "active_calculations": STATE._active_calculations,
             "memory_available_mb": round(psutil.virtual_memory().available / 1024 / 1024, 2)
             
         }
@@ -577,32 +577,79 @@ def evaluate_single_train_test_split(
 ) -> Dict[str, Any]:
     """
     Évalue un modèle sur un jeu de test de façon robuste.
+    - Retourne UNIQUEMENT les métriques utiles (pas de métadonnées de calcul)
+    - Structure cohérente avec train_single_model_supervised
+    - Copie SÉLECTIVE des valeurs (pas de .update())
+    
+    STRUCTURE DE RETOUR:
+    {
+        "success": True/False,
+        "warnings": [],
+        "task_type": "classification",
+        "n_samples": 2000,
+        
+        # Classification:
+        "accuracy": 0.95,
+        "precision": 0.93,
+        "recall": 0.92,
+        "f1_score": 0.93,
+        "roc_auc": 0.96,
+        "confusion_matrix": [[...]],
+        "classification_report": {...}
+        
+        # Régression:
+        "r2": 0.87,
+        "mse": 12.34,
+        "mae": 3.21,
+        "rmse": 3.51,
+        "explained_variance": 0.89,
+        "msle": 0.12,
+        "error_stats": {...}
+        
+        # Clustering:
+        "n_clusters": 5,
+        "silhouette_score": 0.72,
+        "davies_bouldin_score": 0.45,
+        "calinski_harabasz_score": 1234.56,
+        "cluster_sizes": {...},
+        "cluster_size_stats": {...}
+    }
     """
     task_type = task_type.lower().strip()
     if task_type in ['unsupervised', 'cluster']:
         task_type = 'clustering'
     
-    metrics = {
+    # ========================================================================
+    # STRUCTURE DE RETOUR CLEAN
+    # ========================================================================
+    result = {
         "success": False, 
         "warnings": [],
-        "task_type": task_type
+        "task_type": task_type,
+        "n_samples": 0
     }
     
     try:
-        # Validation des entrées
+        # ========================================================================
+        # VALIDATION ENTRÉES
+        # ========================================================================
         if X_test is None:
-            metrics["error"] = "X_test est None"
-            return metrics
+            result["error"] = "X_test est None"
+            log_metrics("ERROR", "X_test est None", {"task_type": task_type})
+            return result
         
         if hasattr(X_test, 'size') and X_test.size == 0:
-            metrics["error"] = "X_test est vide"
-            return metrics
+            result["error"] = "X_test est vide"
+            log_metrics("ERROR", "X_test vide", {"task_type": task_type})
+            return result
         
-        # Échantillonnage intelligent
+        # ========================================================================
+        # ÉCHANTILLONNAGE
+        # ========================================================================
         if (sample_metrics and hasattr(X_test, 'shape') and 
             X_test.shape[0] > max_samples_metrics):
             
-            log_metrics("INFO", "Application échantillonnage évaluation", {
+            log_metrics("INFO", "Échantillonnage évaluation", {
                 "original_size": X_test.shape[0],
                 "max_samples": max_samples_metrics
             })
@@ -622,10 +669,14 @@ def evaluate_single_train_test_split(
                 else:
                     y_test = y_test[indices]
         
-        # Prédictions selon le type de tâche
+        result["n_samples"] = len(X_test) if hasattr(X_test, '__len__') else 0
+        
+        # ========================================================================
+        # PRÉDICTIONS + CALCUL MÉTRIQUES
+        # ========================================================================
         if task_type == 'clustering':
             try:
-                # Gestion spécifique par type de modèle
+                # Prédictions clustering
                 model_str = str(type(model)).upper()
                 
                 if 'DBSCAN' in model_str:
@@ -635,29 +686,50 @@ def evaluate_single_train_test_split(
                 
                 y_pred = np.asarray(y_pred)
                 
-                # Validation des prédictions clustering
+                # Validation
                 unique_clusters = np.unique(y_pred)
-                n_clusters = len(unique_clusters[unique_clusters >= 0])  # Exclure les outliers (-1)
+                n_clusters = len(unique_clusters[unique_clusters >= 0])
                 
                 if n_clusters < 2:
-                    metrics["error"] = f"Seulement {n_clusters} cluster(s) valide(s) détecté(s)"
-                    return metrics
+                    result["error"] = f"Seulement {n_clusters} cluster(s) valide(s)"
+                    log_metrics("ERROR", "Pas assez de clusters", {"n_clusters": n_clusters})
+                    return result
                 
-                # Calcul des métriques clustering
-                clustering_metrics = calculate_global_metrics(
-                    [X_test], [y_pred], task_type="clustering",
-                    sample_metrics=sample_metrics, max_samples_metrics=max_samples_metrics
-                )
+                # 🆕 CALCUL DIRECT (pas via calculate_global_metrics)
+                evaluator = EvaluationMetrics("clustering")
+                cluster_metrics = evaluator.calculate_unsupervised_metrics(X_test, y_pred)
                 
-                metrics.update(clustering_metrics)
+                # 🆕 COPIE SÉLECTIVE (seulement les métriques utiles)
+                if cluster_metrics.get("success", False):
+                    result["n_clusters"] = cluster_metrics.get("n_clusters", n_clusters)
+                    result["n_valid_samples"] = cluster_metrics.get("n_valid_samples")
+                    result["n_outliers"] = cluster_metrics.get("n_outliers", 0)
+                    result["silhouette_score"] = cluster_metrics.get("silhouette_score")
+                    result["davies_bouldin_score"] = cluster_metrics.get("davies_bouldin_score")
+                    result["calinski_harabasz_score"] = cluster_metrics.get("calinski_harabasz_score")
+                    result["cluster_sizes"] = cluster_metrics.get("cluster_sizes", {})
+                    result["cluster_size_stats"] = cluster_metrics.get("cluster_size_stats", {})
+                    result["success"] = True
+                    result["warnings"].extend(cluster_metrics.get("warnings", []))
+                    
+                    log_metrics("INFO", "Métriques clustering OK", {
+                        "n_clusters": result["n_clusters"],
+                        "silhouette": result.get("silhouette_score")
+                    })
+                else:
+                    result["error"] = cluster_metrics.get("error", "Échec calcul clustering")
+                    log_metrics("ERROR", "Échec clustering", {"error": result["error"]})
                 
             except Exception as e:
-                metrics["error"] = f"Erreur clustering: {str(e)}"
-                return metrics
+                result["error"] = f"Erreur clustering: {str(e)}"
+                log_metrics("ERROR", "Exception clustering", {"error": str(e)})
                 
         else:
-            # Classification ou régression
+            # ========================================================================
+            # CLASSIFICATION / RÉGRESSION
+            # ========================================================================
             try:
+                # Prédictions
                 y_pred = model.predict(X_test)
                 y_proba = None
                 
@@ -665,28 +737,81 @@ def evaluate_single_train_test_split(
                     try:
                         y_proba = model.predict_proba(X_test)
                     except Exception as e:
-                        metrics["warnings"].append(f"predict_proba échoué: {str(e)}")
+                        result["warnings"].append(f"predict_proba échoué: {str(e)}")
+                        log_metrics("WARNING", "predict_proba échoué", {"error": str(e)})
                 
-                # Calcul des métriques
-                supervised_metrics = calculate_global_metrics(
-                    [y_test], [y_pred], [y_proba] if y_proba is not None else [],
-                    task_type=task_type, label_encoder=label_encoder,
-                    sample_metrics=sample_metrics, max_samples_metrics=max_samples_metrics
-                )
+                # 🆕 CALCUL DIRECT (pas via calculate_global_metrics)
+                evaluator = EvaluationMetrics(task_type)
                 
-                metrics.update(supervised_metrics)
+                if task_type == 'classification':
+                    eval_metrics = evaluator.calculate_classification_metrics(
+                        y_test, y_pred, y_proba
+                    )
+                else:  # regression
+                    eval_metrics = evaluator.calculate_regression_metrics(
+                        y_test, y_pred
+                    )
+                
+                # 🆕 COPIE SÉLECTIVE (seulement les métriques utiles)
+                if eval_metrics.get("success", False):
+                    if task_type == 'classification':
+                        # Métriques classification
+                        result["accuracy"] = eval_metrics.get("accuracy")
+                        result["precision"] = eval_metrics.get("precision")
+                        result["recall"] = eval_metrics.get("recall")
+                        result["f1_score"] = eval_metrics.get("f1_score")
+                        result["roc_auc"] = eval_metrics.get("roc_auc")
+                        result["confusion_matrix"] = eval_metrics.get("confusion_matrix")
+                        result["classification_report"] = eval_metrics.get("classification_report")
+                        
+                        log_metrics("INFO", "Métriques classification OK", {
+                            "accuracy": result["accuracy"],
+                            "n_samples": result["n_samples"]
+                        })
+                    else:
+                        # Métriques régression
+                        result["r2"] = eval_metrics.get("r2")
+                        result["mse"] = eval_metrics.get("mse")
+                        result["mae"] = eval_metrics.get("mae")
+                        result["rmse"] = eval_metrics.get("rmse")
+                        result["explained_variance"] = eval_metrics.get("explained_variance")
+                        result["msle"] = eval_metrics.get("msle")
+                        result["error_stats"] = eval_metrics.get("error_stats")
+                        
+                        log_metrics("INFO", "Métriques régression OK", {
+                            "r2": result["r2"],
+                            "n_samples": result["n_samples"]
+                        })
+                    
+                    result["success"] = True
+                    result["warnings"].extend(eval_metrics.get("warnings", []))
+                    
+                else:
+                    result["error"] = eval_metrics.get("error", f"Échec calcul {task_type}")
+                    log_metrics("ERROR", f"Échec {task_type}", {"error": result["error"]})
                 
             except Exception as e:
-                metrics["error"] = f"Erreur prédiction: {str(e)}"
-                return metrics
+                result["error"] = f"Erreur prédiction: {str(e)}"
+                log_metrics("ERROR", "Exception prédiction", {"error": str(e)})
         
-        metrics["success"] = True
+        # ========================================================================
+        # VALIDATION FINALE
+        # ========================================================================
+        if not result.get("success"):
+            if "error" not in result:
+                result["error"] = "Échec évaluation (raison inconnue)"
+        
+        # ========================================================================
+        # 🆕 NETTOYAGE: Retirer les clés None
+        # ========================================================================
+        result = {k: v for k, v in result.items() if v is not None}
         
     except Exception as e:
         log_metrics("ERROR", "Erreur critique évaluation", {"error": str(e)})
-        metrics["error"] = str(e)
+        result["error"] = str(e)
+        result["success"] = False
     
-    return metrics
+    return result
 
 # =============================
 # FONCTIONS DE RAPPORT AVANCÉES

@@ -48,6 +48,9 @@ except ImportError:
 
 import torch # type: ignore
 
+from monitoring.state_managers import init, AppPage
+STATE = init()
+
 logger = get_logger(__name__)
 
 # ============================================================================
@@ -482,78 +485,174 @@ def safe_convert_history(history):
 
 
 def robust_predict_with_preprocessor(model, X_test, preprocessor, model_type):
-    """Prédictions robustes."""
+    """
+    Prédictions robustes avec gestion complète des cas edge.
+    - Gestion preprocessor None
+    - Validation des shapes
+    - Try-except sur chaque transformation
+    - Logs détaillés des échecs
+    """
     try:
+        # Preprocessing avec gestion None
         if preprocessor is not None:
             try:
+                # Tenter transformation avec preprocessor
                 X_processed = preprocessor.transform(X_test, output_format="channels_first")
-            except:
+                logger.info(f"✅ Preprocessing réussi: {X_processed.shape}")
+            except AttributeError as e:
+                # Preprocessor sans méthode transform
+                logger.warning(f"⚠️ Preprocessor sans transform(): {e}")
+                X_processed = X_test.copy()
+            except Exception as e:
+                # Erreur transformation
+                logger.warning(f"⚠️ Erreur preprocessing, utilisation données brutes: {e}")
                 X_processed = X_test.copy()
         else:
+            logger.info("ℹ️ Pas de preprocessor, utilisation données brutes")
             X_processed = X_test.copy()
         
+        # Validation shape
+        if len(X_processed.shape) != 4:
+            logger.error(f"❌ Shape invalide: {X_processed.shape}, attendu: (N, C, H, W)")
+            # Tentative de correction
+            if len(X_processed.shape) == 3:
+                # Ajouter dimension channel
+                X_processed = np.expand_dims(X_processed, axis=1)
+                logger.info(f"✅ Shape corrigée: {X_processed.shape}")
+        
+        # Device avec gestion CUDA
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         model.to(device)
         model.eval()
         
-        X_tensor = torch.tensor(X_processed, dtype=torch.float32).to(device)
+        logger.info(f"🖥️ Device: {device}, Shape entrée: {X_processed.shape}")
+        
+        # Conversion tensor avec dtype explicite
+        try:
+            X_tensor = torch.tensor(X_processed, dtype=torch.float32).to(device)
+        except Exception as e:
+            logger.error(f"❌ Erreur conversion tensor: {e}")
+            # Tentative de correction dtype
+            X_processed = X_processed.astype(np.float32)
+            X_tensor = torch.tensor(X_processed, dtype=torch.float32).to(device)
         
         with torch.no_grad():
-            if model_type == "autoencoder":
-                reconstructed = model(X_tensor)
-                reconstructed_np = reconstructed.cpu().numpy()
-                reconstruction_errors = np.mean((X_processed - reconstructed_np) ** 2, axis=(1, 2, 3))
+            if model_type in ["autoencoder", "conv_autoencoder", "variational_autoencoder", "denoising_autoencoder"]:
+                # AUTOENCODER BRANCH
+                try:
+                    reconstructed = model(X_tensor)
+                    reconstructed_np = reconstructed.cpu().numpy()
+                    
+                    # Calcul erreur de reconstruction safe
+                    reconstruction_errors = np.mean(
+                        (X_processed - reconstructed_np) ** 2,
+                        axis=(1, 2, 3) if len(X_processed.shape) == 4 else (1,)
+                    )
+                    
+                    # Normalisation avec protection division par zéro
+                    max_error = np.max(reconstruction_errors)
+                    if max_error > 0:
+                        y_pred_proba = reconstruction_errors / max_error
+                    else:
+                        logger.warning("⚠️ Erreur reconstruction nulle, utilisation valeurs uniformes")
+                        y_pred_proba = np.ones(len(reconstruction_errors)) * 0.5
+                    
+                    # Seuil adaptatif basé sur distribution
+                    threshold = np.median(y_pred_proba) + np.std(y_pred_proba)
+                    threshold = np.clip(threshold, 0.3, 0.7)  # Entre 0.3 et 0.7
+                    
+                    y_pred_binary = (y_pred_proba > threshold).astype(int)
+                    
+                    logger.info(
+                        f"✅ Prédictions autoencoder: {len(y_pred_binary)} samples, "
+                        f"seuil: {threshold:.3f}, anomalies: {y_pred_binary.sum()}"
+                    )
+                    
+                    return {
+                        "y_pred_proba": y_pred_proba,
+                        "y_pred_binary": y_pred_binary,
+                        "reconstruction_errors": reconstruction_errors,
+                        "reconstructed": reconstructed_np,
+                        "adaptive_threshold": threshold,
+                        "success": True
+                    }
                 
-                y_pred_proba = reconstruction_errors / np.max(reconstruction_errors) if np.max(reconstruction_errors) > 0 else reconstruction_errors
-                y_pred_binary = (y_pred_proba > 0.5).astype(int)
-                
-                return {
-                    "y_pred_proba": y_pred_proba,
-                    "y_pred_binary": y_pred_binary,
-                    "reconstruction_errors": reconstruction_errors,
-                    "reconstructed": reconstructed_np,
-                    "success": True
-                }
+                except Exception as e:
+                    logger.error(f"❌ Erreur prédiction autoencoder: {e}", exc_info=True)
+                    raise
+            
             else:
-                output = model(X_tensor)
-                if hasattr(output, 'logits'):
-                    y_proba = torch.softmax(output.logits, dim=1).cpu().numpy()
-                else:
-                    y_proba = torch.softmax(output, dim=1).cpu().numpy()
+                # CLASSIFICATION BRANCH
+                try:
+                    output = model(X_tensor)
+                    
+                    # Gestion multiple formats output
+                    if hasattr(output, 'logits'):
+                        y_proba = torch.softmax(output.logits, dim=1).cpu().numpy()
+                    elif isinstance(output, tuple):
+                        # Certains modèles retournent (logits, features)
+                        y_proba = torch.softmax(output[0], dim=1).cpu().numpy()
+                    else:
+                        y_proba = torch.softmax(output, dim=1).cpu().numpy()
+                    
+                    # Extraction probabilité classe positive
+                    if y_proba.shape[1] == 2:
+                        y_pred_proba = y_proba[:, 1]
+                    elif y_proba.shape[1] == 1:
+                        y_pred_proba = y_proba[:, 0]
+                    else:
+                        # Multi-classes: prendre max
+                        y_pred_proba = np.max(y_proba, axis=1)
+                    
+                    y_pred_binary = (y_pred_proba > 0.5).astype(int)
+                    
+                    logger.info(
+                        f"✅ Prédictions classification: {len(y_pred_binary)} samples, "
+                        f"anomalies: {y_pred_binary.sum()}"
+                    )
+                    
+                    return {
+                        "y_pred_proba": y_pred_proba,
+                        "y_pred_binary": y_pred_binary,
+                        "class_probabilities": y_proba,
+                        "success": True
+                    }
                 
-                if y_proba.shape[1] == 2:
-                    y_pred_proba = y_proba[:, 1]
-                else:
-                    y_pred_proba = np.max(y_proba, axis=1)
-                
-                y_pred_binary = (y_pred_proba > 0.5).astype(int)
-                
-                return {
-                    "y_pred_proba": y_pred_proba,
-                    "y_pred_binary": y_pred_binary,
-                    "class_probabilities": y_proba,
-                    "success": True
-                }
+                except Exception as e:
+                    logger.error(f"❌ Erreur prédiction classification: {e}", exc_info=True)
+                    raise
         
     except Exception as e:
-        logger.error(f"Prediction error: {e}")
-        # Fallback
-        if model_type == "autoencoder":
-            reconstruction_errors = np.random.normal(0.3, 0.1, len(X_test))
+        logger.error(f"❌ Erreur critique prédiction: {e}", exc_info=True)
+        
+        # Génération prédictions aléatoires réalistes
+        logger.warning("⚠️ Utilisation fallback: prédictions aléatoires")
+        
+        if model_type in ["autoencoder", "conv_autoencoder"]:
+            # Pour autoencoder: distribution normale autour de 0.3
+            reconstruction_errors = np.random.normal(0.3, 0.15, len(X_test))
             reconstruction_errors = np.clip(reconstruction_errors, 0, 1)
+            
+            threshold = 0.5
+            
             return {
                 "y_pred_proba": reconstruction_errors,
-                "y_pred_binary": (reconstruction_errors > 0.5).astype(int),
+                "y_pred_binary": (reconstruction_errors > threshold).astype(int),
                 "reconstruction_errors": reconstruction_errors,
                 "reconstructed": X_test.copy(),
-                "success": False
+                "adaptive_threshold": threshold,
+                "success": False,
+                "fallback": True
             }
         else:
-            y_pred_proba = np.random.uniform(0.2, 0.8, len(X_test))
+            # Pour classification: distribution uniforme biaisée
+            y_pred_proba = np.random.beta(2, 5, len(X_test))  # Biais vers valeurs basses
+            
             return {
                 "y_pred_proba": y_pred_proba,
                 "y_pred_binary": (y_pred_proba > 0.5).astype(int),
-                "success": False
+                "success": False,
+                "fallback": True
             }
 
 
@@ -747,27 +846,65 @@ def plot_error_distribution(error_analysis):
 # VÉRIFICATIONS INITIALES
 # ============================================================================
 
-if 'training_results' not in st.session_state or 'model' not in st.session_state.training_results:
+if not hasattr(STATE, 'training_results') or STATE.training_results is None:
     st.error("❌ Aucun modèle entraîné")
+    st.info("💡 Veuillez d'abord entraîner un modèle dans la section Computer Vision")
     if st.button("🚀 Aller à l'Entraînement", type="primary"):
         st.switch_page("pages/4_training_computer.py")
     st.stop()
 
-# Récupération données
+if not isinstance(STATE.training_results, dict):
+    st.error("❌ Format invalide des résultats d'entraînement")
+    st.info("Type reçu: " + str(type(STATE.training_results)))
+    st.stop()
+
+if 'model' not in STATE.training_results:
+    st.error("❌ Modèle manquant dans les résultats")
+    st.info("Clés disponibles: " + str(list(STATE.training_results.keys())))
+    st.stop()
+
+# Récupération données avec fallbacks
 try:
-    model = st.session_state.training_results["model"]
-    history = safe_convert_history(st.session_state.training_results.get("history", {}))
-    model_type = st.session_state.model_config["model_type"]
-    preprocessor = st.session_state.training_results.get("preprocessor")
-    X_test = st.session_state.get("X_test")
-    y_test = st.session_state.get("y_test")
+    model = STATE.training_results["model"]
+    history = safe_convert_history(STATE.training_results.get("history", {}))
     
-    if X_test is None or y_test is None:
-        st.error("❌ Données test manquantes")
+    # Accès safe à model_config
+    if not hasattr(STATE, 'model_config') or STATE.model_config is None:
+        st.error("❌ Configuration du modèle manquante")
         st.stop()
+    
+    model_type = STATE.model_config.get("model_type", "autoencoder")
+    
+    # Récupération safe du preprocessor
+    preprocessor = STATE.training_results.get("preprocessor")
+    
+    # Vérification données test avec accès via STATE.data
+    if not hasattr(STATE.data, 'X_test') or STATE.data.X_test is None:
+        st.error("❌ Données de test (X_test) manquantes")
+        st.info("Veuillez relancer l'entraînement pour générer les données de test")
+        st.stop()
+    
+    if not hasattr(STATE.data, 'y_test') or STATE.data.y_test is None:
+        st.error("❌ Labels de test (y_test) manquants")
+        st.stop()
+    
+    X_test = STATE.data.X_test
+    y_test = STATE.data.y_test
+    
+    # VALIDATION : Cohérence des données
+    if len(X_test) != len(y_test):
+        st.error(f"❌ Incohérence: {len(X_test)} images mais {len(y_test)} labels")
+        st.stop()
+    
+    logger.info(f"✅ Données chargées: {len(X_test)} échantillons, modèle: {model_type}")
         
+except KeyError as e:
+    st.error(f"❌ Clé manquante dans les résultats: {e}")
+    st.info("Structure attendue: training_results[model, history, preprocessor]")
+    st.stop()
 except Exception as e:
     st.error(f"❌ Erreur chargement: {str(e)}")
+    logger.error(f"Erreur chargement données: {e}", exc_info=True)
     st.stop()
 
 
@@ -826,31 +963,115 @@ with st.spinner("🔮 Calcul des prédictions..."):
 # Métriques
 with st.spinner("📈 Calcul des métriques..."):
     try:
-        if model_type == "autoencoder":
-            reconstructed = prediction_results.get("reconstructed", X_test.copy())
-            metrics = {
-                'auc_roc': roc_auc_score(y_test, y_pred_proba),
-                'f1_score': f1_score(y_test, y_pred_binary),
-                'precision': precision_score(y_test, y_pred_binary, zero_division=0),
-                'recall': recall_score(y_test, y_pred_binary, zero_division=0),
-                'accuracy': accuracy_score(y_test, y_pred_binary),
-                'specificity': recall_score(1-y_test, 1-y_pred_binary, zero_division=0),
-                'reconstruction_error': np.mean(prediction_results.get('reconstruction_errors', [0])),
-                'confusion_matrix': confusion_matrix(y_test, y_pred_binary).tolist()
-            }
-        else:
-            metrics = {
-                'auc_roc': roc_auc_score(y_test, y_pred_proba),
-                'f1_score': f1_score(y_test, y_pred_binary),
-                'precision': precision_score(y_test, y_pred_binary, zero_division=0),
-                'recall': recall_score(y_test, y_pred_binary, zero_division=0),
-                'accuracy': accuracy_score(y_test, y_pred_binary),
-                'specificity': recall_score(1-y_test, 1-y_pred_binary, zero_division=0),
-                'confusion_matrix': confusion_matrix(y_test, y_pred_binary).tolist()
-            }
-    except Exception as e:
-        st.error(f"❌ Erreur métriques: {str(e)}")
+        # Validation prédictions
+        if not isinstance(prediction_results, dict):
+            st.error("❌ Format invalide des prédictions")
+            st.stop()
+        
+        y_pred_proba = prediction_results.get("y_pred_proba")
+        y_pred_binary = prediction_results.get("y_pred_binary")
+        
+        if y_pred_proba is None or y_pred_binary is None:
+            st.error("❌ Prédictions manquantes")
+            st.stop()
+        
+        # Validation cohérence
+        if len(y_pred_binary) != len(y_test):
+            st.error(f"❌ Incohérence: {len(y_pred_binary)} prédictions pour {len(y_test)} labels")
+            st.stop()
+        
+        # Calcul métriques avec gestion erreurs individuelles
         metrics = {}
+        
+        # AUC-ROC (nécessite au moins 2 classes dans y_test)
+        try:
+            if len(np.unique(y_test)) >= 2:
+                metrics['auc_roc'] = roc_auc_score(y_test, y_pred_proba)
+            else:
+                logger.warning("⚠️ AUC-ROC impossible: une seule classe dans y_test")
+                metrics['auc_roc'] = 0.5
+        except Exception as e:
+            logger.warning(f"⚠️ Erreur calcul AUC-ROC: {e}")
+            metrics['auc_roc'] = 0.5
+        
+        # F1-Score
+        try:
+            metrics['f1_score'] = f1_score(y_test, y_pred_binary, zero_division=0)
+        except Exception as e:
+            logger.warning(f"⚠️ Erreur calcul F1: {e}")
+            metrics['f1_score'] = 0.0
+        
+        # Precision
+        try:
+            metrics['precision'] = precision_score(y_test, y_pred_binary, zero_division=0)
+        except Exception as e:
+            logger.warning(f"⚠️ Erreur calcul Precision: {e}")
+            metrics['precision'] = 0.0
+        
+        # Recall
+        try:
+            metrics['recall'] = recall_score(y_test, y_pred_binary, zero_division=0)
+        except Exception as e:
+            logger.warning(f"⚠️ Erreur calcul Recall: {e}")
+            metrics['recall'] = 0.0
+        
+        # Accuracy
+        try:
+            metrics['accuracy'] = accuracy_score(y_test, y_pred_binary)
+        except Exception as e:
+            logger.warning(f"⚠️ Erreur calcul Accuracy: {e}")
+            metrics['accuracy'] = 0.0
+        
+        # Specificity (nécessite au moins une classe 0)
+        try:
+            if np.any(y_test == 0):
+                metrics['specificity'] = recall_score(
+                    1 - y_test, 1 - y_pred_binary, zero_division=0
+                )
+            else:
+                logger.warning("⚠️ Specificity impossible: aucune classe 0")
+                metrics['specificity'] = 0.0
+        except Exception as e:
+            logger.warning(f"⚠️ Erreur calcul Specificity: {e}")
+            metrics['specificity'] = 0.0
+        
+        # Métriques spécifiques autoencoder
+        if model_type in ["autoencoder", "conv_autoencoder", "variational_autoencoder", "denoising_autoencoder"]:
+            reconstructed = prediction_results.get("reconstructed", X_test.copy())
+            reconstruction_errors = prediction_results.get('reconstruction_errors')
+            
+            if reconstruction_errors is not None:
+                metrics['reconstruction_error'] = float(np.mean(reconstruction_errors))
+                metrics['reconstruction_std'] = float(np.std(reconstruction_errors))
+                metrics['adaptive_threshold'] = prediction_results.get('adaptive_threshold', 0.5)
+        
+        # Matrice de confusion
+        try:
+            metrics['confusion_matrix'] = confusion_matrix(y_test, y_pred_binary).tolist()
+        except Exception as e:
+            logger.warning(f"⚠️ Erreur matrice confusion: {e}")
+            metrics['confusion_matrix'] = [[0, 0], [0, 0]]
+        
+        logger.info(f"✅ Métriques calculées: {list(metrics.keys())}")
+        
+        # Alerte fallback
+        if prediction_results.get("fallback"):
+            st.warning("⚠️ **Attention**: Prédictions en mode fallback (aléatoires). Résultats non fiables.")
+        
+    except Exception as e:
+        st.error(f"❌ Erreur calcul métriques: {str(e)}")
+        logger.error(f"Erreur métriques: {e}", exc_info=True)
+        
+        # Métriques par défaut en cas d'échec total
+        metrics = {
+            'auc_roc': 0.5,
+            'f1_score': 0.0,
+            'precision': 0.0,
+            'recall': 0.0,
+            'accuracy': 0.0,
+            'specificity': 0.0,
+            'confusion_matrix': [[0, 0], [0, 0]]
+        }
 
 # Analyse
 error_analysis = analyze_false_positives(X_test, y_test, y_pred_binary)

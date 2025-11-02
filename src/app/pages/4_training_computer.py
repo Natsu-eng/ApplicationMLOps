@@ -19,6 +19,9 @@ from collections import Counter
 from sklearn.model_selection import train_test_split
 from sklearn.utils.class_weight import compute_class_weight
 
+from monitoring.state_managers import init, AppPage
+STATE = init()
+
 # Configuration des chemins d'import
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
@@ -135,63 +138,6 @@ class MLTrainingWorkflowPro:
     
     def __init__(self):
         self.logger = StructuredLogger(__name__)
-        self.initialize_session_state()
-        
-    def initialize_session_state(self):
-        """Initialise l'état de session complet avec toutes les configurations"""
-        defaults = {
-            # Navigation et état
-            'current_step': 0,
-            'workflow_complete': False,
-            'current_experiment': None,
-            'experiments': [],
-            
-            # Données
-            'dataset_loaded': False,
-            'dataset_info': {},
-            'split_config': {},
-            
-            # Configurations
-            'selected_model_type': None,
-            'model_config': {},
-            'training_config': None,
-            'preprocessing_config': {
-                "strategy": "standardize",
-                "augmentation_enabled": False,
-                "augmentation_factor": 2,
-                "methods": ['flip', 'rotate']
-            },
-            'imbalance_config': {
-                "use_class_weights": False,
-                "use_targeted_augmentation": False,
-                "augmentation_factor": 2,
-                "strategy": "standardize"
-            },
-            
-            # Résultats
-            'training_history': [],
-            'class_weights': {},
-            'trained_model': None,
-            'training_results': None
-        }
-        
-        for key, value in defaults.items():
-            if key not in st.session_state:
-                st.session_state[key] = value
-                
-        # Initialisation spécifique à la logique métier
-        if 'training_config' not in st.session_state or st.session_state.training_config is None:
-            if LOGIC_METIER_AVAILABLE:
-                st.session_state.training_config = TrainingConfig(
-                    epochs=50,
-                    batch_size=32,
-                    learning_rate=1e-4,
-                    early_stopping_patience=10,
-                    reduce_lr_patience=5,
-                    optimizer=OptimizerType.ADAMW,
-                    scheduler=SchedulerType.REDUCE_ON_PLATEAU,
-                    use_class_weights=False
-                )
     
     def render_header(self):
         """En-tête professionnel avec navigation et métriques"""
@@ -202,11 +148,11 @@ class MLTrainingWorkflowPro:
             st.markdown("**Workflow Intelligent d'Entraînement Computer Vision**")
         
         with col2:
-            st.metric("Étape Actuelle", f"{st.session_state.current_step + 1}/6")
+            st.metric("Étape Actuelle", f"{STATE.current_step + 1}/6")
             
         with col3:
-            if st.session_state.current_experiment:
-                st.info(f"🔄 Expérience: {st.session_state.current_experiment}")
+            if STATE.current_experiment:
+                st.info(f"🔄 Expérience: {STATE.current_experiment}")
             else:
                 st.warning("⚡ Configuration en cours")
                 
@@ -225,7 +171,7 @@ class MLTrainingWorkflowPro:
             {"name": "🚀 Lancement", "icon": "🚀", "description": "Démarrage et Monitoring"}
         ]
         
-        current_step = st.session_state.current_step
+        current_step = STATE.current_step
         
         st.markdown("### 📋 Progression du Workflow")
         
@@ -276,7 +222,7 @@ class MLTrainingWorkflowPro:
         st.header("📊 Étape 1: Analyse des Données")
         
         # Vérification des données chargées
-        if 'X' not in st.session_state or 'y' not in st.session_state:
+        if not STATE.loaded or STATE.data.X is None or STATE.data.y is None:
             st.error("❌ Aucun dataset d'images chargé")
             st.info("Veuillez charger un dataset depuis le dashboard principal.")
             if st.button("📊 Aller au Dashboard", type="primary"):
@@ -284,8 +230,8 @@ class MLTrainingWorkflowPro:
             st.markdown('</div>', unsafe_allow_html=True)
             return
         
-        X = st.session_state["X"]
-        y = st.session_state["y"]
+        X = STATE.data.X
+        y = STATE.data.y
         
         # Métriques principales des données
         col1, col2, col3, col4 = st.columns(4)
@@ -432,32 +378,35 @@ class MLTrainingWorkflowPro:
                     )
                     
                     # Sauvegarde dans session_state
-                    st.session_state.update({
-                        "X_train": X_train,
-                        "X_val": X_val, 
-                        "X_test": X_test,
-                        "y_train": y_train,
-                        "y_val": y_val,
-                        "y_test": y_test,
-                        "split_config": {
-                            "test_size": test_size,
-                            "val_size": val_size,
-                            "train_samples": n_train,
-                            "val_samples": n_val, 
-                            "test_samples": n_test
-                        },
-                        "dataset_loaded": True,
-                        "dataset_info": {
-                            "original_samples": len(X),
-                            "train_samples": n_train,
-                            "val_samples": n_val,
-                            "test_samples": n_test,
-                            "num_classes": unique_classes,
-                            "input_shape": X.shape[1:] if len(X.shape) > 2 else X.shape
-                        }
-                    })
+                    # APRÈS - Utilisez les propriétés du StateManager
+                    STATE.data.X_train = X_train
+                    STATE.data.X_val = X_val
+                    STATE.data.X_test = X_test
+                    STATE.data.y_train = y_train
+                    STATE.data.y_val = y_val
+                    STATE.data.y_test = y_test
+
+                    # Pour les autres attributs, utilisez les setters ou créez des attributs dans data
+                    STATE.data.split_config = {
+                        "test_size": test_size,
+                        "val_size": val_size,
+                        "train_samples": n_train,
+                        "val_samples": n_val, 
+                        "test_samples": n_test
+                    }
+
+                    STATE.data.loaded = True
+
+                    STATE.data.dataset_info = {
+                        "original_samples": len(X),
+                        "train_samples": n_train,
+                        "val_samples": n_val,
+                        "test_samples": n_test,
+                        "num_classes": unique_classes,
+                        "input_shape": X.shape[1:] if len(X.shape) > 2 else X.shape
+                    }
                     
-                    st.session_state.current_step = 1
+                    STATE.current_step = 1
                     st.success("✅ Split effectué avec succès!")
                     st.rerun()
                     
@@ -477,15 +426,15 @@ class MLTrainingWorkflowPro:
         st.header("⚖️ Étape 2: Gestion du Déséquilibre")
         
         # Vérification des données d'entraînement
-        if 'y_train' not in st.session_state:
+        if not STATE.loaded or STATE.data.y_train is None:
             st.error("❌ Données d'entraînement non disponibles")
             if st.button("⬅️ Retour à l'étape 1", use_container_width=True):
-                st.session_state.current_step = 0
+                STATE.current_step = 0
                 st.rerun()
             st.markdown('</div>', unsafe_allow_html=True)
             return
         
-        y_train = st.session_state.y_train
+        y_train = STATE.data.y_train
         
         # Analyse du déséquilibre des classes
         label_counts = Counter(y_train)
@@ -586,13 +535,21 @@ class MLTrainingWorkflowPro:
         
         st.plotly_chart(fig, use_container_width=True)
         
-        # Stratégies de correction du déséquilibre
+        # ============================================================================
+        # 🔥 CORRECTION CRITIQUE : Gestion uniforme des configs
+        # ============================================================================
+        
         st.markdown("### 🎯 Stratégies de Correction du Déséquilibre")
         
         col_corr1, col_corr2 = st.columns(2)
         
         with col_corr1:
             st.subheader("⚖️ Poids de Classe")
+            
+            # ✅ CORRECTION : Initialisation sécurisée
+            if not hasattr(STATE, 'imbalance_config') or STATE.imbalance_config is None:
+                STATE.imbalance_config = {}
+            
             use_class_weights = st.checkbox(
                 "Activer les poids de classe automatiques",
                 value=imbalance_ratio > 2,
@@ -602,12 +559,39 @@ class MLTrainingWorkflowPro:
             if use_class_weights:
                 classes = np.unique(y_train)
                 weights = compute_class_weight('balanced', classes=classes, y=y_train)
-                weight_dict = dict(zip(classes, weights))
+                
+                # ✅ CORRECTION : Conversion explicite des types NumPy
+                weight_dict = {int(cls): float(weight) for cls, weight in zip(classes, weights)}
                 
                 st.info("**Poids calculés automatiquement:**")
                 for cls, weight in weight_dict.items():
                     cls_name = "Normal" if cls == 0 else "Anomalie" if len(label_counts) == 2 else f"Classe {cls}"
-                    st.write(f"- **{cls_name}**: `{weight:.3f}` (inverse de la fréquence)")
+                    st.write(f"- **{cls_name}**: `{weight:.3f}` (×{weight:.1f} importance)")
+                
+                st.success("✅ Les poids seront calculés automatiquement lors de l'entraînement")
+                
+                # ✅ CORRECTION : Sauvegarde uniforme via dict
+                STATE.imbalance_config['use_class_weights'] = True
+                STATE.class_weights = weight_dict
+                
+                # ✅ CORRECTION : Propagation safe vers training_config
+                if not hasattr(STATE, 'training_config') or STATE.training_config is None:
+                    STATE.training_config = {}
+                
+                if isinstance(STATE.training_config, dict):
+                    STATE.training_config['use_class_weights'] = True
+                elif hasattr(STATE.training_config, 'use_class_weights'):
+                    STATE.training_config.use_class_weights = True
+            
+            else:
+                # ✅ CORRECTION : Désactivation safe
+                STATE.imbalance_config['use_class_weights'] = False
+                
+                if hasattr(STATE, 'training_config') and STATE.training_config is not None:
+                    if isinstance(STATE.training_config, dict):
+                        STATE.training_config['use_class_weights'] = False
+                    elif hasattr(STATE.training_config, 'use_class_weights'):
+                        STATE.training_config.use_class_weights = False
         
         with col_corr2:
             st.subheader("🎭 Augmentation Ciblée")
@@ -617,6 +601,7 @@ class MLTrainingWorkflowPro:
                 help="Applique plus d'augmentation de données aux classes sous-représentées"
             )
             
+            augmentation_factor = 1  # Valeur par défaut
             if use_targeted_augmentation:
                 augmentation_factor = st.slider(
                     "Facteur d'augmentation maximal",
@@ -627,13 +612,40 @@ class MLTrainingWorkflowPro:
                 )
                 
                 st.info(f"Les classes minoritaires seront augmentées jusqu'à x{augmentation_factor}")
+                
+                # ✅ CORRECTION : Sauvegarde uniforme
+                STATE.imbalance_config['use_targeted_augmentation'] = True
+                STATE.imbalance_config['augmentation_factor'] = augmentation_factor
+            else:
+                STATE.imbalance_config['use_targeted_augmentation'] = False
+                STATE.imbalance_config['augmentation_factor'] = 1
         
         # Validation avec DataValidator (logique métier)
         if LOGIC_METIER_AVAILABLE:
             with st.expander("🔍 Analyse Détaillée du Déséquilibre"):
-                imbalance_result = DataValidator.check_class_imbalance(y_train)
-                if imbalance_result:
-                    st.json(imbalance_result)
+                try:
+                    imbalance_result = DataValidator.check_class_imbalance(y_train)
+                    if imbalance_result:
+                        # ✅ CORRECTION : Conversion des types NumPy pour JSON
+                        def convert_to_native_types(obj):
+                            if isinstance(obj, (np.integer, np.int32, np.int64)):
+                                return int(obj)
+                            elif isinstance(obj, (np.floating, np.float32, np.float64)):
+                                return float(obj)
+                            elif isinstance(obj, np.ndarray):
+                                return obj.tolist()
+                            elif isinstance(obj, dict):
+                                return {convert_to_native_types(k): convert_to_native_types(v) 
+                                        for k, v in obj.items()}
+                            elif isinstance(obj, list):
+                                return [convert_to_native_types(item) for item in obj]
+                            else:
+                                return obj
+                        
+                        imbalance_result_native = convert_to_native_types(imbalance_result)
+                        st.json(imbalance_result_native)
+                except Exception as e:
+                    st.error(f"Erreur lors de l'analyse du déséquilibre: {e}")
         
         # Navigation
         st.markdown("---")
@@ -641,35 +653,44 @@ class MLTrainingWorkflowPro:
         
         with col_nav1:
             if st.button("⬅️ Retour", use_container_width=True):
-                st.session_state.current_step = 0
+                STATE.current_step = 0
                 st.rerun()
         
         with col_nav2:
             if st.button("💾 Sauvegarder et Continuer ➡️", type="primary", use_container_width=True):
-                # Sauvegarde de la configuration
-                st.session_state.imbalance_config = {
+                # ✅ CORRECTION : Sauvegarde complète avec conversion des types
+                label_counts_native = {int(k): int(v) for k, v in label_counts.items()}
+                
+                STATE.imbalance_config.update({
                     "use_class_weights": use_class_weights,
                     "use_targeted_augmentation": use_targeted_augmentation,
-                    "augmentation_factor": augmentation_factor if use_targeted_augmentation else 1,
-                    "imbalance_ratio": imbalance_ratio,
+                    "augmentation_factor": augmentation_factor,
+                    "imbalance_ratio": float(imbalance_ratio),
                     "imbalance_level": imbalance_level,
-                    "label_counts": label_counts
-                }
+                    "label_counts": label_counts_native
+                })
                 
-                if use_class_weights:
-                    st.session_state.class_weights = weight_dict
-                    st.session_state.training_config.use_class_weights = True
+                if use_class_weights and hasattr(STATE, 'class_weights') and STATE.class_weights:
+                    # Propager aux autres configs si nécessaire
+                    if not hasattr(STATE, 'training_config') or STATE.training_config is None:
+                        STATE.training_config = {}
+                    
+                    if isinstance(STATE.training_config, dict):
+                        STATE.training_config['use_class_weights'] = True
+                    elif hasattr(STATE.training_config, 'use_class_weights'):
+                        STATE.training_config.use_class_weights = True
                 
                 st.success("✅ Configuration du déséquilibre sauvegardée")
-                st.session_state.current_step = 2
+                STATE.current_step = 2
                 st.rerun()
         
         st.markdown('</div>', unsafe_allow_html=True)
-    
+
+
     # ============================================================================
-    # ÉTAPE 3: PRÉTRAITEMENT DES DONNÉES
+    # ÉTAPE 3: PRÉTRAITEMENT ET AUGMENTATION
     # ============================================================================
-    
+
     def render_preprocessing_step(self):
         """Étape 3: Configuration du prétraitement et de l'augmentation"""
         st.markdown('<div class="workflow-step-card">', unsafe_allow_html=True)
@@ -691,17 +712,19 @@ class MLTrainingWorkflowPro:
                 options=["standardize", "normalize", "none"],
                 index=0,
                 help=(
-                    "**Standardize**: (x - mean) / std (recommandé) - Centre à 0 et échelle unitaire\n\n"
-                    "**Normalize**: min-max scaling [0, 1] - Garde les valeurs entre 0 et 1\n\n"
+                    "**Standardize**: (x - mean) / std (recommandé)\n\n"
+                    "**Normalize**: min-max scaling [0, 1]\n\n"
                     "**None**: Aucune normalisation (déconseillé)"
                 )
             )
         
         with col_norm2:
-            if 'X' in st.session_state:
-                current_shape = st.session_state.X.shape
+            if STATE.loaded and STATE.data.X is not None:
+                current_shape = STATE.data.X.shape
                 if len(current_shape) > 2:
                     current_size = f"{current_shape[1]}×{current_shape[2]}"
+                    if len(current_shape) > 3:
+                        current_size += f"×{current_shape[3]}"
                 else:
                     current_size = "N/A"
                 
@@ -711,7 +734,7 @@ class MLTrainingWorkflowPro:
                 "Redimensionnement",
                 options=["Conserver original", "128×128", "224×224", "256×256", "384×384"],
                 index=0,
-                help="Taille cible pour les images. 224×224 est standard pour la plupart des modèles."
+                help="Taille cible pour les images. 224×224 est standard."
             )
         
         st.markdown("---")
@@ -719,11 +742,18 @@ class MLTrainingWorkflowPro:
         # Configuration de l'augmentation de données
         st.subheader("🎭 Augmentation de Données")
         
+        # ✅ CORRECTION : Initialisation sécurisée
+        if not hasattr(STATE, 'preprocessing_config') or STATE.preprocessing_config is None:
+            STATE.preprocessing_config = {}
+        
         augmentation_enabled = st.checkbox(
             "Activer l'augmentation de données",
-            value=st.session_state.preprocessing_config.get("augmentation_enabled", False),
-            help="Génère des variations des images d'entraînement pour améliorer la généralisation"
+            value=STATE.preprocessing_config.get("augmentation_enabled", False),
+            help="Génère des variations des images d'entraînement"
         )
+        
+        methods = []  # Initialisation par défaut
+        augmentation_factor = 1  # Valeur par défaut
         
         if augmentation_enabled:
             st.markdown("#### 🔧 Méthodes d'Augmentation")
@@ -735,14 +765,13 @@ class MLTrainingWorkflowPro:
                     "Facteur de multiplication",
                     min_value=1,
                     max_value=5,
-                    value=st.session_state.preprocessing_config.get("augmentation_factor", 2),
+                    value=STATE.preprocessing_config.get("augmentation_factor", 2),
                     help="Nombre de variations générées par image originale"
                 )
             
             with col_aug2:
                 st.markdown("**Techniques sélectionnées:**")
                 
-                methods = []
                 if st.checkbox("Flip horizontal", value=True):
                     methods.append('flip')
                 if st.checkbox("Rotation (±15°)", value=True):
@@ -755,8 +784,8 @@ class MLTrainingWorkflowPro:
                     methods.append('noise')
             
             # Affichage de l'impact de l'augmentation
-            if 'X_train' in st.session_state:
-                original_count = len(st.session_state.X_train)
+            if STATE.loaded and STATE.data.X_train is not None:
+                original_count = len(STATE.data.X_train)
                 augmented_count = original_count * augmentation_factor
                 
                 st.info(f"""
@@ -766,15 +795,23 @@ class MLTrainingWorkflowPro:
                 - Gain: +{augmented_count - original_count:,} images
                 """)
         
-        # Intégration avec DataAugmenter (logique métier)
+        # ✅ CORRECTION : Configuration safe de DataAugmenter
         if LOGIC_METIER_AVAILABLE and augmentation_enabled:
             with st.expander("🔍 Configuration Avancée de l'Augmentation"):
                 try:
-                    augmenter = DataAugmenter(methods=methods)
-                    st.success("✅ DataAugmenter configuré avec succès")
-                    st.json({"methods": methods, "factor": augmentation_factor})
-                except Exception as e:
+                    if methods:
+                        # ✅ CORRECTION : Instanciation correcte avec paramètres
+                        augmenter = DataAugmenter(methods=methods)
+                        st.success("✅ DataAugmenter configuré avec succès")
+                        st.json({"methods": methods, "factor": augmentation_factor})
+                    else:
+                        st.warning("⚠️ Aucune méthode d'augmentation sélectionnée")
+                except TypeError as e:
+                    # ✅ CORRECTION : Gestion explicite de l'erreur d'instanciation
                     st.error(f"❌ Erreur configuration DataAugmenter: {e}")
+                    st.info("💡 Vérifiez la signature du constructeur DataAugmenter")
+                except Exception as e:
+                    st.error(f"❌ Erreur inattendue: {e}")
         
         # Navigation
         st.markdown("---")
@@ -782,25 +819,26 @@ class MLTrainingWorkflowPro:
         
         with col_nav1:
             if st.button("⬅️ Retour", use_container_width=True):
-                st.session_state.current_step = 1
+                STATE.current_step = 1
                 st.rerun()
         
         with col_nav2:
             if st.button("💾 Sauvegarder et Continuer ➡️", type="primary", use_container_width=True):
-                st.session_state.preprocessing_config = {
+                # ✅ CORRECTION : Mise à jour safe du dict
+                STATE.preprocessing_config.update({
                     "strategy": normalization_method,
                     "augmentation_enabled": augmentation_enabled,
-                    "augmentation_factor": augmentation_factor if augmentation_enabled else 1,
-                    "methods": methods if augmentation_enabled else [],
+                    "augmentation_factor": augmentation_factor,
+                    "methods": methods,
                     "resize": resize_option
-                }
+                })
                 
                 st.success("✅ Configuration de prétraitement sauvegardée")
-                st.session_state.current_step = 3
+                STATE.current_step = 3
                 st.rerun()
         
         st.markdown('</div>', unsafe_allow_html=True)
-    
+        
     # ============================================================================
     # ÉTAPE 4: SÉLECTION ET CONFIGURATION DU MODÈLE
     # ============================================================================
@@ -961,9 +999,9 @@ class MLTrainingWorkflowPro:
                     
                     with col:
                         # Vérification de la compatibilité avec les données
-                        has_labels = 'y_train' in st.session_state and st.session_state.y_train is not None
+                        has_labels = STATE.loaded and STATE.data.y_train is not None
                         is_compatible = has_labels or not model["requires_labels"]
-                        is_selected = st.session_state.selected_model_type == model["id"]
+                        is_selected = STATE.selected_model_type == model["id"]
                         
                         card_class = "model-card selected" if is_selected else "model-card"
                         
@@ -1000,8 +1038,8 @@ class MLTrainingWorkflowPro:
                                 use_container_width=True,
                                 type="primary" if is_selected else "secondary"
                             ):
-                                st.session_state.selected_model_type = model["id"]
-                                st.session_state.model_config = {
+                                STATE.selected_model_type = model["id"]
+                                STATE.model_config = {
                                     "model_type": model["id"],
                                     "model_params": self.get_default_model_params(model["id"])
                                 }
@@ -1017,9 +1055,9 @@ class MLTrainingWorkflowPro:
                             )
         
         # Configuration avancée si modèle sélectionné
-        if st.session_state.selected_model_type:
+        if STATE.selected_model_type:
             st.markdown("---")
-            st.subheader(f"⚙️ Configuration Avancée - {st.session_state.selected_model_type.upper()}")
+            st.subheader(f"⚙️ Configuration Avancée - {STATE.selected_model_type.upper()}")
             
             self.render_model_specific_parameters()
         
@@ -1029,13 +1067,13 @@ class MLTrainingWorkflowPro:
         
         with col_nav1:
             if st.button("⬅️ Retour", use_container_width=True):
-                st.session_state.current_step = 2
+                STATE.current_step = 2
                 st.rerun()
         
         with col_nav2:
             if st.button("💾 Continuer vers l'Entraînement ➡️", type="primary", use_container_width=True):
-                if st.session_state.selected_model_type:
-                    st.session_state.current_step = 4
+                if STATE.selected_model_type:
+                    STATE.current_step = 4
                     st.rerun()
                 else:
                     st.error("❌ Veuillez sélectionner un modèle")
@@ -1148,8 +1186,8 @@ class MLTrainingWorkflowPro:
         Affiche les paramètres spécifiques au modèle sélectionné avec interface moderne.      
         Gère les configurations pour tous les modèles avec validation et aide contextuelle.
         """
-        model_type = st.session_state.selected_model_type
-        model_params = st.session_state.model_config.get("model_params", {})
+        model_type = STATE.selected_model_type
+        model_params = STATE.model_config.get("model_params", {})
         
         st.markdown("#### 🔧 Paramètres du Modèle")
         
@@ -1179,7 +1217,7 @@ class MLTrainingWorkflowPro:
                     help="🛡️ Régularisation contre l'overfitting. 0.3-0.5 recommandé."
                 )
             
-            st.session_state.model_config["model_params"].update({
+            STATE.model_config["model_params"].update({
                 "base_filters": base_filters,
                 "dropout_rate": dropout_rate
             })
@@ -1230,7 +1268,7 @@ class MLTrainingWorkflowPro:
                 help="🛡️ Dropout des couches fully-connected finales"
             )
             
-            st.session_state.model_config["model_params"].update({
+            STATE.model_config["model_params"].update({
                 "backbone_name": backbone_name,
                 "pretrained": pretrained,
                 "freeze_layers": freeze_layers,
@@ -1293,7 +1331,7 @@ class MLTrainingWorkflowPro:
                     step=0.05,
                     help="Intensité du bruit gaussien ajouté pendant l'entraînement"
                 )
-                st.session_state.model_config["model_params"]["noise_factor"] = noise_factor
+                STATE.model_config["model_params"]["noise_factor"] = noise_factor
             
             elif model_type == "variational_autoencoder":
                 beta = st.slider(
@@ -1304,7 +1342,7 @@ class MLTrainingWorkflowPro:
                     step=0.1,
                     help="🎚️ Balance reconstruction vs régularisation. 1.0 = β-VAE standard."
                 )
-                st.session_state.model_config["model_params"]["beta"] = beta
+                STATE.model_config["model_params"]["beta"] = beta
             
             dropout_rate = st.slider(
                 "Dropout",
@@ -1315,7 +1353,7 @@ class MLTrainingWorkflowPro:
                 help="🛡️ Régularisation (généralement plus faible pour autoencoders)"
             )
             
-            st.session_state.model_config["model_params"].update({
+            STATE.model_config["model_params"].update({
                 "latent_dim": latent_dim,
                 "base_filters": base_filters,
                 "num_stages": num_stages,
@@ -1379,7 +1417,7 @@ class MLTrainingWorkflowPro:
                 patch_size = st.slider("Taille des patchs", 1, 5, 3)
                 stride = st.slider("Stride d'extraction", 1, 4, 1)
             
-            st.session_state.model_config["model_params"].update({
+            STATE.model_config["model_params"].update({
                 "backbone_name": backbone_name,
                 "patchcore_layers": layers,
                 "coreset_ratio": coreset_ratio,
@@ -1450,7 +1488,7 @@ class MLTrainingWorkflowPro:
                 step=0.1
             )
             
-            st.session_state.model_config["model_params"].update({
+            STATE.model_config["model_params"].update({
                 "backbone_name": backbone_name,
                 "embedding_dim": embedding_dim,
                 "margin": margin,
@@ -1622,14 +1660,14 @@ class MLTrainingWorkflowPro:
         
         with col_nav1:
             if st.button("⬅️ Retour", use_container_width=True):
-                st.session_state.current_step = 3
+                STATE.current_step = 3
                 st.rerun()
         
         with col_nav2:
             if st.button("💾 Sauvegarder et Continuer ➡️", type="primary", use_container_width=True):
                 # Création de la configuration d'entraînement
                 if LOGIC_METIER_AVAILABLE:
-                    st.session_state.training_config = TrainingConfig(
+                    STATE.training_config = TrainingConfig(
                         epochs=epochs,
                         batch_size=batch_size,
                         learning_rate=learning_rate,
@@ -1639,7 +1677,7 @@ class MLTrainingWorkflowPro:
                         scheduler=SchedulerType(scheduler),
                         early_stopping_patience=early_stopping_patience,
                         reduce_lr_patience=reduce_lr_patience,
-                        use_class_weights=st.session_state.imbalance_config.get('use_class_weights', False),
+                        use_class_weights=STATE.imbalance_config.get('use_class_weights', False),
                         deterministic=deterministic,
                         use_mixed_precision=use_mixed_precision,
                         num_workers=num_workers,
@@ -1647,7 +1685,7 @@ class MLTrainingWorkflowPro:
                     )
                 else:
                     # Fallback si la logique métier n'est pas disponible
-                    st.session_state.training_config = {
+                    STATE.training_config = {
                         "epochs": epochs,
                         "batch_size": batch_size,
                         "learning_rate": learning_rate,
@@ -1657,7 +1695,7 @@ class MLTrainingWorkflowPro:
                         "scheduler": scheduler,
                         "early_stopping_patience": early_stopping_patience,
                         "reduce_lr_patience": reduce_lr_patience,
-                        "use_class_weights": st.session_state.imbalance_config.get('use_class_weights', False),
+                        "use_class_weights": STATE.imbalance_config.get('use_class_weights', False),
                         "deterministic": deterministic,
                         "use_mixed_precision": use_mixed_precision,
                         "num_workers": num_workers,
@@ -1665,7 +1703,7 @@ class MLTrainingWorkflowPro:
                     }
                 
                 st.success("✅ Configuration d'entraînement sauvegardée")
-                st.session_state.current_step = 5
+                STATE.current_step = 5
                 st.rerun()
         
         st.markdown('</div>', unsafe_allow_html=True)
@@ -1673,126 +1711,191 @@ class MLTrainingWorkflowPro:
     # ============================================================================
     # ÉTAPE 6: LANCEMENT ET MONITORING
     # ============================================================================
-    
+
     def render_training_launch_step(self):
-        """Étape 6: Lancement et monitoring de l'entraînement"""
+        
         st.markdown('<div class="workflow-step-card">', unsafe_allow_html=True)
         st.header("🚀 Étape 6: Lancement de l'Entraînement")
         
-        st.markdown("**Récapitulatif de la Configuration**")
+        # Récapitulatif de la configuration
+        st.subheader("📋 Récapitulatif de la Configuration")
         
-        # Affichage du récapitulatif en deux colonnes
         col_summary1, col_summary2 = st.columns(2)
         
         with col_summary1:
             st.subheader("📊 Données et Préparation")
             
-            if 'split_config' in st.session_state:
-                st.json(st.session_state.split_config)
+            split_config = getattr(STATE.data, 'split_config', None)
+            if split_config:
+                st.json(split_config)
+            else:
+                st.info("Aucune configuration de split disponible")
             
             st.subheader("⚖️ Gestion du Déséquilibre")
-            st.json(st.session_state.imbalance_config)
+            if hasattr(STATE, 'imbalance_config') and STATE.imbalance_config:
+                st.json(STATE.imbalance_config)
+            else:
+                st.info("Aucune configuration de déséquilibre disponible")
             
             st.subheader("🎨 Prétraitement")
-            st.json(st.session_state.preprocessing_config)
-        
+            if hasattr(STATE, 'preprocessing_config') and STATE.preprocessing_config:
+                st.json(STATE.preprocessing_config)
+            else:
+                st.info("Aucune configuration de prétraitement disponible")
+
         with col_summary2:
             st.subheader("🤖 Modèle")
-            st.json(st.session_state.model_config)
+            if hasattr(STATE, 'model_config') and STATE.model_config:
+                st.json(STATE.model_config)
+            else:
+                st.info("Aucune configuration de modèle disponible")
             
             st.subheader("⚙️ Entraînement")
-            if LOGIC_METIER_AVAILABLE and isinstance(st.session_state.training_config, TrainingConfig):
-                # Conversion pour l'affichage
-                training_config_dict = {
-                    'epochs': st.session_state.training_config.epochs,
-                    'batch_size': st.session_state.training_config.batch_size,
-                    'learning_rate': st.session_state.training_config.learning_rate,
-                    'weight_decay': st.session_state.training_config.weight_decay,
-                    'optimizer': st.session_state.training_config.optimizer.value,
-                    'scheduler': st.session_state.training_config.scheduler.value,
-                    'early_stopping_patience': st.session_state.training_config.early_stopping_patience,
-                    'reduce_lr_patience': st.session_state.training_config.reduce_lr_patience,
-                    'use_class_weights': st.session_state.training_config.use_class_weights
-                }
-                st.json(training_config_dict)
+            if hasattr(STATE, 'training_config') and STATE.training_config:
+                # Conversion safe pour l'affichage
+                if isinstance(STATE.training_config, dict):
+                    st.json(STATE.training_config)
+                elif LOGIC_METIER_AVAILABLE and hasattr(STATE.training_config, '__dict__'):
+                    # Conversion objet TrainingConfig en dict
+                    config_dict = {
+                        'epochs': getattr(STATE.training_config, 'epochs', 50),
+                        'batch_size': getattr(STATE.training_config, 'batch_size', 32),
+                        'learning_rate': getattr(STATE.training_config, 'learning_rate', 1e-4),
+                        'weight_decay': getattr(STATE.training_config, 'weight_decay', 0.01),
+                        'optimizer': getattr(STATE.training_config, 'optimizer', 'adamw'),
+                        'scheduler': getattr(STATE.training_config, 'scheduler', 'reduce_on_plateau'),
+                        'early_stopping_patience': getattr(STATE.training_config, 'early_stopping_patience', 10),
+                        'reduce_lr_patience': getattr(STATE.training_config, 'reduce_lr_patience', 5),
+                        'use_class_weights': getattr(STATE.training_config, 'use_class_weights', False)
+                    }
+                    st.json(config_dict)
+                else:
+                    st.json({"error": "Format de configuration invalide"})
             else:
-                st.json(st.session_state.training_config)
-        
-        # Validation finale de la configuration
+                st.info("Aucune configuration d'entraînement disponible")
+            
         st.markdown("---")
         st.subheader("🔍 Validation de la Configuration")
         
         errors, warnings = self.validate_training_configuration()
         
+        # Définition de launch_disabled AVANT son utilisation
+        launch_disabled = len(errors) > 0
+        
         if errors:
             for error in errors:
                 st.markdown(f'<div class="config-error">{error}</div>', unsafe_allow_html=True)
-            launch_disabled = True
         else:
             if warnings:
                 for warning in warnings:
                     st.warning(warning)
             st.success("✅ Configuration valide - Prêt pour l'entraînement!")
-            launch_disabled = False
         
         # Informations de lancement
         st.markdown("---")
         st.subheader("🎯 Informations de Lancement")
-        
+
         col_launch1, col_launch2, col_launch3 = st.columns(3)
-        
+
         with col_launch1:
-            total_train_images = len(st.session_state.get('X_train', []))
-            if st.session_state.preprocessing_config.get("augmentation_enabled", False):
-                total_train_images *= st.session_state.preprocessing_config.get("augmentation_factor", 1)
+            # Calcul du nombre total d'images d'entraînement avec augmentation
+            total_train_images = 0
+            if STATE.loaded and hasattr(STATE.data, 'X_train') and STATE.data.X_train is not None:
+                total_train_images = len(STATE.data.X_train)
+                
+                # Application du facteur d'augmentation
+                if (hasattr(STATE, 'preprocessing_config') and 
+                    STATE.preprocessing_config and 
+                    STATE.preprocessing_config.get("augmentation_enabled", False)):
+                    augmentation_factor = STATE.preprocessing_config.get("augmentation_factor", 1)
+                    total_train_images *= augmentation_factor
+            
             st.metric("📷 Images Train", f"{total_train_images:,}")
-        
+
         with col_launch2:
-            epochs = st.session_state.training_config.epochs if hasattr(st.session_state.training_config, 'epochs') else st.session_state.training_config.get('epochs', 50)
-            batch_size = st.session_state.training_config.batch_size if hasattr(st.session_state.training_config, 'batch_size') else st.session_state.training_config.get('batch_size', 32)
-            training_time_estimate = (total_train_images * epochs) / (batch_size * 100)  # Estimation rough
-            st.metric("⏱️ Temps estimé", f"{max(1, int(training_time_estimate))} min")
-        
+            # Extraction des epochs et batch_size avec valeurs par défaut
+            epochs = 50  # Valeur par défaut
+            batch_size = 32
+            
+            if hasattr(STATE, 'training_config') and STATE.training_config:
+                if isinstance(STATE.training_config, dict):
+                    epochs = STATE.training_config.get('epochs', 50)
+                    batch_size = STATE.training_config.get('batch_size', 32)
+                elif hasattr(STATE.training_config, 'epochs'):
+                    epochs = STATE.training_config.epochs
+                    batch_size = STATE.training_config.batch_size
+            
+            # Estimation du temps avec protection division par zéro
+            estimated_minutes = 1
+            if batch_size > 0 and total_train_images > 0:
+                training_time_estimate = (total_train_images * epochs) / (batch_size * 100)
+                estimated_minutes = max(1, int(training_time_estimate))
+                
+            st.metric("⏱️ Temps estimé", f"{estimated_minutes} min")
+
         with col_launch3:
-            use_weights = st.session_state.imbalance_config.get("use_class_weights", False)
+            # Affichage de l'utilisation des poids de classe
+            use_weights = False
+            if hasattr(STATE, 'imbalance_config') and STATE.imbalance_config:
+                use_weights = STATE.imbalance_config.get("use_class_weights", False)
             st.metric("⚖️ Poids de classe", "Activés" if use_weights else "Désactivés")
-        
+
         # Informations système
         st.markdown("---")
         st.subheader("💻 Informations Système")
-        
+
         col_sys1, col_sys2, col_sys3 = st.columns(3)
-        
+
         with col_sys1:
             device = "CUDA 🚀" if torch.cuda.is_available() else "CPU ⚡"
             st.info(f"**Device:** {device}")
             if torch.cuda.is_available():
-                gpu_name = torch.cuda.get_device_name(0)
-                gpu_memory = torch.cuda.get_device_properties(0).total_memory / (1024**3)
-                st.success(f"**GPU:** {gpu_name} ({gpu_memory:.1f} GB)")
-        
+                try:
+                    gpu_name = torch.cuda.get_device_name(0)
+                    gpu_memory = torch.cuda.get_device_properties(0).total_memory / (1024**3)
+                    st.success(f"**GPU:** {gpu_name} ({gpu_memory:.1f} GB)")
+                except Exception:
+                    st.warning("**GPU:** Informations non disponibles")
+
         with col_sys2:
-            mixed_precision = st.session_state.training_config.use_mixed_precision if hasattr(st.session_state.training_config, 'use_mixed_precision') else st.session_state.training_config.get('use_mixed_precision', False)
+            # Accès robuste à use_mixed_precision
+            mixed_precision = False
+            if hasattr(STATE, 'training_config') and STATE.training_config:
+                if isinstance(STATE.training_config, dict):
+                    mixed_precision = STATE.training_config.get('use_mixed_precision', False)
+                elif hasattr(STATE.training_config, 'use_mixed_precision'):
+                    mixed_precision = STATE.training_config.use_mixed_precision
             st.info(f"**Mixed Precision:** {'Activée 🚀' if mixed_precision else 'Désactivée'}")
-        
+
         with col_sys3:
-            deterministic = st.session_state.training_config.deterministic if hasattr(st.session_state.training_config, 'deterministic') else st.session_state.training_config.get('deterministic', True)
+            # Accès robuste à deterministic
+            deterministic = True
+            if hasattr(STATE, 'training_config') and STATE.training_config:
+                if isinstance(STATE.training_config, dict):
+                    deterministic = STATE.training_config.get('deterministic', True)
+                elif hasattr(STATE.training_config, 'deterministic'):
+                    deterministic = STATE.training_config.deterministic
             st.info(f"**Mode Déterministe:** {'Activé ✅' if deterministic else 'Désactivé'}")
-        
-        # Bouton de lancement principal
+
         st.markdown("---")
-        
-        if st.button("🚀 Démarrer l'Entraînement", type="primary", use_container_width=True, disabled=launch_disabled):
+
+        # BOUTON AVEC launch_disabled DÉFINI PLUS HAUT
+        if st.button(
+            "🚀 Démarrer l'Entraînement", 
+            type="primary", 
+            use_container_width=True, 
+            disabled=launch_disabled  #SAFE : Variable définie au début
+        ):
             self.launch_training()
-        
+
         # Navigation
         st.markdown("---")
         col_back, _ = st.columns(2)
         with col_back:
             if st.button("⬅️ Retour", use_container_width=True):
-                st.session_state.current_step = 4
+                STATE.current_step = 4
                 st.rerun()
-        
+
         st.markdown('</div>', unsafe_allow_html=True)
     
     def validate_training_configuration(self):
@@ -1801,39 +1904,62 @@ class MLTrainingWorkflowPro:
         warnings = []
         
         # Vérification des données
-        required_data = ['X_train', 'y_train', 'X_val', 'y_val', 'X_test', 'y_test']
-        for data_key in required_data:
-            if data_key not in st.session_state:
-                errors.append(f"❌ Données manquantes: {data_key}")
+        required_data_attrs = ['X_train', 'y_train', 'X_val', 'y_val', 'X_test', 'y_test']
         
-        # Vérification modèle
-        if 'model_config' not in st.session_state or not st.session_state.model_config:
-            errors.append("❌ Configuration du modèle manquante")
+        for attr in required_data_attrs:
+            if not hasattr(STATE.data, attr):
+                errors.append(f"❌ Attribut manquant dans STATE.data: {attr}")
+            elif getattr(STATE.data, attr, None) is None:
+                errors.append(f"❌ Données manquantes: {attr} est None")
         
-        # Vérification entraînement
-        if 'training_config' not in st.session_state or not st.session_state.training_config:
-            errors.append("❌ Configuration d'entraînement manquante")
+        # Vérification des configurations essentielles
+        if not hasattr(STATE, 'model_config') or not STATE.model_config:
+            errors.append("❌ Configuration du modèle manquante ou vide")
         
-        # Validation des données avec DataValidator (logique métier)
+        if not hasattr(STATE, 'training_config') or not STATE.training_config:
+            errors.append("❌ Configuration d'entraînement manquante ou vide")
+        
+        # Vérification des données via DataValidator si disponible
         if LOGIC_METIER_AVAILABLE:
-            for dataset_key, name in [('X_train', 'train'), ('X_val', 'val'), ('X_test', 'test')]:
-                dataset = st.session_state.get(dataset_key)
-                labels = st.session_state.get(f'y_{name}')
-                
-                if dataset is not None and labels is not None:
-                    val_result = DataValidator.validate_input_data(dataset, labels, name)
-                    if not val_result.success:
-                        errors.append(f"❌ Validation {name}: {val_result.error}")
+            try:
+                for dataset_key, name in [('X_train', 'train'), ('X_val', 'val'), ('X_test', 'test')]:
+                    if hasattr(STATE.data, dataset_key):
+                        dataset = getattr(STATE.data, dataset_key)
+                        labels = getattr(STATE.data, f'y_{name}', None)
+                        
+                        if dataset is not None and labels is not None:
+                            val_result = DataValidator.validate_input_data(dataset, labels, name)
+                            if not val_result.success:
+                                errors.append(f"❌ Validation {name}: {val_result.error}")
+            except Exception as e:
+                warnings.append(f"⚠️ Erreur validation DataValidator: {e}")
         
-        # Vérifications spécifiques
-        if st.session_state.training_config:
-            epochs = st.session_state.training_config.epochs if hasattr(st.session_state.training_config, 'epochs') else st.session_state.training_config.get('epochs', 50)
-            batch_size = st.session_state.training_config.batch_size if hasattr(st.session_state.training_config, 'batch_size') else st.session_state.training_config.get('batch_size', 32)
+        # Examen des hyperparamètres d'entraînement
+        if hasattr(STATE, 'training_config') and STATE.training_config:
+            try:
+                if isinstance(STATE.training_config, dict):
+                    epochs = STATE.training_config.get('epochs', 50)
+                    batch_size = STATE.training_config.get('batch_size', 32)
+                elif hasattr(STATE.training_config, 'epochs'):
+                    epochs = STATE.training_config.epochs
+                    batch_size = STATE.training_config.batch_size
+                else:
+                    epochs = 50
+                    batch_size = 32
+                    warnings.append("⚠️ Paramètres par défaut utilisés (epochs=50, batch_size=32)")
+                
+                # Vérifications de cohérence
+                if epochs > 100:
+                    warnings.append("⚠️ Nombre d'époques élevé (>100)")
+                
+                if batch_size > 64 and not torch.cuda.is_available():
+                    warnings.append("⚠️ Batch size élevé (>64) sans GPU")
+                
+                if batch_size < 8:
+                    warnings.append("⚠️ Batch size très faible (<8)")
             
-            if epochs > 100:
-                warnings.append("⚠️ Nombre d'époques élevé - entraînement potentiellement long")
-            if batch_size > 64 and not torch.cuda.is_available():
-                warnings.append("⚠️ Batch size élevé - risque de mémoire insuffisante sur CPU")
+            except Exception as e:
+                errors.append(f"❌ Erreur validation paramètres: {e}")
         
         return errors, warnings
     
@@ -1858,7 +1984,7 @@ class MLTrainingWorkflowPro:
                 }
                 
                 # Détermination du type d'anomalie pour les modèles non supervisés
-                model_type = st.session_state.model_config["model_type"]
+                model_type = STATE.model_config["model_type"]
                 anomaly_type = None
                 if model_type in ["conv_autoencoder", "variational_autoencoder", "denoising_autoencoder", "patch_core"]:
                     anomaly_type = "structural"
@@ -1883,191 +2009,105 @@ class MLTrainingWorkflowPro:
                     
             except Exception as e:
                 self.handle_training_error(e, results_placeholder)
-    
+
     def train_with_metier_logic(self, streamlit_components, anomaly_type):
-        """Utilise la logique métier existante pour l'entraînement"""
+        """
+        Interface simplifiée vers l'orchestrateur d'entraînement.
+        Cette méthode ne fait que le pont entre Streamlit et la logique métier.
+        """
+        from orchestrators.visio_training_orchestrator import (
+            training_orchestrator,
+            TrainingContext
+        )
         
         try:
-            # =============================================================================
-            # ÉTAPE 1: VALIDATION DES DONNÉES (SANS PREPROCESSING)
-            # =============================================================================
-            
-            # Debug: afficher les shapes originales
-            logger.info(f"Données originales - X_train shape: {st.session_state.X_train.shape}")
-            logger.info(f"Données originales - X_val shape: {st.session_state.X_val.shape}")
-            
-            # Validation basique des données
-            if (st.session_state.X_train is None or st.session_state.X_val is None or
-                len(st.session_state.X_train) == 0 or len(st.session_state.X_val) == 0):
-                return None, {'success': False, 'error': "Données d'entraînement invalides"}
-            
-            # =============================================================================
-            # ÉTAPE 2: CONFIGURATION DES CALLBACKS POUR L'INTERFACE
-            # =============================================================================
-            
-            callbacks = []
-            if streamlit_components:
-                callbacks.append(StreamlitCallback(
-                    progress_bar=streamlit_components.get('progress_bar'),
-                    status_text=streamlit_components.get('status_text'),
-                    total_epochs=st.session_state.training_config.epochs
-                ))
-            callbacks.append(LoggingCallback(log_every_n_epochs=5))
-            
-            # =============================================================================
-            # ÉTAPE 3: CONFIGURATION DU MODÈLE
-            # =============================================================================
-            
-            model_config = ModelConfig(
-                model_type=ModelType(st.session_state.model_config["model_type"]),
-                num_classes=st.session_state.model_config["model_params"].get("num_classes", 2),
-                input_channels=st.session_state.model_config["model_params"].get("input_channels", 3),
-                dropout_rate=st.session_state.model_config["model_params"].get("dropout_rate", 0.5),
-                base_filters=st.session_state.model_config["model_params"].get("base_filters", 32),
-                latent_dim=st.session_state.model_config["model_params"].get("latent_dim", 256),
-                num_stages=st.session_state.model_config["model_params"].get("num_stages", 4)
+            # Création du contexte d'entraînement
+            context = TrainingContext(
+                X_train=STATE.data.X_train,
+                y_train=STATE.data.y_train,
+                X_val=STATE.data.X_val, 
+                y_val=STATE.data.y_val,
+                model_config=STATE.model_config,
+                training_config=STATE.training_config,
+                preprocessing_config=STATE.preprocessing_config,
+                callbacks=self._create_callbacks(streamlit_components),
+                anomaly_type=anomaly_type,
+                metadata={
+                    "dataset_name": getattr(STATE.data, 'name', 'unknown'),  # ✅ Correct
+                    "user_id": "anonymous" 
+                }
             )
             
-            # =============================================================================
-            # ÉTAPE 4: LANCEMENT DE L'ENTRAÎNEMENT AVEC DONNÉES BRUTES
-            # LE TRAINER GÈRE SON PROPRE PREPROCESSING INTERNE
-            # =============================================================================
-            
-            if anomaly_type:
-                # Cas des modèles de détection d'anomalies (Autoencoders, etc.)
-                trainer = AnomalyAwareTrainer(
-                    anomaly_type=anomaly_type,
-                    model_config=model_config,
-                    training_config=st.session_state.training_config,
-                    taxonomy_config=None,
-                    callbacks=callbacks
-                )
-                result = trainer.train(
-                    st.session_state.X_train,  # ← DONNÉES BRUTES
-                    st.session_state.y_train, 
-                    st.session_state.X_val,    # ← DONNÉES BRUTES
-                    st.session_state.y_val
-                )
-            else:
-                # Cas des modèles de classification standard
-                trainer = ComputerVisionTrainer(
-                    model_config=model_config,
-                    training_config=st.session_state.training_config,
-                    callbacks=callbacks
-                )
-                result = trainer.fit(
-                    st.session_state.X_train,  # ← DONNÉES BRUTES
-                    st.session_state.y_train, 
-                    st.session_state.X_val,    # ← DONNÉES BRUTES
-                    st.session_state.y_val
-                )
-            
-            # =============================================================================
-            # ÉTAPE 5: RÉCUPÉRATION DES RÉSULTATS ET DU PREPROCESSOR
-            # =============================================================================
+            # Délégation complète à l'orchestrateur
+            result = training_orchestrator.train(context)
             
             if result.success:
-                # RÉCUPÉRATION CRITIQUE: le preprocessor créé par le trainer
-                preprocessor = getattr(trainer, 'preprocessor', None)
+                # Sauvegarde dans session_state
+                STATE.preprocessor = result.preprocessor
                 
-                if preprocessor is None:
-                    logger.warning("Aucun preprocessor trouvé dans le trainer")
-                    # Créer un preprocessor de secours basé sur la configuration
-                    preprocessor = DataPreprocessor(
-                        strategy=st.session_state.preprocessing_config.get("strategy", "standardize"),
-                        auto_detect_format=True
-                    )
-                    # Fit sur les données d'entraînement pour l'évaluation
-                    preprocessor.fit(st.session_state.X_train)
-                
-                # SAUVEGARDE CRITIQUE: le preprocessor pour l'évaluation
-                st.session_state.preprocessor = preprocessor
-                
-                # Préparation de l'historique avec structure garantie
-                history_data = result.data['history']
-                
-                # Construction de l'historique final (GARANTIE SANS BOOLÉENS)
-                history = {
-                    'success': True,
-                    'train_loss': [float(x) for x in history_data.get('train_loss', [])],
-                    'val_loss': [float(x) for x in history_data.get('val_loss', [])],
-                    'val_accuracy': [float(x) for x in history_data.get('val_accuracy', [])],
-                    'val_f1': [float(x) for x in history_data.get('val_f1', [])],
-                    'learning_rates': [float(x) for x in history_data.get('learning_rates', [])],
-                    'best_epoch': int(history_data.get('best_epoch', 0)),
-                    'best_val_loss': float(history_data.get('best_val_loss', 0)),
-                    'training_time': float(history_data.get('training_time', 0)),
-                    'total_epochs_trained': int(history_data.get('total_epochs_trained', 0)),
-                    'early_stopping_triggered': bool(history_data.get('early_stopping_triggered', False)),
-                    'model_type': str(history_data.get('model_type', '')),
-                    'input_shape': history_data.get('input_shape'),
-                    'anomaly_type': anomaly_type,
-                    'preprocessor_available': preprocessor is not None,
-                    'preprocessor_config': preprocessor.get_config() if preprocessor else None
-                }
-                
-                logger.info(f"✅ Preprocessor sauvegardé: {preprocessor is not None}")
-                if preprocessor:
-                    logger.info(f"Config preprocessor: {preprocessor.get_config()}")
-                
-                # SAUVEGARDE CRITIQUE: le modèle ET le preprocessor pour l'évaluation
-                return trainer.model, history
-                
+                return result.model, result.history
             else:
-                # En cas d'échec, retourner l'erreur
-                logger.error(f"Échec de l'entraînement: {result.error}")
                 return None, {'success': False, 'error': result.error}
                 
         except Exception as e:
-            # Gestion robuste des erreurs avec logging détaillé
-            logger.error(f"Erreur lors de l'entraînement: {e}", exc_info=True)
-            
-            # Informations de debug pour diagnostiquer le problème
-            debug_info = {
-                'X_train_shape': getattr(st.session_state, 'X_train', None).shape if hasattr(st.session_state, 'X_train') else 'N/A',
-                'X_val_shape': getattr(st.session_state, 'X_val', None).shape if hasattr(st.session_state, 'X_val') else 'N/A',
-                'model_type': st.session_state.model_config.get("model_type", "N/A"),
-                'error_message': str(e)
-            }
-            
-            logger.error(f"Debug info: {debug_info}")
-            
-            return None, {
-                'success': False, 
-                'error': f"Erreur lors de l'entraînement: {str(e)}",
-                'debug_info': debug_info
-            }
+            logger.error(f"Erreur interface training: {e}", exc_info=True)
+            return None, {'success': False, 'error': str(e)}
+
+    def _create_callbacks(self, streamlit_components):
+        """Crée les callbacks Streamlit"""
+        callbacks = []
+        
+        if streamlit_components:
+            callbacks.append(StreamlitCallback(
+                progress_bar=streamlit_components.get('progress_bar'),
+                status_text=streamlit_components.get('status_text'),
+                total_epochs=STATE.training_config.epochs
+            ))
+        
+        callbacks.append(LoggingCallback(log_every_n_epochs=5))
+        
+        return callbacks
     
     def handle_training_success(self, model, history, results_placeholder):
-        """Gère le succès de l'entraînement avec sauvegarde du preprocessor"""
+        """Gère le succès de l'entraînement avec sauvegarde exhaustive"""
         
-        # SAUVEGARDE CRITIQUE: tous les éléments nécessaires pour l'évaluation
-        st.session_state.trained_model = model
-        st.session_state.training_history = history
+        # Sauvegarde dans STATE
+        STATE.trained_model = model
+        STATE.training_history = history
         
-        st.session_state.training_results = {
+        # Récupération du préprocesseur si disponible
+        preprocessor = getattr(STATE, 'preprocessor', None)
+        
+        STATE.training_results = {
             "model": model,
             "history": history,
-            "training_config": st.session_state.training_config,
-            "model_config": st.session_state.model_config,
-            "preprocessing_config": st.session_state.preprocessing_config,
-            "imbalance_config": st.session_state.imbalance_config,
-            "preprocessor": st.session_state.preprocessor,  # ← ELEMENT CRITIQUE
+            "training_config": getattr(STATE, 'training_config', {}),
+            "model_config": getattr(STATE, 'model_config', {}),
+            "preprocessing_config": getattr(STATE, 'preprocessing_config', {}),
+            "imbalance_config": getattr(STATE, 'imbalance_config', {}),
+            "preprocessor": preprocessor,
             "trained_at": time.strftime("%Y-%m-%d %H:%M:%S")
         }
         
-        # Debug: vérifier que le preprocessor est bien sauvegardé
-        logger.info(f"Preprocessor sauvegardé dans training_results: {st.session_state.preprocessor is not None}")
+        # Logs de succès
+        logger.info("✅ Training completed successfully")
+        logger.info(f"   - Preprocessor saved: {preprocessor is not None}")
+        logger.info(f"   - Model type: {type(model).__name__}")
+        logger.info(f"   - History keys: {list(history.keys()) if history else 'None'}")
         
         with results_placeholder.container():
             st.success("✅ Entraînement terminé avec succès!")
             
-            # Afficher des informations de debug
-            with st.expander("🔍 Informations de Debug"):
-                st.write("**Preprocessor sauvegardé:**", st.session_state.preprocessor is not None)
-                if st.session_state.preprocessor:
-                    st.write("**Config preprocessor:**", st.session_state.preprocessor.get_config())
-                st.write("**Shape des données d'entrée:**", history.get('input_shape', 'N/A'))
+            # Debug optionnel (désactivable en prod)
+            if st.checkbox("🔍 Afficher debug", value=False, key="show_debug"):
+                with st.expander("📋 Informations Techniques"):
+                    st.write("**Preprocessor:**", preprocessor is not None)
+                    if preprocessor and hasattr(preprocessor, 'get_config'):
+                        try:
+                            st.json(preprocessor.get_config())
+                        except Exception as e:
+                            st.warning(f"Config non disponible: {e}")
+                    st.write("**Input Shape:**", history.get('input_shape', 'N/A'))
             
             self.display_training_results(history)
             
@@ -2083,7 +2123,7 @@ class MLTrainingWorkflowPro:
                 st.json(history)
             
             if st.button("🔙 Retour à la configuration", use_container_width=True):
-                st.session_state.current_step = 4
+                STATE.current_step = 4
                 st.rerun()
     
     def handle_training_error(self, error, results_placeholder):
@@ -2190,10 +2230,10 @@ class MLTrainingWorkflowPro:
         with col_action2:
             if st.button("🔄 Nouvel Entraînement", use_container_width=True):
                 # Réinitialisation partielle pour un nouvel entraînement
-                st.session_state.current_step = 0
-                st.session_state.workflow_complete = False
-                st.session_state.trained_model = None
-                st.session_state.training_results = None
+                STATE.current_step = 0
+                STATE.workflow_complete = False
+                STATE.trained_model = None
+                STATE.training_results = None
                 st.rerun()
     
     def main(self):
@@ -2202,17 +2242,17 @@ class MLTrainingWorkflowPro:
         self.render_workflow_progress()
         
         # Routage des étapes
-        if st.session_state.current_step == 0:
+        if STATE.current_step == 0:
             self.render_data_analysis_step()
-        elif st.session_state.current_step == 1:
+        elif STATE.current_step == 1:
             self.render_imbalance_analysis_step()
-        elif st.session_state.current_step == 2:
+        elif STATE.current_step == 2:
             self.render_preprocessing_step()
-        elif st.session_state.current_step == 3:
+        elif STATE.current_step == 3:
             self.render_model_selection_step()
-        elif st.session_state.current_step == 4:
+        elif STATE.current_step == 4:
             self.render_training_config_step()
-        elif st.session_state.current_step == 5:
+        elif STATE.current_step == 5:
             self.render_training_launch_step()
         
         # Footer avec informations supplémentaires
@@ -2229,25 +2269,25 @@ class MLTrainingWorkflowPro:
             
             with col_info1:
                 st.markdown("**Données:**")
-                if 'X' in st.session_state:
-                    st.write(f"- Images totales: {len(st.session_state.X):,}")
-                    st.write(f"- Classes: {len(np.unique(st.session_state.y))}")
-                
-                if 'X_train' in st.session_state:
-                    st.write(f"- Train: {len(st.session_state.X_train):,}")
-                    st.write(f"- Validation: {len(st.session_state.X_val):,}")
-                    st.write(f"- Test: {len(st.session_state.X_test):,}")
+                if STATE.loaded and STATE.data.X is not None:
+                    st.write(f"- Images totales: {len(STATE.data.X):,}")
+                    st.write(f"- Classes: {len(np.unique(STATE.data.y))}")
+
+                if STATE.loaded and STATE.data.X_train is not None:
+                    st.write(f"- Train: {len(STATE.data.X_train):,}")
+                    st.write(f"- Validation: {len(STATE.data.X_val):,}")
+                    st.write(f"- Test: {len(STATE.data.X_test):,}")
             
             with col_info2:
                 st.markdown("**Configuration:**")
-                st.write(f"- Étape actuelle: {st.session_state.current_step + 1}/6")
+                st.write(f"- Étape actuelle: {STATE.current_step + 1}/6")
                 
-                if st.session_state.selected_model_type:
-                    st.write(f"- Modèle: {st.session_state.selected_model_type}")
+                if STATE.selected_model_type:
+                    st.write(f"- Modèle: {STATE.selected_model_type}")
                 
-                if st.session_state.training_config:
-                    epochs = st.session_state.training_config.epochs if hasattr(st.session_state.training_config, 'epochs') else st.session_state.training_config.get('epochs', 'N/A')
-                    batch_size = st.session_state.training_config.batch_size if hasattr(st.session_state.training_config, 'batch_size') else st.session_state.training_config.get('batch_size', 'N/A')
+                if STATE.training_config:
+                    epochs = STATE.training_config.epochs if hasattr(STATE.training_config, 'epochs') else STATE.training_config.get('epochs', 'N/A')
+                    batch_size = STATE.training_config.batch_size if hasattr(STATE.training_config, 'batch_size') else STATE.training_config.get('batch_size', 'N/A')
                     st.write(f"- Époques: {epochs}")
                     st.write(f"- Batch size: {batch_size}")
         
@@ -2263,13 +2303,13 @@ class MLTrainingWorkflowPro:
             if st.button("🔄 Réinitialiser le Workflow", use_container_width=True):
                 # Réinitialisation complète
                 for key in ['current_step', 'selected_model_type', 'model_config', 'training_config']:
-                    if key in st.session_state:
-                        st.session_state[key] = self.initialize_session_state.__defaults__[0].get(key, None)
-                st.session_state.current_step = 0
+                    if key in STATE:
+                        STATE[key] = self.STATE.__defaults__[0].get(key, None)
+                STATE.current_step = 0
                 st.rerun()
         
         with col_nav3:
-            if 'trained_model' in st.session_state and st.session_state.trained_model is not None:
+            if STATE.trained_model is not None:
                 if st.button("📊 Évaluation des Résultats", type="primary", use_container_width=True):
                     st.switch_page("pages/5_anomaly_evaluation.py")
 

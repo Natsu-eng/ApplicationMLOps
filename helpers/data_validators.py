@@ -103,6 +103,26 @@ class DataValidator:
             raise ValueError(f"Validation échouée: {str(e)}")
 
     @staticmethod
+    def validate_features(df, feature_list, target_column=None, task_type="classification"):
+        """
+        Dispatcher intelligent vers la bonne fonction de validation.  
+        Args:
+            df: DataFrame à valider
+            feature_list: Liste des colonnes
+            target_column: Colonne cible (optionnel)
+            task_type: Type de tâche (classification/regression/clustering)
+            
+        Returns:
+            Dict de validation
+        """
+        if task_type and task_type.lower() == 'clustering':
+            logger.info("🔄 Validation CLUSTERING (colonnes numériques uniquement)")
+            return DataValidator.validate_clustering_features(df, feature_list)
+        else:
+            logger.info(f"🔄 Validation SUPERVISÉ ({task_type}) (numériques + catégorielles)")
+            return DataValidator.validate_supervised_features(df, feature_list, task_type)
+    
+    @staticmethod
     def is_valid_column_name(name: str) -> bool:
         """
         Vérifie si un nom de colonne est valide (non vide, alphanumérique, caractères autorisés).
@@ -533,6 +553,132 @@ class DataValidator:
             if STREAMLIT_AVAILABLE:
                 st.error(validation["issues"][-1])
                 st.stop()
+            raise ValueError(validation["issues"][-1])
+        
+    @staticmethod
+    @monitor_performance("validate_supervised_features")
+    def validate_supervised_features(
+        df: Union[pd.DataFrame, 'dd.DataFrame'],
+        features: List[str],
+        task_type: str = "classification"
+    ) -> Dict[str, Any]:
+        """
+        Valide les features pour l'apprentissage SUPERVISÉ.
+        Accepte les colonnes numériques, catégorielles et textuelles.
+        
+        Args:
+            df: DataFrame à valider
+            features: Liste des colonnes à valider
+            task_type: Type de tâche (classification/regression)
+            
+        Returns:
+            Dict avec is_valid, valid_features, numeric_features, categorical_features, etc.
+        """
+        try:
+            validation = {
+                "is_valid": True,
+                "valid_features": [],
+                "numeric_features": [],
+                "categorical_features": [],
+                "text_features": [],
+                "issues": [],
+                "warnings": []
+            }
+
+            df = DataValidator.validate_dataframe(df)
+
+            if not features:
+                validation["is_valid"] = False
+                validation["issues"].append("Aucune feature fournie")
+                logger.error(validation["issues"][-1])
+                return validation
+
+            valid_features = [col for col in features if col in df.columns]
+            if not valid_features:
+                validation["is_valid"] = False
+                validation["issues"].append("Aucune feature valide (noms incorrects)")
+                logger.error(validation["issues"][-1])
+                return validation
+
+            for col in valid_features:
+                col_data = df[col]
+                dtype = col_data.dtype
+                
+                # Vérifier si constante
+                try:
+                    n_unique = col_data.nunique().compute() if DASK_AVAILABLE and isinstance(df, dd.DataFrame) else col_data.nunique()
+                    if n_unique == 1:
+                        validation["warnings"].append(f"Colonne '{col}' constante → sera retirée")
+                        logger.warning(validation["warnings"][-1])
+                        continue
+                except Exception as e:
+                    logger.debug(f"Erreur vérification unicité {col}: {e}")
+                
+                # Classification par type
+                if pd.api.types.is_numeric_dtype(dtype):
+                    validation["numeric_features"].append(col)
+                    validation["valid_features"].append(col)
+                    logger.debug(f"✅ Feature numérique: {col}")
+                
+                elif pd.api.types.is_string_dtype(dtype) or pd.api.types.is_object_dtype(dtype):
+                    try:
+                        sample = col_data.dropna().head(100).compute() if DASK_AVAILABLE and isinstance(df, dd.DataFrame) else col_data.dropna().head(100)
+                        
+                        if len(sample) == 0:
+                            validation["warnings"].append(f"Colonne '{col}' vide → sera retirée")
+                            continue
+                        
+                        avg_length = sample.astype(str).str.len().mean()
+                        n_unique_sample = sample.nunique()
+                        
+                        if avg_length > 50:
+                            validation["text_features"].append(col)
+                            validation["valid_features"].append(col)
+                            logger.debug(f"✅ Feature texte: {col}")
+                        elif n_unique_sample < len(sample) * 0.5:
+                            validation["categorical_features"].append(col)
+                            validation["valid_features"].append(col)
+                            logger.debug(f"✅ Feature catégorielle: {col}")
+                        else:
+                            validation["categorical_features"].append(col)
+                            validation["valid_features"].append(col)
+                            validation["warnings"].append(f"Colonne '{col}' ambiguë → catégorielle")
+                    
+                    except Exception as e:
+                        logger.debug(f"Erreur analyse {col}: {e}")
+                        validation["categorical_features"].append(col)
+                        validation["valid_features"].append(col)
+                
+                elif pd.api.types.is_datetime64_any_dtype(dtype):
+                    validation["warnings"].append(f"Colonne '{col}' datetime → ignorée")
+                    logger.warning(validation["warnings"][-1])
+                else:
+                    validation["warnings"].append(f"Colonne '{col}' type inconnu → ignorée")
+
+            if len(validation["valid_features"]) < VALIDATION_CONSTANTS.get("MIN_COLS_REQUIRED", 1):
+                validation["is_valid"] = False
+                validation["issues"].append(
+                    f"Features insuffisantes ({len(validation['valid_features'])} < {VALIDATION_CONSTANTS.get('MIN_COLS_REQUIRED', 1)})"
+                )
+                logger.error(validation["issues"][-1])
+
+            if not validation["numeric_features"] and not validation["categorical_features"]:
+                validation["is_valid"] = False
+                validation["issues"].append("Aucune feature numérique ou catégorielle")
+                logger.error(validation["issues"][-1])
+
+            logger.info(
+                f"✅ Validation supervisé: {len(validation['valid_features'])} total "
+                f"({len(validation['numeric_features'])} num, {len(validation['categorical_features'])} cat, "
+                f"{len(validation['text_features'])} text), {len(validation['issues'])} issues"
+            )
+
+            return validation
+
+        except Exception as e:
+            validation["is_valid"] = False
+            validation["issues"].append(f"Erreur critique: {str(e)}")
+            logger.error(validation["issues"][-1], exc_info=True)
             raise ValueError(validation["issues"][-1])
 
 __all__ = ['DataValidator']

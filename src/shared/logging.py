@@ -3,9 +3,7 @@ import logging.handlers
 import os
 import sys
 import platform
-import psutil
-from datetime import datetime
-from typing import Optional
+import psutil # type: ignore
 import traceback
 from src.config.constants import LOGGING_CONSTANTS, MLFLOW_CONSTANTS  
 
@@ -84,7 +82,7 @@ def setup_logging(
     # Configuration MLflow (si activé)
     if mlflow_integration:
         try:
-            import mlflow
+            import mlflow # type: ignore
 
             if not MLFLOW_CONSTANTS["AVAILABLE"]:
                 MLFLOW_CONSTANTS["AVAILABLE"] = True

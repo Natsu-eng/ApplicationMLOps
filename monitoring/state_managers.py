@@ -1,122 +1,560 @@
 """
-Gestionnaires d'état pour différentes parties de l'application.
+DataLab Pro - State Manager Global
+Version: 4.0 | Production-Ready | Thread-Safe | Fixed
 """
-import threading
+
+import os
 import time
-from typing import Dict, Any
+import threading
+import logging
+from typing import Any, Dict, Optional, Set, Tuple, List
 from contextlib import contextmanager
-
-class MetricsStateManager:
-    """Gestionnaire d'état pour les calculs de métriques."""
-    
-    def __init__(self):
-        self._calculation_lock = threading.RLock()
-        self._active_calculations = 0
-        self._calculation_stats = {
-            "total_calculations": 0,
-            "failed_calculations": 0,
-            "last_calculation_time": None
-        }
-    
-    @contextmanager
-    def calculation_context(self):
-        """Context manager pour suivre les calculs."""
-        with self._calculation_lock:
-            self._active_calculations += 1
-            self._calculation_stats["total_calculations"] += 1
-            start_time = time.time()
-            
-            try:
-                yield
-            except Exception:
-                self._calculation_stats["failed_calculations"] += 1
-                raise
-            finally:
-                self._active_calculations -= 1
-                self._calculation_stats["last_calculation_time"] = time.time() - start_time
-    
-    def get_stats(self) -> Dict[str, Any]:
-        """Retourne les statistiques de calcul."""
-        with self._calculation_lock:
-            return self._calculation_stats.copy()
-
-# Instance globale
-METRICS_STATE = MetricsStateManager()
-
-
+from dataclasses import dataclass, field
+from enum import Enum
 import streamlit as st
-from typing import Dict, Any, List
-class DashboardStateManager:
-    """Gestion centralisée de l'état du dashboard""" 
-    REQUIRED_KEYS = {
-        'column_types': (dict, type(None)),
-        'rename_list': list,
-        'columns_to_drop': list,
-        'useless_candidates': list,
-        'dataset_hash': (str, type(None)),
-        'last_memory_check': (int, float),
-        'dashboard_version': int,
-        'selected_univar_col': (str, type(None)),
-        'selected_bivar_col1': (str, type(None)),
-        'selected_bivar_col2': (str, type(None))
-    }
-    
-    @classmethod
-    def initialize(cls):
-        """Initialise l'état avec validation"""
-        defaults = {
-            'column_types': None,
-            'rename_list': [],
-            'columns_to_drop': [],
-            'useless_candidates': [],
-            'dataset_hash': None,
-            'last_memory_check': 0,
-            'dashboard_version': 1,
-            'selected_univar_col': None,
-            'selected_bivar_col1': None,
-            'selected_bivar_col2': None
-        }
-        
-        for key, expected_type in cls.REQUIRED_KEYS.items():
-            if key not in st.session_state:
-                st.session_state[key] = defaults[key]
-            elif not isinstance(st.session_state[key], expected_type):
-                print(f"Invalid type for {key}, resetting")
-                st.session_state[key] = defaults[key]
-    
-    @classmethod
-    def reset_selections(cls):
-        """Reset les sélections pour éviter les erreurs"""
-        selection_keys = ['selected_univar_col', 'selected_bivar_col1', 'selected_bivar_col2']
-        for key in selection_keys:
-            st.session_state[key] = None
+import numpy as np
+import pandas as pd
 
-class MLStateManager:
-    """Gestion de l'état pour la configuration ML"""
+# ========================
+# LOGGER
+# ========================
+logger = logging.getLogger(__name__)
+
+# ========================
+# ENUMS
+# ========================
+class DataType(Enum):
+    NONE = "none"
+    TABULAR = "tabular"
+    IMAGES = "images"
+
+class AppPage(Enum):
+    HOME = "main.py"
+    DASHBOARD = "pages/1_dashboard.py"
+    ML_TRAINING = "pages/2_training.py"
+    ML_EVALUATION = "pages/3_evaluation.py"
+    CV_TRAINING = "pages/4_training_computer.py"
+    ANOMALY_EVAL = "pages/5_anomaly_evaluation.py"
+
+class TrainingStep(Enum):
+    DATA_ANALYSIS = 0
+    TARGET_SELECTION = 1
+    IMBALANCE_ANALYSIS = 2
+    PREPROCESSING = 3
+    MODEL_SELECTION = 4
+    TRAINING_LAUNCH = 5
+
+# ========================
+# CONFIG & STATS
+# ========================
+@dataclass
+class Config:
+    MAX_FILE_MB: int = 500
+    SUPPORTED_EXT: Set[str] = field(default_factory=lambda: {'.csv', '.xlsx', '.parquet', '.feather', '.json'})
+    TIMEOUT_MIN: int = 60
+    MAX_MESSAGE_SIZE: int = 500  # MB
+
+@dataclass
+class CalcStats:
+    total: int = 0
+    failed: int = 0
+    last: float = 0.0
+    avg: float = 0.0
+    active: int = 0
+    history: list = field(default_factory=list)
+    max_hist: int = 100
+
+# ========================
+# STATE CLASSES - COMPLÈTES
+# ========================
+@dataclass
+class NavState:
+    current: AppPage = AppPage.HOME
+    authorized: Set[AppPage] = field(default_factory=set)
+    last_active: float = field(default_factory=time.time)
+    current_step: int = 0  # AJOUT CRITIQUE
+
+@dataclass
+class DataState:
+    loaded: bool = False
+    type: DataType = DataType.NONE
+    name: Optional[str] = None
+    loaded_at: Optional[float] = None
+
+    # Tabulaires
+    df: Optional[pd.DataFrame] = None
+    df_raw: Optional[pd.DataFrame] = None
+    feature_list: List[str] = field(default_factory=list)
+    target_column: Optional[str] = None
+    task_type: Optional[str] = None
+
+    # Images
+    X: Optional[np.ndarray] = None
+    X_norm: Optional[np.ndarray] = None
+    y: Optional[np.ndarray] = None
+    X_train: Optional[np.ndarray] = None
+    X_val: Optional[np.ndarray] = None
+    X_test: Optional[np.ndarray] = None
+    y_train: Optional[np.ndarray] = None
+    y_val: Optional[np.ndarray] = None
+    y_test: Optional[np.ndarray] = None
+    dir: Optional[str] = None
+    structure: Optional[dict] = None
+    info: Optional[dict] = None
+    task: Optional[str] = None
+    img_count: Optional[int] = None
+    img_shape: Optional[tuple] = None
+    n_classes: Optional[int] = None
+
+@dataclass
+class TrainingState:
+    # Configuration commune
+    current_step: int = 0
+    workflow_complete: bool = False
+    selected_models: List[str] = field(default_factory=list)
+    test_size: int = 20
+    optimize_hyperparams: bool = False
     
-    @staticmethod
-    def initialize_ml_config():
-        """Initialise l'état de configuration ML"""
-        defaults = {
-            'target_column_for_ml_config': None,
-            'feature_list_for_ml_config': [],
-            'preprocessing_choices': {
-                'numeric_imputation': 'mean',
-                'categorical_imputation': 'most_frequent',
-                'use_smote': False,
-                'remove_constant_cols': True,
-                'remove_identifier_cols': True,
-                'scale_features': True,
-                'pca_preprocessing': False
-            },
-            'selected_models_for_training': [],
-            'test_split_for_ml_config': 20,
-            'optimize_hp_for_ml_config': False,
-            'task_type': 'classification',
-            'ml_training_in_progress': False,
-            'ml_last_training_time': None
-        }
-        
-        for key, default_value in defaults.items():
-            if key not in st.session_state:
-                st.session_state[key] = default_value
+    # Configuration Computer Vision
+    selected_model_type: Optional[str] = None
+    model_config: Dict[str, Any] = field(default_factory=dict)
+    training_config: Dict[str, Any] = field(default_factory=dict)
+    preprocessing_config: Dict[str, Any] = field(default_factory=dict)
+    imbalance_config: Dict[str, Any] = field(default_factory=dict)
+    current_experiment: Optional[str] = None
+    
+    # Résultats
+    training_results: Optional[Dict[str, Any]] = None
+    trained_model: Any = None
+    training_history: Optional[Dict[str, Any]] = None
+    preprocessor: Any = None
+    class_weights: Optional[Dict] = None
+    ml_results: Optional[Dict] = None
+
+@dataclass
+class MetricsState:
+    start: float = field(default_factory=time.time)
+    last_active: float = field(default_factory=time.time)
+    errors: int = 0
+    success: int = 0
+    memory_percent: float = 0.0
+    calc: CalcStats = field(default_factory=CalcStats)
+
+# ========================
+# GLOBAL STATE MANAGER (Singleton Renforcé)
+# ========================
+class StateManager:
+    _instance = None
+    _lock = threading.RLock()
+
+    def __new__(cls):
+        with cls._lock:
+            if cls._instance is None:
+                cls._instance = super().__new__(cls)
+                cls._instance._initialized = False
+            return cls._instance
+
+    def __init__(self):
+        if not self._initialized:
+            self.config = Config()
+            self._setup_session()
+            self._initialized = True
+            logger.info("StateManager initialisé")
+
+    def _setup_session(self):
+        """Initialisation sécurisée de tous les états"""
+        with self._lock:
+            defaults = {
+                'nav': NavState(),
+                'data': DataState(),
+                'training': TrainingState(),
+                'metrics': MetricsState(),
+                'ready': True,
+                'time': time.strftime('%H:%M:%S')
+            }
+            
+            for k, v in defaults.items():
+                if k not in st.session_state:
+                    st.session_state[k] = v
+            
+            self._update_auth()
+
+    # --- AUTH ---
+    def _update_auth(self):
+        t = st.session_state.data.type
+        auth = {AppPage.HOME}
+        if t == DataType.TABULAR:
+            auth.update({AppPage.DASHBOARD, AppPage.ML_TRAINING, AppPage.ML_EVALUATION})
+        elif t == DataType.IMAGES:
+            auth.update({AppPage.DASHBOARD, AppPage.CV_TRAINING, AppPage.ANOMALY_EVAL})
+        st.session_state.nav.authorized = auth
+
+    # --- NAVIGATION ---
+    def go(self, page: AppPage) -> bool:
+        if page not in st.session_state.nav.authorized:
+            logger.warning(f"Accès refusé: {page.value}")
+            st.warning(f"⚠️ Accès refusé à {page.name}")
+            return False
+        st.session_state.nav.current = page
+        st.session_state.nav.last_active = time.time()
+        logger.info(f"→ {page.value}")
+        return True
+
+    def switch(self, page: AppPage) -> bool:
+        if not self.go(page):
+            return False
+        try:
+            st.switch_page(page.value)
+            return True
+        except Exception as e:
+            logger.error(f"switch_page failed: {e}")
+            st.error(f"Erreur de navigation: {e}")
+            return False
+
+    # --- DATA SETTERS ---
+    def set_tabular(self, df: pd.DataFrame, df_raw: pd.DataFrame, name: str) -> bool:
+        try:
+            if df is None or df.empty:
+                return False
+            self.reset_data()
+            d = st.session_state.data
+            d.df = df.copy()
+            d.df_raw = df_raw.copy() if df_raw is not None else df.copy()
+            d.name = name
+            d.type = DataType.TABULAR
+            d.loaded = True
+            d.loaded_at = time.time()
+            self._update_auth()
+            logger.info(f"Tabular loaded: {name} | {df.shape}")
+            return True
+        except Exception as e:
+            logger.error(f"set_tabular: {e}")
+            st.error(f"Erreur chargement: {e}")
+            return False
+
+    def set_images(self, X, X_norm, y, dir_path, structure, info) -> bool:
+        try:
+            if len(X) == 0 or len(X) != len(y):
+                return False
+            self.reset_data()
+            d = st.session_state.data
+            d.X = X
+            d.X_norm = X_norm
+            d.y = y
+            d.dir = dir_path
+            d.structure = structure
+            d.info = info
+            d.type = DataType.IMAGES
+            d.name = os.path.basename(dir_path)
+            d.loaded = True
+            d.loaded_at = time.time()
+            d.img_count = len(X)
+            d.img_shape = X.shape
+            d.n_classes = len(np.unique(y))
+            d.task = "anomaly_detection" if len(np.unique(y)) == 2 and set(np.unique(y)) == {0,1} else "classification"
+            self._update_auth()
+            logger.info(f"Images loaded: {len(X)} | {d.n_classes} classes")
+            return True
+        except Exception as e:
+            logger.error(f"set_images: {e}")
+            st.error(f"Erreur chargement images: {e}")
+            return False
+
+    def reset_data(self):
+        """Reset sécurisé des données"""
+        st.session_state.data = DataState()
+        st.session_state.training = TrainingState()  # Reset training aussi
+        self._update_auth()
+        logger.info("Data reset")
+
+    def reset_all(self):
+        """Reset complet sécurisé"""
+        st.session_state.data = DataState()
+        st.session_state.nav = NavState()
+        st.session_state.training = TrainingState()
+        st.session_state.metrics = MetricsState()
+        self._update_auth()
+        logger.info("Full reset")
+
+    # --- VALIDATION ---
+    def validate(self) -> Tuple[bool, str]:
+        d = st.session_state.data
+        if not d.loaded:
+            return False, "Aucune donnée"
+        if d.type == DataType.TABULAR:
+            if d.df is None or d.df.empty:
+                return False, "DataFrame vide"
+            return True, f"{len(d.df):,} lignes"
+        if d.type == DataType.IMAGES:
+            if d.X is None or len(d.X) == 0:
+                return False, "Aucune image"
+            if len(d.X) != len(d.y):
+                return False, "X ≠ y"
+            return True, f"{len(d.X):,} images"
+        return False, "Type inconnu"
+
+    # --- CALCULATIONS ---
+    @contextmanager
+    def calc(self, name: str = "op"):
+        start = time.time()
+        s = st.session_state.metrics.calc
+        with self._lock:
+            s.active += 1
+            s.total += 1
+        try:
+            yield
+        except Exception as e:
+            with self._lock:
+                s.failed += 1
+                st.session_state.metrics.errors += 1
+            logger.error(f"Calc error [{name}]: {e}")
+            raise
+        finally:
+            dur = time.time() - start
+            with self._lock:
+                s.active -= 1
+                s.last = dur
+                s.history.append(dur)
+                if len(s.history) > s.max_hist:
+                    s.history.pop(0)
+                s.avg = sum(s.history) / len(s.history) if s.history else 0
+                st.session_state.metrics.success += 1
+
+    # --- ACTIVITY ---
+    def touch(self):
+        st.session_state.metrics.last_active = time.time()
+        st.session_state.time = time.strftime('%H:%M:%S')
+
+    def get(self, key: str, default: Any = None) -> Any:
+        """Accès sécurisé aux données de session"""
+        return st.session_state.get(key, default)
+
+    # --- PROPS (Accès unifié et sécurisé) ---
+    @property
+    def page(self): 
+        return st.session_state.nav.current
+    
+    @property
+    def dtype(self): 
+        return st.session_state.data.type
+    
+    @property
+    def loaded(self): 
+        return st.session_state.data.loaded
+    
+    @property
+    def tabular(self): 
+        return self.loaded and self.dtype == DataType.TABULAR
+    
+    @property
+    def images(self): 
+        return self.loaded and self.dtype == DataType.IMAGES
+    
+    @property
+    def data(self):
+        return st.session_state.data
+    
+    @property
+    def nav(self):
+        return st.session_state.nav
+    
+    @property
+    def metrics(self):
+        return st.session_state.metrics
+    
+    @property
+    def training(self):
+        return st.session_state.training
+    
+    # --- PROPS SPÉCIFIQUES POUR COMPATIBILITÉ ---
+    @property
+    def current_step(self):
+        """Accès unifié au current_step depuis training state"""
+        return st.session_state.training.current_step
+    
+    @current_step.setter
+    def current_step(self, value):
+        st.session_state.training.current_step = value
+    
+    @property
+    def selected_model_type(self):
+        return st.session_state.training.selected_model_type
+    
+    @selected_model_type.setter
+    def selected_model_type(self, value):
+        st.session_state.training.selected_model_type = value
+    
+    @property
+    def model_config(self):
+        return st.session_state.training.model_config
+    
+    @model_config.setter
+    def model_config(self, value):
+        st.session_state.training.model_config = value
+    
+    @property
+    def training_config(self):
+        return st.session_state.training.training_config
+    
+    @training_config.setter
+    def training_config(self, value):
+        st.session_state.training.training_config = value
+    
+    @property
+    def preprocessing_config(self):
+        return st.session_state.training.preprocessing_config
+    
+    @preprocessing_config.setter
+    def preprocessing_config(self, value):
+        st.session_state.training.preprocessing_config = value
+    
+    @property
+    def imbalance_config(self):
+        return st.session_state.training.imbalance_config
+    
+    @imbalance_config.setter
+    def imbalance_config(self, value):
+        st.session_state.training.imbalance_config = value
+    
+    @property
+    def current_experiment(self):
+        return st.session_state.training.current_experiment
+    
+    @current_experiment.setter
+    def current_experiment(self, value):
+        st.session_state.training.current_experiment = value
+    
+    @property
+    def training_results(self):
+        return st.session_state.training.training_results
+    
+    @training_results.setter
+    def training_results(self, value):
+        st.session_state.training.training_results = value
+    
+    @property
+    def trained_model(self):
+        return st.session_state.training.trained_model
+    
+    @trained_model.setter
+    def trained_model(self, value):
+        st.session_state.training.trained_model = value
+    
+    @property
+    def training_history(self):
+        return st.session_state.training.training_history
+    
+    @training_history.setter
+    def training_history(self, value):
+        st.session_state.training.training_history = value
+    
+    @property
+    def preprocessor(self):
+        return st.session_state.training.preprocessor
+    
+    @preprocessor.setter
+    def preprocessor(self, value):
+        st.session_state.training.preprocessor = value
+    
+    @property
+    def class_weights(self):
+        return st.session_state.training.class_weights
+    
+    @class_weights.setter
+    def class_weights(self, value):
+        st.session_state.training.class_weights = value
+    
+    @property
+    def ml_results(self):
+        return st.session_state.training.ml_results
+    
+    @ml_results.setter
+    def ml_results(self, value):
+        st.session_state.training.ml_results = value
+    
+    @property
+    def workflow_complete(self):
+        return st.session_state.training.workflow_complete
+    
+    @workflow_complete.setter
+    def workflow_complete(self, value):
+        st.session_state.training.workflow_complete = value
+    
+    @property
+    def selected_models(self):
+        return st.session_state.training.selected_models
+    
+    @selected_models.setter
+    def selected_models(self, value):
+        st.session_state.training.selected_models = value
+    
+    @property
+    def test_size(self):
+        return st.session_state.training.test_size
+    
+    @test_size.setter
+    def test_size(self, value):
+        st.session_state.training.test_size = value
+    
+    @property
+    def optimize_hyperparams(self):
+        return st.session_state.training.optimize_hyperparams
+    
+    @optimize_hyperparams.setter
+    def optimize_hyperparams(self, value):
+        st.session_state.training.optimize_hyperparams = value
+    
+    @property
+    def feature_list(self):
+        return st.session_state.data.feature_list
+    
+    @feature_list.setter
+    def feature_list(self, value):
+        st.session_state.data.feature_list = value
+    
+    @property
+    def target_column(self):
+        return st.session_state.data.target_column
+    
+    @target_column.setter
+    def target_column(self, value):
+        st.session_state.data.target_column = value
+    
+    @property
+    def task_type(self):
+        return st.session_state.data.task_type
+    
+    @task_type.setter
+    def task_type(self, value):
+        st.session_state.data.task_type = value
+
+# ========================
+# INITIALIZER
+# ========================
+def init() -> StateManager:
+    sm = StateManager()
+    now = time.time()
+
+    # ✅ Vérifie que 'metrics' existe avant de l'utiliser
+    if "metrics" not in st.session_state:
+        logger.warning("⚠️ metrics absent du session_state → réinitialisation complète")
+        sm.reset_all()
+    else:
+        # Vérifie si la session est expirée
+        if now - st.session_state.metrics.last_active > sm.config.TIMEOUT_MIN * 60:
+            logger.warning("⏱️ Session expirée → reset complet")
+            sm.reset_all()
+
+    sm.touch()
+
+    # Mise à jour des métriques mémoire
+    try:
+        import psutil
+        st.session_state.metrics.memory_percent = psutil.virtual_memory().percent
+    except Exception as e:
+        logger.warning(f"psutil non disponible: {e}")
+
+    return sm
+
+# GLOBAL INSTANCE
+STATE = StateManager()

@@ -18,6 +18,7 @@ from pathlib import Path
 # Import des modules déplacés
 from monitoring.logging_utils import StructuredLogger
 from monitoring.decorators import monitor_operation, timeout, safe_execute
+from monitoring.state_managers import STATE
 from monitoring.system_monitor import get_system_metrics, _get_memory_usage
 from helpers.streamlit_helpers import conditional_cache
 from utils.formatters import format_metric_value
@@ -30,7 +31,7 @@ except ImportError:
     STREAMLIT_AVAILABLE = False
 
 try:
-    import shap
+    import shap # type: ignore
     SHAP_AVAILABLE = True
 except ImportError:
     SHAP_AVAILABLE = False
@@ -170,14 +171,19 @@ def _generate_color_palette(n_colors: int) -> List[str]:
 
 def _safe_get_model_task_type(model_result: Dict) -> str:
     """
-    Détection robuste du type de tâche - VERSION CORRIGÉE
+    Détection robuste du type de tâche - VERSION ULTRA ROBUSTE
     """
     try:
-        if not model_result or not isinstance(model_result, dict):
-            return 'unknown'
+        # PRIORITÉ ABSOLUE : Utiliser STATE.task_type si disponible
+        if hasattr(STATE, 'task_type') and STATE.task_type in ['classification', 'regression', 'clustering']:
+            return STATE.task_type
         
-        # 1. Vérification par métriques (METHODE PRINCIPALE)
+        # Fallback : analyse des métriques
         metrics = model_result.get('metrics', {})
+        
+        # Clustering metrics
+        if any(metric in metrics for metric in ['silhouette_score', 'calinski_harabasz_score', 'davies_bouldin_score']):
+            return 'clustering'
         
         # Classification metrics
         if any(metric in metrics for metric in ['accuracy', 'precision', 'recall', 'f1', 'auc']):
@@ -186,45 +192,8 @@ def _safe_get_model_task_type(model_result: Dict) -> str:
         # Regression metrics  
         if any(metric in metrics for metric in ['r2', 'mse', 'mae', 'rmse']):
             return 'regression'
-            
-        # Clustering metrics
-        if any(metric in metrics for metric in ['silhouette_score', 'calinski_harabasz_score', 'davies_bouldin_score']):
-            return 'clustering'
         
-        # 2. Vérification par nom du modèle
-        model_name = model_result.get('model_name', '').lower()
-        
-        clustering_keywords = ['kmeans', 'dbscan', 'gmm', 'gaussianmixture', 'hierarchical', 'agglomerative']
-        if any(kw in model_name for kw in clustering_keywords):
-            return 'clustering'
-            
-        regression_keywords = ['regression', 'regressor', 'linear', 'lasso', 'ridge']
-        if any(kw in model_name for kw in regression_keywords):
-            return 'regression'
-            
-        classification_keywords = ['classifier', 'classification', 'logistic', 'randomforest', 'xgboost']
-        if any(kw in model_name for kw in classification_keywords):
-            return 'classification'
-        
-        # 3. Fallback basé sur les données disponibles
-        has_y_test = model_result.get('y_test') is not None
-        has_labels = model_result.get('labels') is not None
-        
-        if has_y_test and not has_labels:
-            # Essayer de déterminer si c'est classification ou regression
-            y_test = model_result.get('y_test')
-            try:
-                y_array = np.array(y_test)
-                unique_vals = len(np.unique(y_array))
-                if unique_vals <= 20:  # Classification si peu de valeurs uniques
-                    return 'classification'
-                else:
-                    return 'regression'
-            except:
-                return 'classification'  # Default safe
-        elif has_labels and not has_y_test:
-            return 'clustering'
-        
+        # Fallback final
         return 'unknown'
         
     except Exception as e:

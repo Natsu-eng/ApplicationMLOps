@@ -1,13 +1,13 @@
 """
 Module d'entraînement robuste pour le machine learning.
 Supporte l'apprentissage supervisé et non-supervisé avec gestion MLOps avancée.
-Version Production - Corrigée pour MLflow/Streamlit
+Version Production - 
 """
 import pandas as pd
 import numpy as np
 from sklearn.model_selection import train_test_split, cross_val_score, GridSearchCV, StratifiedKFold, KFold
-from imblearn.pipeline import Pipeline
-from imblearn.over_sampling import SMOTE
+from imblearn.pipeline import Pipeline # type: ignore
+from imblearn.over_sampling import SMOTE # type: ignore
 import joblib
 import os
 import time
@@ -27,8 +27,8 @@ from utils.mlflow import _ensure_array_like, _safe_cluster_metrics, clean_model_
 
 # Intégration MLflow
 try:
-    import mlflow
-    import mlflow.sklearn
+    import mlflow # type: ignore
+    import mlflow.sklearn # type: ignore
     MLFLOW_AVAILABLE = True
 except ImportError:
     MLFLOW_AVAILABLE = False
@@ -94,7 +94,11 @@ def create_leak_free_pipeline(
     optimize_hyperparams: bool = False
 ) -> Tuple[Optional[Pipeline], Optional[Dict]]:
     """
-    Crée un pipeline sans data leakage avec gestion robuste des erreurs.
+    Crée un pipeline sklearn/imblearn sans fuite de données.
+    AMÉLIORATIONS CLÉS:
+    - Filtrage strict de column_types basé sur feature_list
+    - Validation que TOUTES les colonnes dans column_types existent dans feature_list
+    - Log détaillé des colonnes filtrées/retirées
     """
     
     try:
@@ -113,13 +117,82 @@ def create_leak_free_pipeline(
         if optimize_hyperparams and "params" in model_config:
             param_grid = {f"model__{k}": v for k, v in model_config["params"].items()}
         
-        # Créer le préprocesseur
-        preprocessor = create_preprocessor(preprocessing_choices, column_types)
+        # ========================================================================
+        # 🆕 VALIDATION CRITIQUE: Récupération de feature_list
+        # ========================================================================
+        available_features = preprocessing_choices.get('feature_list', [])
+        
+        if not available_features:
+            logger.error("❌ feature_list manquante dans preprocessing_choices!")
+            # Tentative de récupération depuis column_types (fallback)
+            available_features = []
+            for col_list in column_types.values():
+                available_features.extend(col_list)
+            
+            if not available_features:
+                logger.error("❌ Impossible de déterminer les features disponibles")
+                return None, None
+            
+            logger.warning(f"⚠️ feature_list restaurée depuis column_types: {len(available_features)} colonnes")
+        
+        available_features_set = set(available_features)
+        
+        logger.info(f"✅ Features disponibles: {len(available_features)}")
+        logger.debug(f"   Détail features: {available_features[:10]}...")
+        
+        # ========================================================================
+        # 🆕 FILTRAGE STRICT: Ne garder QUE les colonnes présentes dans feature_list
+        # ========================================================================
+        filtered_column_types = {}
+        columns_removed = {}
+        columns_kept = {}
+        
+        for col_type, cols in column_types.items():
+            # Filtrer pour ne garder QUE les colonnes qui existent dans feature_list
+            valid_cols = [col for col in cols if col in available_features_set]
+            removed_cols = [col for col in cols if col not in available_features_set]
+            
+            if valid_cols:
+                filtered_column_types[col_type] = valid_cols
+                columns_kept[col_type] = len(valid_cols)
+            
+            if removed_cols:
+                columns_removed[col_type] = removed_cols
+        
+        # ========================================================================
+        # 📊 LOG DÉTAILLÉ du filtrage
+        # ========================================================================
+        if columns_removed:
+            logger.warning("⚠️ Colonnes RETIRÉES (absentes de feature_list):")
+            for col_type, removed_cols in columns_removed.items():
+                logger.warning(f"   • {col_type}: {len(removed_cols)} colonnes → {removed_cols[:5]}...")
+        
+        if columns_kept:
+            logger.info("✅ Colonnes CONSERVÉES (présentes dans feature_list):")
+            for col_type, count in columns_kept.items():
+                logger.info(f"   • {col_type}: {count} colonnes")
+        
+        # Validation finale: au moins une colonne doit rester
+        total_kept = sum(len(cols) for cols in filtered_column_types.values())
+        if total_kept == 0:
+            logger.error("❌ AUCUNE colonne conservée après filtrage!")
+            logger.error(f"   feature_list: {available_features[:10]}")
+            logger.error(f"   column_types original: {[(k, len(v)) for k, v in column_types.items()]}")
+            return None, None
+        
+        logger.info(f"✅ {total_kept} colonnes au total après filtrage")
+        
+        # ========================================================================
+        # 🔧 Créer le préprocesseur avec les colonnes FILTRÉES
+        # ========================================================================
+        preprocessor = create_preprocessor(preprocessing_choices, filtered_column_types)
         if preprocessor is None:
             logger.error(f"❌ Échec création préprocesseur pour {model_name}")
             return None, None
         
-        # Construire le pipeline selon le contexte
+        # ========================================================================
+        # 🔧 Construction du pipeline selon le contexte
+        # ========================================================================
         if use_smote and task_type == 'classification':
             logger.info("🔄 Construction pipeline avec SMOTE")
             
@@ -152,7 +225,9 @@ def create_leak_free_pipeline(
             
             logger.info(f"✅ Pipeline créé avec 2 étapes: preprocessor → {model_name}")
         
-        # Validation finale du pipeline
+        # ========================================================================
+        # ✅ Validation finale du pipeline
+        # ========================================================================
         expected_steps = ['preprocessor', 'model'] if not (use_smote and task_type == 'classification') else ['preprocessor', 'smote', 'model']
         actual_steps = list(pipeline.named_steps.keys())
         
@@ -169,7 +244,7 @@ def create_leak_free_pipeline(
         return pipeline, param_grid if param_grid else None
     
     except Exception as e:
-        logger.error(f"❌ Erreur création pipeline pour {model_name}: {e}")
+        logger.error(f"❌ Erreur création pipeline pour {model_name}: {e}", exc_info=True)
         return None, None
 
 # ===============================================
@@ -187,7 +262,12 @@ def train_single_model_supervised(
     task_type: str = 'classification',
     monitor: TrainingMonitor = None
 ) -> Dict[str, Any]:
-    """Entraîne un modèle supervisé avec validation croisée."""
+    """
+    Entraîne un modèle supervisé avec validation croisée.
+    - Ajout de metrics VIDE par défaut
+    - Calcul des métriques IMMÉDIATEMENT après entraînement
+    - Gestion robuste des erreurs d'évaluation
+    """
     result = {
         "model_name": model_name,
         "success": False,
@@ -195,7 +275,8 @@ def train_single_model_supervised(
         "training_time": 0,
         "error": None,
         "best_params": None,
-        "cv_scores": None
+        "cv_scores": None,
+        "metrics": {}  
     }
     
     start_time = time.time()
@@ -215,6 +296,9 @@ def train_single_model_supervised(
             cv = KFold(n_splits=cv_folds, shuffle=True, random_state=random_state)
             scoring = 'r2'
         
+        # ========================================================================
+        # PHASE 1: ENTRAÎNEMENT
+        # ========================================================================
         if param_grid and len(param_grid) > 0:
             logger.info(f"🔍 Optimisation hyperparamètres pour {model_name}")
             
@@ -259,6 +343,71 @@ def train_single_model_supervised(
         
         result["training_time"] = time.time() - start_time
         
+        # ========================================================================
+        # 🆕 PHASE 2: ÉVALUATION IMMÉDIATE
+        # ========================================================================
+        if result["success"] and result["model"] is not None:
+            try:
+                logger.info(f"📊 Calcul des métriques pour {model_name}")
+                
+                # Import ici pour éviter les dépendances circulaires
+                from src.evaluation.metrics import evaluate_single_train_test_split
+                
+                evaluation_result = evaluate_single_train_test_split(
+                    model=result["model"],
+                    X_test=X_test,
+                    y_test=y_test,
+                    task_type=task_type,
+                    label_encoder=None,
+                    sample_metrics=True,
+                    max_samples_metrics=100000
+                )
+                
+                # 🆕 FUSION ROBUSTE des métriques
+                if evaluation_result and isinstance(evaluation_result, dict):
+                    if evaluation_result.get('success', False):
+                        # Copier TOUTES les métriques
+                        result['metrics'] = {
+                            k: v for k, v in evaluation_result.items()
+                            if k not in ['success', 'warnings', 'error', 'task_type']
+                        }
+                        logger.info(f"✅ Métriques calculées: {list(result['metrics'].keys())}")
+                    else:
+                        # Si évaluation échouée, créer des métriques par défaut
+                        result['metrics'] = {
+                            'error': evaluation_result.get('error', 'Évaluation échouée'),
+                            'accuracy': 0.0 if task_type == 'classification' else None,
+                            'r2': 0.0 if task_type == 'regression' else None
+                        }
+                        logger.warning(f"⚠️ Évaluation échouée pour {model_name}: {result['metrics']['error']}")
+                else:
+                    # Fallback si evaluation_result invalide
+                    result['metrics'] = {
+                        'error': 'Résultat évaluation invalide',
+                        'accuracy': 0.0 if task_type == 'classification' else None,
+                        'r2': 0.0 if task_type == 'regression' else None
+                    }
+                    logger.error(f"❌ Résultat évaluation invalide pour {model_name}")
+                
+            except Exception as eval_error:
+                logger.error(f"❌ Erreur évaluation pour {model_name}: {eval_error}", exc_info=True)
+                result['metrics'] = {
+                    'error': f'Erreur évaluation: {str(eval_error)}',
+                    'accuracy': 0.0 if task_type == 'classification' else None,
+                    'r2': 0.0 if task_type == 'regression' else None
+                }
+        
+        # ========================================================================
+        # VALIDATION FINALE
+        # ========================================================================
+        if not result.get('metrics'):
+            result['metrics'] = {
+                'error': 'Métriques non calculées',
+                'accuracy': 0.0 if task_type == 'classification' else None,
+                'r2': 0.0 if task_type == 'regression' else None
+            }
+            logger.warning(f"⚠️ Métriques vides pour {model_name}, ajout de métriques par défaut")
+        
         if monitor:
             resource_info = monitor.check_resources()
             logger.info(f"✅ {model_name} entraîné en {result['training_time']:.2f}s")
@@ -267,7 +416,12 @@ def train_single_model_supervised(
         result["success"] = False
         result["error"] = str(e)
         result["training_time"] = time.time() - start_time
-        logger.error(f"❌ Erreur entraînement {model_name}: {e}")
+        result["metrics"] = {
+            'error': str(e),
+            'accuracy': 0.0 if task_type == 'classification' else None,
+            'r2': 0.0 if task_type == 'regression' else None
+        }
+        logger.error(f"❌ Erreur entraînement {model_name}: {e}", exc_info=True)
     
     return result
 
@@ -470,20 +624,73 @@ def train_single_model_with_mlflow(
     mlflow_enabled: bool
 ) -> Tuple[Optional[Dict], Optional[Dict]]:
     """
-    Entraîne un seul modèle avec gestion MLflow complète.
-    Retourne (result_dict, mlflow_run_data)
+    🔧 CORRECTION: Injection de feature_list dans preprocessing_choices.
+    
+    PROBLÈME RÉSOLU:
+    - create_leak_free_pipeline ne savait pas quelles colonnes sont disponibles
+    
+    CHANGEMENTS:
+    - Ajout de feature_list dans preprocessing_choices
+    - Validation que X_train contient bien ces features
     """
     
-    # Initialisation
     mlflow_run_data = None
     result = None
     
     try:
-        # Création du pipeline
+        # 🆕 INJECTION feature_list dans preprocessing_choices
+        preprocessing_choices['feature_list'] = feature_list
+        
+        # 🆕 VALIDATION: Vérifier que X_train contient bien ces features
+        if task_type != 'clustering' and X_train is not None:
+            missing_features = [f for f in feature_list if f not in X_train.columns]
+            if missing_features:
+                log_structured(
+                    "ERROR",
+                    f"Features manquantes dans X_train: {missing_features[:5]}",
+                    {"model": model_name, "n_missing": len(missing_features)}
+                )
+                return None, None
+            
+            # S'assurer que X_train ne contient QUE les features de feature_list
+            X_train = X_train[feature_list].copy()
+            X_test = X_test[feature_list].copy()
+        
+        elif task_type == 'clustering' and X is not None:
+            missing_features = [f for f in feature_list if f not in X.columns]
+            if missing_features:
+                log_structured(
+                    "ERROR",
+                    f"Features manquantes dans X: {missing_features[:5]}",
+                    {"model": model_name, "n_missing": len(missing_features)}
+                )
+                return None, None
+            
+            X = X[feature_list].copy()
+        
+        # 🆕 FILTRAGE column_types pour ne garder QUE les colonnes dans feature_list
+        feature_set = set(feature_list)
+        filtered_column_types = {}
+        
+        for col_type, cols in column_types.items():
+            valid_cols = [col for col in cols if col in feature_set]
+            if valid_cols:
+                filtered_column_types[col_type] = valid_cols
+        
+        log_structured(
+            "INFO",
+            f"Column types filtrés pour {model_name}",
+            {
+                "original_types": {k: len(v) for k, v in column_types.items()},
+                "filtered_types": {k: len(v) for k, v in filtered_column_types.items()}
+            }
+        )
+        
+        # Création du pipeline avec column_types FILTRÉS
         pipeline, param_grid = create_leak_free_pipeline(
             model_name=model_name,
             task_type=task_type,
-            column_types=column_types,
+            column_types=filtered_column_types,  # 🆕 Utiliser les colonnes filtrées
             preprocessing_choices=preprocessing_choices,
             use_smote=use_smote,
             optimize_hyperparams=optimize
@@ -511,7 +718,7 @@ def train_single_model_with_mlflow(
                 
                 # Log git info
                 for k, v in git_info.items():
-                    if v:  # Éviter les valeurs vides
+                    if v:
                         mlflow.log_param(f"git_{k}", v)
                 
                 # Log preprocessing choices
@@ -599,18 +806,13 @@ def train_single_model_with_mlflow(
         # Logging MLflow final
         if mlflow_enabled and training_result["success"]:
             try:
-                # Log des métriques
                 for k, v in metrics.items():
                     if isinstance(v, (int, float)) and not np.isnan(v):
                         mlflow.log_metric(k, float(v))
                 
-                # Log du temps d'entraînement
                 mlflow.log_metric("training_time", training_result.get("training_time", 0.0))
-                
-                # Sauvegarde du modèle comme artifact
                 mlflow.log_artifact(model_path)
                 
-                # Formatage des données pour l'UI
                 mlflow_run_data = format_mlflow_run_for_ui(
                     run_info=mlflow.active_run(),
                     metrics=metrics,
@@ -643,19 +845,16 @@ def train_single_model_with_mlflow(
             "feature_names": feature_list
         }
 
-        # Ajout des données spécifiques au type de tâche
         if task_type == 'clustering' and training_result.get("labels") is not None:
             result["labels"] = training_result["labels"]
-            result["X_sample"] = X  # Pour les visualisations
+            result["X_sample"] = X
         elif task_type in ['classification', 'regression']:
-            # AJOUT: Données pour visualisations avancées
             result["X_train"] = X_train
             result["y_train"] = y_train
             result["X_test"] = X_test
             result["y_test"] = y_test
-            result["model"] = training_result["model"]  # Pipeline complet
+            result["model"] = training_result["model"]
         
-        # Échantillon pour SHAP (éviter surcharge mémoire)
         if X_test is not None and len(X_test) > 0:
             sample_size = min(1000, len(X_test))
             result["X_sample"] = X_test.iloc[:sample_size] if hasattr(X_test, 'iloc') else X_test[:sample_size]
