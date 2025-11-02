@@ -18,6 +18,7 @@ from sklearn.exceptions import ConvergenceWarning
 
 # Import des modules déplacés
 from monitoring.performance_monitor import TrainingMonitor
+from monitoring.state_managers import STATE
 from monitoring.training_state_manager import TrainingStateManager, TRAINING_STATE
 from monitoring.mlflow_collector import MLflowRunCollector
 from helpers.data_validators import DataValidator
@@ -556,50 +557,75 @@ def log_structured(level: str, message: str, extra: Dict = None):
         logger.error(f"Erreur lors de la journalisation structurée: {str(e)[:100]}")
 
 def _store_results_in_session(results: List[Dict], mlflow_runs: List[Dict]) -> bool:
-    """
-    Stocke les résultats dans session_state de manière ROBUSTE.
-    Retourne True si succès, False sinon.
-    """
-    if not STREAMLIT_AVAILABLE or st is None:
-        return False
-        
+    """Stockage ROBUSTE avec synchronisation multi-état"""
     try:
-        # Initialisation ROBUSTE des session states
+        log_structured("INFO", "🔄 Démarrage stockage session", {
+            "n_results": len(results) if results else 0,
+            "n_mlflow_runs": len(mlflow_runs) if mlflow_runs else 0
+        })
+        
+        if not STREAMLIT_AVAILABLE or st is None:
+            log_structured("WARNING", "Streamlit non disponible - stockage limité")
+            # Stocke quand même dans STATE si possible
+            if hasattr(STATE, 'mlflow_runs') and mlflow_runs:
+                STATE.mlflow_runs = mlflow_runs
+            return False
+        
+        # 🔧 INITIALISATION ROBUSTE de tous les états
         if 'ml_results' not in st.session_state:
             st.session_state.ml_results = []
-        
         if 'mlflow_runs' not in st.session_state:
             st.session_state.mlflow_runs = []
         
-        # Validation des données avant stockage
+        # 🎯 VALIDATION STRICTE des données
         valid_results = [r for r in results if isinstance(r, dict) and r.get('model_name')]
-        valid_mlflow_runs = [r for r in mlflow_runs if isinstance(r, dict) and r.get('run_id')]
+        valid_mlflow_runs = [r for r in mlflow_runs if isinstance(r, dict)]
         
-        # Stockage SÉCURISÉ avec vérification de type
-        if isinstance(st.session_state.ml_results, list):
-            st.session_state.ml_results.extend(valid_results)
-        else:
-            st.session_state.ml_results = valid_results
-            
-        if isinstance(st.session_state.mlflow_runs, list):
-            st.session_state.mlflow_runs.extend(valid_mlflow_runs)
-        else:
-            st.session_state.mlflow_runs = valid_mlflow_runs
-            
-        log_structured("INFO", "Résultats stockés avec succès", {
+        # 🎯 FUSION INTELLIGENTE (évite les doublons par run_id)
+        existing_run_ids = set()
+        if hasattr(st.session_state, 'mlflow_runs'):
+            existing_run_ids = {r.get('run_id') for r in st.session_state.mlflow_runs if r.get('run_id')}
+        
+        new_runs = []
+        for run in valid_mlflow_runs:
+            run_id = run.get('run_id')
+            if run_id and run_id not in existing_run_ids:
+                new_runs.append(run)
+                existing_run_ids.add(run_id)
+        
+        # 💾 STOCKAGE MULTI-ÉTAT
+        # 1. Session Streamlit
+        st.session_state.ml_results.extend(valid_results)
+        st.session_state.mlflow_runs.extend(new_runs)
+        
+        # 2. État global STATE
+        if hasattr(STATE, 'mlflow_runs'):
+            # Fusion aussi pour STATE
+            state_existing_ids = {r.get('run_id') for r in STATE.mlflow_runs if r.get('run_id')}
+            state_new_runs = [r for r in new_runs if r.get('run_id') not in state_existing_ids]
+            STATE.mlflow_runs.extend(state_new_runs)
+        
+        # 3. TrainingState spécifique
+        if hasattr(STATE, 'training') and hasattr(STATE.training, 'mlflow_runs'):
+            training_existing_ids = {r.get('run_id') for r in STATE.training.mlflow_runs if r.get('run_id')}
+            training_new_runs = [r for r in new_runs if r.get('run_id') not in training_existing_ids]
+            STATE.training.mlflow_runs.extend(training_new_runs)
+        
+        log_structured("INFO", "✅ Stockage session réussi", {
             "n_results": len(valid_results),
-            "n_mlflow_runs": len(valid_mlflow_runs),
-            "total_results": len(st.session_state.ml_results),
-            "total_runs": len(st.session_state.mlflow_runs)
+            "n_mlflow_runs": len(new_runs),
+            "total_runs_session": len(st.session_state.mlflow_runs),
+            "total_runs_state": len(STATE.mlflow_runs) if hasattr(STATE, 'mlflow_runs') else 0,
+            "total_runs_training": len(STATE.training.mlflow_runs) if hasattr(STATE.training, 'mlflow_runs') else 0
         })
         
         return True
         
     except Exception as e:
-        log_structured("ERROR", "Échec stockage session", {
+        log_structured("ERROR", "❌ Échec stockage session", {
             "error": str(e),
-            "results_type": type(results) if results else None,
-            "mlflow_runs_type": type(mlflow_runs) if mlflow_runs else None
+            "results_count": len(results) if results else 0,
+            "mlflow_runs_count": len(mlflow_runs) if mlflow_runs else 0
         })
         return False
 

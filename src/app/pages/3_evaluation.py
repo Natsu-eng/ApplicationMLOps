@@ -316,7 +316,7 @@ def model_has_predict_proba(model) -> bool:
 
 @monitor_operation
 def display_model_details(visualizer, model_result: Dict[str, Any], task_type: str):
-    """Affiche les détails complets d'un modèle - VERSION PRODUCTION ROBUSTE"""
+    """Affiche les détails complets d'un modèle - VERSION CORRIGÉE AVEC GESTION DES DONNÉES"""
     try:
         model_name = model_result.get('model_name', 'Unknown')
         unique_id = f"{model_name}_{int(time.time())}"
@@ -415,33 +415,74 @@ def display_model_details(visualizer, model_result: Dict[str, Any], task_type: s
                     st.metric("DB Index", str(db_index))
 
         # ========================================================================
-        # VISUALISATIONS CONDITIONNELLES
+        # 🆕 CORRECTION : GESTION ROBUSTE DES DONNÉES DE VISUALISATION
         # ========================================================================
         st.markdown("---")
         st.markdown("#### 📈 Visualisations")
 
-        # Vérification des données pour visualisations
+        # Vérification améliorée des données pour visualisations
         has_visualization_data = False
+        missing_data_details = []
         
         if task_type == 'clustering':
-            has_visualization_data = (
-                model_result.get('X_train') is not None and 
-                model_result.get('labels') is not None
-            )
+            has_X = model_result.get('X_train') is not None
+            has_labels = model_result.get('labels') is not None
+            has_visualization_data = has_X and has_labels
+            
+            if not has_X:
+                missing_data_details.append("❌ Données d'entraînement (X_train) manquantes")
+            if not has_labels:
+                missing_data_details.append("❌ Labels de clustering manquants")
+                
         else:
-            has_visualization_data = (
-                model_result.get('X_test') is not None and
-                model_result.get('y_test') is not None
-            )
+            has_X_test = model_result.get('X_test') is not None
+            has_y_test = model_result.get('y_test') is not None
+            has_visualization_data = has_X_test and has_y_test
+            
+            if not has_X_test:
+                missing_data_details.append("❌ Données de test (X_test) manquantes")
+            if not has_y_test:
+                missing_data_details.append("❌ Labels de test (y_test) manquants")
 
         if not has_visualization_data:
             st.warning("""
             ⚠️ **Données de visualisation limitées**
             
-            Les visualisations avancées nécessitent des données d'entraînement/test 
-            qui ne sont pas disponibles pour ce modèle. Seules les métriques de base sont affichées.
+            Les données nécessaires aux visualisations ne sont pas disponibles pour ce modèle.
             """)
-            return
+            
+            if missing_data_details:
+                st.error("**Détail des données manquantes:**")
+                for detail in missing_data_details:
+                    st.error(detail)
+            
+            # 🆕 TENTATIVE DE RÉCUPÉRATION ALTERNATIVE
+            st.info("🔄 Tentative de récupération des données alternatives...")
+            
+            recovery_attempted = False
+            
+            if task_type != 'clustering':
+                # Essai 1: Utiliser les données d'entraînement si disponibles
+                if model_result.get('X_train') is not None and model_result.get('y_train') is not None:
+                    st.success("✅ Utilisation des données d'entraînement comme alternative")
+                    model_result['X_test'] = model_result['X_train']
+                    model_result['y_test'] = model_result['y_train']
+                    has_visualization_data = True
+                    recovery_attempted = True
+                
+                # Essai 2: Utiliser l'échantillon réduit si disponible
+                elif model_result.get('X_sample') is not None and model_result.get('y_sample') is not None:
+                    st.success("✅ Utilisation de l'échantillon réduit comme alternative")
+                    model_result['X_test'] = model_result['X_sample']
+                    model_result['y_test'] = model_result['y_sample']
+                    has_visualization_data = True
+                    recovery_attempted = True
+            
+            if not recovery_attempted:
+                st.info("💡 **Solutions possibles:**\n- Relancez l'entraînement\n- Vérifiez les logs d'erreur\n- Contactez l'administrateur")
+                return
+            else:
+                st.warning("⚠️ Visualisations basées sur des données alternatives (entraînement/échantillon)")
 
         # ========================================================================
         # VISUALISATIONS SPÉCIFIQUES PAR TYPE DE TÂCHE
@@ -571,7 +612,7 @@ def display_model_details(visualizer, model_result: Dict[str, Any], task_type: s
         st.markdown("---")
         st.markdown("#### ℹ️ Informations Complémentaires")
         
-        col_info1, col_info2 = st.columns(2)
+        col_info1, col_info2, col_info3 = st.columns(3)
         
         with col_info1:
             st.markdown("**⏱️ Performances**")
@@ -583,6 +624,13 @@ def display_model_details(visualizer, model_result: Dict[str, Any], task_type: s
             if model_result.get('X_train') is not None:
                 n_samples = len(model_result['X_train'])
                 st.metric("Échantillons d'entraînement", f"{n_samples:,}")
+                
+        with col_info3:
+            st.markdown("**🔧 Statut**")
+            if model_result.get('success', False):
+                st.metric("Entraînement", "✅ Réussi")
+            else:
+                st.metric("Entraînement", "❌ Échoué")
 
     except Exception as e:
         log_structured("ERROR", f"Erreur détaillée {model_name}", {
@@ -595,6 +643,131 @@ def display_model_details(visualizer, model_result: Dict[str, Any], task_type: s
         with st.expander("🔧 Détails Techniques de l'Erreur", expanded=False):
             import traceback
             st.code(traceback.format_exc())
+
+
+
+@monitor_operation
+def sync_mlflow_runs():
+    """Synchronise les runs MLflow entre tous les états - VERSION COMPLÈTE"""
+    try:
+        log_structured("INFO", "🔄 Démarrage synchronisation MLflow")
+        
+        # 🎯 SOURCE 1: Session Streamlit (priorité haute)
+        session_runs = getattr(st.session_state, 'mlflow_runs', [])
+        if session_runs and len(session_runs) > 0:
+            STATE.mlflow_runs = session_runs
+            log_structured("INFO", "Runs synchronisés depuis session_state", {
+                "n_runs": len(session_runs),
+                "source": "session_state"
+            })
+            return session_runs
+        
+        # 🎯 SOURCE 2: TrainingState (état global)
+        training_runs = getattr(STATE.training, 'mlflow_runs', [])
+        if training_runs and len(training_runs) > 0:
+            # Synchronise aussi vers session_state pour cohérence
+            st.session_state.mlflow_runs = training_runs
+            log_structured("INFO", "Runs synchronisés depuis training_state", {
+                "n_runs": len(training_runs),
+                "source": "training_state"
+            })
+            return training_runs
+        
+        # 🎯 SOURCE 3: Rechargement direct depuis serveur MLflow
+        if MLFLOW_AVAILABLE:
+            try:
+                from mlflow.tracking import MlflowClient
+                client = MlflowClient()
+                
+                # Récupère toutes les expériences
+                experiments = client.search_experiments()
+                all_runs = []
+                
+                for exp in experiments:
+                    runs = client.search_runs(
+                        experiment_ids=[exp.experiment_id],
+                        max_results=50  # Limite pour performance
+                    )
+                    all_runs.extend(runs)
+                
+                if all_runs:
+                    formatted_runs = []
+                    for run in all_runs:
+                        try:
+                            formatted_run = {
+                                'run_id': run.info.run_id,
+                                'status': run.info.status,
+                                'model_name': run.data.tags.get('mlflow.runName', 'Unknown'),
+                                'metrics': run.data.metrics,
+                                'tags': run.data.tags,
+                                'start_time': run.info.start_time,
+                                'end_time': run.info.end_time,
+                                'experiment_id': run.info.experiment_id
+                            }
+                            formatted_runs.append(formatted_run)
+                        except Exception as e:
+                            log_structured("WARNING", "Erreur formatage run", {
+                                "run_id": getattr(run.info, 'run_id', 'unknown'),
+                                "error": str(e)[:100]
+                            })
+                    
+                    # Stocke dans TOUS les états
+                    STATE.mlflow_runs = formatted_runs
+                    st.session_state.mlflow_runs = formatted_runs
+                    
+                    log_structured("INFO", "Runs rechargés depuis serveur MLflow", {
+                        "n_runs": len(formatted_runs),
+                        "source": "mlflow_server"
+                    })
+                    return formatted_runs
+                    
+            except Exception as e:
+                log_structured("ERROR", "Échec rechargement MLflow", {
+                    "error": str(e),
+                    "tracking_uri": mlflow.get_tracking_uri() if MLFLOW_AVAILABLE else "N/A"
+                })
+        
+        # 🎯 SOURCE 4: Résultats d'entraînement (fallback)
+        if hasattr(STATE, 'training_results') and STATE.training_results:
+            try:
+                results = getattr(STATE.training_results, 'results', [])
+                if results and len(results) > 0:
+                    # Extrait les informations des runs depuis les résultats
+                    extracted_runs = []
+                    for result in results:
+                        if isinstance(result, dict) and result.get('success', False):
+                            extracted_runs.append({
+                                'run_id': f"generated_{result.get('model_name', 'unknown')}_{int(time.time())}",
+                                'status': 'FINISHED',
+                                'model_name': result.get('model_name', 'Unknown'),
+                                'metrics': result.get('metrics', {}),
+                                'tags': {'source': 'training_results'},
+                                'start_time': time.time() - result.get('training_time', 0),
+                                'end_time': time.time()
+                            })
+                    
+                    if extracted_runs:
+                        STATE.mlflow_runs = extracted_runs
+                        st.session_state.mlflow_runs = extracted_runs
+                        log_structured("INFO", "Runs extraits des résultats d'entraînement", {
+                            "n_runs": len(extracted_runs),
+                            "source": "training_results"
+                        })
+                        return extracted_runs
+            except Exception as e:
+                log_structured("ERROR", "Erreur extraction runs depuis résultats", {
+                    "error": str(e)[:100]
+                })
+        
+        log_structured("WARNING", "Aucun run MLflow trouvé dans aucune source")
+        return []
+        
+    except Exception as e:
+        log_structured("ERROR", "Erreur critique synchronisation MLflow", {
+            "error": str(e),
+            "traceback": traceback.format_exc()[:500]
+        })
+        return []
 
 @monitor_operation
 def create_mlflow_run_plot(runs: List[Any], task_type: str, metric_to_plot: str = None, chart_type: str = "Bar") -> Optional[go.Figure]:
@@ -794,31 +967,101 @@ def create_mlflow_run_plot(runs: List[Any], task_type: str, metric_to_plot: str 
 
 @monitor_operation
 def display_mlflow_tab():
-    """
-    Affiche l'onglet MLflow avec gestion d'erreurs robuste.
-    
-    🔧 CORRECTIONS v3.0:
-    - Traduction COMPLÈTE statuts MLflow (EN → FR)
-    - Validation stricte des métriques numériques
-    - Gestion robuste des runs malformés
-    """
+    """Affiche l'onglet MLflow avec synchronisation forcée - VERSION CORRIGÉE"""
     st.markdown("### 🔗 Exploration des Runs MLflow")
+    
+    # 🎯 SYNCHRONISATION FORCÉE IMMÉDIATE
+    mlflow_runs = sync_mlflow_runs()
     
     if not MLFLOW_AVAILABLE:
         st.error("🚫 MLflow non disponible")
         st.info("Installez MLflow pour accéder aux runs: `pip install mlflow`")
         return
     
-    # Récupération des runs MLflow depuis l'état
-    mlflow_runs = getattr(STATE, 'mlflow_runs', [])
+    # 🔍 DIAGNOSTIC COMPLET
+    with st.expander("🔧 Diagnostic MLflow Détaillé", expanded=False):
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.write("**📊 Sources des runs:**")
+            diagnostic_data = {
+                "session_state_runs": len(getattr(st.session_state, 'mlflow_runs', [])),
+                "state_runs": len(getattr(STATE, 'mlflow_runs', [])),
+                "training_state_runs": len(getattr(STATE.training, 'mlflow_runs', [])),
+                "sync_runs": len(mlflow_runs),
+                "mlflow_available": MLFLOW_AVAILABLE
+            }
+            st.json(diagnostic_data)
+        
+        with col2:
+            st.write("**🔄 Actions:**")
+            
+            if st.button("🔄 Recharger depuis MLflow Server", key="reload_mlflow_server", use_container_width=True):
+                with st.spinner("Rechargement depuis serveur MLflow..."):
+                    if MLFLOW_AVAILABLE:
+                        try:
+                            from mlflow.tracking import MlflowClient
+                            client = MlflowClient()
+                            experiments = client.search_experiments()
+                            all_runs = []
+                            
+                            for exp in experiments:
+                                runs = client.search_runs(experiment_ids=[exp.experiment_id], max_results=50)
+                                all_runs.extend(runs)
+                            
+                            if all_runs:
+                                formatted_runs = []
+                                for run in all_runs:
+                                    formatted_runs.append({
+                                        'run_id': run.info.run_id,
+                                        'status': run.info.status,
+                                        'model_name': run.data.tags.get('mlflow.runName', 'Unknown'),
+                                        'metrics': run.data.metrics,
+                                        'tags': run.data.tags,
+                                        'start_time': run.info.start_time,
+                                        'end_time': run.info.end_time
+                                    })
+                                
+                                # Stockage multi-état
+                                STATE.mlflow_runs = formatted_runs
+                                st.session_state.mlflow_runs = formatted_runs
+                                STATE.training.mlflow_runs = formatted_runs
+                                
+                                st.success(f"✅ {len(formatted_runs)} runs rechargés")
+                                st.rerun()
+                            else:
+                                st.warning("Aucun run trouvé sur le serveur")
+                        except Exception as e:
+                            st.error(f"Erreur rechargement: {str(e)[:200]}")
+            
+            if st.button("🗑️ Nettoyer les runs", key="clear_mlflow_runs", use_container_width=True):
+                STATE.mlflow_runs = []
+                st.session_state.mlflow_runs = []
+                STATE.training.mlflow_runs = []
+                st.success("Runs nettoyés")
+                st.rerun()
     
+    # 🎯 AFFICHAGE PRINCIPAL
     if not mlflow_runs:
         st.warning("⚠️ Aucun run MLflow disponible")
-        st.info("Entraînez des modèles pour générer des runs MLflow")
+        st.info("""
+        **Pour générer des runs MLflow:**
+        1. Allez dans l'onglet **Configuration ML**
+        2. Chargez un dataset et configurez l'entraînement
+        3. **Assurez-vous que MLflow est activé** dans les paramètres avancés
+        4. Lancez l'entraînement des modèles
+        5. Revenez sur cette page pour voir les runs
+        """)
+        
+        # Vérification supplémentaire
+        if hasattr(STATE, 'training_results') and STATE.training_results:
+            st.info("💡 **Des résultats d'entraînement sont disponibles mais pas de runs MLflow.**")
+            st.info("Activez MLflow dans les paramètres d'entraînement pour le prochain lancement.")
+        
         return
     
-    st.markdown(f"**📊 {len(mlflow_runs)} runs MLflow disponibles**")
-    
+    st.success(f"**📊 {len(mlflow_runs)} runs MLflow disponibles**")
+
     # ========================================================================
     # 🆕 TRADUCTION DES STATUTS MLflow (ANGLAIS → FRANÇAIS)
     # ========================================================================
@@ -1275,7 +1518,7 @@ def main():
         # ========================================================================
         with tab3:
             display_metrics_tab(validation_result)
-            
+
         # ========================================================================
         # ONGLET 4 : EXPORT (CORRIGÉ)
         # ========================================================================
@@ -1368,6 +1611,32 @@ def main():
         # ========================================================================
         with tab5:
             display_mlflow_tab()
+
+
+        # 🎯 DIAGNOSTIC MLflow DANS SIDEBAR
+        st.sidebar.markdown("---")
+        st.sidebar.markdown("### 🔍 Diagnostic MLflow")
+        
+        mlflow_status = {
+            "MLflow disponible": MLFLOW_AVAILABLE,
+            "Runs session_state": len(getattr(st.session_state, 'mlflow_runs', [])),
+            "Runs STATE": len(getattr(STATE, 'mlflow_runs', [])),
+            "Runs training_state": len(getattr(STATE.training, 'mlflow_runs', [])),
+            "Tracking URI": mlflow.get_tracking_uri() if MLFLOW_AVAILABLE else "N/A",
+            "Dernière synchro": datetime.now().strftime('%H:%M:%S')
+        }
+        
+        with st.sidebar.expander("📊 Statut MLflow", expanded=False):
+            st.json(mlflow_status)
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("🔄 Synchro", key="sidebar_sync_mlflow"):
+                    sync_mlflow_runs()
+                    st.rerun()
+            with col2:
+                if st.button("📋 Logs", key="sidebar_mlflow_logs"):
+                    st.info("Vérifiez les logs pour les détails de synchronisation")
 
         # ========================================================================
         # GESTION DES AVERTISSMENTS

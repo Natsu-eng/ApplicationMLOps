@@ -131,6 +131,9 @@ class TrainingState:
     class_weights: Optional[Dict] = None
     ml_results: Optional[Dict] = None
 
+    # Stockage des runs MLflow
+    mlflow_runs: List[Dict[str, Any]] = field(default_factory=list)
+
 @dataclass
 class MetricsState:
     start: float = field(default_factory=time.time)
@@ -527,6 +530,15 @@ class StateManager:
     @task_type.setter
     def task_type(self, value):
         st.session_state.data.task_type = value
+
+
+    @property
+    def mlflow_runs(self):
+        return st.session_state.training.mlflow_runs
+    
+    @mlflow_runs.setter
+    def mlflow_runs(self, value):
+        st.session_state.training.mlflow_runs = value
 
 # ========================
 # INITIALIZER

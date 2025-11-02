@@ -507,9 +507,9 @@ class MLTrainingOrchestrator:
     ) -> List[Dict[str, Any]]:
         """
         Entraîne tous les modèles sélectionnés.
-        AMÉLIORATIONS CLÉS:
-        - Injection systématique de feature_list dans preprocessing_choices
-        - Validation stricte de la cohérence features vs colonnes disponibles
+        - Injection systématique de X_test, y_test dans les résultats pour l'évaluation
+        - Sauvegarde des données d'entraînement et de test pour les visualisations
+        - Gestion robuste de la mémoire avec échantillons réduits
         """
         results = []
         n_models = len(context.model_names)
@@ -518,7 +518,7 @@ class MLTrainingOrchestrator:
         column_types = auto_detect_column_types(context.df)
         
         # ========================================================================
-        # 🆕 INJECTION feature_list dans preprocessing_choices
+        # NJECTION feature_list dans preprocessing_choices
         # ========================================================================
         preprocessing_choices_enriched = context.preprocessing_config.copy()
         preprocessing_choices_enriched['feature_list'] = context.feature_list
@@ -527,7 +527,7 @@ class MLTrainingOrchestrator:
         logger.debug(f"   Détail: {context.feature_list[:10]}...")
         
         # ========================================================================
-        # 🆕 FILTRAGE column_types pour ne garder QUE les colonnes de feature_list
+        # FILTRAGE column_types pour ne garder QUE les colonnes de feature_list
         # ========================================================================
         feature_set = set(context.feature_list)
         filtered_column_types = {}
@@ -562,8 +562,8 @@ class MLTrainingOrchestrator:
                 pipeline, param_grid = create_leak_free_pipeline(
                     model_name=model_name,
                     task_type=context.task_type,
-                    column_types=filtered_column_types,  # 🆕 Utiliser les colonnes FILTRÉES
-                    preprocessing_choices=preprocessing_choices_enriched,  # 🆕 Avec feature_list
+                    column_types=filtered_column_types,  # Utilise les colonnes FILTRÉES
+                    preprocessing_choices=preprocessing_choices_enriched,  # Avec feature_list
                     use_smote=context.use_smote,
                     optimize_hyperparams=context.optimize_hyperparams
                 )
@@ -578,7 +578,7 @@ class MLTrainingOrchestrator:
                     }
                 
                 # ========================================================================
-                # 🆕 VALIDATION: S'assurer que X_train/X/X_test contiennent SEULEMENT feature_list
+                # VALIDATION: S'assurer que X_train/X/X_test contiennent SEULEMENT feature_list
                 # ========================================================================
                 if context.task_type == 'clustering':
                     X_for_training = data_prep['X'][context.feature_list].copy()
@@ -592,9 +592,17 @@ class MLTrainingOrchestrator:
                         param_grid=param_grid,
                         monitor=None
                     )
+                    
+                    # Injection données clustering pour visualisations
+                    result['X_train'] = X_for_training
+                    result['labels'] = result.get('predictions')
+                    result['feature_names'] = context.feature_list
+                    
                 else:
                     X_train = data_prep['X_train'][context.feature_list].copy()
                     X_test = data_prep['X_test'][context.feature_list].copy()
+                    y_train = data_prep['y_train']
+                    y_test = data_prep['y_test']
                     
                     logger.debug(f"✅ X_train préparé: {X_train.shape}, X_test: {X_test.shape}")
                     
@@ -602,17 +610,41 @@ class MLTrainingOrchestrator:
                         model_name=model_name,
                         pipeline=pipeline,
                         X_train=X_train,
-                        y_train=data_prep['y_train'],
+                        y_train=y_train,
                         X_test=X_test,
-                        y_test=data_prep['y_test'],
+                        y_test=y_test,
                         param_grid=param_grid,
                         task_type=context.task_type,
                         monitor=None
                     )
+                    
+                    # Injection systématique des données pour l'évaluation
+                    result['X_train'] = X_train
+                    result['y_train'] = y_train
+                    result['X_test'] = X_test  # ← CE QUI MANQUAIT !
+                    result['y_test'] = y_test  # ← CE QUI MANQUAIT !
+                    result['feature_names'] = context.feature_list
+                    
+                    # Échantillon réduit pour éviter la mémoire excessive
+                    if len(X_test) > 1000:
+                        result['X_sample'] = X_test.iloc[:1000].copy()
+                        result['y_sample'] = y_test.iloc[:1000].copy()
+                        logger.info(f"✅ Échantillon réduit créé: 1000/{len(X_test)} échantillons")
                 
                 # Enrichissement du résultat
                 result['task_type'] = context.task_type
                 result['feature_names'] = context.feature_list
+                
+                # Validation que les données sont bien sauvegardées
+                data_saved = {
+                    'X_train': result.get('X_train') is not None,
+                    'X_test': result.get('X_test') is not None,
+                    'y_train': result.get('y_train') is not None,
+                    'y_test': result.get('y_test') is not None,
+                    'labels': result.get('labels') is not None
+                }
+                
+                logger.info(f"✅ Données sauvegardées pour {model_name}: {data_saved}")
                 
                 return result
                 
@@ -660,6 +692,19 @@ class MLTrainingOrchestrator:
                             'training_time': 0,
                             'warnings': [str(e)]
                         })
+        
+        # Log final de validation des données sauvegardées
+        successful_models = [r for r in results if r.get('success', False)]
+        for model in successful_models:
+            model_name = model.get('model_name', 'Unknown')
+            has_test_data = model.get('X_test') is not None and model.get('y_test') is not None
+            has_train_data = model.get('X_train') is not None and model.get('y_train') is not None
+            
+            if context.task_type != 'clustering':
+                if has_test_data:
+                    logger.info(f"✅ {model_name}: Données de test sauvegardées ✅")
+                else:
+                    logger.error(f"❌ {model_name}: DONNÉES DE TEST MANQUANTES ❌")
         
         return results
     
