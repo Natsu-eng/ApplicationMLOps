@@ -9,9 +9,9 @@ import torch # type: ignore
 import torch.nn as nn # type: ignore
 import torchvision.models as models # type: ignore
 from typing import Optional, List, Dict, Any
-import logging
+from src.shared.logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class TransferLearningModel(nn.Module):

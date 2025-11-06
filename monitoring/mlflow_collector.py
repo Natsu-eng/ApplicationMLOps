@@ -3,9 +3,9 @@ Collecteur thread-safe pour les runs MLflow.
 """
 import threading
 from typing import Dict, Any, List
-import logging
+from src.shared.logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 class MLflowRunCollector:
     """Collecteur thread-safe pour les runs MLflow."""

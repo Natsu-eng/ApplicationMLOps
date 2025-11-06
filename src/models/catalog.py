@@ -13,12 +13,15 @@ from sklearn.discriminant_analysis import LinearDiscriminantAnalysis, QuadraticD
 from sklearn.naive_bayes import GaussianNB, MultinomialNB, BernoulliNB
 from sklearn.neural_network import MLPRegressor, MLPClassifier
 
-import logging
 from typing import Dict, Any, Optional, List
 import warnings
+from src.shared.logging import get_logger
 
 # Configuration
 warnings.filterwarnings("ignore")
+
+# Logger centralisé
+logger = get_logger(__name__)
 
 # Fallbacks pour les librairies optionnelles
 XGBRegressor, XGBClassifier, LGBMRegressor, LGBMClassifier = None, None, None, None
@@ -26,12 +29,12 @@ XGBRegressor, XGBClassifier, LGBMRegressor, LGBMClassifier = None, None, None, N
 try:
     from xgboost import XGBRegressor, XGBClassifier
 except ImportError:
-    logging.warning("XGBoost non disponible - installation: pip install xgboost")
+    logger.warning("XGBoost non disponible - installation: pip install xgboost")
 
 try:
     from lightgbm import LGBMRegressor, LGBMClassifier # type: ignore
 except ImportError:
-    logging.warning("LightGBM non disponible - installation: pip install lightgbm")
+    logger.warning("LightGBM non disponible - installation: pip install lightgbm")
 
 # Catalogue complet des modèles avec hyperparamètres et descriptions
 MODEL_CATALOG = {
@@ -323,23 +326,23 @@ def get_model_config(task_type: str, model_name: str) -> Optional[Dict[str, Any]
     """
     try:
         if not isinstance(task_type, str) or not isinstance(model_name, str):
-            logging.error("Les paramètres 'task_type' et 'model_name' doivent être des chaînes.")
+            logger.error("Les paramètres 'task_type' et 'model_name' doivent être des chaînes.")
             return None
         
         if task_type not in MODEL_CATALOG:
-            logging.error(f"Type de tâche non supporté: {task_type}")
+            logger.error(f"Type de tâche non supporté: {task_type}")
             return None
         
         if model_name not in MODEL_CATALOG[task_type]:
-            logging.error(f"Modèle non trouvé: {model_name} pour {task_type}")
+            logger.error(f"Modèle non trouvé: {model_name} pour {task_type}")
             return None
         
         model_config = MODEL_CATALOG[task_type][model_name]
-        logging.info(f"✅ Configuration récupérée pour le modèle '{model_name}' de type '{task_type}'")
+        logger.info(f"✅ Configuration récupérée pour le modèle '{model_name}' de type '{task_type}'")
         return model_config
         
     except Exception as e:
-        logging.error(f"Erreur récupération configuration modèle: {e}", exc_info=True)
+        logger.error(f"Erreur récupération configuration modèle: {e}", exc_info=True)
         return None
 
 def get_available_models(task_type: str) -> List[str]:
@@ -355,7 +358,7 @@ def get_available_models(task_type: str) -> List[str]:
     try:
         return list(MODEL_CATALOG.get(task_type, {}).keys())
     except Exception as e:
-        logging.error(f"Erreur récupération modèles disponibles: {e}")
+        logger.error(f"Erreur récupération modèles disponibles: {e}")
         return []
 
 def validate_model_selection(task_type: str, model_names: List[str]) -> Dict[str, Any]:

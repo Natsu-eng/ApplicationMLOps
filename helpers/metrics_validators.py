@@ -4,10 +4,10 @@ Validation des données pour les calculs de métriques ML.
 import numpy as np
 import pandas as pd
 from typing import Dict, Any, Optional
-import logging
 from helpers.data_transformers import safe_array_conversion
+from src.shared.logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 def validate_input_data(y_true: Any, y_pred: Any, task_type: str) -> Dict[str, Any]:
     """

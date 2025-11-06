@@ -10,9 +10,9 @@ from typing import Dict
 
 import torch
 
-from src.shared.logging import StructuredLogger
+from src.shared.logging import get_logger
 
-logger = StructuredLogger(__name__)
+logger = get_logger(__name__)
 
 class TrainingCallback:
     """Interface de callback abstraite"""

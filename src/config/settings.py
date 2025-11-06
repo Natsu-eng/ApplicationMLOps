@@ -2,11 +2,18 @@
 Configuration centralisée via Pydantic, chargée depuis les variables d'environnement.
 """
 from pydantic_settings import BaseSettings
+from pydantic import ConfigDict
 
 class AppSettings(BaseSettings):
     DEFAULT_TASK_TYPE: str = "classification"
     DEFAULT_N_SPLITS: int = 5
     MAX_FILE_SIZE_MB: int = 1024
+    
+    model_config = ConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore"  # Ignorer les variables d'environnement non définies
+    )
 
 class TrainingSettings(BaseSettings):
     HIGH_MEMORY_THRESHOLD: float = 85.0
@@ -20,14 +27,22 @@ class TrainingSettings(BaseSettings):
     MAX_MODEL_FILES: int = 50
     MONITOR_TIME_THRESHOLD: int = 10
     MEMORY_LIMIT_MB: int = 2048
+    
+    model_config = ConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore"  # Ignorer les variables d'environnement non définies
+    )
 
 class MlflowSettings(BaseSettings):
     MLFLOW_TRACKING_URI: str = "http://127.0.0.1:5000"
     MLFLOW_EXPERIMENT_NAME: str = "Default Experiment"
 
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
+    model_config = ConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore"  # Ignorer les variables d'environnement non définies (postgres_user, streamlit_env, etc.)
+    )
 
 # Instanciation des configurations
 app_settings = AppSettings()

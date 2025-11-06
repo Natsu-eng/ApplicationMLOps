@@ -3,10 +3,10 @@ Utilitaires pour la gestion des fichiers et validation.
 """
 import os
 import re
-import logging
 from typing import Dict, Any, Union
+from src.shared.logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # Extensions de fichiers supportées
 SUPPORTED_EXTENSIONS = {'csv', 'parquet', 'xlsx', 'xls', 'json'}

@@ -8,9 +8,9 @@ import torchvision.models as models # type: ignore
 import faiss # type: ignore
 import numpy as np
 from typing import List, Tuple, Optional
-import logging
+from src.shared.logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 class ProfessionalPatchCore(nn.Module):
     """

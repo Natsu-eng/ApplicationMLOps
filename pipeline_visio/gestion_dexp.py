@@ -5,11 +5,11 @@ from typing import Any, Dict
 import numpy as np
 from src.data.computer_vision_preprocessing import Result
 from src.models.computer_vision_training import ModelConfig, ProductionPipeline, TrainingConfig
-from src.shared.logging import StructuredLogger
+from src.shared.logging import get_logger
 from utils.callbacks import CheckpointCallback, LoggingCallback
 
 
-logger = StructuredLogger(__name__)
+logger = get_logger(__name__)
 
 # ==========================
 # GESTIONNAIRE D'EXPÉRIENCES

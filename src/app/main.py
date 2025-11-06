@@ -8,8 +8,6 @@ import os
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
-
-import os
 import time
 import streamlit as st
 import pandas as pd
@@ -25,6 +23,7 @@ from src.data.image_processing import (
 )
 from utils.system_utils import get_system_metrics, cleanup_memory
 from monitoring.state_managers import init, AppPage, STATE
+from src.shared.logging import setup_logging, log_system_info
 
 # --- Configuration Streamlit ---
 st.set_page_config(
@@ -33,6 +32,13 @@ st.set_page_config(
     layout="centered",
     initial_sidebar_state="collapsed"
 )
+
+# Initialize session/metrics for robustness (timeouts, memory refresh)
+init()
+
+# Idempotent logging setup + system info at app start
+setup_logging(mlflow_integration=True)
+log_system_info()
 
 # --- CSS Moderne & Léger ---
 st.markdown("""

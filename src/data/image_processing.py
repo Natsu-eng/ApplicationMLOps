@@ -20,11 +20,13 @@ from PIL import Image
 from typing import Tuple, List, Dict, Optional, Any
 from dataclasses import dataclass
 from enum import Enum
-import logging
 from pathlib import Path
 
+# Import du système de logging centralisé
+from src.shared.logging import get_logger
+
 # Configuration logging
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # ===================================
 # CONSTANTES ET CONFIGURATIONS

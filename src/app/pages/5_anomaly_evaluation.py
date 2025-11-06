@@ -43,8 +43,13 @@ except ImportError:
     ANOMALY_CONFIG = {"MLFLOW_ENABLED": False}
     
     def get_logger(name):
-        import logging
-        return logging.getLogger(name)
+        # Utiliser le système de logging centralisé même en fallback
+        try:
+            from src.shared.logging import get_logger
+            return get_logger(name)
+        except ImportError:
+            import logging
+            return logging.getLogger(name)
 
 import torch # type: ignore
 

@@ -13,7 +13,7 @@ from typing import Dict, Any, Optional
 import torch
 from torch.utils.data import DataLoader, TensorDataset
 
-from src.shared.logging import StructuredLogger
+from src.shared.logging import get_logger
 
 def apply_normalization(image: np.ndarray, method: str) -> np.ndarray:
     """Applique la normalisation choisie."""
@@ -85,7 +85,7 @@ def generate_preview(original: np.ndarray, config: Dict[str, Any]) -> list:
 # PREPROCESSING PIPELINE (SANS FUITE)
 # ===================================
 
-logger = StructuredLogger(__name__)
+logger = get_logger(__name__)
 class DataPreprocessor:
     """
     Pipeline de preprocessing production-ready avec gestion automatique des formats.

@@ -3,25 +3,9 @@
 Design unifié avec Computer Vision Training - Production Ready
 Version: 2.0.0
 """
-import os
-import logging
-from src.config.constants import LOGGING_CONSTANTS
-
-# Configuration des logs
-log_dir = LOGGING_CONSTANTS.get("LOG_DIR", "logs")
-log_file = LOGGING_CONSTANTS.get("LOG_FILE", "training.log")
-if not os.path.exists(log_dir):
-    os.makedirs(log_dir)
-
-# Set up logging
-logging.basicConfig(
-    level=logging.INFO,
-    handlers=[
-        logging.FileHandler(os.path.join(log_dir, log_file), encoding='utf-8'),
-        logging.StreamHandler()
-    ]
-)
-logger = logging.getLogger(__name__)
+# Utilisation du système de logging centralisé
+# Note: setup_logging() est appelé dans main.py au démarrage
+from src.shared.logging import get_logger
 
 import streamlit as st
 import pandas as pd
@@ -41,13 +25,13 @@ from orchestrators.ml_training_orchestrator import (
 )
 from src.models.catalog import MODEL_CATALOG
 from src.data.data_analysis import detect_imbalance, auto_detect_column_types
-from src.shared.logging import StructuredLogger
+from src.shared.logging import get_logger
 from helpers.data_validators import DataValidator
 from utils.system_utils import get_system_metrics as check_system_resources
 from monitoring.state_managers import init, AppPage
 STATE = init()
 
-logger = StructuredLogger(__name__)
+logger = get_logger(__name__)
 
 # Configuration Streamlit
 st.set_page_config(
@@ -425,7 +409,7 @@ class MLTrainingWorkflowPro:
     """
     
     def __init__(self):
-        self.logger = StructuredLogger(__name__)
+        self.logger = get_logger(__name__)
     
     def render_header(self):
         """En-tête professionnel avec navigation et métriques"""

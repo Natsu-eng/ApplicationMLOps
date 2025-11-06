@@ -2,13 +2,13 @@
 Module de monitoring système centralisé, optimisé pour production.
 Utilise psutil pour des métriques fiables sans dépendances externes excessives.
 """
-import logging
 import time
 from typing import Dict, Any
 
 import psutil
+from src.shared.logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 class SystemMonitor:
     """

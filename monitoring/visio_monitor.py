@@ -7,9 +7,9 @@ import torch
 import torch.nn as nn
 
 from src.data.computer_vision_preprocessing import DataPreprocessor, Result
-from src.shared.logging import StructuredLogger
+from src.shared.logging import get_logger
 
-logger = StructuredLogger(__name__)
+logger = get_logger(__name__)
 # ========================
 # MONITORING EN PRODUCTION
 # ========================

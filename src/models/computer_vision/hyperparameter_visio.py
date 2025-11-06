@@ -9,9 +9,9 @@ from src.data.computer_vision_preprocessing import Result
 from src.models.computer_vision.cross_validator import CrossValidator
 from src.models.computer_vision_training import ModelConfig, TrainingConfig
 
-from src.shared.logging import StructuredLogger
+from src.shared.logging import get_logger
 
-logger = StructuredLogger(__name__)
+logger = get_logger(__name__)
 
 
 class HyperparameterTuner:

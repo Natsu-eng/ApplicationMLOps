@@ -1,8 +1,8 @@
 
 import torch
-from src.shared.logging import StructuredLogger
+from src.shared.logging import get_logger
 
-logger = StructuredLogger(__name__)
+logger = get_logger(__name__)
 # ======================
 # GESTIONNAIRE DE DEVICE
 # ======================

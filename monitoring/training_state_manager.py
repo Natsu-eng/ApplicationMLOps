@@ -5,9 +5,9 @@ import threading
 from typing import Dict, Any, List
 from contextlib import contextmanager
 from monitoring.mlflow_collector import MLflowRunCollector
-import logging
+from src.shared.logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 class TrainingStateManager:
     """Gestionnaire d'état global pour l'entraînement."""

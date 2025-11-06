@@ -16,7 +16,7 @@ from datetime import datetime
 from pathlib import Path
 
 # Import des modules déplacés
-from monitoring.logging_utils import StructuredLogger
+from src.shared.logging import get_logger
 from monitoring.decorators import monitor_operation, timeout, safe_execute
 from monitoring.state_managers import STATE
 from monitoring.system_monitor import get_system_metrics, _get_memory_usage
@@ -99,7 +99,7 @@ except ImportError:
     }
 
 # Initialisation du logger
-logger = StructuredLogger(__name__)
+logger = get_logger(__name__)
 
 def _safe_get(obj: Any, keys: List[str], default: Optional[Any] = None) -> Optional[Any]:
     """Récupération sécurisée d'attributs imbriqués - SPÉCIFIQUE AUX VISUALISATIONS"""
@@ -222,7 +222,7 @@ def _export_plot_to_png(fig: go.Figure, width: int = 1200, height: int = 600) ->
         img_bytes = fig.to_image(format="png", width=width, height=height, scale=2)
         return img_bytes
     except Exception as e:
-        logger.log_structured("ERROR", f"Export PNG échoué: {str(e)}")
+        logger.error(f"Export PNG échoué: {str(e)}")
         return b""
 
 def _generate_color_palette(n_colors: int) -> List[str]:
@@ -270,7 +270,7 @@ class ModelEvaluationVisualizer:
         self._temp_dir.mkdir(exist_ok=True)
         self._plot_cache = {}
         
-        logger.log_structured("INFO", "Visualizer initialisé", {
+        logger.info("Visualizer initialisé", {
             "n_results": len(self.ml_results),
             "task_type": self.validation_result.get("task_type", "unknown")
         })
@@ -329,7 +329,7 @@ class ModelEvaluationVisualizer:
                     task_type
                 )
             
-            logger.log_structured("INFO", "Validation données terminée", {
+            logger.info("Validation données terminée", {
                 "n_successful": len(validation['successful_models']),
                 "n_failed": len(validation['failed_models']),
                 "task_type": validation["task_type"]
@@ -337,7 +337,7 @@ class ModelEvaluationVisualizer:
             
         except Exception as e:
             validation["errors"].append(f"Erreur validation: {str(e)}")
-            logger.log_structured("ERROR", f"Erreur validation évaluation: {str(e)}")
+            logger.error(f"Erreur validation évaluation: {str(e)}")
         
         return validation
 
@@ -352,11 +352,11 @@ class ModelEvaluationVisualizer:
             if hasattr(fig, 'to_json'):
                 return fig
             else:
-                logger.log_structured("WARNING", f"Objet non-Plotly fourni au cache", {"plot_key": plot_key})
+                logger.warning(f"Objet non-Plotly fourni au cache", {"plot_key": plot_key})
                 return fig
                 
         except Exception as e:
-            logger.log_structured("ERROR", f"Erreur cache graphique", {
+            logger.error(f"Erreur cache graphique", {
                 "plot_key": plot_key, 
                 "error": str(e)
             })
@@ -371,7 +371,7 @@ class ModelEvaluationVisualizer:
         if STREAMLIT_AVAILABLE and hasattr(st, 'session_state'):
             stored_task = getattr(st.session_state, 'task_type', None)
             if stored_task and stored_task in ['classification', 'regression', 'clustering']:
-                logger.log_structured("INFO", f"Type tâche récupéré depuis session_state: {stored_task}")
+                logger.info(f"Type tâche récupéré depuis session_state: {stored_task}")
                 return stored_task
         
         # PRIORITÉ 2 : Détection par analyse de chaque modèle
@@ -386,7 +386,7 @@ class ModelEvaluationVisualizer:
             from collections import Counter
             most_common = Counter(task_types).most_common(1)
             detected_type = most_common[0][0] if most_common else 'unknown'
-            logger.log_structured("INFO", f"Type tâche détecté par analyse: {detected_type}")
+            logger.info(f"Type tâche détecté par analyse: {detected_type}")
             return detected_type
         
         # PRIORITÉ 3 : Fallback sur analyse du premier modèle
@@ -415,7 +415,7 @@ class ModelEvaluationVisualizer:
                 
                 return 'classification' if is_classification else 'regression'
             except Exception as e:
-                logger.log_structured("ERROR", f"Erreur analyse y_test: {str(e)}")
+                logger.error(f"Erreur analyse y_test: {str(e)}")
         
         # PRIORITÉ 4 : Analyse des métriques
         metrics = _safe_get(first_model, ['metrics'], {})
@@ -431,7 +431,7 @@ class ModelEvaluationVisualizer:
         elif any(m in metrics for m in regression_metrics):
             return 'regression'
         
-        logger.log_structured("WARNING", "Type de tâche non détecté après toutes tentatives")
+        logger.warning("Type de tâche non détecté après toutes tentatives")
         return 'unknown'
 
     def _find_best_model(self, models: List[Dict], task_type: str) -> Optional[str]:
@@ -454,7 +454,7 @@ class ModelEvaluationVisualizer:
             
             return _safe_get(best_model, ['model_name'])
         except Exception as e:
-            logger.log_structured("WARNING", f"Erreur recherche meilleur modèle: {str(e)}")
+            logger.warning(f"Erreur recherche meilleur modèle: {str(e)}")
             return _safe_get(models[0], ['model_name'])
 
     def _compute_metrics_summary(self, models: List[Dict], task_type: str) -> Dict[str, Any]:
@@ -487,7 +487,7 @@ class ModelEvaluationVisualizer:
                     'silhouette_std': float(np.std(silhouette_scores))
                 }
         except Exception as e:
-            logger.log_structured("WARNING", f"Erreur calcul résumé métriques: {str(e)}")
+            logger.warning(f"Erreur calcul résumé métriques: {str(e)}")
         
         return summary
 
@@ -517,7 +517,7 @@ class ModelEvaluationVisualizer:
                 return _create_empty_plot(f"Type de tâche '{task_type}' non supporté")
                 
         except Exception as e:
-            logger.log_structured("ERROR", f"Graphique comparaison échoué: {str(e)}")
+            logger.error(f"Graphique comparaison échoué: {str(e)}")
             return _create_empty_plot(f"Erreur création graphique: {str(e)}")
 
     def _create_classification_comparison(self, models: List[Dict], model_names: List[str]) -> go.Figure:
@@ -718,7 +718,7 @@ class ModelEvaluationVisualizer:
             return fig
             
         except Exception as e:
-            logger.log_structured("ERROR", f"Distribution performances échouée: {str(e)}")
+            logger.error(f"Distribution performances échouée: {str(e)}")
             return _create_empty_plot(f"Erreur: {str(e)}")
 
     @monitor_operation
@@ -807,7 +807,7 @@ class ModelEvaluationVisualizer:
                 margin=dict(l=150, r=50, t=80, b=50)
             )
             
-            logger.log_structured("INFO", f"Graphique importance créé", {
+            logger.info("Graphique importance créé", {
                 "model": model_name,
                 "n_features": top_n,
                 "method": method_used
@@ -815,7 +815,7 @@ class ModelEvaluationVisualizer:
             return fig
             
         except Exception as e:
-            logger.log_structured("ERROR", f"Graphique importance features échoué: {str(e)}")
+            logger.error(f"Graphique importance features échoué: {str(e)}")
             return _create_empty_plot(f"Erreur importance features: {str(e)}")
 
     @monitor_operation
@@ -871,7 +871,7 @@ class ModelEvaluationVisualizer:
                         explainer = shap.TreeExplainer(actual_model)
                         shap_values = explainer.shap_values(X_shap)
                     except Exception as tree_error:
-                        logger.log_structured("WARNING", f"TreeExplainer échoué: {str(tree_error)}")
+                        logger.warning(f"TreeExplainer échoué: {str(tree_error)}")
                         # Continuer avec d'autres explainers
                         
                 # Essayer LinearExplainer pour les modèles linéaires
@@ -880,7 +880,7 @@ class ModelEvaluationVisualizer:
                         explainer = shap.LinearExplainer(actual_model, X_shap)
                         shap_values = explainer.shap_values(X_shap)
                     except Exception as linear_error:
-                        logger.log_structured("WARNING", f"LinearExplainer échoué: {str(linear_error)}")
+                        logger.warning(f"LinearExplainer échoué: {str(linear_error)}")
                 
                 # Fallback KernelExplainer
                 if shap_values is None:
@@ -892,7 +892,7 @@ class ModelEvaluationVisualizer:
                             explainer = shap.KernelExplainer(actual_model.predict, background)
                         shap_values = explainer.shap_values(X_shap)
                     except Exception as kernel_error:
-                        logger.log_structured("ERROR", f"KernelExplainer échoué: {str(kernel_error)}")
+                        logger.error(f"KernelExplainer échoué: {str(kernel_error)}")
                         return _create_empty_plot(f"Erreur calcul SHAP: {str(kernel_error)[:100]}")
                 
                 # Gestion des formats de sortie SHAP
@@ -906,11 +906,11 @@ class ModelEvaluationVisualizer:
                 return self._create_shap_summary_plot(shap_values, X_shap, feature_names, model_name)
                 
             except Exception as shap_error:
-                logger.log_structured("ERROR", f"Erreur calcul SHAP: {str(shap_error)}")
+                logger.error(f"Erreur calcul SHAP: {str(shap_error)}")
                 return _create_empty_plot(f"Erreur calcul SHAP: {str(shap_error)[:100]}")
             
         except Exception as e:
-            logger.log_structured("ERROR", f"Analyse SHAP échouée: {str(e)}")
+            logger.error(f"Analyse SHAP échouée: {str(e)}")
             return _create_empty_plot(f"Erreur analyse SHAP: {str(e)}")
 
     def _create_shap_summary_plot(self, shap_values: np.ndarray, X: np.ndarray, 
@@ -1051,11 +1051,11 @@ class ModelEvaluationVisualizer:
                 ]
             )
 
-            logger.log_structured("INFO", f"Matrice de confusion créée", {"model": model_name})
+            logger.info("Matrice de confusion créée", {"model": model_name})
             return fig
 
         except Exception as e:
-            logger.log_structured("ERROR", f"Matrice de confusion échouée: {str(e)}")
+            logger.error(f"Matrice de confusion échouée: {str(e)}")
             return _create_empty_plot(f"Erreur matrice de confusion: {str(e)}")
 
     @monitor_operation
@@ -1134,11 +1134,11 @@ class ModelEvaluationVisualizer:
                 showlegend=True
             )
 
-            logger.log_structured("INFO", f"Courbe ROC créée", {"model": model_name})
+            logger.info("Courbe ROC créée", {"model": model_name})
             return fig
 
         except Exception as e:
-            logger.log_structured("ERROR", f"Courbe ROC échouée: {str(e)}")
+            logger.error(f"Courbe ROC échouée: {str(e)}")
             return _create_empty_plot(f"Erreur courbe ROC: {str(e)}")
 
     @monitor_operation
@@ -1235,7 +1235,7 @@ class ModelEvaluationVisualizer:
             return fig
             
         except Exception as e:
-            logger.log_structured("ERROR", f"Visualisation clusters échouée: {str(e)}")
+            logger.error(f"Visualisation clusters échouée: {str(e)}")
             return _create_empty_plot(f"Erreur visualisation clusters: {str(e)}")
 
     @monitor_operation
@@ -1324,7 +1324,7 @@ class ModelEvaluationVisualizer:
             return fig
             
         except Exception as e:
-            logger.log_structured("ERROR", f"Analyse silhouette échouée: {str(e)}")
+            logger.error(f"Analyse silhouette échouée: {str(e)}")
             return _create_empty_plot(f"Erreur analyse silhouette: {str(e)}")
 
     @monitor_operation
@@ -1381,7 +1381,7 @@ class ModelEvaluationVisualizer:
             return fig
 
         except Exception as e:
-            logger.log_structured("ERROR", f"Graphique résidus échoué: {str(e)}")
+            logger.error(f"Graphique résidus échoué: {str(e)}")
             return _create_empty_plot(f"Erreur graphique résidus: {str(e)}")
 
     @monitor_operation
@@ -1446,7 +1446,7 @@ class ModelEvaluationVisualizer:
             return fig
 
         except Exception as e:
-            logger.log_structured("ERROR", f"Graphique prédictions vs réelles échoué: {str(e)}")
+            logger.error(f"Graphique prédictions vs réelles échoué: {str(e)}")
             return _create_empty_plot(f"Erreur graphique prédictions: {str(e)}")
 
     @monitor_operation
@@ -1546,7 +1546,7 @@ class ModelEvaluationVisualizer:
             return fig
 
         except Exception as e:
-            logger.log_structured("ERROR", f"Courbe d'apprentissage échouée: {str(e)}")
+            logger.error(f"Courbe d'apprentissage échouée: {str(e)}")
             return _create_empty_plot(f"Erreur courbe d'apprentissage: {str(e)}")
 
     @monitor_operation
@@ -1601,7 +1601,7 @@ class ModelEvaluationVisualizer:
             if df[col].dtype == 'object':
                 df[col] = df[col].astype(str)
         
-        logger.log_structured("INFO", "DataFrame comparaison généré", {"n_models": len(df)})
+        logger.info("DataFrame comparaison généré", {"n_models": len(df)})
         return df
 
     @monitor_operation
@@ -1648,7 +1648,7 @@ class ModelEvaluationVisualizer:
                 "errors": self.validation_result["errors"]
             }
             
-            logger.log_structured("INFO", "Données d'export préparées", {
+            logger.info("Données d'export préparées", {
                 "n_models": len(models_data),
                 "task_type": self.validation_result["task_type"]
             })
@@ -1657,7 +1657,7 @@ class ModelEvaluationVisualizer:
             return export_data
             
         except Exception as e:
-            logger.log_structured("ERROR", f"Préparation données export échouée: {str(e)}")
+            logger.error(f"Préparation données export échouée: {str(e)}")
             return {
                 "error": str(e), 
                 "export_timestamp": time.time(),
@@ -1677,10 +1677,9 @@ class ModelEvaluationVisualizer:
                 except Exception:
                     pass
             
-            logger.log_structured("INFO", "Ressources nettoyées")
+            logger.info("Ressources nettoyées")
         except Exception as e:
-            logger.log_structured("WARNING", f"Nettoyage partiellement échoué: {str(e)}")
-
+            logger.warning(f"Nettoyage partiellement échoué: {str(e)}")
 # Fonctions utilitaires exportées
 def create_model_comparison(ml_results: List[Dict[str, Any]]) -> go.Figure:
     """Fonction utilitaire pour créer un graphique de comparaison"""

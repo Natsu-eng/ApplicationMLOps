@@ -14,9 +14,9 @@ from src.models.computer_vision.persistence import ModelPersistence
 from src.models.computer_vision_training import ComputerVisionTrainer, ModelConfig, TrainingConfig
 from utils.callbacks import LoggingCallback, TrainingCallback
 
-from src.shared.logging import StructuredLogger
+from src.shared.logging import get_logger
 
-logger = StructuredLogger(__name__)
+logger = get_logger(__name__)
 
 
 class ProductionPipeline:

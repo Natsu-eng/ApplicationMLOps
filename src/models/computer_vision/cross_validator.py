@@ -4,9 +4,9 @@ import numpy as np
 from sklearn.model_selection import StratifiedKFold
 from src.data.computer_vision_preprocessing import Result
 from src.models.computer_vision_training import ComputerVisionTrainer, ModelConfig, TrainingConfig
-from src.shared.logging import StructuredLogger
+from src.shared.logging import get_logger
 from utils.callbacks import TrainingCallback
-logger = StructuredLogger(__name__)
+logger = get_logger(__name__)
 
 # ================
 # CROSS-VALIDATION

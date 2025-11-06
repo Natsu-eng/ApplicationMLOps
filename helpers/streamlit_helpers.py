@@ -2,10 +2,10 @@
 Helpers spécifiques à Streamlit pour le caching et la gestion d'état.
 """
 import functools
-import logging
 from typing import Any, Callable
+from src.shared.logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # Variable globale pour la disponibilité de Streamlit
 try:

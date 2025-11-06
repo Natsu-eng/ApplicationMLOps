@@ -19,6 +19,7 @@ from src.models.training import (
     train_single_model_unsupervised
 )
 from src.data.data_analysis import auto_detect_column_types, detect_imbalance
+from src.shared.logging import get_logger
 from src.shared.logging import StructuredLogger
 from src.config.constants import TRAINING_CONSTANTS, VALIDATION_CONSTANTS
 
@@ -28,9 +29,10 @@ from helpers.task_detection import safe_get_task_type
 from utils.errors_handlers import safe_train_models
 from utils.system_utils import check_system_resources
 
-# Initialisation du state manager
-STATE = init()
-logger = StructuredLogger(__name__)
+# Initialisation du state manager (singleton, ne pas réassigner)
+STATE = STATE  # Utiliser l'instance importée directement
+logger = StructuredLogger(__name__) # pour le logging structuré
+
 
 
 # ============================================================================
@@ -208,6 +210,7 @@ class MLTrainingOrchestrator:
     
     def __init__(self):
         self.logger = StructuredLogger(__name__)
+
     
     def train(self, context: MLTrainingContext) -> MLTrainingResult:
         """
@@ -507,9 +510,7 @@ class MLTrainingOrchestrator:
     ) -> List[Dict[str, Any]]:
         """
         Entraîne tous les modèles sélectionnés.
-        - Injection systématique de X_test, y_test dans les résultats pour l'évaluation
-        - Sauvegarde des données d'entraînement et de test pour les visualisations
-        - Gestion robuste de la mémoire avec échantillons réduits
+        - Gestion robuste des données pour les visualisations
         """
         results = []
         n_models = len(context.model_names)
@@ -518,7 +519,7 @@ class MLTrainingOrchestrator:
         column_types = auto_detect_column_types(context.df)
         
         # ========================================================================
-        # NJECTION feature_list dans preprocessing_choices
+        # INJECTION feature_list dans preprocessing_choices
         # ========================================================================
         preprocessing_choices_enriched = context.preprocessing_config.copy()
         preprocessing_choices_enriched['feature_list'] = context.feature_list
@@ -554,7 +555,7 @@ class MLTrainingOrchestrator:
             }]
         
         def train_single_model_wrapper(model_name: str) -> Dict[str, Any]:
-            """Wrapper pour entraînement d'un modèle avec gestion d'erreurs"""
+            """Wrapper pour entraînement d'un modèle avec INJECTION CORRECTE des labels"""
             try:
                 self.logger.info(f"🔧 Entraînement: {model_name}")
                 
@@ -562,8 +563,8 @@ class MLTrainingOrchestrator:
                 pipeline, param_grid = create_leak_free_pipeline(
                     model_name=model_name,
                     task_type=context.task_type,
-                    column_types=filtered_column_types,  # Utilise les colonnes FILTRÉES
-                    preprocessing_choices=preprocessing_choices_enriched,  # Avec feature_list
+                    column_types=filtered_column_types,
+                    preprocessing_choices=preprocessing_choices_enriched,
                     use_smote=context.use_smote,
                     optimize_hyperparams=context.optimize_hyperparams
                 )
@@ -593,12 +594,33 @@ class MLTrainingOrchestrator:
                         monitor=None
                     )
                     
-                    # Injection données clustering pour visualisations
+                    # Injection CORRECTE des données clustering
                     result['X_train'] = X_for_training
-                    result['labels'] = result.get('predictions')
+                    result['X'] = X_for_training  # Double sauvegarde pour compatibilité
+                   
+                    # Vérification et log des labels
+                    if result.get('labels') is not None:
+                        logger.info(f"✅ Labels de clustering injectés pour {model_name}: {len(result['labels'])} labels")
+                        # Assurer que les labels sont dans le format correct
+                        if hasattr(result['labels'], 'shape'):
+                            logger.debug(f"   Shape des labels: {result['labels'].shape}")
+                    else:
+                        logger.warning(f"⚠️ Aucun label disponible pour {model_name} après entraînement")
+                        # Tentative de récupération depuis le modèle
+                        try:
+                            if hasattr(result.get('model'), 'labels_'):
+                                result['labels'] = result['model'].labels_
+                                logger.info(f"🔄 Labels récupérés depuis .labels_ pour {model_name}")
+                            elif hasattr(result.get('model'), 'predict'):
+                                result['labels'] = result['model'].predict(X_for_training)
+                                logger.info(f"🔄 Labels prédits pour {model_name}")
+                        except Exception as e:
+                            logger.error(f"❌ Échec récupération labels {model_name}: {e}")
+                    
                     result['feature_names'] = context.feature_list
                     
                 else:
+                    # Code pour classification/régression
                     X_train = data_prep['X_train'][context.feature_list].copy()
                     X_test = data_prep['X_test'][context.feature_list].copy()
                     y_train = data_prep['y_train']
@@ -621,8 +643,8 @@ class MLTrainingOrchestrator:
                     # Injection systématique des données pour l'évaluation
                     result['X_train'] = X_train
                     result['y_train'] = y_train
-                    result['X_test'] = X_test  # ← CE QUI MANQUAIT !
-                    result['y_test'] = y_test  # ← CE QUI MANQUAIT !
+                    result['X_test'] = X_test
+                    result['y_test'] = y_test
                     result['feature_names'] = context.feature_list
                     
                     # Échantillon réduit pour éviter la mémoire excessive
@@ -635,7 +657,7 @@ class MLTrainingOrchestrator:
                 result['task_type'] = context.task_type
                 result['feature_names'] = context.feature_list
                 
-                # Validation que les données sont bien sauvegardées
+                # VALIDATION RENFORCÉE des données sauvegardées
                 data_saved = {
                     'X_train': result.get('X_train') is not None,
                     'X_test': result.get('X_test') is not None,
@@ -644,7 +666,17 @@ class MLTrainingOrchestrator:
                     'labels': result.get('labels') is not None
                 }
                 
-                logger.info(f"✅ Données sauvegardées pour {model_name}: {data_saved}")
+                # Log détaillé selon le type de tâche
+                if context.task_type == 'clustering':
+                    labels_info = {
+                        'labels_present': data_saved['labels'],
+                        'labels_type': type(result.get('labels')),
+                        'labels_shape': result.get('labels', []).shape if hasattr(result.get('labels'), 'shape') else 'N/A',
+                        'X_train_shape': result.get('X_train', []).shape if hasattr(result.get('X_train'), 'shape') else 'N/A'
+                    }
+                    logger.info(f"📊 Données clustering sauvegardées pour {model_name}: {data_saved} | {labels_info}")
+                else:
+                    logger.info(f"✅ Données sauvegardées pour {model_name}: {data_saved}")
                 
                 return result
                 
@@ -693,20 +725,32 @@ class MLTrainingOrchestrator:
                             'warnings': [str(e)]
                         })
         
-        # Log final de validation des données sauvegardées
+        # DIAGNOSTIC FINAL COMPLET
         successful_models = [r for r in results if r.get('success', False)]
+        
         for model in successful_models:
             model_name = model.get('model_name', 'Unknown')
-            has_test_data = model.get('X_test') is not None and model.get('y_test') is not None
-            has_train_data = model.get('X_train') is not None and model.get('y_train') is not None
             
-            if context.task_type != 'clustering':
+            if context.task_type == 'clustering':
+                has_labels = model.get('labels') is not None
+                has_X = model.get('X_train') is not None
+                
+                if has_labels and has_X:
+                    n_labels = len(model['labels']) if hasattr(model['labels'], '__len__') else 'N/A'
+                    logger.info(f"✅ {model_name}: Données clustering COMPLÈTES ✅ (labels: {n_labels}, X: {model['X_train'].shape})")
+                else:
+                    logger.error(f"❌ {model_name}: DONNÉES CLUSTERING MANQUANTES ❌ (labels: {has_labels}, X: {has_X})")
+            else:
+                has_test_data = model.get('X_test') is not None and model.get('y_test') is not None
+                has_train_data = model.get('X_train') is not None and model.get('y_train') is not None
+                
                 if has_test_data:
                     logger.info(f"✅ {model_name}: Données de test sauvegardées ✅")
                 else:
                     logger.error(f"❌ {model_name}: DONNÉES DE TEST MANQUANTES ❌")
         
         return results
+    
     
     def _analyze_results(
         self,

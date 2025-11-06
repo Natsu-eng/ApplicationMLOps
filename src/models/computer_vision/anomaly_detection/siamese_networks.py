@@ -6,9 +6,9 @@ import torch.nn as nn # type: ignore
 import torch.nn.functional as F # type: ignore
 import torchvision.models as models # type: ignore
 from typing import Tuple, Optional
-import logging
+from src.shared.logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 class ProfessionalSiameseNetwork(nn.Module):
     """

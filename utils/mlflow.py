@@ -1,7 +1,7 @@
 import os
 import subprocess
 import time
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Optional
 
 import joblib
 import numpy as np
@@ -17,6 +17,64 @@ try:
 except ImportError:
     MLFLOW_AVAILABLE = False
     mlflow = None
+
+
+# ============================================
+# CONFIGURATION ET HEALTHCHECK MLFLOW
+# ============================================
+
+def configure_mlflow(
+    tracking_uri: Optional[str] = None,
+    experiment_name: Optional[str] = None
+) -> bool:
+    """Configure MLflow de manière centralisée et idempotente.
+
+    Args:
+        tracking_uri: URI du serveur MLflow. Si None, lit depuis settings.
+        experiment_name: Nom de l'expérience. Si None, lit depuis settings.
+
+    Returns:
+        True si configuration réussie, False sinon.
+    """
+    if not MLFLOW_AVAILABLE:
+        return False
+
+    try:
+        # Chargement via settings pour centralisation
+        try:
+            from src.config.settings import mlflow_settings  # type: ignore
+            default_tracking = mlflow_settings.MLFLOW_TRACKING_URI
+            default_experiment = mlflow_settings.MLFLOW_EXPERIMENT_NAME
+        except Exception:
+            # Fallback à des valeurs raisonnables locales
+            default_tracking = "sqlite:///mlflow.db"
+            default_experiment = "datalab_pro_experiments"
+
+        final_tracking = (tracking_uri or default_tracking).strip()
+        final_experiment = (experiment_name or default_experiment).strip()
+
+        mlflow.set_tracking_uri(final_tracking)
+        # Crée/selectionne l'expérience
+        exp = mlflow.get_experiment_by_name(final_experiment)
+        if exp is None:
+            mlflow.create_experiment(final_experiment)
+        mlflow.set_experiment(final_experiment)
+        return True
+    except Exception:
+        return False
+
+
+def mlflow_health_check(timeout_seconds: int = 3) -> bool:
+    """Vérifie l’accessibilité basique du serveur MLflow."""
+    if not MLFLOW_AVAILABLE:
+        return False
+    try:
+        client = mlflow.tracking.MlflowClient(timeout=timeout_seconds)  # type: ignore
+        # Opération légère: lister les expériences (limité implicitement)
+        _ = client.search_experiments(max_results=1)  # type: ignore
+        return True
+    except Exception:
+        return False
 
 
 # ============================================
@@ -232,9 +290,9 @@ import numpy as np
 import pandas as pd
 from sklearn.metrics import silhouette_score, calinski_harabasz_score, davies_bouldin_score
 from typing import Tuple, Dict, Any
-import logging
+from src.shared.logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 def _ensure_array_like(X, force_float: bool = False) -> Tuple[np.ndarray, bool, Any]:
     """

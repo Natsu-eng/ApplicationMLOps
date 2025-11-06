@@ -5,14 +5,13 @@ Fonctions d'échantillonnage sécurisé pour DataFrames.
 import pandas as pd
 import numpy as np
 import dask.dataframe as dd
-import logging
 from typing import Union
 from helpers.dask_helpers import is_dask_dataframe, compute_if_dask
 from helpers.data_transformers import optimize_dataframe
 from monitoring.decorators import monitor_performance
+from src.shared.logging import get_logger
 
-
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 def safe_sample(
     df: Union[pd.DataFrame, 'dd.DataFrame'], 

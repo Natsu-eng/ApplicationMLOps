@@ -1,61 +1,91 @@
 """
-Module de gestion des erreurs robuste pour l'application.
-Version optimisée pour production avec logging et reprise intelligente.
+Module de gestion des erreurs - Version consolidée.
+
+Ce module fournit des fonctions utilitaires utilisant les décorateurs standardisés
+de monitoring/decorators.py. Les décorateurs sont maintenant centralisés dans
+monitoring/decorators.py pour éviter la duplication.
+
+Pour la compatibilité ascendante, ce module reste disponible mais utilise
+les décorateurs standardisés en interne.
 """
 
-import logging
-from typing import Callable, Any
-from functools import wraps
+from typing import Any, Dict, List, Optional
 
+# Import des décorateurs standardisés
+from monitoring.decorators import safe_execute, handle_mlflow_errors
 from src.shared.logging import get_logger
 
 logger = get_logger(__name__)
 
+# Déprécié: Utiliser directement safe_execute de monitoring/decorators.py
+# Conservé pour compatibilité ascendante
 class ErrorHandler:
-    """Gestion centralisée des erreurs avec reprise intelligente"""
+    """
+    Classe de gestion d'erreurs - DÉPRÉCIÉE.
+    
+    Utiliser directement les décorateurs de monitoring/decorators.py:
+    - safe_execute() pour exécution sécurisée
+    - handle_mlflow_errors() pour gestion MLflow
+    
+    Cette classe est conservée uniquement pour compatibilité ascendante.
+    """
     
     @staticmethod
     def safe_execute(default_return=None, max_retries: int = 1):
-        """Décorateur pour exécution sécurisée avec reprise"""
-        def decorator(func: Callable) -> Callable:
-            @wraps(func)
-            def wrapper(*args, **kwargs) -> Any:
-                last_exception = None
-                
-                for attempt in range(max_retries + 1):
-                    try:
-                        return func(*args, **kwargs)
-                    except Exception as e:
-                        last_exception = e
-                        logger.warning(f"Tentative {attempt + 1} échouée pour {func.__name__}: {str(e)[:100]}")
-                        
-                        if attempt < max_retries:
-                            continue
-                
-                logger.error(f"Échec définitif de {func.__name__}: {str(last_exception)}", exc_info=True)
-                return default_return
-            return wrapper
-        return decorator
+        """
+        Décorateur pour exécution sécurisée avec reprise.
+        
+        DÉPRÉCIÉ: Utiliser directement safe_execute() de monitoring/decorators.py
+        
+        Args:
+            default_return: Valeur de retour en cas d'erreur
+            max_retries: Nombre de tentatives supplémentaires
+            
+        Returns:
+            Décorateur
+        """
+        logger.warning(
+            "ErrorHandler.safe_execute est déprécié. "
+            "Utiliser directement safe_execute() de monitoring/decorators.py"
+        )
+        return safe_execute(fallback_value=default_return, max_retries=max_retries)
     
     @staticmethod
-    def handle_mlflow_errors(func: Callable) -> Callable:
-        """Gestion spécifique des erreurs MLflow"""
-        @wraps(func)
-        def wrapper(*args, **kwargs) -> Any:
-            try:
-                return func(*args, **kwargs)
-            except ImportError:
-                logger.warning("MLflow non disponible - poursuite sans tracking")
-                return None
-            except Exception as e:
-                logger.error(f"Erreur MLflow dans {func.__name__}: {str(e)[:100]}", exc_info=True)
-                return None
-        return wrapper
+    def handle_mlflow_errors(func):
+        """
+        Gestion spécifique des erreurs MLflow.
+        
+        DÉPRÉCIÉ: Utiliser directement handle_mlflow_errors() de monitoring/decorators.py
+        
+        Args:
+            func: Fonction à décorer
+            
+        Returns:
+            Fonction wrappée
+        """
+        logger.warning(
+            "ErrorHandler.handle_mlflow_errors est déprécié. "
+            "Utiliser directement handle_mlflow_errors() de monitoring/decorators.py"
+        )
+        return handle_mlflow_errors(func)
 
-@ErrorHandler.safe_execute(default_return=None, max_retries=1)
+
+@safe_execute(fallback_value=None, max_retries=1)
 def safe_train_models(**kwargs):
-    """Exécution sécurisée de l'entraînement des modèles."""
+    """
+    Exécution sécurisée de l'entraînement des modèles.
+    
+    Cette fonction utilise le décorateur safe_execute standardisé pour
+    gérer les erreurs et permettre les retries.
+    
+    Args:
+        **kwargs: Arguments passés à train_models()
+        
+    Returns:
+        Résultats de l'entraînement ou None en cas d'erreur
+    """
     from src.models.training import train_models
     return train_models(**kwargs)
+
 
 __all__ = ['ErrorHandler', 'safe_train_models']

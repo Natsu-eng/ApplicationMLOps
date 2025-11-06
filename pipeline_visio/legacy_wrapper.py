@@ -17,10 +17,10 @@ from src.models.computer_vision_training import (
     SchedulerType, 
     TrainingConfig
 )
-from src.shared.logging import StructuredLogger
+from src.shared.logging import get_logger
 from utils.callbacks import LoggingCallback, StreamlitCallback
 
-logger = StructuredLogger(__name__)
+logger = get_logger(__name__)
 
 
 # ============================================================================

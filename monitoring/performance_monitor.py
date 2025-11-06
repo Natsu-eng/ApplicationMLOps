@@ -3,11 +3,11 @@ Monitoring des performances et ressources pendant l'entraînement.
 """
 import time
 import psutil
-import logging
 from typing import Dict, List, Any, Optional
 from src.config.constants import TRAINING_CONSTANTS
+from src.shared.logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 class TrainingMonitor:
     """Monitor pour suivre la progression et les ressources pendant l'entraînement."""

@@ -16,9 +16,9 @@ from src.models.computer_vision_training import (
 )
 from src.data.computer_vision_preprocessing import DataPreprocessor
 from monitoring.mlflow_vision_tracker import cv_mlflow_tracker
-from src.shared.logging import StructuredLogger
+from src.shared.logging import get_logger
 
-logger = StructuredLogger(__name__)
+logger = get_logger(__name__)
 
 
 @dataclass
@@ -100,11 +100,12 @@ class ComputerVisionTrainingOrchestrator:
             # ========================================
             result = self._execute_training(trainer, context)
             
-            if not result.success:
+            # VÉRIFICATION SUCCÈS
+            if not result.get('success', False):  # ✅ Accès dict au lieu de .success
                 cv_mlflow_tracker.end_run("FAILED")
                 return TrainingResult(
                     success=False,
-                    error=result.error,
+                    error=result.get('error', 'Erreur inconnue'),  # ✅ Accès dict
                     mlflow_run_id=run_id
                 )
             
@@ -116,7 +117,7 @@ class ComputerVisionTrainingOrchestrator:
             # ========================================
             # 7. LOG MÉTRIQUES ET ARTIFACTS
             # ========================================
-            history = result.data['history']
+            history = result['data']['history']  # Accès dict
             self._log_training_metrics(history)
             self._log_training_artifacts(trainer.model, preprocessor, context, run_id)
             
@@ -158,7 +159,8 @@ class ComputerVisionTrainingOrchestrator:
                     "X_val_shape": context.X_val.shape if context.X_val is not None else None
                 }
             )
-    
+
+
     def _validate_training_context(self, context: TrainingContext):
         """Valide le contexte d'entraînement"""
         if context.X_train is None or context.X_val is None:
@@ -253,16 +255,11 @@ class ComputerVisionTrainingOrchestrator:
     def _execute_training(self, trainer, context: TrainingContext):
         """
         Exécute l'entraînement et normalise le format de retour.
-        Stratégies:
-        - Détection automatique du type de retour
-        - Conversion objet Result → dict si nécessaire
-        - Normalisation du format de sortie
-        - Validation exhaustive du résultat
+        Retour TOUJOURS au format dict standardisé
         """
         try:
             # Exécution selon le type de trainer
             if context.anomaly_type:
-                # AnomalyAwareTrainer.train()
                 raw_result = trainer.train(
                     context.X_train,
                     context.y_train,
@@ -270,7 +267,6 @@ class ComputerVisionTrainingOrchestrator:
                     context.y_val
                 )
             else:
-                # ComputerVisionTrainer.fit()
                 raw_result = trainer.fit(
                     context.X_train,
                     context.y_train,
@@ -278,109 +274,118 @@ class ComputerVisionTrainingOrchestrator:
                     context.y_val
                 )
             
-            # NORMALISATION DU FORMAT DE RETOUR
-            # Gérer 3 cas: dict, Result dataclass, autre objet
+            # ========================================================================
+            # NORMALISATION ROBUSTE - Gère TOUS les cas possibles
+            # ========================================================================
             
+            # CAS 1 : Déjà un dict
             if isinstance(raw_result, dict):
-                # Cas 1: Déjà un dict (ancien format)
                 result = raw_result
                 self.logger.info(f"✅ Résultat format dict (legacy)")
             
-            elif hasattr(raw_result, '__dataclass_fields__'):
-                # Cas 2: Dataclass Result (nouveau format)
-                self.logger.info(f"✅ Résultat format Result dataclass, conversion en dict")
+            # CAS 2 : Objet Result avec attribut .data
+            elif hasattr(raw_result, 'data'):
+                self.logger.info(f"✅ Résultat format Result, extraction .data")
                 
-                # Conversion dataclass → dict
-                try:
-                    from dataclasses import asdict
-                    result = asdict(raw_result)
-                except Exception as e:
-                    # Fallback: conversion manuelle
-                    self.logger.warning(f"⚠️ asdict() échoué, conversion manuelle: {e}")
+                # Extraction du dict depuis Result
+                if isinstance(raw_result.data, dict):
                     result = {
-                        'success': getattr(raw_result, 'success', False),
-                        'data': getattr(raw_result, 'data', {}),
+                        'success': getattr(raw_result, 'success', True),
+                        'data': raw_result.data,
                         'error': getattr(raw_result, 'error', None),
                         'metadata': getattr(raw_result, 'metadata', {})
                     }
-                
-                # S'assurer que 'history' est accessible
-                if 'data' in result and isinstance(result['data'], dict):
-                    if 'history' in result['data']:
-                        pass  # Déjà présent
-                    elif hasattr(raw_result, 'history'):
-                        result['data']['history'] = raw_result.history
+                else:
+                    # Cas où .data n'est pas un dict (objet complexe)
+                    result = {
+                        'success': getattr(raw_result, 'success', True),
+                        'data': {
+                            'history': getattr(raw_result.data, 'history', {}) if hasattr(raw_result.data, 'history') else {}
+                        },
+                        'error': getattr(raw_result, 'error', None),
+                        'metadata': getattr(raw_result, 'metadata', {})
+                    }
             
-            elif hasattr(raw_result, 'success') and hasattr(raw_result, 'data'):
-                # Cas 3: Objet custom avec attributs success/data
-                self.logger.info(f"✅ Résultat format objet custom, conversion en dict")
+            # CAS 3 : Objet avec success/data mais pas de .data direct
+            elif hasattr(raw_result, 'success'):
+                self.logger.info(f"✅ Résultat format objet custom")
                 result = {
                     'success': raw_result.success,
-                    'data': raw_result.data if hasattr(raw_result, 'data') else {},
-                    'error': raw_result.error if hasattr(raw_result, 'error') else None,
-                    'metadata': raw_result.metadata if hasattr(raw_result, 'metadata') else {}
+                    'data': getattr(raw_result, 'history', {}) if hasattr(raw_result, 'history') else {},
+                    'error': getattr(raw_result, 'error', None),
+                    'metadata': getattr(raw_result, 'metadata', {})
                 }
             
+            # CAS 4 : Format inconnu
             else:
-                # Cas 4: Format inconnu
                 self.logger.error(f"❌ Format résultat invalide: {type(raw_result)}")
                 return {
                     'success': False,
                     'error': f"Format résultat invalide: {type(raw_result)}",
-                    'data': {}
+                    'data': {},
+                    'metadata': {}
                 }
             
+            # ========================================================================
             # VALIDATION ET NORMALISATION DU DICT
+            # ========================================================================
             
             # S'assurer que les clés essentielles existent
             if 'success' not in result:
                 result['success'] = 'error' not in result or result['error'] is None
             
             if 'data' not in result:
-                if 'history' in result:
-                    # Migrer 'history' dans 'data'
-                    result['data'] = {'history': result.pop('history')}
-                else:
-                    result['data'] = {}
+                result['data'] = {}
             
             if 'error' not in result:
                 result['error'] = None
             
-            # S'assurer que data.history existe
-            if isinstance(result['data'], dict):
-                if 'history' not in result['data']:
-                    # Tenter de récupérer depuis trainer
-                    if hasattr(trainer, 'history') and trainer.history:
-                        result['data']['history'] = trainer.history
-                        self.logger.warning("⚠️ history récupérée depuis trainer.history")
-                    else:
-                        # Créer un historique minimal
-                        result['data']['history'] = {
-                            'train_loss': [],
-                            'val_loss': [],
-                            'total_epochs_trained': 0,
-                            'best_epoch': 0,
-                            'training_time': 0.0
-                        }
-                        self.logger.warning("⚠️ Historique vide créé (fallback)")
+            if 'metadata' not in result:
+                result['metadata'] = {}
             
+            # S'assurer que data est un dict
+            if not isinstance(result['data'], dict):
+                result['data'] = {'raw': result['data']}
+            
+            # S'assurer que data.history existe
+            if 'history' not in result['data']:
+                # Tenter de récupérer depuis trainer
+                if hasattr(trainer, 'history') and trainer.history:
+                    result['data']['history'] = trainer.history
+                    self.logger.warning("⚠️ history récupérée depuis trainer.history")
+                else:
+                    # Créer un historique minimal
+                    result['data']['history'] = {
+                        'train_loss': [],
+                        'val_loss': [],
+                        'total_epochs_trained': 0,
+                        'best_epoch': 0,
+                        'training_time': 0.0
+                    }
+                    self.logger.warning("⚠️ Historique vide créé (fallback)")
+            
+            # ========================================================================
             # LOG DÉTAILLÉ DU RÉSULTAT FINAL
+            # ========================================================================
             self.logger.info(
-                f"✅ Entraînement terminé",
+                f"✅ Entraînement terminé - Format normalisé",
                 success=result['success'],
                 has_data=bool(result.get('data')),
                 has_history='history' in result.get('data', {}),
                 has_error=result.get('error') is not None,
-                result_keys=list(result.keys())
+                result_keys=list(result.keys()),
+                data_keys=list(result.get('data', {}).keys())
             )
             
+            # ========================================================================
             # VALIDATION FINALE
+            # ========================================================================
             if result['success'] and not result.get('data', {}).get('history'):
                 self.logger.error("❌ Succès déclaré mais historique manquant!")
                 result['success'] = False
                 result['error'] = "Historique d'entraînement manquant"
             
-            return result
+            return result  # ✅ TOUJOURS un dict normalisé
             
         except Exception as e:
             self.logger.error(f"❌ Erreur exécution entraînement: {e}", exc_info=True)
@@ -568,25 +573,20 @@ class ComputerVisionTrainingOrchestrator:
         preprocessor: DataPreprocessor
     ) -> Dict:
         """
-        Construit l'historique final normalisé avec conversion types robuste.
-        Stratégies:
-        - Conversion safe de chaque valeur
-        - Gestion None/NaN/Inf
-        - Validation listes non-vides
-        - Fallbacks pour valeurs manquantes
+        Construit l'historique final normalisé.    
+        Gestion robuste des types None et validation
         """
         
         def safe_float(value, default=0.0):
-            """Conversion safe en float"""
+            """Conversion safe en float avec gestion None"""
             try:
                 if value is None:
                     return default
                 if isinstance(value, (list, tuple, np.ndarray)):
                     if len(value) == 0:
                         return default
-                    value = value[-1]  # Prendre dernière valeur
+                    value = value[-1]
                 f = float(value)
-                # Gérer NaN et Inf
                 if np.isnan(f) or np.isinf(f):
                     return default
                 return f
@@ -594,7 +594,7 @@ class ComputerVisionTrainingOrchestrator:
                 return default
         
         def safe_int(value, default=0):
-            """Conversion safe en int"""
+            """Conversion safe en int avec gestion None"""
             try:
                 if value is None:
                     return default
@@ -602,22 +602,13 @@ class ComputerVisionTrainingOrchestrator:
             except (ValueError, TypeError):
                 return default
         
-        def safe_bool(value, default=False):
-            """Conversion safe en bool"""
-            try:
-                if value is None:
-                    return default
-                return bool(value)
-            except (ValueError, TypeError):
-                return default
-        
         def safe_list_float(values, default_list=None):
-            """Conversion safe liste de floats"""
+            """Conversion safe liste de floats avec gestion None"""
             if default_list is None:
                 default_list = []
             
             try:
-                if values is None or len(values) == 0:
+                if values is None or (hasattr(values, '__len__') and len(values) == 0):
                     return default_list
                 
                 result = []
@@ -635,9 +626,12 @@ class ComputerVisionTrainingOrchestrator:
             except Exception:
                 return default_list
         
-        # SAFE DE L'HISTORIQUE
         try:
-            # Listes de métriques
+            # ========================================================================
+            # EXTRACTION SAFE DES MÉTRIQUES
+            # ========================================================================
+            
+            # Listes de métriques avec fallbacks
             train_loss = safe_list_float(history_data.get('train_loss'), [0.0])
             val_loss = safe_list_float(history_data.get('val_loss'), [0.0])
             val_accuracy = safe_list_float(history_data.get('val_accuracy'), [])
@@ -649,7 +643,7 @@ class ComputerVisionTrainingOrchestrator:
             best_val_loss = safe_float(history_data.get('best_val_loss'), float('inf'))
             training_time = safe_float(history_data.get('training_time'), 0.0)
             total_epochs = safe_int(history_data.get('total_epochs_trained'), len(train_loss))
-            early_stopping = safe_bool(history_data.get('early_stopping_triggered'), False)
+            early_stopping = bool(history_data.get('early_stopping_triggered', False))
             
             # Model type safe
             model_type_value = history_data.get('model_type') or context.model_config.get("model_type")
@@ -660,7 +654,9 @@ class ComputerVisionTrainingOrchestrator:
             if input_shape is None and context.X_train is not None:
                 input_shape = context.X_train.shape[1:]
             
-            # Preprocessor config safe
+            # ========================================================================
+            # PREPROCESSOR CONFIG SAFE
+            # ========================================================================
             preprocessor_config = None
             preprocessor_available = False
             
@@ -672,7 +668,9 @@ class ComputerVisionTrainingOrchestrator:
                     self.logger.warning(f"⚠️ Impossible d'extraire config preprocessor: {e}")
                     preprocessor_config = {"error": "config_unavailable"}
             
+            # ========================================================================
             # CONSTRUCTION DU DICT FINAL
+            # ========================================================================
             final_history = {
                 'success': True,
                 'train_loss': train_loss,

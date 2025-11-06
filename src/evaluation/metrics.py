@@ -4,7 +4,6 @@ Version Production - Complètement refactorée pour la robustesse
 """
 
 from datetime import datetime
-import logging
 import threading
 import pandas as pd
 import numpy as np
@@ -29,7 +28,9 @@ from monitoring.decorators import monitor_performance, safe_metric_calculation
 from monitoring.system_monitor import get_system_metrics
 from helpers.metrics_validators import validate_input_data
 from helpers.data_transformers import safe_array_conversion
+from src.shared import logging
 from utils.formatters import _sanitize_metrics_for_output
+from src.shared.logging import get_logger
 
 # Imports conditionnels
 try:
@@ -1022,7 +1023,8 @@ class MetricsLogger:
     """Classe pour journaliser les métriques d'évaluation des modèles."""
     
     def __init__(self, logger_name: str = "metrics"):
-        self.logger = logging.getLogger(logger_name)
+        # Utiliser le système de logging centralisé
+        self.logger = get_logger(logger_name)
 
     def log_metrics(self, level: str, message: str, extra: Dict[str, Any] = None):
         """Journalise les métriques avec un format texte clair."""

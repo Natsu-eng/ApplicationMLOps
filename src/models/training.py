@@ -3,6 +3,7 @@ Module d'entraînement robuste pour le machine learning.
 Supporte l'apprentissage supervisé et non-supervisé avec gestion MLOps avancée.
 Version Production - 
 """
+import logging
 import pandas as pd
 import numpy as np
 from sklearn.model_selection import train_test_split, cross_val_score, GridSearchCV, StratifiedKFold, KFold
@@ -69,17 +70,9 @@ except ImportError as e:
     TRAINING_CONSTANTS = {}
     PREPROCESSING_CONSTANTS = {}
 
-import logging
-# Configuration logging structuré (JSON)
-logger = logging.getLogger(__name__)
-logging.basicConfig(
-    level=getattr(logging, LOGGING_CONSTANTS.get("DEFAULT_LOG_LEVEL", "INFO")),
-    format='%(asctime)s - %(name)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s',
-    handlers=[
-        logging.FileHandler(os.path.join(LOGGING_CONSTANTS.get("LOG_DIR", "logs"), LOGGING_CONSTANTS.get("LOG_FILE", "training.log"))),
-        logging.StreamHandler() if LOGGING_CONSTANTS.get("CONSOLE_LOGGING", True) else logging.NullHandler()
-    ]
-)
+# Utilisation du système de logging centralisé
+# Note: setup_logging() doit être appelé au démarrage de l'application
+logger = get_logger(__name__)
 
 
 # ============================================
@@ -434,7 +427,8 @@ def train_single_model_unsupervised(
     monitor: Any = None
 ) -> Dict[str, Any]:
     """
-    Entraîne un modèle non-supervisé de façon robuste.
+    Entraîne un modèle non-supervisé avec GARANTIE des labels.
+    Version corrigée avec validation renforcée.
     """
     result = {
         "model_name": model_name,
@@ -443,7 +437,7 @@ def train_single_model_unsupervised(
         "training_time": 0.0,
         "error": None,
         "best_params": None,
-        "labels": None,
+        "labels": None,  
         "metrics": {}
     }
 
@@ -462,15 +456,26 @@ def train_single_model_unsupervised(
             estimator = last_step[1]
 
         def _fit_predict_with_pipeline(pipeline_obj, X_in):
-            if hasattr(pipeline_obj, "fit_predict"):
-                return pipeline_obj.fit_predict(X_in)
-            else:
-                fitted = pipeline_obj.fit(X_in)
-                if hasattr(fitted, "predict"):
-                    return fitted.predict(X_in)
-                if hasattr(fitted, "labels_"):
-                    return getattr(fitted, "labels_")
-                raise AttributeError("Estimator ne supporte ni fit_predict ni predict ni labels_.")
+            """Fonction robuste pour obtenir les labels avec gestion d'erreurs"""
+            try:
+                if hasattr(pipeline_obj, "fit_predict"):
+                    labels = pipeline_obj.fit_predict(X_in)
+                    logger.debug(f"   Labels obtenus via fit_predict: {len(labels)}")
+                    return labels
+                else:
+                    fitted = pipeline_obj.fit(X_in)
+                    if hasattr(fitted, "predict"):
+                        labels = fitted.predict(X_in)
+                        logger.debug(f"   Labels obtenus via predict: {len(labels)}")
+                        return labels
+                    if hasattr(fitted, "labels_"):
+                        labels = getattr(fitted, "labels_")
+                        logger.debug(f"   Labels obtenus via labels_: {len(labels)}")
+                        return labels
+                    raise AttributeError("Estimator ne supporte ni fit_predict ni predict ni labels_.")
+            except Exception as e:
+                logger.error(f"❌ Erreur dans _fit_predict_with_pipeline: {e}")
+                raise
 
         if param_grid and isinstance(param_grid, dict) and len(param_grid) > 0:
             from itertools import product
@@ -482,18 +487,23 @@ def train_single_model_unsupervised(
 
             best_score = -np.inf
             best_params = None
+            best_candidate = None
+            best_labels = None
+            best_metrics = None
 
-            for combo in combos:
+            for i, combo in enumerate(combos):
                 try:
                     params = dict(zip(keys, combo))
                     pipeline_candidate = clone(pipeline)
                     
                     try:
                         pipeline_candidate.set_params(**params)
-                    except Exception:
+                    except Exception as e:
                         if hasattr(pipeline_candidate, "named_steps"):
                             final_name = list(pipeline_candidate.named_steps.keys())[-1]
                             pipeline_candidate.named_steps[final_name].set_params(**params)
+                        else:
+                            raise e
 
                     labels = _fit_predict_with_pipeline(pipeline_candidate, X)
                     labels = np.asarray(labels)
@@ -507,7 +517,8 @@ def train_single_model_unsupervised(
                         best_labels = labels
                         best_metrics = metrics
                         
-                except Exception:
+                except Exception as e:
+                    logger.warning(f"⚠️ Combinaison {i+1}/{len(combos)} échouée pour {model_name}: {e}")
                     continue
 
             if best_score == -np.inf:
@@ -515,24 +526,58 @@ def train_single_model_unsupervised(
                 
             result["best_params"] = best_params
             result["model"] = best_candidate
-            result["labels"] = best_labels
+            result["labels"] = best_labels  # 🎯 SAUVEGARDE DES LABELS
             result["metrics"] = best_metrics
 
         else:
+            # Entraînement sans optimisation d'hyperparamètres
             labels = _fit_predict_with_pipeline(pipeline, X)
             labels = np.asarray(labels)
             result["model"] = pipeline
-            result["labels"] = labels
+            result["labels"] = labels  # 🎯 SAUVEGARDE DES LABELS
             result["metrics"] = _safe_cluster_metrics(X_arr, labels)
 
         result["training_time"] = time.time() - start_time
         result["success"] = True
+
+        # VALIDATION FINALE RENFORCÉE
+        if result["labels"] is None:
+            logger.warning(f"⚠️ Aucun label sauvegardé pour {model_name}, tentative de récupération...")
+            
+            # Tentative de récupération depuis le modèle entraîné
+            try:
+                trained_model = result["model"]
+                if hasattr(trained_model, 'labels_'):
+                    result["labels"] = trained_model.labels_
+                    logger.info(f"✅ Labels récupérés depuis .labels_ pour {model_name}: {len(result['labels'])}")
+                elif hasattr(trained_model, 'predict'):
+                    result["labels"] = trained_model.predict(X)
+                    logger.info(f"✅ Labels récupérés via .predict() pour {model_name}: {len(result['labels'])}")
+                else:
+                    logger.error(f"❌ Impossible de récupérer les labels pour {model_name}: modèle sans attribut labels_ ou predict")
+            except Exception as e:
+                logger.error(f"❌ Erreur récupération labels {model_name}: {e}")
+        else:
+            # Validation que les labels ont le bon format
+            if not isinstance(result["labels"], (np.ndarray, list)):
+                logger.warning(f"⚠️ Format de labels inhabituel pour {model_name}: {type(result['labels'])}")
+            else:
+                logger.info(f"✅ Labels validés pour {model_name}: {len(result['labels'])} points de données")
 
     except Exception as e:
         result["success"] = False
         result["error"] = str(e)
         result["training_time"] = time.time() - start_time
         logger.error(f"❌ Erreur clustering {model_name}: {e}")
+
+    # LOG FINAL POUR DEBUG
+    final_status = {
+        'success': result['success'],
+        'labels_present': result['labels'] is not None,
+        'labels_count': len(result['labels']) if result['labels'] is not None else 0,
+        'training_time': result['training_time']
+    }
+    logger.info(f"📊 Résultat final clustering {model_name}: {final_status}")
 
     return result
 
@@ -957,8 +1002,14 @@ def train_models(
 
         if mlflow_enabled:
             try:
-                mlflow.set_tracking_uri(MLFLOW_CONSTANTS.get("TRACKING_URI", "sqlite:///mlflow.db"))
-                mlflow.set_experiment(MLFLOW_CONSTANTS.get("EXPERIMENT_NAME", "datalab_experiments"))
+                from utils.mlflow import configure_mlflow
+                # Configure de manière centralisée à partir des settings/constants
+                configured = configure_mlflow(
+                    MLFLOW_CONSTANTS.get("TRACKING_URI", "sqlite:///mlflow.db"),
+                    MLFLOW_CONSTANTS.get("EXPERIMENT_NAME", "datalab_experiments")
+                )
+                if not configured:
+                    raise RuntimeError("Échec configuration MLflow")
                 log_structured("INFO", f"MLflow configuré", {
                     "experiment_name": MLFLOW_CONSTANTS.get("EXPERIMENT_NAME"),
                     "tracking_uri": MLFLOW_CONSTANTS.get("TRACKING_URI"),

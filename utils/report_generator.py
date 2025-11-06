@@ -11,7 +11,6 @@ from reportlab.platypus import (
 from reportlab.lib.units import inch
 from reportlab.lib import colors
 from src.evaluation.model_plots import ModelEvaluationVisualizer
-import logging
 from datetime import datetime
 import gc
 import os
@@ -19,8 +18,9 @@ import pandas as pd
 from typing import Dict, Any, Optional
 import base64
 from io import BytesIO
+from src.shared.logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # --- Styles personnalisés modernisés ---
 def _create_custom_styles():

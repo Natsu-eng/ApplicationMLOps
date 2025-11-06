@@ -103,21 +103,28 @@ MLFLOW_CONSTANTS = {
 }
 
 
-#Configuration centralisée pour la détection d'anomalies visuelles (projet PIC).
-# Ajouter cette configuration
+#Configuration centralisée pour la détection d'anomalies visuelles.
+# Alignée avec .env.vision, sans fallback SQLite
 ANOMALY_CONFIG = {
     "max_images_preview": 5,
     "target_size": (128, 128),
     "normalize": True,
-    "supported_categories": ["bottle", "cable", "capsule", "carpet", "grid", 
-                           "leather", "metal_nut", "pill", "screw", "tile", 
-                           "toothbrush", "transistor", "wood", "zipper"]
+    "supported_categories": [
+        "bottle", "cable", "capsule", "carpet", "grid",
+        "leather", "metal_nut", "pill", "screw", "tile",
+        "toothbrush", "transistor", "wood", "zipper"
+    ],
+    # MLflow Vision (chargé depuis .env.vision)
+    "MLFLOW_ENABLED": os.getenv("MLFLOW_VISION_ENABLED", "false").lower() == "true",
+    "MLFLOW_TRACKING_URI": os.getenv("MLFLOW_VISION_TRACKING_URI", ""),
+    "MLFLOW_EXPERIMENT_NAME": os.getenv("MLFLOW_VISION_EXPERIMENT_NAME", "computer_vision_experiments"),
+    "MLFLOW_ARTIFACT_STORE": os.getenv("MLFLOW_VISION_ARTIFACT_STORE", ""),
 }
 
 # Constantes DB Postgres (optionnelles si utilisées ailleurs)
 DB_CONSTANTS = {
     "USER": os.getenv("POSTGRES_USER", "postgres"),
-    "PASSWORD": os.getenv("POSTGRES_PASSWORD", "postgres"),
+    "PASSWORD": os.getenv("POSTGRES_PASSWORD", "password"),
     "DB": os.getenv("POSTGRES_DB", "mlflow_db"),
     "HOST": os.getenv("POSTGRES_HOST", "localhost"),
     "PORT": int(os.getenv("POSTGRES_PORT", 5432)),

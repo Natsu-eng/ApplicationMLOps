@@ -1,11 +1,11 @@
 """
 Helpers pour la gestion des DataFrames Dask.
 """
-import logging
 import time
 from typing import Any
+from src.shared.logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # Variable globale pour la disponibilité de Dask
 try:

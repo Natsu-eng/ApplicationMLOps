@@ -30,6 +30,9 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+# Ensure session is refreshed (metrics/timeouts) on page load
+init()
+
 # --- CSS Moderne & Léger ---
 st.markdown("""
 <style>

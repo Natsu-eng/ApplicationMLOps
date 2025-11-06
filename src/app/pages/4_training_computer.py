@@ -19,11 +19,11 @@ from collections import Counter
 from sklearn.model_selection import train_test_split
 from sklearn.utils.class_weight import compute_class_weight
 
-from monitoring.state_managers import init, AppPage
-STATE = init()
+from monitoring.state_managers import init, AppPage, STATE
 
-# Configuration des chemins d'import
-sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
+# Note: STATE est déjà un singleton, pas besoin de réassigner
+# Configuration des chemins d'import (si nécessaire)
+# sys.path.append(os.path.join(os.path.dirname(__file__), '..'))  # Redondant avec projet root
 
 logger = get_logger(__name__)
 
@@ -41,7 +41,7 @@ try:
         MLflowIntegration
     )
     from src.data.computer_vision_preprocessing import DataPreprocessor, DataValidator
-    from src.shared.logging import StructuredLogger
+    from src.shared.logging import get_logger
     from utils.callbacks import LoggingCallback, StreamlitCallback
     from utils.device_manager import DeviceManager
     LOGIC_METIER_AVAILABLE = True
@@ -137,7 +137,7 @@ class MLTrainingWorkflowPro:
     """
     
     def __init__(self):
-        self.logger = StructuredLogger(__name__)
+        self.logger = get_logger(__name__)
     
     def render_header(self):
         """En-tête professionnel avec navigation et métriques"""

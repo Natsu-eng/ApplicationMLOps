@@ -605,7 +605,10 @@ class ProductionModelEvaluator:
             return
         
         try:
-            mlflow.set_tracking_uri(ANOMALY_CONFIG.get("MLFLOW_TRACKING_URI", "sqlite:///mlflow.db"))
+            from utils.mlflow import configure_mlflow
+            uri = ANOMALY_CONFIG.get("MLFLOW_TRACKING_URI")
+            if uri:
+                configure_mlflow(uri, ANOMALY_CONFIG.get("MLFLOW_EXPERIMENT_NAME"))
             
             with mlflow.start_run(run_id=mlflow_run_id):
                 # Métriques principales
@@ -726,7 +729,10 @@ def compute_anomaly_metrics(
     
     if mlflow_run_id and ANOMALY_CONFIG.get("MLFLOW_ENABLED", False):
         try:
-            mlflow.set_tracking_uri(ANOMALY_CONFIG.get("MLFLOW_TRACKING_URI", "sqlite:///mlflow.db"))
+            from utils.mlflow import configure_mlflow
+            uri = ANOMALY_CONFIG.get("MLFLOW_TRACKING_URI")
+            if uri:
+                configure_mlflow(uri, ANOMALY_CONFIG.get("MLFLOW_EXPERIMENT_NAME"))
             with mlflow.start_run(run_id=mlflow_run_id):
                 for metric_name, metric_value in metrics.items():
                     if isinstance(metric_value, (int, float)) and metric_name not in ["confusion_matrix", "classification_report"]:
@@ -802,7 +808,10 @@ def compute_reconstruction_metrics(
         
         if mlflow_run_id and ANOMALY_CONFIG.get("MLFLOW_ENABLED", False):
             try:
-                mlflow.set_tracking_uri(ANOMALY_CONFIG.get("MLFLOW_TRACKING_URI", "sqlite:///mlflow.db"))
+                from utils.mlflow import configure_mlflow
+                uri = ANOMALY_CONFIG.get("MLFLOW_TRACKING_URI")
+                if uri:
+                    configure_mlflow(uri, ANOMALY_CONFIG.get("MLFLOW_EXPERIMENT_NAME"))
                 with mlflow.start_run(run_id=mlflow_run_id):
                     mlflow.log_metrics({k: v for k, v in metrics.items() if isinstance(v, (int, float))})
             except Exception as e:

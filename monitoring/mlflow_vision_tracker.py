@@ -10,9 +10,9 @@ from pathlib import Path
 from typing import Dict, Any, Optional
 import torch  # type: ignore
 import numpy as np
-from src.shared.logging import StructuredLogger
+from src.shared.logging import get_logger
 
-logger = StructuredLogger(__name__)
+logger = get_logger(__name__)
 
 
 class ComputerVisionMLflowTracker:
@@ -40,14 +40,15 @@ class ComputerVisionMLflowTracker:
                 "MLFLOW_VISION_TRACKING_URI",
                 "postgresql+psycopg2://postgres:password@localhost:5432/mlflow_vision_db"
             )
-            mlflow.set_tracking_uri(tracking_uri)
             
-            # Experiment dédié
+            # Experiment dédié (défini AVANT utilisation)
             experiment_name = os.getenv(
                 "MLFLOW_VISION_EXPERIMENT_NAME",
                 "computer_vision_experiments"
             )
-            mlflow.set_experiment(experiment_name)
+            
+            from utils.mlflow import configure_mlflow
+            configure_mlflow(tracking_uri, experiment_name)
             
             # Artifact store
             artifact_store = os.getenv(

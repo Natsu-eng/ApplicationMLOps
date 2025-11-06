@@ -5,7 +5,6 @@ from plotly.subplots import make_subplots
 import pandas as pd
 import numpy as np
 from scipy.stats import pointbiserialr, f_oneway, chi2_contingency
-import logging
 import time
 import streamlit as st
 from typing import Dict, List, Optional, Tuple, Union
@@ -15,11 +14,9 @@ import seaborn as sns
 from .import templates  # Fichier de templates
 
 from src.shared.logging import get_logger
+
+# Configuration du logging centralisé
 logger = get_logger(__name__)
-
-
-# Configuration du logging
-logger = logging.getLogger(__name__)
 warnings.filterwarnings('ignore')
 
 # Constantes de configuration

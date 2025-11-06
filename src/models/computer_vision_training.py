@@ -37,13 +37,13 @@ from sklearn.utils.class_weight import compute_class_weight
 from src.config.model_config import ModelConfig, ModelType
 from src.data.computer_vision_preprocessing import DataLoaderFactory, DataPreprocessor, DataValidator, Result
 from src.models.computer_vision.model_builder import ModelBuilder
-from src.shared.logging import StructuredLogger
+from src.shared.logging import get_logger
 from utils.callbacks import LoggingCallback, TrainingCallback
 from utils.device_manager import DeviceManager
 
 warnings.filterwarnings('ignore', category=UserWarning)
 
-logger = StructuredLogger(__name__)
+logger = get_logger(__name__)
 
 # ======================
 # CONFIGURATION ET TYPES

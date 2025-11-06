@@ -5,9 +5,9 @@ from utils.device_manager import DeviceManager
 import torch.nn as nn # type: ignore
 import torch # type: ignore
 
-from src.shared.logging import StructuredLogger
+from src.shared.logging import get_logger
 
-logger = StructuredLogger(__name__)
+logger = get_logger(__name__)
 
 # ==========================
 # IMPORTS DES MODÈLES RÉELS

@@ -6,7 +6,6 @@ Version: 4.0 | Production-Ready | Thread-Safe | Fixed
 import os
 import time
 import threading
-import logging
 from typing import Any, Dict, Optional, Set, Tuple, List
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -15,10 +14,13 @@ import streamlit as st
 import numpy as np
 import pandas as pd
 
+# Import du système de logging centralisé
+from src.shared.logging import get_logger
+
 # ========================
 # LOGGER
 # ========================
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # ========================
 # ENUMS

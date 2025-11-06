@@ -5,7 +5,11 @@ import sys
 import platform
 import psutil # type: ignore
 import traceback
-from src.config.constants import LOGGING_CONSTANTS, MLFLOW_CONSTANTS  
+from src.config.constants import LOGGING_CONSTANTS
+from src.config.settings import MlflowSettings  
+
+
+_LOGGING_CONFIGURED = False
 
 
 def setup_logging(
@@ -47,9 +51,14 @@ def setup_logging(
         datefmt="%Y-%m-%d %H:%M:%S",
     )
 
+    global _LOGGING_CONFIGURED
     # Logger racine
     root_logger = logging.getLogger()
     root_logger.setLevel(numeric_level)
+
+    # Idempotence: ne configurer qu'une seule fois si déjà fait
+    if _LOGGING_CONFIGURED:
+        return
 
     # Supprimer les gestionnaires existants pour éviter les doublons
     for handler in root_logger.handlers[:]:
@@ -82,31 +91,17 @@ def setup_logging(
     # Configuration MLflow (si activé)
     if mlflow_integration:
         try:
-            import mlflow # type: ignore
+            from utils.mlflow import configure_mlflow  # lazy import
 
-            if not MLFLOW_CONSTANTS["AVAILABLE"]:
-                MLFLOW_CONSTANTS["AVAILABLE"] = True
+            # Lire settings (pydantic)
+            settings = MlflowSettings()
+            tracking_uri = settings.MLFLOW_TRACKING_URI
+            experiment_name = settings.MLFLOW_EXPERIMENT_NAME
 
-            # Vérifier l'encodage de l'URI et du nom de l'expérience
-            tracking_uri = MLFLOW_CONSTANTS["TRACKING_URI"]
-            experiment_name = MLFLOW_CONSTANTS["EXPERIMENT_NAME"]
-            if not tracking_uri or not experiment_name:
-                raise ValueError("MLFLOW_TRACKING_URI ou MLFLOW_EXPERIMENT_NAME non défini")
-
-            # Forcer l'encodage UTF-8 pour l'URI
-            try:
-                tracking_uri = tracking_uri.encode('utf-8').decode('utf-8')
-                experiment_name = experiment_name.encode('utf-8').decode('utf-8')
-            except UnicodeEncodeError as e:
-                root_logger.error(f"Erreur d'encodage dans la configuration MLflow : {str(e)}")
-                raise
-
-            mlflow.set_tracking_uri(tracking_uri)
-
-            # Créer l’expérience si elle n’existe pas
-            experiment = mlflow.get_experiment_by_name(experiment_name)
-            if experiment is None:
-                mlflow.create_experiment(experiment_name)
+            # Configure via util centralisée
+            configured = configure_mlflow(tracking_uri, experiment_name)
+            if not configured:
+                raise RuntimeError("Configuration MLflow échouée")
 
             mlflow_logger = logging.getLogger("mlflow")
             mlflow_logger.setLevel(numeric_level)
@@ -130,6 +125,8 @@ def setup_logging(
         except Exception as e:
             root_logger.error(f"Échec de la configuration de la journalisation MLflow : {str(e)}")
             root_logger.debug(f"Détail de l'erreur : {traceback.format_exc()}")
+
+    _LOGGING_CONFIGURED = True
 
 def get_logger(name: str) -> logging.Logger:
     """Récupère un logger configuré."""
@@ -254,30 +251,54 @@ def setup_error_logging():
 # LOGGING STRUCTURÉ VISION PAR ORDINATEUR
 # =======================================
 class StructuredLogger:
-    """Logger structuré pour production"""
+    """
+    Logger structuré pour production.
+    
+    Wrapper autour du système de logging standardisé qui permet un formatage
+    structuré avec support des kwargs. Utilise get_logger() en interne pour
+    garantir la cohérence avec le système de logging centralisé.
+    
+    Note: Pour un usage simple, préférer get_logger() directement.
+    Cette classe est utile pour les cas où un formatage structuré est nécessaire.
+    """
     
     def __init__(self, name: str, level: int = logging.INFO):
-        self.logger = logging.getLogger(name)
-        self.logger.setLevel(level)
+        """
+        Initialise le StructuredLogger.
         
-        if not self.logger.handlers:
-            handler = logging.StreamHandler()
-            formatter = logging.Formatter(
-                '%(asctime)s | %(name)s | %(levelname)s | %(message)s',
-                datefmt='%Y-%m-%d %H:%M:%S'
-            )
-            handler.setFormatter(formatter)
-            self.logger.addHandler(handler)
+        Args:
+            name: Nom du logger (généralement __name__)
+            level: Niveau de logging (par défaut INFO)
+        """
+        # Utiliser le système de logging centralisé
+        self.logger = get_logger(name)
+        self.logger.setLevel(level)
     
     def info(self, msg: str, **kwargs):
-        self.logger.info(f"{msg} | {kwargs}" if kwargs else msg)
+        """Log un message de niveau INFO."""
+        if kwargs:
+            self.logger.info(f"{msg} | {kwargs}")
+        else:
+            self.logger.info(msg)
     
     def warning(self, msg: str, **kwargs):
-        self.logger.warning(f"{msg} | {kwargs}" if kwargs else msg)
+        """Log un message de niveau WARNING."""
+        if kwargs:
+            self.logger.warning(f"{msg} | {kwargs}")
+        else:
+            self.logger.warning(msg)
     
     def error(self, msg: str, **kwargs):
-        self.logger.error(f"{msg} | {kwargs}" if kwargs else msg)
+        """Log un message de niveau ERROR."""
+        if kwargs:
+            self.logger.error(f"{msg} | {kwargs}")
+        else:
+            self.logger.error(msg)
     
     def debug(self, msg: str, **kwargs):
-        self.logger.debug(f"{msg} | {kwargs}" if kwargs else msg)
+        """Log un message de niveau DEBUG."""
+        if kwargs:
+            self.logger.debug(f"{msg} | {kwargs}")
+        else:
+            self.logger.debug(msg)
 

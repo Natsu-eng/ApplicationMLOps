@@ -3,13 +3,13 @@ Transformations de données pour l'optimisation mémoire et le prétraitement.
 """
 import pandas as pd
 import numpy as np
-import logging
 from typing import Dict, Any, Tuple, Union
 import gc
 import dask.dataframe as dd
 from monitoring.decorators import safe_metric_calculation
+from src.shared.logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 def optimize_dataframe(
     df: pd.DataFrame, 

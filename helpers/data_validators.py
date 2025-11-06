@@ -6,8 +6,10 @@ import pandas as pd
 import numpy as np
 import re
 from typing import Union, Optional, Dict, Any, List
-import logging
-logger = logging.getLogger(__name__)
+
+# Import du système de logging centralisé (déjà importé plus bas)
+from src.shared.logging import get_logger
+logger = get_logger(__name__)
 
 try:
     import dask.dataframe as dd
