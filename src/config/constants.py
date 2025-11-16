@@ -98,7 +98,7 @@ LOGGING_CONSTANTS = {
 # Constantes MLflow (chargées depuis .env si dispo)
 MLFLOW_CONSTANTS = {
     "AVAILABLE": False,  # Flag dynamique pour savoir si MLflow est installé
-    "TRACKING_URI": os.getenv("MLFLOW_TRACKING_URI", "sqlite:///mlflow.db"),  # fallback local
+    "TRACKING_URI": os.getenv("MLFLOW_TRACKING_URI", ""),
     "EXPERIMENT_NAME": os.getenv("MLFLOW_EXPERIMENT_NAME", "datalab_pro_experimentations")
 }
 

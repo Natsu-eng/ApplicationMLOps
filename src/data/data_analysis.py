@@ -24,7 +24,7 @@ logger = get_logger(__name__)
 
 # Tentative d'import de dépendances optionnelles
 try:
-    import dask.dataframe as dd
+    import dask.dataframe as dd # type: ignore
     DASK_AVAILABLE = True
 except ImportError:
     DASK_AVAILABLE = False

@@ -27,6 +27,10 @@ from helpers.data_validators import DataValidator
 from src.evaluation.metrics import evaluate_single_train_test_split
 from utils.mlflow import _ensure_array_like, _safe_cluster_metrics, clean_model_name, format_mlflow_run_for_ui, get_git_info, is_mlflow_available
 
+# Initialisation du collecteur MLflow
+from monitoring.mlflow_collector import get_mlflow_collector
+MLFLOW_COLLECTOR = get_mlflow_collector()
+
 # Intégration MLflow
 try:
     import mlflow # type: ignore
@@ -71,9 +75,82 @@ except ImportError as e:
     PREPROCESSING_CONSTANTS = {}
 
 # Utilisation du système de logging centralisé
-# Note: setup_logging() doit être appelé au démarrage de l'application
 logger = get_logger(__name__)
 
+
+# ============================================================================
+# 🆕 CLASSE DE VALIDATION CENTRALISÉE
+# ============================================================================
+
+class FeatureListValidator:
+    """
+    Validateur centralisé pour feature_list.
+    Garantit la cohérence entre tous les modules.
+    """
+    
+    @staticmethod
+    def validate_and_extract(
+        preprocessing_choices: Dict[str, Any],
+        column_types: Dict[str, List[str]],
+        model_name: str
+    ) -> Tuple[List[str], Dict[str, List[str]]]:
+        """
+        Valide et extrait feature_list de manière robuste.  
+        Returns:
+            Tuple (feature_list validée, column_types filtrés)
+        """
+        # RÉCUPÉRATION de feature_list
+        feature_list = preprocessing_choices.get('feature_list', [])
+        
+        if not feature_list:
+            logger.error(f"❌ {model_name}: feature_list VIDE dans preprocessing_choices!")
+            logger.error(f"   preprocessing_choices keys: {list(preprocessing_choices.keys())}")
+            raise ValueError(f"{model_name}: feature_list manquante dans preprocessing_choices")
+        
+        # CONVERSION en set pour filtrage rapide
+        feature_set = set(feature_list)
+        
+        logger.info(f"✅ {model_name}: {len(feature_list)} features validées")
+        logger.debug(f"   Features: {feature_list[:10]}...")
+        
+        # FILTRAGE de column_types
+        filtered_column_types = {}
+        columns_removed = {}
+        columns_kept = {}
+        
+        for col_type, cols in column_types.items():
+            valid_cols = [col for col in cols if col in feature_set]
+            removed_cols = [col for col in cols if col not in feature_set]
+            
+            if valid_cols:
+                filtered_column_types[col_type] = valid_cols
+                columns_kept[col_type] = len(valid_cols)
+            
+            if removed_cols:
+                columns_removed[col_type] = removed_cols
+        
+        # LOGGING détaillé
+        if columns_removed:
+            logger.warning(f"⚠️ {model_name}: Colonnes RETIRÉES (absentes de feature_list):")
+            for col_type, removed_cols in columns_removed.items():
+                logger.warning(f"   • {col_type}: {len(removed_cols)} colonnes → {removed_cols[:5]}...")
+        
+        if columns_kept:
+            logger.info(f"✅ {model_name}: Colonnes CONSERVÉES:")
+            for col_type, count in columns_kept.items():
+                logger.info(f"   • {col_type}: {count} colonnes")
+        
+        # VALIDATION finale
+        total_kept = sum(len(cols) for cols in filtered_column_types.values())
+        if total_kept == 0:
+            logger.error(f"❌ {model_name}: AUCUNE colonne conservée après filtrage!")
+            logger.error(f"   feature_list: {feature_list[:10]}")
+            logger.error(f"   column_types original: {[(k, len(v)) for k, v in column_types.items()]}")
+            raise ValueError(f"{model_name}: Aucune colonne valide après filtrage")
+        
+        logger.info(f"✅ {model_name}: {total_kept} colonnes au total après filtrage")
+        
+        return feature_list, filtered_column_types
 
 # ============================================
 # FONCTIONS DE PIPELINE AVEC GESTION D'ERREURS 
@@ -88,17 +165,12 @@ def create_leak_free_pipeline(
     optimize_hyperparams: bool = False
 ) -> Tuple[Optional[Pipeline], Optional[Dict]]:
     """
-    Crée un pipeline sklearn/imblearn sans fuite de données.
-    AMÉLIORATIONS CLÉS:
-    - Filtrage strict de column_types basé sur feature_list
-    - Validation que TOUTES les colonnes dans column_types existent dans feature_list
-    - Log détaillé des colonnes filtrées/retirées
+    VERSION CORRIGÉE avec validation SMOTE atomique
     """
-    
     try:
         logger.info(f"🔧 Création pipeline pour {model_name} (task: {task_type}, SMOTE: {use_smote})")
         
-        # Récupérer la configuration du modèle
+        # RÉCUPÉRATION configuration modèle
         model_config = get_model_config(task_type, model_name)
         if not model_config:
             logger.error(f"❌ Configuration non trouvée pour {model_name} ({task_type})")
@@ -106,88 +178,42 @@ def create_leak_free_pipeline(
         
         model = model_config["model"]
         
-        # Préparer la grille de paramètres
+        # PRÉPARATION grille de paramètres
         param_grid = {}
         if optimize_hyperparams and "params" in model_config:
             param_grid = {f"model__{k}": v for k, v in model_config["params"].items()}
         
-        # ========================================================================
-        # 🆕 VALIDATION CRITIQUE: Récupération de feature_list
-        # ========================================================================
-        available_features = preprocessing_choices.get('feature_list', [])
-        
-        if not available_features:
-            logger.error("❌ feature_list manquante dans preprocessing_choices!")
-            # Tentative de récupération depuis column_types (fallback)
-            available_features = []
-            for col_list in column_types.values():
-                available_features.extend(col_list)
-            
-            if not available_features:
-                logger.error("❌ Impossible de déterminer les features disponibles")
-                return None, None
-            
-            logger.warning(f"⚠️ feature_list restaurée depuis column_types: {len(available_features)} colonnes")
-        
-        available_features_set = set(available_features)
-        
-        logger.info(f"✅ Features disponibles: {len(available_features)}")
-        logger.debug(f"   Détail features: {available_features[:10]}...")
-        
-        # ========================================================================
-        # 🆕 FILTRAGE STRICT: Ne garder QUE les colonnes présentes dans feature_list
-        # ========================================================================
-        filtered_column_types = {}
-        columns_removed = {}
-        columns_kept = {}
-        
-        for col_type, cols in column_types.items():
-            # Filtrer pour ne garder QUE les colonnes qui existent dans feature_list
-            valid_cols = [col for col in cols if col in available_features_set]
-            removed_cols = [col for col in cols if col not in available_features_set]
-            
-            if valid_cols:
-                filtered_column_types[col_type] = valid_cols
-                columns_kept[col_type] = len(valid_cols)
-            
-            if removed_cols:
-                columns_removed[col_type] = removed_cols
-        
-        # ========================================================================
-        # 📊 LOG DÉTAILLÉ du filtrage
-        # ========================================================================
-        if columns_removed:
-            logger.warning("⚠️ Colonnes RETIRÉES (absentes de feature_list):")
-            for col_type, removed_cols in columns_removed.items():
-                logger.warning(f"   • {col_type}: {len(removed_cols)} colonnes → {removed_cols[:5]}...")
-        
-        if columns_kept:
-            logger.info("✅ Colonnes CONSERVÉES (présentes dans feature_list):")
-            for col_type, count in columns_kept.items():
-                logger.info(f"   • {col_type}: {count} colonnes")
-        
-        # Validation finale: au moins une colonne doit rester
-        total_kept = sum(len(cols) for cols in filtered_column_types.values())
-        if total_kept == 0:
-            logger.error("❌ AUCUNE colonne conservée après filtrage!")
-            logger.error(f"   feature_list: {available_features[:10]}")
-            logger.error(f"   column_types original: {[(k, len(v)) for k, v in column_types.items()]}")
+        # VALIDATION CENTRALISÉE via FeatureListValidator
+        try:
+            feature_list, filtered_column_types = FeatureListValidator.validate_and_extract(
+                preprocessing_choices=preprocessing_choices,
+                column_types=column_types,
+                model_name=model_name
+            )
+        except ValueError as e:
+            logger.error(f"❌ Validation feature_list échouée pour {model_name}: {e}")
             return None, None
         
-        logger.info(f"✅ {total_kept} colonnes au total après filtrage")
+        # 🆕 VALIDATION SMOTE AVANT CRÉATION PIPELINE
+        final_use_smote = False
+        if use_smote and task_type == 'classification':
+            # Vérification k_neighbors depuis preprocessing_choices
+            smote_k = preprocessing_choices.get("smote_k_neighbors", 5)
+            
+            # ⚠️ CRITIQUE : Vérifier que DataFrame est accessible
+            # On ne peut pas valider ici sans accès aux données
+            # => Délégation à train_single_model_with_mlflow
+            logger.info(f"🔍 SMOTE demandé avec k={smote_k}, validation différée à l'entraînement")
+            final_use_smote = True
         
-        # ========================================================================
-        # 🔧 Créer le préprocesseur avec les colonnes FILTRÉES
-        # ========================================================================
+        # CRÉATION du préprocesseur avec colonnes FILTRÉES
         preprocessor = create_preprocessor(preprocessing_choices, filtered_column_types)
         if preprocessor is None:
             logger.error(f"❌ Échec création préprocesseur pour {model_name}")
             return None, None
         
-        # ========================================================================
-        # 🔧 Construction du pipeline selon le contexte
-        # ========================================================================
-        if use_smote and task_type == 'classification':
+        # CONSTRUCTION du pipeline
+        if final_use_smote:
             logger.info("🔄 Construction pipeline avec SMOTE")
             
             smote_k = preprocessing_choices.get("smote_k_neighbors", 5)
@@ -204,12 +230,12 @@ def create_leak_free_pipeline(
                 ('model', model)
             ])
             
-            logger.info(f"✅ Pipeline créé avec 3 étapes: preprocessor → SMOTE → {model_name}")
+            logger.info(f"✅ Pipeline créé avec 3 étapes: preprocessor → SMOTE(k={smote_k}) → {model_name}")
         
         else:
             logger.info("🔄 Construction pipeline standard")
             
-            if use_smote:
+            if use_smote and task_type != 'classification':
                 logger.warning(f"⚠️ SMOTE ignoré pour task_type='{task_type}'")
             
             pipeline = Pipeline([
@@ -219,10 +245,8 @@ def create_leak_free_pipeline(
             
             logger.info(f"✅ Pipeline créé avec 2 étapes: preprocessor → {model_name}")
         
-        # ========================================================================
-        # ✅ Validation finale du pipeline
-        # ========================================================================
-        expected_steps = ['preprocessor', 'model'] if not (use_smote and task_type == 'classification') else ['preprocessor', 'smote', 'model']
+        # VALIDATION finale du pipeline
+        expected_steps = ['preprocessor', 'model'] if not final_use_smote else ['preprocessor', 'smote', 'model']
         actual_steps = list(pipeline.named_steps.keys())
         
         if actual_steps != expected_steps:
@@ -241,9 +265,9 @@ def create_leak_free_pipeline(
         logger.error(f"❌ Erreur création pipeline pour {model_name}: {e}", exc_info=True)
         return None, None
 
-# ===============================================
-# FONCTIONS D'ENTRAÎNEMENT PAR MODÈLE - AMÉLIORÉES
-# ===============================================
+# ===================================
+# FONCTIONS D'ENTRAÎNEMENT PAR MODÈLE 
+# ===================================
 
 def train_single_model_supervised(
     model_name: str,
@@ -257,11 +281,25 @@ def train_single_model_supervised(
     monitor: TrainingMonitor = None
 ) -> Dict[str, Any]:
     """
-    Entraîne un modèle supervisé avec validation croisée.
-    - Ajout de metrics VIDE par défaut
-    - Calcul des métriques IMMÉDIATEMENT après entraînement
-    - Gestion robuste des erreurs d'évaluation
+    VERSION ROBUSTE avec garantie metrics TOUJOURS présentes
+    - Initialisation metrics par défaut AVANT try/except
+    - Calcul immédiat après entraînement
+    - Fallback metrics en cas d'erreur évaluation
     """
+    
+    # INITIALISATION STRICTE avec metrics par défaut
+    default_metric_value = 0.0
+    default_metrics = {
+        'accuracy': default_metric_value if task_type == 'classification' else None,
+        'precision': default_metric_value if task_type == 'classification' else None,
+        'recall': default_metric_value if task_type == 'classification' else None,
+        'f1': default_metric_value if task_type == 'classification' else None,
+        'r2': default_metric_value if task_type == 'regression' else None,
+        'mae': default_metric_value if task_type == 'regression' else None,
+        'mse': default_metric_value if task_type == 'regression' else None,
+        'rmse': default_metric_value if task_type == 'regression' else None
+    }
+    
     result = {
         "model_name": model_name,
         "success": False,
@@ -270,7 +308,7 @@ def train_single_model_supervised(
         "error": None,
         "best_params": None,
         "cv_scores": None,
-        "metrics": {}  
+        "metrics": default_metrics.copy()  
     }
     
     start_time = time.time()
@@ -293,6 +331,8 @@ def train_single_model_supervised(
         # ========================================================================
         # PHASE 1: ENTRAÎNEMENT
         # ========================================================================
+        model_trained = False
+        
         if param_grid and len(param_grid) > 0:
             logger.info(f"🔍 Optimisation hyperparamètres pour {model_name}")
             
@@ -300,7 +340,7 @@ def train_single_model_supervised(
             total_combinations = np.prod([len(v) for v in param_grid.values()])
             
             if total_combinations > max_combinations:
-                logger.warning(f"Grille trop large ({total_combinations} combinaisons), limitation automatique")
+                logger.warning(f"Grille réduite: {total_combinations} → limitation")
                 limited_param_grid = {}
                 for k, v in param_grid.items():
                     limited_param_grid[k] = v[:2] if len(v) > 2 else v
@@ -320,31 +360,35 @@ def train_single_model_supervised(
                 'std': grid_search.cv_results_['std_test_score'][grid_search.best_index_]
             }
             result["success"] = True
+            model_trained = True
             
-            logger.info(f"✅ Optimisation terminée pour {model_name} - score: {grid_search.best_score_:.3f}")
+            logger.info(f"✅ Optimisation OK {model_name} - CV score: {grid_search.best_score_:.3f}")
             
         else:
             try:
                 cv_scores = cross_val_score(pipeline, X_train, y_train, cv=cv, scoring=scoring)
                 result["cv_scores"] = {'mean': cv_scores.mean(), 'std': cv_scores.std()}
+                logger.info(f"✅ CV {model_name}: {cv_scores.mean():.3f} ± {cv_scores.std():.3f}")
             except Exception as cv_error:
-                logger.warning(f"⚠️ CV échouée pour {model_name}: {cv_error}")
+                logger.warning(f"⚠️ CV échouée {model_name}: {cv_error}")
                 result["cv_scores"] = None
             
             pipeline.fit(X_train, y_train)
             result["model"] = pipeline
             result["success"] = True
+            model_trained = True
+            
+            logger.info(f"✅ Entraînement OK {model_name}")
         
         result["training_time"] = time.time() - start_time
         
         # ========================================================================
-        # 🆕 PHASE 2: ÉVALUATION IMMÉDIATE
+        # PHASE 2: ÉVALUATION IMMÉDIATE avec fallback robuste
         # ========================================================================
-        if result["success"] and result["model"] is not None:
+        if model_trained and result["model"] is not None:
             try:
-                logger.info(f"📊 Calcul des métriques pour {model_name}")
+                logger.info(f"📊 Calcul métriques {model_name}")
                 
-                # Import ici pour éviter les dépendances circulaires
                 from src.evaluation.metrics import evaluate_single_train_test_split
                 
                 evaluation_result = evaluate_single_train_test_split(
@@ -357,67 +401,83 @@ def train_single_model_supervised(
                     max_samples_metrics=100000
                 )
                 
-                # 🆕 FUSION ROBUSTE des métriques
+                # FUSION INTELLIGENTE avec validation type
                 if evaluation_result and isinstance(evaluation_result, dict):
                     if evaluation_result.get('success', False):
-                        # Copier TOUTES les métriques
-                        result['metrics'] = {
+                        # Extraction SÉCURISÉE des métriques
+                        computed_metrics = {
                             k: v for k, v in evaluation_result.items()
                             if k not in ['success', 'warnings', 'error', 'task_type']
+                            and isinstance(v, (int, float, np.number))
+                            and not (isinstance(v, float) and (np.isnan(v) or np.isinf(v)))
                         }
-                        logger.info(f"✅ Métriques calculées: {list(result['metrics'].keys())}")
+                        
+                        if computed_metrics:
+                            result['metrics'] = computed_metrics
+                            logger.info(f"✅ Métriques {model_name}: {list(computed_metrics.keys())}")
+                        else:
+                            logger.warning(f"⚠️ Aucune métrique valide calculée pour {model_name}")
+                            # Garder default_metrics
                     else:
-                        # Si évaluation échouée, créer des métriques par défaut
-                        result['metrics'] = {
-                            'error': evaluation_result.get('error', 'Évaluation échouée'),
-                            'accuracy': 0.0 if task_type == 'classification' else None,
-                            'r2': 0.0 if task_type == 'regression' else None
-                        }
-                        logger.warning(f"⚠️ Évaluation échouée pour {model_name}: {result['metrics']['error']}")
+                        # Évaluation échouée, ajouter erreur mais garder default_metrics
+                        error_msg = evaluation_result.get('error', 'Évaluation échouée')
+                        result['metrics']['error'] = error_msg
+                        logger.warning(f"⚠️ Évaluation échouée {model_name}: {error_msg}")
                 else:
-                    # Fallback si evaluation_result invalide
-                    result['metrics'] = {
-                        'error': 'Résultat évaluation invalide',
-                        'accuracy': 0.0 if task_type == 'classification' else None,
-                        'r2': 0.0 if task_type == 'regression' else None
-                    }
-                    logger.error(f"❌ Résultat évaluation invalide pour {model_name}")
+                    logger.error(f"❌ Résultat évaluation invalide {model_name}: {type(evaluation_result)}")
+                    result['metrics']['error'] = 'Résultat évaluation invalide'
                 
             except Exception as eval_error:
-                logger.error(f"❌ Erreur évaluation pour {model_name}: {eval_error}", exc_info=True)
-                result['metrics'] = {
-                    'error': f'Erreur évaluation: {str(eval_error)}',
-                    'accuracy': 0.0 if task_type == 'classification' else None,
-                    'r2': 0.0 if task_type == 'regression' else None
-                }
+                logger.error(f"❌ Erreur évaluation {model_name}: {eval_error}", exc_info=True)
+                # 🆕 FALLBACK: metrics par défaut + erreur
+                result['metrics'] = default_metrics.copy()
+                result['metrics']['error'] = f'Erreur évaluation: {str(eval_error)[:100]}'
         
         # ========================================================================
-        # VALIDATION FINALE
+        # VALIDATION FINALE STRICTE
         # ========================================================================
-        if not result.get('metrics'):
-            result['metrics'] = {
-                'error': 'Métriques non calculées',
-                'accuracy': 0.0 if task_type == 'classification' else None,
-                'r2': 0.0 if task_type == 'regression' else None
-            }
-            logger.warning(f"⚠️ Métriques vides pour {model_name}, ajout de métriques par défaut")
+        if not result.get('metrics') or not isinstance(result['metrics'], dict):
+            logger.error(f"❌ CRITIQUE {model_name}: metrics None ou invalide, réinitialisation")
+            result['metrics'] = default_metrics.copy()
+            result['metrics']['error'] = 'Metrics non calculées'
+        
+        # Vérification présence au moins UNE métrique valide
+        valid_metrics_count = sum(
+            1 for k, v in result['metrics'].items()
+            if k != 'error' and v is not None and isinstance(v, (int, float, np.number))
+        )
+        
+        if valid_metrics_count == 0:
+            logger.warning(f"⚠️ {model_name}: Aucune métrique valide, ajout d'un indicateur")
+            result['metrics']['valid_metrics_count'] = 0
         
         if monitor:
             resource_info = monitor.check_resources()
-            logger.info(f"✅ {model_name} entraîné en {result['training_time']:.2f}s")
+            logger.info(f"✅ {model_name} terminé en {result['training_time']:.2f}s, {valid_metrics_count} métriques valides")
         
     except Exception as e:
         result["success"] = False
         result["error"] = str(e)
         result["training_time"] = time.time() - start_time
-        result["metrics"] = {
-            'error': str(e),
-            'accuracy': 0.0 if task_type == 'classification' else None,
-            'r2': 0.0 if task_type == 'regression' else None
-        }
-        logger.error(f"❌ Erreur entraînement {model_name}: {e}", exc_info=True)
+        
+        # GARANTIE: metrics toujours présentes même en cas d'erreur
+        if not result.get('metrics') or not isinstance(result['metrics'], dict):
+            result["metrics"] = default_metrics.copy()
+        
+        result["metrics"]['error'] = str(e)[:200]
+        result["metrics"]['training_failed'] = True
+        
+        logger.error(f"❌ Erreur critique {model_name}: {e}", exc_info=True)
+    
+    # ASSERTION FINALE (debug)
+    assert 'metrics' in result, f"CRITIQUE: 'metrics' manquante dans result pour {model_name}"
+    assert isinstance(result['metrics'], dict), f"CRITIQUE: metrics n'est pas un dict pour {model_name}"
+    
+    logger.debug(f"🔍 {model_name} - Clés result: {list(result.keys())}")
+    logger.debug(f"🔍 {model_name} - Clés metrics: {list(result['metrics'].keys())}")
     
     return result
+
 
 def train_single_model_unsupervised(
     model_name: str,
@@ -427,8 +487,7 @@ def train_single_model_unsupervised(
     monitor: Any = None
 ) -> Dict[str, Any]:
     """
-    Entraîne un modèle non-supervisé avec GARANTIE des labels.
-    Version corrigée avec validation renforcée.
+    VERSION CORRIGÉE avec garantie labels à TOUS les niveaux
     """
     result = {
         "model_name": model_name,
@@ -455,28 +514,66 @@ def train_single_model_unsupervised(
             last_step = list(pipeline.named_steps.items())[-1]
             estimator = last_step[1]
 
-        def _fit_predict_with_pipeline(pipeline_obj, X_in):
-            """Fonction robuste pour obtenir les labels avec gestion d'erreurs"""
+        def _fit_predict_robust(pipeline_obj, X_in):
+            """
+            Fonction ULTRA-ROBUSTE pour obtenir les labels
+            Essaie TOUTES les méthodes possibles
+            """
+            labels = None
+            method_used = None
+            
             try:
+                # MÉTHODE 1: fit_predict (préféré pour clustering)
                 if hasattr(pipeline_obj, "fit_predict"):
                     labels = pipeline_obj.fit_predict(X_in)
-                    logger.debug(f"   Labels obtenus via fit_predict: {len(labels)}")
-                    return labels
-                else:
-                    fitted = pipeline_obj.fit(X_in)
-                    if hasattr(fitted, "predict"):
-                        labels = fitted.predict(X_in)
-                        logger.debug(f"   Labels obtenus via predict: {len(labels)}")
-                        return labels
-                    if hasattr(fitted, "labels_"):
-                        labels = getattr(fitted, "labels_")
-                        logger.debug(f"   Labels obtenus via labels_: {len(labels)}")
-                        return labels
-                    raise AttributeError("Estimator ne supporte ni fit_predict ni predict ni labels_.")
+                    method_used = "fit_predict"
+                    logger.debug(f"   Labels via fit_predict: {len(labels)}")
+                    return labels, method_used
             except Exception as e:
-                logger.error(f"❌ Erreur dans _fit_predict_with_pipeline: {e}")
-                raise
+                logger.warning(f"fit_predict échoué: {e}")
+            
+            try:
+                # MÉTHODE 2: fit + labels_
+                fitted = pipeline_obj.fit(X_in)
+                if hasattr(fitted, "labels_"):
+                    labels = getattr(fitted, "labels_")
+                    method_used = "labels_"
+                    logger.debug(f"   Labels via labels_: {len(labels)}")
+                    return labels, method_used
+            except Exception as e:
+                logger.warning(f"fit + labels_ échoué: {e}")
+            
+            try:
+                # MÉTHODE 3: fit + predict
+                if not hasattr(pipeline_obj, "fit"):
+                    raise AttributeError("Pas de méthode fit")
+                
+                fitted = pipeline_obj.fit(X_in)
+                if hasattr(fitted, "predict"):
+                    labels = fitted.predict(X_in)
+                    method_used = "fit + predict"
+                    logger.debug(f"   Labels via fit+predict: {len(labels)}")
+                    return labels, method_used
+            except Exception as e:
+                logger.warning(f"fit + predict échoué: {e}")
+            
+            # MÉTHODE 4: Accès direct au dernier step du pipeline
+            try:
+                if hasattr(pipeline_obj, "named_steps"):
+                    last_step_name = list(pipeline_obj.named_steps.keys())[-1]
+                    last_estimator = pipeline_obj.named_steps[last_step_name]
+                    
+                    if hasattr(last_estimator, "labels_"):
+                        labels = getattr(last_estimator, "labels_")
+                        method_used = f"pipeline.{last_step_name}.labels_"
+                        logger.debug(f"   Labels via {method_used}: {len(labels)}")
+                        return labels, method_used
+            except Exception as e:
+                logger.warning(f"Accès dernier step échoué: {e}")
+            
+            raise RuntimeError("AUCUNE méthode pour obtenir les labels n'a fonctionné!")
 
+        # ENTRAÎNEMENT avec/sans optimisation
         if param_grid and isinstance(param_grid, dict) and len(param_grid) > 0:
             from itertools import product
             from sklearn.base import clone
@@ -505,8 +602,12 @@ def train_single_model_unsupervised(
                         else:
                             raise e
 
-                    labels = _fit_predict_with_pipeline(pipeline_candidate, X)
+                    # RÉCUPÉRATION LABELS ROBUSTE
+                    labels, method = _fit_predict_robust(pipeline_candidate, X)
                     labels = np.asarray(labels)
+                    
+                    logger.debug(f"Combo {i+1}/{len(combos)}: labels obtenus via {method}")
+                    
                     metrics = _safe_cluster_metrics(X, labels)
                     score = metrics.get("silhouette", np.nan)
                     
@@ -518,7 +619,7 @@ def train_single_model_unsupervised(
                         best_metrics = metrics
                         
                 except Exception as e:
-                    logger.warning(f"⚠️ Combinaison {i+1}/{len(combos)} échouée pour {model_name}: {e}")
+                    logger.warning(f"⚠️ Combinaison {i+1}/{len(combos)} échouée: {e}")
                     continue
 
             if best_score == -np.inf:
@@ -526,58 +627,48 @@ def train_single_model_unsupervised(
                 
             result["best_params"] = best_params
             result["model"] = best_candidate
-            result["labels"] = best_labels  # 🎯 SAUVEGARDE DES LABELS
+            result["labels"] = best_labels
             result["metrics"] = best_metrics
 
         else:
-            # Entraînement sans optimisation d'hyperparamètres
-            labels = _fit_predict_with_pipeline(pipeline, X)
+            # Entraînement sans optimisation
+            labels, method = _fit_predict_robust(pipeline, X)
             labels = np.asarray(labels)
+            
+            logger.info(f"Labels obtenus via {method}")
+            
             result["model"] = pipeline
-            result["labels"] = labels  # 🎯 SAUVEGARDE DES LABELS
+            result["labels"] = labels
             result["metrics"] = _safe_cluster_metrics(X_arr, labels)
 
         result["training_time"] = time.time() - start_time
         result["success"] = True
 
-        # VALIDATION FINALE RENFORCÉE
+        # VALIDATION FINALE STRICTE
         if result["labels"] is None:
-            logger.warning(f"⚠️ Aucun label sauvegardé pour {model_name}, tentative de récupération...")
-            
-            # Tentative de récupération depuis le modèle entraîné
-            try:
-                trained_model = result["model"]
-                if hasattr(trained_model, 'labels_'):
-                    result["labels"] = trained_model.labels_
-                    logger.info(f"✅ Labels récupérés depuis .labels_ pour {model_name}: {len(result['labels'])}")
-                elif hasattr(trained_model, 'predict'):
-                    result["labels"] = trained_model.predict(X)
-                    logger.info(f"✅ Labels récupérés via .predict() pour {model_name}: {len(result['labels'])}")
-                else:
-                    logger.error(f"❌ Impossible de récupérer les labels pour {model_name}: modèle sans attribut labels_ ou predict")
-            except Exception as e:
-                logger.error(f"❌ Erreur récupération labels {model_name}: {e}")
-        else:
-            # Validation que les labels ont le bon format
-            if not isinstance(result["labels"], (np.ndarray, list)):
-                logger.warning(f"⚠️ Format de labels inhabituel pour {model_name}: {type(result['labels'])}")
-            else:
-                logger.info(f"✅ Labels validés pour {model_name}: {len(result['labels'])} points de données")
+            raise RuntimeError("CRITIQUE: Labels sont None après entraînement!")
+        
+        if not isinstance(result["labels"], (np.ndarray, list)):
+            raise TypeError(f"CRITIQUE: Labels type invalide: {type(result['labels'])}")
+        
+        if len(result["labels"]) != n_samples:
+            raise ValueError(
+                f"CRITIQUE: Incohérence nb labels ({len(result['labels'])}) "
+                f"vs nb samples ({n_samples})"
+            )
+        
+        logger.info(
+            f"✅ {model_name}: Clustering réussi\n"
+            f"   • Labels: {len(result['labels'])} points\n"
+            f"   • Clusters uniques: {len(np.unique(result['labels']))}\n"
+            f"   • Silhouette: {result['metrics'].get('silhouette', 'N/A')}"
+        )
 
     except Exception as e:
         result["success"] = False
         result["error"] = str(e)
         result["training_time"] = time.time() - start_time
-        logger.error(f"❌ Erreur clustering {model_name}: {e}")
-
-    # LOG FINAL POUR DEBUG
-    final_status = {
-        'success': result['success'],
-        'labels_present': result['labels'] is not None,
-        'labels_count': len(result['labels']) if result['labels'] is not None else 0,
-        'training_time': result['training_time']
-    }
-    logger.info(f"📊 Résultat final clustering {model_name}: {final_status}")
+        logger.error(f"❌ Erreur clustering {model_name}: {e}", exc_info=True)
 
     return result
 
@@ -601,79 +692,126 @@ def log_structured(level: str, message: str, extra: Dict = None):
     except Exception as e:
         logger.error(f"Erreur lors de la journalisation structurée: {str(e)[:100]}")
 
+# =================================
+# FONCTION DE STOCKAGE POUR SESSION
+# =================================
 def _store_results_in_session(results: List[Dict], mlflow_runs: List[Dict]) -> bool:
-    """Stockage ROBUSTE avec synchronisation multi-état"""
+    """
+    Stockage ATOMIQUE avec déduplication et validation stricte.
+    🆕 Synchronisation STATE + session_state garantie
+    """
     try:
-        log_structured("INFO", "🔄 Démarrage stockage session", {
-            "n_results": len(results) if results else 0,
-            "n_mlflow_runs": len(mlflow_runs) if mlflow_runs else 0
-        })
+        logger.info(f"🔄 Démarrage stockage session: {len(results)} résultats, {len(mlflow_runs)} runs MLflow")
         
         if not STREAMLIT_AVAILABLE or st is None:
-            log_structured("WARNING", "Streamlit non disponible - stockage limité")
-            # Stocke quand même dans STATE si possible
+            logger.warning("⚠️ Streamlit non disponible - stockage limité à STATE")
+            # Fallback STATE uniquement
             if hasattr(STATE, 'mlflow_runs') and mlflow_runs:
-                STATE.mlflow_runs = mlflow_runs
+                existing_ids = {r.get('run_id') for r in STATE.mlflow_runs if r.get('run_id')}
+                new_runs = [r for r in mlflow_runs if r.get('run_id') not in existing_ids]
+                STATE.mlflow_runs.extend(new_runs)
+                logger.info(f"✅ {len(new_runs)} runs ajoutés à STATE (fallback)")
             return False
         
-        # 🔧 INITIALISATION ROBUSTE de tous les états
+        # 🔒 VALIDATION STRICTE des données
+        valid_results = []
+        for r in results:
+            if not isinstance(r, dict):
+                logger.warning(f"⚠️ Résultat ignoré (type invalide): {type(r)}")
+                continue
+            if not r.get('model_name'):
+                logger.warning(f"⚠️ Résultat ignoré (model_name manquant): {list(r.keys())}")
+                continue
+            valid_results.append(r)
+        
+        valid_mlflow_runs = []
+        for r in mlflow_runs:
+            if not isinstance(r, dict):
+                logger.warning(f"⚠️ Run MLflow ignoré (type invalide): {type(r)}")
+                continue
+            if not r.get('run_id'):
+                logger.warning(f"⚠️ Run MLflow ignoré (run_id manquant)")
+                continue
+            valid_mlflow_runs.append(r)
+        
+        logger.info(f"✅ Validation: {len(valid_results)}/{len(results)} résultats, {len(valid_mlflow_runs)}/{len(mlflow_runs)} runs valides")
+        
+        # 🔧 INITIALISATION ATOMIQUE
         if 'ml_results' not in st.session_state:
             st.session_state.ml_results = []
         if 'mlflow_runs' not in st.session_state:
             st.session_state.mlflow_runs = []
         
-        # 🎯 VALIDATION STRICTE des données
-        valid_results = [r for r in results if isinstance(r, dict) and r.get('model_name')]
-        valid_mlflow_runs = [r for r in mlflow_runs if isinstance(r, dict)]
+        # 🎯 DÉDUPLICATION par run_id
+        existing_run_ids = {r.get('run_id') for r in st.session_state.mlflow_runs if r.get('run_id')}
+        new_runs = [r for r in valid_mlflow_runs if r.get('run_id') not in existing_run_ids]
         
-        # 🎯 FUSION INTELLIGENTE (évite les doublons par run_id)
-        existing_run_ids = set()
-        if hasattr(st.session_state, 'mlflow_runs'):
-            existing_run_ids = {r.get('run_id') for r in st.session_state.mlflow_runs if r.get('run_id')}
+        if len(new_runs) < len(valid_mlflow_runs):
+            logger.info(f"ℹ️ {len(valid_mlflow_runs) - len(new_runs)} runs déjà existants (ignorés)")
         
-        new_runs = []
-        for run in valid_mlflow_runs:
-            run_id = run.get('run_id')
-            if run_id and run_id not in existing_run_ids:
-                new_runs.append(run)
-                existing_run_ids.add(run_id)
-        
-        # 💾 STOCKAGE MULTI-ÉTAT
-        # 1. Session Streamlit
-        st.session_state.ml_results.extend(valid_results)
-        st.session_state.mlflow_runs.extend(new_runs)
-        
-        # 2. État global STATE
-        if hasattr(STATE, 'mlflow_runs'):
-            # Fusion aussi pour STATE
-            state_existing_ids = {r.get('run_id') for r in STATE.mlflow_runs if r.get('run_id')}
-            state_new_runs = [r for r in new_runs if r.get('run_id') not in state_existing_ids]
-            STATE.mlflow_runs.extend(state_new_runs)
-        
-        # 3. TrainingState spécifique
-        if hasattr(STATE, 'training') and hasattr(STATE.training, 'mlflow_runs'):
-            training_existing_ids = {r.get('run_id') for r in STATE.training.mlflow_runs if r.get('run_id')}
-            training_new_runs = [r for r in new_runs if r.get('run_id') not in training_existing_ids]
-            STATE.training.mlflow_runs.extend(training_new_runs)
-        
-        log_structured("INFO", "✅ Stockage session réussi", {
-            "n_results": len(valid_results),
-            "n_mlflow_runs": len(new_runs),
-            "total_runs_session": len(st.session_state.mlflow_runs),
-            "total_runs_state": len(STATE.mlflow_runs) if hasattr(STATE, 'mlflow_runs') else 0,
-            "total_runs_training": len(STATE.training.mlflow_runs) if hasattr(STATE.training, 'mlflow_runs') else 0
-        })
-        
-        return True
+        # 💾 STOCKAGE MULTI-NIVEAU avec transaction atomique
+        try:
+            # Niveau 1: Session Streamlit (prioritaire)
+            st.session_state.ml_results.extend(valid_results)
+            st.session_state.mlflow_runs.extend(new_runs)
+            
+            # Niveau 2: STATE global (synchronisation)
+            if hasattr(STATE, 'ml_results'):
+                if not isinstance(STATE.ml_results, list):
+                    STATE.ml_results = []
+                STATE.ml_results.extend(valid_results)
+            
+            if hasattr(STATE, 'mlflow_runs'):
+                if not isinstance(STATE.mlflow_runs, list):
+                    STATE.mlflow_runs = []
+                
+                state_existing_ids = {r.get('run_id') for r in STATE.mlflow_runs if r.get('run_id')}
+                state_new_runs = [r for r in new_runs if r.get('run_id') not in state_existing_ids]
+                STATE.mlflow_runs.extend(state_new_runs)
+            
+            # Niveau 3: TrainingState (si disponible)
+            if hasattr(STATE, 'training') and hasattr(STATE.training, 'mlflow_runs'):
+                if not isinstance(STATE.training.mlflow_runs, list):
+                    STATE.training.mlflow_runs = []
+                
+                training_existing_ids = {r.get('run_id') for r in STATE.training.mlflow_runs if r.get('run_id')}
+                training_new_runs = [r for r in new_runs if r.get('run_id') not in training_existing_ids]
+                STATE.training.mlflow_runs.extend(training_new_runs)
+            
+            # ✅ VALIDATION POST-STOCKAGE
+            total_session = len(st.session_state.mlflow_runs)
+            total_state = len(STATE.mlflow_runs) if hasattr(STATE, 'mlflow_runs') else 0
+            total_training = len(STATE.training.mlflow_runs) if hasattr(STATE, 'training') and hasattr(STATE.training, 'mlflow_runs') else 0
+            
+            logger.info(
+                f"✅ Stockage réussi:\n"
+                f"   • Résultats ajoutés: {len(valid_results)}\n"
+                f"   • Nouveaux runs MLflow: {len(new_runs)}\n"
+                f"   • Total session: {total_session} runs\n"
+                f"   • Total STATE: {total_state} runs\n"
+                f"   • Total training: {total_training} runs"
+            )
+            
+            return True
+            
+        except Exception as storage_error:
+            logger.error(f"❌ Erreur transaction stockage: {storage_error}", exc_info=True)
+            # Rollback tentative (best effort)
+            try:
+                st.session_state.ml_results = st.session_state.ml_results[:-len(valid_results)]
+                st.session_state.mlflow_runs = st.session_state.mlflow_runs[:-len(new_runs)]
+            except:
+                pass
+            return False
         
     except Exception as e:
-        log_structured("ERROR", "❌ Échec stockage session", {
-            "error": str(e),
-            "results_count": len(results) if results else 0,
-            "mlflow_runs_count": len(mlflow_runs) if mlflow_runs else 0
-        })
+        logger.error(f"❌ Échec critique stockage session: {e}", exc_info=True)
         return False
 
+
+# ===============================================
+# FONCTION PRINCIPALE D'ENTRAÎNEMENT AVEC MLFLOW
+# ===============================================
 def train_single_model_with_mlflow(
     model_name: str,
     task_type: str,
@@ -695,83 +833,111 @@ def train_single_model_with_mlflow(
     mlflow_enabled: bool
 ) -> Tuple[Optional[Dict], Optional[Dict]]:
     """
-    🔧 CORRECTION: Injection de feature_list dans preprocessing_choices.
-    
-    PROBLÈME RÉSOLU:
-    - create_leak_free_pipeline ne savait pas quelles colonnes sont disponibles
-    
-    CHANGEMENTS:
-    - Ajout de feature_list dans preprocessing_choices
-    - Validation que X_train contient bien ces features
+    VERSION CORRIGÉE avec :
+    - Validation SMOTE stricte AVANT création pipeline
+    - Synchronisation MLflow garantie
+    - Métriques obligatoires
     """
     
     mlflow_run_data = None
     result = None
     
     try:
-        # 🆕 INJECTION feature_list dans preprocessing_choices
+        # INJECTION feature_list
         preprocessing_choices['feature_list'] = feature_list
+        logger.debug(f"✅ {model_name}: feature_list injectée ({len(feature_list)} features)")
         
-        # 🆕 VALIDATION: Vérifier que X_train contient bien ces features
+        # VALIDATION données
         if task_type != 'clustering' and X_train is not None:
             missing_features = [f for f in feature_list if f not in X_train.columns]
             if missing_features:
-                log_structured(
-                    "ERROR",
-                    f"Features manquantes dans X_train: {missing_features[:5]}",
-                    {"model": model_name, "n_missing": len(missing_features)}
-                )
+                logger.error(f"❌ {model_name}: Features manquantes: {missing_features[:5]}")
                 return None, None
             
-            # S'assurer que X_train ne contient QUE les features de feature_list
             X_train = X_train[feature_list].copy()
             X_test = X_test[feature_list].copy()
+            logger.debug(f"✅ {model_name}: X_train/X_test filtrés ({X_train.shape})")
         
         elif task_type == 'clustering' and X is not None:
             missing_features = [f for f in feature_list if f not in X.columns]
             if missing_features:
-                log_structured(
-                    "ERROR",
-                    f"Features manquantes dans X: {missing_features[:5]}",
-                    {"model": model_name, "n_missing": len(missing_features)}
-                )
+                logger.error(f"❌ {model_name}: Features manquantes dans X: {missing_features[:5]}")
                 return None, None
             
             X = X[feature_list].copy()
+            logger.debug(f"✅ {model_name}: X clustering filtré ({X.shape})")
         
-        # 🆕 FILTRAGE column_types pour ne garder QUE les colonnes dans feature_list
+        # FILTRAGE column_types
         feature_set = set(feature_list)
-        filtered_column_types = {}
+        filtered_column_types = {
+            col_type: [col for col in cols if col in feature_set]
+            for col_type, cols in column_types.items()
+            if any(col in feature_set for col in cols)
+        }
         
-        for col_type, cols in column_types.items():
-            valid_cols = [col for col in cols if col in feature_set]
-            if valid_cols:
-                filtered_column_types[col_type] = valid_cols
+        logger.info(f"✅ {model_name}: Column types filtrés: {[(k, len(v)) for k, v in filtered_column_types.items()]}")
         
-        log_structured(
-            "INFO",
-            f"Column types filtrés pour {model_name}",
-            {
-                "original_types": {k: len(v) for k, v in column_types.items()},
-                "filtered_types": {k: len(v) for k, v in filtered_column_types.items()}
-            }
-        )
+        # 🆕 VALIDATION SMOTE STRICTE (CRITIQUE)
+        final_use_smote = False
+        smote_validation_passed = True
         
-        # Création du pipeline avec column_types FILTRÉS
+        if use_smote and task_type == 'classification' and y_train is not None:
+            # Récupération paramètres SMOTE
+            smote_k = preprocessing_choices.get('smote_k_neighbors', 5)
+            
+            # VALIDATION classe minoritaire
+            class_counts = y_train.value_counts()
+            min_class_count = class_counts.min()
+            
+            if min_class_count <= smote_k:
+                logger.error(
+                    f"❌ {model_name}: SMOTE IMPOSSIBLE!\n"
+                    f"   k_neighbors={smote_k} >= min_class_count={min_class_count}\n"
+                    f"   SMOTE nécessite min_class_count > k_neighbors"
+                )
+                smote_validation_passed = False
+                use_smote = False
+                
+                # Injection warning dans preprocessing_choices
+                if 'smote_validation_error' not in preprocessing_choices:
+                    preprocessing_choices['smote_validation_error'] = (
+                        f"Classe minoritaire trop petite ({min_class_count} ≤ k={smote_k})"
+                    )
+            else:
+                logger.info(
+                    f"✅ {model_name}: SMOTE validé (k={smote_k} < min_class={min_class_count})"
+                )
+                final_use_smote = True
+        
+        # Mise à jour preprocessing_choices avec validation
+        preprocessing_choices['use_smote'] = final_use_smote
+        preprocessing_choices['smote_validation_passed'] = smote_validation_passed
+        
+        # CRÉATION pipeline (avec SMOTE validé)
         pipeline, param_grid = create_leak_free_pipeline(
             model_name=model_name,
             task_type=task_type,
-            column_types=filtered_column_types,  # 🆕 Utiliser les colonnes filtrées
+            column_types=filtered_column_types,
             preprocessing_choices=preprocessing_choices,
-            use_smote=use_smote,
+            use_smote=final_use_smote,  # 🎯 SMOTE validé
             optimize_hyperparams=optimize
         )
         
         if pipeline is None:
-            log_structured("ERROR", f"Pipeline vide pour {model_name}")
+            logger.error(f"❌ {model_name}: Pipeline vide")
             return None, None
 
-        # Configuration MLflow
+        # RÉCUPÉRATION IMBALANCE INFO depuis STATE
+        imbalance_ratio = None
+        imbalance_level = None
+        min_class_count = None
+        
+        if hasattr(STATE, 'imbalance_config') and isinstance(STATE.imbalance_config, dict):
+            imbalance_ratio = STATE.imbalance_config.get('imbalance_ratio')
+            imbalance_level = STATE.imbalance_config.get('imbalance_level')
+            min_class_count = STATE.imbalance_config.get('min_class_count')
+        
+        # CONFIGURATION MLFLOW ENRICHIE
         run_id = None
         timestamp = int(time.time())
         
@@ -780,31 +946,54 @@ def train_single_model_with_mlflow(
                 run_name = f"{clean_model_name(model_name)}_{timestamp}"
                 mlflow.start_run(run_name=run_name)
                 
-                # Log des paramètres de base
+                # PARAMS STANDARDS
                 mlflow.log_param("task_type", task_type)
                 mlflow.log_param("model_name", model_name)
                 mlflow.log_param("optimize_hyperparams", optimize)
-                mlflow.log_param("use_smote", use_smote)
                 mlflow.log_param("n_features", len(feature_list))
                 
-                # Log git info
+                # 🆕 PARAMS SMOTE AVEC VALIDATION
+                mlflow.log_param("use_smote", final_use_smote)
+                mlflow.log_param("smote_validation_passed", smote_validation_passed)
+                
+                if final_use_smote:
+                    mlflow.log_param("smote_k_neighbors", preprocessing_choices.get('smote_k_neighbors', 5))
+                    mlflow.set_tag("smote_applied", "true")
+                else:
+                    mlflow.set_tag("smote_applied", "false")
+                    if not smote_validation_passed:
+                        mlflow.set_tag("smote_validation_error", 
+                                     preprocessing_choices.get('smote_validation_error', 'Unknown'))
+                
+                if imbalance_ratio is not None:
+                    mlflow.log_metric("imbalance_ratio", float(imbalance_ratio))
+                    mlflow.set_tag("imbalance_level", str(imbalance_level))
+                
+                if min_class_count is not None:
+                    mlflow.log_metric("min_class_count", int(min_class_count))
+                
+                # PARAMS GIT
                 for k, v in git_info.items():
                     if v:
                         mlflow.log_param(f"git_{k}", v)
                 
-                # Log preprocessing choices
+                # PARAMS PREPROCESSING
                 for k, v in preprocessing_choices.items():
                     if isinstance(v, (str, int, float, bool)):
                         mlflow.log_param(f"preprocessing_{k}", v)
                 
+                # TAGS ADDITIONNELS
+                mlflow.set_tag("framework", "scikit-learn")
+                mlflow.set_tag("app_version", "3.0.0")
+                
                 run_id = mlflow.active_run().info.run_id
-                log_structured("INFO", f"Run MLflow démarré", {"run_id": run_id, "model": model_name})
+                logger.info(f"✅ {model_name}: Run MLflow démarré ({run_id})")
                 
             except Exception as e:
-                log_structured("WARNING", f"Échec démarrage MLflow pour {model_name}: {str(e)}")
+                logger.warning(f"⚠️ {model_name}: Échec démarrage MLflow: {e}")
                 mlflow_enabled = False
 
-        # Entraînement
+        # ENTRAÎNEMENT
         training_result = None
         try:
             if task_type == 'clustering':
@@ -828,41 +1017,31 @@ def train_single_model_with_mlflow(
                     monitor=monitor
                 )
         except Exception as e:
-            log_structured("ERROR", f"Échec entraînement pour {model_name}: {str(e)}")
+            logger.error(f"❌ {model_name}: Échec entraînement: {e}")
+            if mlflow_enabled and mlflow.active_run():
+                mlflow.log_param("training_error", str(e)[:200])
+                mlflow.end_run(status="FAILED")
+            return None, None
+
+        # 🆕 VALIDATION STRICTE DES MÉTRIQUES (CRITIQUE)
+        if not training_result or not training_result.get('success'):
+            logger.error(f"❌ {model_name}: Entraînement échoué")
+            if mlflow_enabled and mlflow.active_run():
+                mlflow.end_run(status="FAILED")
+            return None, None
+        
+        if 'metrics' not in training_result or not isinstance(training_result['metrics'], dict):
+            logger.error(f"❌ {model_name}: CRITIQUE - metrics manquantes ou invalides")
+            training_result['metrics'] = {'error': 'Metrics non générées'}
             if mlflow_enabled and mlflow.active_run():
                 mlflow.end_run(status="FAILED")
             return None, None
 
-        # Évaluation
-        metrics = {}
-        warnings_list = []
-        
-        try:
-            if training_result["success"]:
-                if task_type == 'clustering':
-                    metrics = training_result["metrics"]
-                    metrics["success"] = True
-                    metrics["warnings"] = metrics.get("warnings", [])
-                else:
-                    metrics = evaluate_single_train_test_split(
-                        model=training_result["model"],
-                        X_test=X_test,
-                        y_test=y_test,
-                        task_type=task_type,
-                        label_encoder=label_encoder,
-                        sample_metrics=sample_metrics,
-                        max_samples_metrics=max_samples_metrics
-                    )
-            else:
-                metrics = {"error": training_result.get("error", "Échec entraînement")}
-        except Exception as e:
-            log_structured("ERROR", f"Échec évaluation pour {model_name}: {str(e)}")
-            metrics = {"error": f"Erreur évaluation: {str(e)}"}
-
-        # Propagation des warnings
+        # ÉVALUATION (déjà faite dans train_single_model_supervised/unsupervised)
+        metrics = training_result['metrics']
         warnings_list = metrics.pop("warnings", [])
 
-        # Sauvegarde du modèle
+        # SAUVEGARDE modèle
         model_name_clean = clean_model_name(model_name)
         model_filename = f"{model_name_clean}_{task_type}_{timestamp}.joblib"
         model_path = os.path.join("models_output", model_filename)
@@ -870,20 +1049,45 @@ def train_single_model_with_mlflow(
         try:
             os.makedirs("models_output", exist_ok=True)
             joblib.dump(training_result["model"], model_path)
-            log_structured("INFO", f"Modèle sauvegardé", {"path": model_path, "model": model_name})
+            logger.info(f"✅ {model_name}: Modèle sauvegardé ({model_path})")
         except Exception as e:
-            log_structured("ERROR", f"Échec sauvegarde modèle {model_name}: {str(e)}")
+            logger.error(f"❌ {model_name}: Échec sauvegarde: {e}")
 
-        # Logging MLflow final
-        if mlflow_enabled and training_result["success"]:
+        # LOGGING MLFLOW ENRICHI
+        # LOGGING MLFLOW ENRICHI
+        if mlflow_enabled:
             try:
+                # MÉTRIQUES PRINCIPALES
                 for k, v in metrics.items():
                     if isinstance(v, (int, float)) and not np.isnan(v):
                         mlflow.log_metric(k, float(v))
-                
+                        
                 mlflow.log_metric("training_time", training_result.get("training_time", 0.0))
+                        
+                # MÉTRIQUES SMOTE
+                if final_use_smote:
+                    mlflow.log_metric("smote_applied", 1.0)
+                    mlflow.log_metric("data_augmentation", 1.0)
+                else:
+                    mlflow.log_metric("smote_applied", 0.0)
+                        
+                if not smote_validation_passed:
+                    mlflow.log_metric("smote_validation_failed", 1.0)
+                        
+                if imbalance_ratio is not None and imbalance_ratio > 2:
+                    mlflow.log_metric("imbalance_severity", min(10.0, imbalance_ratio / 2))
+                        
+                # ARTEFACTS
                 mlflow.log_artifact(model_path)
-                
+                        
+                # TAGS FINAUX
+                if metrics.get('accuracy'):
+                    mlflow.set_tag("accuracy_tier", 
+                                "excellent" if metrics['accuracy'] > 0.9 else 
+                                "good" if metrics['accuracy'] > 0.8 else 
+                                "fair" if metrics['accuracy'] > 0.7 else "poor")
+                        
+                # 🎯 FORMATAGE ET COLLECTE IMMÉDIATE (AVANT end_run)
                 mlflow_run_data = format_mlflow_run_for_ui(
                     run_info=mlflow.active_run(),
                     metrics=metrics,
@@ -891,52 +1095,82 @@ def train_single_model_with_mlflow(
                     model_name=model_name,
                     timestamp=timestamp
                 )
-                
-                log_structured("INFO", f"Run MLflow complété", {
-                    "model": model_name, 
-                    "run_id": run_id,
-                    "metrics_count": len([k for k in metrics if isinstance(metrics[k], (int, float))])
-                })
-                
+                        
+                # ENRICHISSEMENT
+                if mlflow_run_data:
+                    mlflow_run_data['smote_applied'] = final_use_smote
+                    mlflow_run_data['smote_validation_passed'] = smote_validation_passed
+                    mlflow_run_data['imbalance_ratio'] = imbalance_ratio
+                    mlflow_run_data['imbalance_level'] = imbalance_level
+                            
+                    # 🎯 COLLECTE ATOMIQUE dans le collecteur global
+                    collected = MLFLOW_COLLECTOR.add_run(mlflow_run_data)
+                    if collected:
+                        logger.info(f"✅ {model_name}: Run collecté dans MLFLOW_COLLECTOR")
+                    else:
+                        logger.warning(f"⚠️ {model_name}: Run déjà collecté ou invalide")
+                        
+                logger.info(f"✅ {model_name}: Run MLflow complété")
+                        
             except Exception as e:
-                log_structured("WARNING", f"Échec logging MLflow pour {model_name}: {str(e)}")
+                logger.warning(f"⚠️ {model_name}: Échec logging MLflow: {e}")
             finally:
                 if mlflow.active_run():
                     mlflow.end_run()
 
-        # Construction du résultat final
+        # 🆕 CONSTRUCTION RÉSULTAT FINAL ROBUSTE
         result = {
             "model_name": model_name,
             "task_type": task_type,
-            "metrics": metrics,
+            "metrics": metrics,  # Déjà validées
             "training_time": training_result.get("training_time", 0),
             "model_path": model_path,
             "warnings": warnings_list,
-            "success": training_result.get("success", False),
-            "feature_names": feature_list
+            "success": True,  # On arrive ici = succès
+            "feature_names": feature_list,
+            "smote_applied": final_use_smote,
+            "smote_validation_passed": smote_validation_passed,
+            "imbalance_ratio": imbalance_ratio,
+            "n_features": len(feature_list)
         }
 
-        if task_type == 'clustering' and training_result.get("labels") is not None:
-            result["labels"] = training_result["labels"]
-            result["X_sample"] = X
-        elif task_type in ['classification', 'regression']:
+        # Ajout données spécifiques au task
+        if task_type == 'clustering':
+            if training_result.get("labels") is not None:
+                result["labels"] = training_result["labels"]
+                result["X_sample"] = X
+                logger.info(f"✅ {model_name}: Labels clustering sauvegardés ({len(result['labels'])} points)")
+            else:
+                logger.error(f"❌ {model_name}: CRITIQUE - Labels clustering manquants!")
+                result["warnings"].append("Labels clustering non disponibles")
+        
+        else:  # Supervisé
             result["X_train"] = X_train
             result["y_train"] = y_train
             result["X_test"] = X_test
             result["y_test"] = y_test
             result["model"] = training_result["model"]
-        
-        if X_test is not None and len(X_test) > 0:
-            sample_size = min(1000, len(X_test))
-            result["X_sample"] = X_test.iloc[:sample_size] if hasattr(X_test, 'iloc') else X_test[:sample_size]
+            
+            if X_test is not None and len(X_test) > 0:
+                sample_size = min(1000, len(X_test))
+                result["X_sample"] = X_test.iloc[:sample_size]
 
     except Exception as e:
-        log_structured("ERROR", f"Erreur critique dans train_single_model_with_mlflow pour {model_name}: {str(e)}")
+        logger.error(f"❌ {model_name}: Erreur critique: {e}", exc_info=True)
         if mlflow_enabled and mlflow.active_run():
+            try:
+                mlflow.log_param("critical_error", str(e)[:200])
+            except:
+                pass
             mlflow.end_run(status="FAILED")
         return None, None
 
     return result, mlflow_run_data
+
+
+# ======================================
+# 🔧 TRAIN_MODELS - FONCTION PRINCIPALE
+# ======================================
 
 def train_models(
     df: pd.DataFrame,
@@ -953,25 +1187,48 @@ def train_models(
     n_jobs: int = None
 ) -> List[Dict[str, Any]]:
     """
-    Fonction principale d'entraînement - Version Production Corrigée.
+    🆕 VERSION CORRIGÉE avec:
+    - Validation SMOTE précoce
+    - Synchronisation MLflow GARANTIE multi-niveaux
+    - Métriques obligatoires
+    - Logs structurés
     """
     
     if n_jobs is None:
         n_jobs = TRAINING_CONSTANTS.get("N_JOBS", -1)
     
-    # Utilisation du gestionnaire d'état global
     with TRAINING_STATE.training_session() as state:
         results = []
         monitor = TrainingMonitor()
         monitor.start_training()
 
-        # ============================================================
-        # 1. CONFIGURATION DE BASE
-        # ============================================================
+        # ========================================================================
+        # PHASE 1: VALIDATION FEATURE_LIST
+        # ========================================================================
+        if not feature_list or len(feature_list) == 0:
+            logger.error("❌ feature_list vide!")
+            
+            if target_column and target_column in df.columns:
+                feature_list = [col for col in df.columns if col != target_column]
+            else:
+                feature_list = list(df.columns)
+            
+            if not feature_list:
+                error_msg = "Impossible de déterminer feature_list"
+                logger.error(f"❌ {error_msg}")
+                return [{"model_name": "Validation", "metrics": {"error": error_msg}, "warnings": [], "success": False}]
+            
+            logger.warning(f"⚠️ feature_list récupérée auto: {len(feature_list)} features")
+        
+        logger.info(f"✅ feature_list validée: {len(feature_list)} features")
+
+        # ========================================================================
+        # PHASE 2: VALIDATION TASK TYPE
+        # ========================================================================
         task_type = task_type.lower()
         if task_type not in ['classification', 'regression', 'clustering', 'unsupervised']:
-            log_structured("ERROR", f"Type de tâche invalide: {task_type}")
-            return [{"model_name": "Validation", "metrics": {"error": f"Type de tâche {task_type} non supporté"}, "warnings": []}]
+            logger.error(f"❌ Type invalide: {task_type}")
+            return [{"model_name": "Validation", "metrics": {"error": f"Type {task_type} non supporté"}, "warnings": [], "success": False}]
         
         if task_type == 'unsupervised':
             task_type = 'clustering'
@@ -981,61 +1238,39 @@ def train_models(
             use_smote = False
             test_size = 0.0
 
-        log_structured("INFO", f"Début entraînement", {
-            "task_type": task_type, 
-            "n_models": len(model_names), 
-            "target_column": target_column,
-            "dataset_shape": df.shape
-        })
+        logger.info(f"🚀 Début entraînement: {task_type}, {len(model_names)} modèles, {len(feature_list)} features")
 
-        # Validation initiale
+        # ========================================================================
+        # PHASE 3: VALIDATION DONNÉES
+        # ========================================================================
         min_samples = TRAINING_CONSTANTS.get("MIN_SAMPLES_REQUIRED", 10)
         if len(df) < min_samples:
-            log_structured("ERROR", f"Nombre d'échantillons insuffisant: {len(df)} < {min_samples}")
-            return [{"model_name": "Validation", "metrics": {"error": "Échantillons insuffisants"}, "warnings": []}]
+            logger.error(f"❌ Échantillons insuffisants: {len(df)} < {min_samples}")
+            return [{"model_name": "Validation", "metrics": {"error": "Échantillons insuffisants"}, "warnings": [], "success": False}]
 
-        # ============================================================
-        # 2. CONFIGURATION MLFLOW
-        # ============================================================
+        # ========================================================================
+        # PHASE 4: CONFIGURATION MLFLOW
+        # ========================================================================
         mlflow_enabled = MLFLOW_AVAILABLE and MLFLOW_CONSTANTS.get("AVAILABLE", False)
         git_info = get_git_info() if mlflow_enabled else {}
 
         if mlflow_enabled:
             try:
                 from utils.mlflow import configure_mlflow
-                # Configure de manière centralisée à partir des settings/constants
                 configured = configure_mlflow(
                     MLFLOW_CONSTANTS.get("TRACKING_URI", "sqlite:///mlflow.db"),
                     MLFLOW_CONSTANTS.get("EXPERIMENT_NAME", "datalab_experiments")
                 )
                 if not configured:
-                    raise RuntimeError("Échec configuration MLflow")
-                log_structured("INFO", f"MLflow configuré", {
-                    "experiment_name": MLFLOW_CONSTANTS.get("EXPERIMENT_NAME"),
-                    "tracking_uri": MLFLOW_CONSTANTS.get("TRACKING_URI"),
-                    "git_branch": git_info.get('branch', 'unknown')
-                })
+                    raise RuntimeError("Échec config MLflow")
+                logger.info(f"✅ MLflow configuré: {MLFLOW_CONSTANTS.get('EXPERIMENT_NAME')}")
             except Exception as e:
-                log_structured("WARNING", f"Échec configuration MLflow: {str(e)}")
+                logger.warning(f"⚠️ Échec config MLflow: {e}")
                 mlflow_enabled = False
 
-        # ============================================================
-        # 3. PRÉPARATION DES FEATURES
-        # ============================================================
-        if not feature_list:
-            if target_column and target_column in df.columns:
-                feature_list = [col for col in df.columns if col != target_column]
-            else:
-                feature_list = list(df.columns)
-
-        max_features = TRAINING_CONSTANTS.get("MAX_FEATURES", 1000)
-        if len(feature_list) > max_features:
-            log_structured("WARNING", f"Trop de features ({len(feature_list)}) → limité à {max_features}")
-            feature_list = feature_list[:max_features]
-
-        # ============================================================
-        # 4. CONFIGURATION PRÉTRAITEMENT
-        # ============================================================
+        # ========================================================================
+        # PHASE 5: PREPROCESSING CONFIG
+        # ========================================================================
         if preprocessing_choices is None:
             preprocessing_choices = {
                 'numeric_imputation': PREPROCESSING_CONSTANTS.get("NUMERIC_IMPUTATION_DEFAULT", "mean"),
@@ -1048,17 +1283,16 @@ def train_models(
                 'random_state': TRAINING_CONSTANTS.get("RANDOM_STATE", 42)
             }
 
-        # Création des répertoires
         os.makedirs("models_output", exist_ok=True)
         os.makedirs(LOGGING_CONSTANTS.get("LOG_DIR", "logs"), exist_ok=True)
 
-        # ============================================================
-        # 5. PRÉPARATION DES DONNÉES
-        # ============================================================
+        # ========================================================================
+        # PHASE 6: PRÉPARATION DONNÉES
+        # ========================================================================
         X = df[feature_list].copy()
         if X.empty:
-            log_structured("ERROR", "DataFrame vide après sélection des features")
-            return [{"model_name": "Validation", "metrics": {"error": "DataFrame vide"}, "warnings": []}]
+            logger.error("❌ DataFrame vide après sélection features")
+            return [{"model_name": "Validation", "metrics": {"error": "DataFrame vide"}, "warnings": [], "success": False}]
 
         y, label_encoder = None, None
         if task_type != 'clustering' and target_column:
@@ -1066,18 +1300,55 @@ def train_models(
             y_encoded, label_encoder, warnings_enc = safe_label_encode(y_raw)
             y = pd.Series(y_encoded, index=y_raw.index, name=target_column)
             if warnings_enc:
-                log_structured("WARNING", f"Encodage des labels: {warnings_enc}")
+                logger.warning(f"⚠️ Encodage labels: {warnings_enc}")
 
         data_validation = DataValidator.validate_training_data(X, y, task_type)
         if not data_validation["is_valid"]:
-            log_structured("ERROR", f"Validation des données échouée: {', '.join(data_validation['issues'])}")
-            return [{"model_name": "Validation", "metrics": {"error": ', '.join(data_validation['issues'])}, "warnings": data_validation.get('warnings', [])}]
+            logger.error(f"❌ Validation données échouée: {', '.join(data_validation['issues'])}")
+            return [{"model_name": "Validation", "metrics": {"error": ', '.join(data_validation['issues'])}, "warnings": data_validation.get('warnings', []), "success": False}]
 
         column_types = auto_detect_column_types(X)
 
-        # ============================================================
-        # 6. SPLIT TRAIN/TEST
-        # ============================================================
+        # ========================================================================
+        # PHASE 7: 🆕 VALIDATION SMOTE PRÉCOCE (AVANT SPLIT)
+        # ========================================================================
+        smote_validation_global = {
+            'requested': use_smote,
+            'validated': False,
+            'reason': None
+        }
+        
+        if use_smote and task_type == 'classification' and y is not None:
+            class_counts = y.value_counts()
+            min_class_count = class_counts.min()
+            smote_k = preprocessing_choices.get('smote_k_neighbors', 5)
+            
+            if min_class_count <= smote_k:
+                logger.error(
+                    f"❌ SMOTE GLOBAL IMPOSSIBLE!\n"
+                    f"   Classe minoritaire: {min_class_count} échantillons\n"
+                    f"   k_neighbors: {smote_k}\n"
+                    f"   SMOTE nécessite min_class_count > k_neighbors\n"
+                    f"   → SMOTE sera DÉSACTIVÉ pour TOUS les modèles"
+                )
+                use_smote = False
+                smote_validation_global['validated'] = False
+                smote_validation_global['reason'] = f"min_class_count ({min_class_count}) ≤ k ({smote_k})"
+                
+                # Warning global
+                logger.warning("⚠️ DÉSACTIVATION SMOTE pour tous les modèles")
+            else:
+                smote_validation_global['validated'] = True
+                smote_validation_global['reason'] = f"Validation OK (min_class={min_class_count} > k={smote_k})"
+                logger.info(f"✅ SMOTE global validé: {smote_validation_global['reason']}")
+        
+        # Injection dans preprocessing_choices
+        preprocessing_choices['use_smote'] = use_smote
+        preprocessing_choices['smote_validation_global'] = smote_validation_global
+
+        # ========================================================================
+        # PHASE 8: SPLIT TRAIN/TEST
+        # ========================================================================
         X_train = X_test = y_train = y_test = None
         if task_type != 'clustering':
             random_state = TRAINING_CONSTANTS.get("RANDOM_STATE", 42)
@@ -1086,27 +1357,19 @@ def train_models(
                 X_train, X_test, y_train, y_test = train_test_split(
                     X, y, test_size=test_size, random_state=random_state, stratify=stratify
                 )
-                log_structured("INFO", "Split train/test effectué", {
-                    "train_size": len(X_train),
-                    "test_size": len(X_test)
-                })
+                logger.info(f"✅ Split train/test: {len(X_train)} train, {len(X_test)} test")
             except Exception as e:
-                log_structured("ERROR", f"Échec du split train/test: {str(e)}")
-                return [{"model_name": "Validation", "metrics": {"error": f"Split train/test échoué: {str(e)}"}, "warnings": []}]
+                logger.error(f"❌ Échec split: {e}")
+                return [{"model_name": "Validation", "metrics": {"error": f"Split échoué: {e}"}, "warnings": [], "success": False}]
 
-        # ============================================================
-        # 7. ENTRAÎNEMENT PARALLÈLE AVEC COLLECTE MLFLOW
-        # ============================================================
+        # ========================================================================
+        # PHASE 9: ENTRAÎNEMENT AVEC WRAPPER
+        # ========================================================================
         successful_models = 0
 
         def train_model_wrapper(args):
-            """Wrapper pour l'entraînement parallèle avec collecte MLflow."""
             i, model_name = args
-            log_structured("INFO", f"Début entraînement modèle", {
-                "model_index": i,
-                "total_models": len(model_names),
-                "model_name": model_name
-            })
+            logger.info(f"🔧 Début entraînement {model_name} ({i}/{len(model_names)})")
             
             result, mlflow_data = train_single_model_with_mlflow(
                 model_name=model_name,
@@ -1129,35 +1392,32 @@ def train_models(
                 mlflow_enabled=mlflow_enabled
             )
             
-            # Collecte thread-safe des données MLflow
+            # 🎯 STOCKAGE MLFLOW DANS STATE (CRITIQUE)
             if mlflow_data and isinstance(mlflow_data, dict):
                 state.mlflow_collector.add_run(mlflow_data)
+                logger.info(f"✅ MLflow run ajouté à collector: {mlflow_data.get('run_id', 'N/A')[:8]}")
+            else:
+                logger.warning(f"⚠️ Pas de mlflow_data pour {model_name}")
             
             return result
 
-        # Exécution parallèle
         try:
-            # Préparation des arguments
             model_args = [(i, model_name) for i, model_name in enumerate(model_names, 1)]
             
             if n_jobs == 1 or len(model_names) == 1:
-                # Mode séquentiel pour debug ou petits datasets
-                log_structured("INFO", "Exécution en mode séquentiel")
+                logger.info("🔄 Exécution séquentielle")
                 parallel_results = [train_model_wrapper(args) for args in model_args]
             else:
-                # Mode parallèle
-                log_structured("INFO", f"Exécution en mode parallèle (n_jobs={n_jobs})")
+                logger.info(f"🔄 Exécution parallèle (n_jobs={n_jobs})")
                 parallel_results = Parallel(n_jobs=n_jobs)(
                     delayed(train_model_wrapper)(args) for args in model_args
                 )
             
-            # Filtrage des résultats valides
             results = [res for res in parallel_results if res is not None and res.get("success", False)]
             successful_models = len(results)
             
         except Exception as e:
-            log_structured("ERROR", f"Échec de l'exécution parallèle: {str(e)} - Fallback séquentiel")
-            # Fallback séquentiel
+            logger.error(f"❌ Échec exécution parallèle: {e}")
             results = []
             for i, model_name in enumerate(model_names, 1):
                 try:
@@ -1166,48 +1426,197 @@ def train_models(
                         results.append(result)
                         successful_models += 1
                 except Exception as model_error:
-                    log_structured("ERROR", f"Échec sur modèle {model_name}: {str(model_error)}")
+                    logger.error(f"❌ Échec {model_name}: {model_error}")
 
-        # ============================================================
-        # 8. FINALISATION ET STOCKAGE STREAMLIT ROBUSTE
-        # ============================================================
+        # ========================================================================
+        # PHASE 10: 🆕 SYNCHRONISATION MLFLOW MULTI-NIVEAUX GARANTIE
+        # ========================================================================
         total_time = monitor.get_total_duration()
-        
-        # Récupération des runs MLflow collectés
         mlflow_runs = state.mlflow_collector.get_runs()
-        
-        log_structured("INFO", "Entraînement terminé", {
-            "successful_models": successful_models,
-            "total_models": len(model_names),
-            "total_time": total_time,
-            "mlflow_runs_collected": len(mlflow_runs)
-        })
 
-        # Stockage Streamlit ROBUSTE
-        storage_success = _store_results_in_session(results, mlflow_runs)
-        if not storage_success:
-            log_structured("ERROR", "Échec critique du stockage Streamlit")
+        logger.info(f"✅ Entraînement terminé: {successful_models}/{len(model_names)} modèles, {total_time:.2f}s")
+        logger.info(f"📊 MLflow runs collectés: {len(mlflow_runs)}")
 
-        # Vérification finale MLflow
+        # 🎯 SYNCHRONISATION ATOMIQUE MULTI-NIVEAUX (CRITIQUE)
+        if mlflow_runs:
+            logger.info(f"🔄 Synchronisation MLflow de {len(mlflow_runs)} runs...")
+            
+            try:
+                # VALIDATION des runs
+                valid_mlflow_runs = []
+                for run in mlflow_runs:
+                    if isinstance(run, dict) and run.get('run_id'):
+                        valid_mlflow_runs.append(run)
+                    else:
+                        logger.warning(f"⚠️ Run MLflow invalide ignoré: {type(run)}")
+                
+                if not valid_mlflow_runs:
+                    logger.error("❌ Aucun run MLflow valide à synchroniser")
+                else:
+                    logger.info(f"✅ {len(valid_mlflow_runs)} runs MLflow valides")
+                    
+                    # === SYNCHRONISATION NIVEAU 1: session_state ===
+                    sync_session = 0
+                    try:
+                        if STREAMLIT_AVAILABLE and st is not None:
+                            if not hasattr(st.session_state, 'mlflow_runs'):
+                                st.session_state.mlflow_runs = []
+                            
+                            existing_ids_session = {
+                                r.get('run_id') 
+                                for r in st.session_state.mlflow_runs 
+                                if isinstance(r, dict) and r.get('run_id')
+                            }
+                            
+                            new_runs_session = [
+                                r for r in valid_mlflow_runs 
+                                if r.get('run_id') not in existing_ids_session
+                            ]
+                            
+                            if new_runs_session:
+                                st.session_state.mlflow_runs.extend(new_runs_session)
+                                sync_session = len(new_runs_session)
+                                logger.info(
+                                    f"✅ {sync_session} runs → session_state.mlflow_runs "
+                                    f"(total: {len(st.session_state.mlflow_runs)})"
+                                )
+                    except Exception as e:
+                        logger.error(f"❌ Erreur sync session_state: {e}", exc_info=True)
+                    
+                    # === SYNCHRONISATION NIVEAU 2: STATE.mlflow_runs ===
+                    sync_state = 0
+                    try:
+                        from monitoring.state_managers import STATE
+                        
+                        existing_ids_state = {
+                            r.get('run_id') 
+                            for r in STATE.mlflow_runs 
+                            if isinstance(r, dict) and r.get('run_id')
+                        }
+                        
+                        new_runs_state = [
+                            r for r in valid_mlflow_runs 
+                            if r.get('run_id') not in existing_ids_state
+                        ]
+                        
+                        if new_runs_state:
+                            for run in new_runs_state:
+                                STATE.add_mlflow_run(run)
+                            sync_state = len(new_runs_state)
+                            logger.info(
+                                f"✅ {sync_state} runs → STATE.mlflow_runs "
+                                f"(total: {len(STATE.mlflow_runs)})"
+                            )
+                    except Exception as e:
+                        logger.error(f"❌ Erreur sync STATE: {e}", exc_info=True)
+                    
+                    # === SYNCHRONISATION NIVEAU 3: STATE.training ===
+                    sync_training = 0
+                    try:
+                        if hasattr(st.session_state, 'training'):
+                            if not hasattr(st.session_state.training, 'mlflow_runs'):
+                                st.session_state.training.mlflow_runs = []
+                            
+                            existing_ids_training = {
+                                r.get('run_id') 
+                                for r in st.session_state.training.mlflow_runs 
+                                if isinstance(r, dict) and r.get('run_id')
+                            }
+                            
+                            new_runs_training = [
+                                r for r in valid_mlflow_runs 
+                                if r.get('run_id') not in existing_ids_training
+                            ]
+                            
+                            if new_runs_training:
+                                st.session_state.training.mlflow_runs.extend(new_runs_training)
+                                sync_training = len(new_runs_training)
+                                logger.info(
+                                    f"✅ {sync_training} runs → STATE.training.mlflow_runs "
+                                    f"(total: {len(st.session_state.training.mlflow_runs)})"
+                                )
+                    except Exception as e:
+                        logger.error(f"❌ Erreur sync STATE.training: {e}", exc_info=True)
+                    
+                    # === RÉCAPITULATIF ===
+                    total_synchronized = sync_session + sync_state + sync_training
+                    
+                    logger.info(
+                        f"\n{'='*60}\n"
+                        f"SYNCHRONISATION MLFLOW TERMINÉE\n"
+                        f"{'='*60}\n"
+                        f"Runs valides: {len(valid_mlflow_runs)}\n"
+                        f"session_state: +{sync_session}\n"
+                        f"STATE: +{sync_state}\n"
+                        f"STATE.training: +{sync_training}\n"
+                        f"Total synchronisé: {total_synchronized}\n"
+                        f"{'='*60}"
+                    )
+                    
+                    # === STOCKAGE LEGACY (pour compatibilité) ===
+                    try:
+                        storage_success = _store_results_in_session(results, valid_mlflow_runs)
+                        if storage_success:
+                            logger.info("✅ Stockage legacy session réussi")
+                        else:
+                            logger.warning("⚠️ Stockage legacy session échoué (non critique)")
+                    except Exception as e:
+                        logger.warning(f"⚠️ Stockage legacy: {e}")
+            
+            except Exception as sync_error:
+                logger.error(f"❌ Erreur critique synchronisation MLflow: {sync_error}", exc_info=True)
+
+        else:
+            logger.warning("⚠️ Aucun run MLflow collecté")
+
+        # ========================================================================
+        # PHASE 11: VÉRIFICATION MLFLOW DB
+        # ========================================================================
         if mlflow_enabled:
             try:
                 runs = mlflow.search_runs()
-                log_structured("INFO", "Vérification MLflow", {
-                    "runs_found": len(runs),
-                    "successful_models": successful_models
-                })
+                logger.info(f"✅ MLflow DB: {len(runs)} runs au total")
                 
                 if len(runs) < successful_models:
-                    log_structured("WARNING", f"Incohérence MLflow: {len(runs)} runs vs {successful_models} modèles")
-                    
+                    logger.warning(
+                        f"⚠️ Incohérence MLflow DB: {len(runs)} runs DB "
+                        f"vs {successful_models} modèles réussis"
+                    )
             except Exception as e:
-                log_structured("WARNING", f"Échec vérification MLflow: {str(e)}")
+                logger.warning(f"⚠️ Vérification MLflow DB échouée: {e}")
 
-        # Nettoyage mémoire
+        # ========================================================================
+        # PHASE 12: NETTOYAGE & RETOUR
+        # ========================================================================
         gc.collect()
-        
+
+        # Validation finale des résultats
+        for result in results:
+            if 'metrics' not in result or not isinstance(result['metrics'], dict):
+                logger.error(f"❌ CRITIQUE: metrics invalides pour {result.get('model_name', 'Unknown')}")
+                result['metrics'] = {'error': 'Metrics non générées'}
+                result['success'] = False
+
+        # Log récapitulatif final
+        logger.info(
+            f"\n{'='*60}\n"
+            f"RÉCAPITULATIF ENTRAÎNEMENT\n"
+            f"{'='*60}\n"
+            f"Task: {task_type}\n"
+            f"Modèles: {successful_models}/{len(model_names)} réussis\n"
+            f"Features: {len(feature_list)}\n"
+            f"SMOTE: {'✅ Activé' if use_smote else '❌ Désactivé'}\n"
+            f"MLflow runs collectés: {len(mlflow_runs)}\n"
+            f"MLflow runs synchronisés: {total_synchronized if mlflow_runs else 0}\n"
+            f"Temps total: {total_time:.2f}s\n"
+            f"{'='*60}\n"
+        )
+
         return results
 
+# ===============================================
+# FONCTION DE NETTOYAGE DU DOSSIER DES MODÈLES
+# ===============================================
 def cleanup_models_directory(max_files: int = None):
     """Nettoie le dossier des modèles pour éviter l'accumulation."""
     if max_files is None:

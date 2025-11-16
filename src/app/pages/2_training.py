@@ -1,10 +1,8 @@
 """
 🚀 ML FACTORY PRO - Interface Moderne pour ML Classique (Tabular Data)
 Design unifié avec Computer Vision Training - Production Ready
-Version: 2.0.0
+Version: 3.0.0 | StateManager Refactorisé
 """
-# Utilisation du système de logging centralisé
-# Note: setup_logging() est appelé dans main.py au démarrage
 from src.shared.logging import get_logger
 
 import streamlit as st
@@ -25,12 +23,17 @@ from orchestrators.ml_training_orchestrator import (
 )
 from src.models.catalog import MODEL_CATALOG
 from src.data.data_analysis import detect_imbalance, auto_detect_column_types
-from src.shared.logging import get_logger
 from helpers.data_validators import DataValidator
 from utils.system_utils import get_system_metrics as check_system_resources
-from monitoring.state_managers import init, AppPage
-STATE = init()
+from monitoring.state_managers import init, AppPage, TrainingStep
+from monitoring.mlflow_collector import get_mlflow_collector
 
+# Import des composants UI centralisés
+from helpers.ui_components import UIComponents, TargetAnalysisHelpers
+from ui.styles import UIStyles
+
+# Initialisation du StateManager
+STATE = init()
 logger = get_logger(__name__)
 
 # Configuration Streamlit
@@ -41,375 +44,20 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# CSS moderne identique à Computer Vision
-st.markdown("""
-<style>
-    /* Reset et Base */
-    .stApp {
-        background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
-    }
-    
-    /* Header Principal */
-    .main-header {
-        font-size: 2.5rem;
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        font-weight: 700;
-        margin-bottom: 1rem;
-        text-align: center;
-        animation: fadeInDown 0.6s ease-out;
-    }
-    
-    .sub-header {
-        text-align: center;
-        color: #666;
-        font-size: 1.1rem;
-        margin-bottom: 2rem;
-    }
-    
-    /* Cards */
-    .workflow-step-card {
-        background: white;
-        padding: 2rem;
-        border-radius: 15px;
-        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-        border: 1px solid #e0e0e0;
-        margin-bottom: 1.5rem;
-        animation: fadeIn 0.4s ease-out;
-    }
-    
-    .model-card {
-        background: white;
-        padding: 1.5rem;
-        border-radius: 12px;
-        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-        border: 2px solid transparent;
-        transition: all 0.3s ease;
-        cursor: pointer;
-        height: 100%;
-        position: relative;
-        overflow: hidden;
-    }
-    
-    .model-card::before {
-        content: '';
-        position: absolute;
-        top: 0;
-        left: 0;
-        width: 100%;
-        height: 100%;
-        background: linear-gradient(135deg, rgba(102, 126, 234, 0.05) 0%, rgba(118, 75, 162, 0.05) 100%);
-        opacity: 0;
-        transition: opacity 0.3s ease;
-    }
-    
-    .model-card:hover {
-        transform: translateY(-4px);
-        box-shadow: 0 6px 12px rgba(0, 0, 0, 0.15);
-        border-color: #667eea;
-    }
-    
-    .model-card:hover::before {
-        opacity: 1;
-    }
-    
-    .model-card.selected {
-        border-color: #667eea;
-        background: linear-gradient(135deg, #f8f9ff 0%, #f0f4ff 100%);
-        box-shadow: 0 4px 8px rgba(102, 126, 234, 0.3);
-    }
-    
-    .model-card.selected::after {
-        content: '✓';
-        position: absolute;
-        top: 10px;
-        right: 10px;
-        background: #667eea;
-        color: white;
-        width: 24px;
-        height: 24px;
-        border-radius: 50%;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-weight: bold;
-        font-size: 14px;
-    }
-    
-    /* Metric Cards */
-    .metric-card {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        color: white;
-        padding: 1.5rem;
-        border-radius: 10px;
-        text-align: center;
-        box-shadow: 0 4px 8px rgba(102, 126, 234, 0.3);
-        transition: transform 0.3s ease;
-    }
-    
-    .metric-card:hover {
-        transform: scale(1.05);
-    }
-    
-    .metric-card h3 {
-        margin: 0;
-        font-size: 2rem;
-    }
-    
-    .metric-card h4 {
-        margin: 0.5rem 0;
-        font-size: 0.9rem;
-        opacity: 0.9;
-    }
-    
-    .metric-card h2 {
-        margin: 0;
-        font-size: 1.8rem;
-        font-weight: 700;
-    }
-    
-    /* Status Badges */
-    .status-badge {
-        display: inline-block;
-        padding: 0.3rem 0.8rem;
-        border-radius: 20px;
-        font-size: 0.8rem;
-        font-weight: 600;
-        margin: 0.2rem;
-        transition: transform 0.2s ease;
-    }
-    
-    .status-badge:hover {
-        transform: scale(1.1);
-    }
-    
-    .badge-success { 
-        background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
-        color: white; 
-        box-shadow: 0 2px 4px rgba(40, 167, 69, 0.3);
-    }
-    
-    .badge-warning { 
-        background: linear-gradient(135deg, #ffc107 0%, #ff9800 100%);
-        color: #333; 
-        box-shadow: 0 2px 4px rgba(255, 193, 7, 0.3);
-    }
-    
-    .badge-danger { 
-        background: linear-gradient(135deg, #dc3545 0%, #c82333 100%);
-        color: white; 
-        box-shadow: 0 2px 4px rgba(220, 53, 69, 0.3);
-    }
-    
-    .badge-info { 
-        background: linear-gradient(135deg, #17a2b8 0%, #138496 100%);
-        color: white; 
-        box-shadow: 0 2px 4px rgba(23, 162, 184, 0.3);
-    }
-    
-    /* Progress Steps */
-    .progress-step {
-        text-align: center;
-        padding: 1rem;
-        border-radius: 10px;
-        transition: all 0.3s ease;
-    }
-    
-    .progress-step.active {
-        background: #f8f9ff;
-        border: 2px solid #667eea;
-        transform: scale(1.05);
-    }
-    
-    .progress-step.completed {
-        background: #e8f5e9;
-        border: 2px solid #28a745;
-    }
-    
-    .progress-step.pending {
-        background: white;
-        border: 2px solid #e0e0e0;
-        opacity: 0.7;
-    }
-    
-    /* Task Selection Cards */
-    .task-card {
-        background: white;
-        padding: 2rem;
-        border-radius: 15px;
-        border: 3px solid transparent;
-        text-align: center;
-        transition: all 0.3s ease;
-        cursor: pointer;
-        height: 220px;
-        display: flex;
-        flex-direction: column;
-        justify-content: center;
-        position: relative;
-        overflow: hidden;
-    }
-    
-    .task-card::before {
-        content: '';
-        position: absolute;
-        top: 0;
-        left: 0;
-        width: 100%;
-        height: 100%;
-        background: linear-gradient(135deg, rgba(102, 126, 234, 0.1) 0%, rgba(118, 75, 162, 0.1) 100%);
-        opacity: 0;
-        transition: opacity 0.3s ease;
-    }
-    
-    .task-card:hover {
-        transform: translateY(-5px);
-        box-shadow: 0 8px 16px rgba(0, 0, 0, 0.15);
-    }
-    
-    .task-card:hover::before {
-        opacity: 1;
-    }
-    
-    .task-card.selected {
-        border-color: #667eea;
-        background: linear-gradient(135deg, #f8f9ff 0%, #f0f4ff 100%);
-        box-shadow: 0 6px 12px rgba(102, 126, 234, 0.3);
-    }
-    
-    .task-card .icon {
-        font-size: 3.5rem;
-        margin-bottom: 1rem;
-    }
-    
-    /* Animations */
-    @keyframes fadeIn {
-        from {
-            opacity: 0;
-            transform: translateY(20px);
-        }
-        to {
-            opacity: 1;
-            transform: translateY(0);
-        }
-    }
-    
-    @keyframes fadeInDown {
-        from {
-            opacity: 0;
-            transform: translateY(-20px);
-        }
-        to {
-            opacity: 1;
-            transform: translateY(0);
-        }
-    }
-    
-    @keyframes pulse {
-        0%, 100% {
-            transform: scale(1);
-        }
-        50% {
-            transform: scale(1.05);
-        }
-    }
-    
-    /* Buttons */
-    .stButton > button {
-        border-radius: 8px;
-        font-weight: 600;
-        transition: all 0.3s ease;
-        border: none;
-        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-    }
-    
-    .stButton > button:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
-    }
-    
-    .stButton > button[kind="primary"] {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    }
-    
-    .stButton > button[kind="primary"]:hover {
-        background: linear-gradient(135deg, #5568d3 0%, #6a3d91 100%);
-    }
-    
-    /* Dataframes */
-    .dataframe {
-        border-radius: 8px;
-        overflow: hidden;
-        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-    }
-    
-    /* Expanders */
-    .streamlit-expanderHeader {
-        background: #f8f9fa;
-        border-radius: 8px;
-        font-weight: 600;
-    }
-    
-    /* Selectbox & Inputs */
-    .stSelectbox, .stSlider, .stCheckbox {
-        margin-bottom: 1rem;
-    }
-    
-    /* Info/Warning/Error boxes */
-    .stAlert {
-        border-radius: 8px;
-        border-left-width: 4px;
-    }
-    
-    /* Sidebar */
-    .css-1d391kg {
-        background: linear-gradient(180deg, #667eea 0%, #764ba2 100%);
-    }
-    
-    /* Hide Streamlit branding */
-    #MainMenu {visibility: hidden;}
-    footer {visibility: hidden;}
-    
-    /* Tooltips */
-    .tooltip {
-        position: relative;
-        display: inline-block;
-        cursor: help;
-    }
-    
-    .tooltip .tooltiptext {
-        visibility: hidden;
-        width: 200px;
-        background-color: #555;
-        color: #fff;
-        text-align: center;
-        border-radius: 6px;
-        padding: 5px;
-        position: absolute;
-        z-index: 1;
-        bottom: 125%;
-        left: 50%;
-        margin-left: -100px;
-        opacity: 0;
-        transition: opacity 0.3s;
-    }
-    
-    .tooltip:hover .tooltiptext {
-        visibility: visible;
-        opacity: 1;
-    }
-</style>
-""", unsafe_allow_html=True)
+# Application du CSS moderne
+st.markdown(UIStyles.get_main_css(), unsafe_allow_html=True)
 
 
 class MLTrainingWorkflowPro:
     """
     Workflow moderne pour ML Classique (Tabular Data).
-    Architecture identique à Computer Vision pour cohérence UX.
+    Architecture refactorisée avec StateManager professionnel.
     """
     
     def __init__(self):
-        self.logger = get_logger(__name__)
+        self.logger = logger
+        self.ui_components = UIComponents()
+        self.target_helpers = TargetAnalysisHelpers()
     
     def render_header(self):
         """En-tête professionnel avec navigation et métriques"""
@@ -421,47 +69,11 @@ class MLTrainingWorkflowPro:
         
         with col2:
             progress = ((STATE.current_step + 1) / 6) * 100
-            st.markdown(
-                f"""
-                <div style="text-align: center;">
-                    <div style="font-size: 0.9rem; color: #666; margin-bottom: 0.5rem;">Progression</div>
-                    <div style="background: #e0e0e0; border-radius: 10px; height: 8px; overflow: hidden;">
-                        <div style="background: linear-gradient(90deg, #667eea 0%, #764ba2 100%); 
-                                    width: {progress}%; height: 100%; transition: width 0.3s ease;"></div>
-                    </div>
-                    <div style="font-size: 0.8rem; color: #667eea; margin-top: 0.5rem; font-weight: 600;">
-                        Étape {STATE.current_step + 1}/6
-                    </div>
-                </div>
-                """,
-                unsafe_allow_html=True
-            )
+            st.markdown(UIStyles.render_progress_bar(progress, STATE.current_step + 1, 6), unsafe_allow_html=True)
         
         with col3:
             sys_metrics = check_system_resources()
-            memory_color = "#28a745" if sys_metrics["memory_percent"] < 70 else "#ffc107" if sys_metrics["memory_percent"] < 85 else "#dc3545"
-            
-            st.markdown(
-                f"""
-                <div style="text-align: center;">
-                    <div style="font-size: 0.9rem; color: #666; margin-bottom: 0.5rem;">Système</div>
-                    <div style="display: flex; justify-content: center; align-items: center; gap: 0.5rem;">
-                        <div style="width: 40px; height: 40px; border-radius: 50%; 
-                                    background: {memory_color}; display: flex; align-items: center; 
-                                    justify-content: center; color: white; font-weight: bold;">
-                            {sys_metrics["memory_percent"]:.0f}
-                        </div>
-                        <div style="text-align: left;">
-                            <div style="font-size: 0.8rem; color: #666;">RAM</div>
-                            <div style="font-size: 0.7rem; color: #999;">
-                                {100 - sys_metrics["memory_percent"]:.0f}% libre
-                            </div>
-                        </div>
-                    </div>
-                </div>
-                """,
-                unsafe_allow_html=True
-            )
+            st.markdown(UIStyles.render_system_metrics(sys_metrics["memory_percent"]), unsafe_allow_html=True)
     
     def render_workflow_progress(self):
         """Barre de progression avec étapes détaillées"""
@@ -515,54 +127,37 @@ class MLTrainingWorkflowPro:
         
         st.markdown("---")
     
-    # ============================================================================
-    # ÉTAPE 1: ANALYSE DU DATASET
-    # ============================================================================
-    
     def render_dataset_analysis_step(self):
-        """Étape 1: Analyse du dataset chargé - VERSION CORRIGÉE"""
+        """Étape 1: Analyse du dataset chargé - Version StateManager"""
         st.markdown('<div class="workflow-step-card">', unsafe_allow_html=True)
         st.header("📊 Étape 1: Analyse du Dataset")
         
-        # Vérification dataset
+        # Vérification dataset avec StateManager
         if not STATE.loaded or STATE.data.df is None:
             st.error("❌ Aucun dataset chargé")
             st.info("💡 Veuillez charger un dataset depuis le dashboard principal.")
             if st.button("📊 Aller au Dashboard", type="primary", use_container_width=True):
-                st.switch_page("pages/1_dashboard.py")
+                STATE.switch(AppPage.DASHBOARD)
             st.markdown('</div>', unsafe_allow_html=True)
             return
         
         df = STATE.data.df
         
-        # ========================================================================
-        # 🆕 CORRECTION CRITIQUE : NETTOYAGE AUTOMATIQUE DES COLONNES INUTILES
-        # ========================================================================
-        
-        # Sauvegarde du dataset original pour référence
-        original_shape = df.shape
-        original_columns = df.columns.tolist()
-        
-        # Détection automatique des colonnes problématiques
+        # Nettoyage automatique des colonnes problématiques
         with st.spinner("🔍 Analyse automatique des colonnes en cours..."):
-            # Colonnes constantes (sans variance)
             constant_cols = []
             numeric_cols = df.select_dtypes(include=['number']).columns
             for col in numeric_cols:
                 if df[col].std() == 0:
                     constant_cols.append(col)
             
-            # Colonnes identifiantes (100% valeurs uniques)
             identifier_cols = [col for col in df.columns if df[col].nunique() == len(df)]
-            
-            # Colonnes avec trop de valeurs manquantes (>80%)
             high_missing_cols = [col for col in df.columns if df[col].isnull().mean() > 0.8]
             
-            # Colonnes à supprimer
             cols_to_remove = list(set(constant_cols + identifier_cols + high_missing_cols))
             cols_to_keep = [col for col in df.columns if col not in cols_to_remove]
         
-        # Application automatique du nettoyage
+        # Application du nettoyage automatique
         if cols_to_remove:
             st.markdown("### 🧹 Nettoyage Automatique des Colonnes")
             
@@ -571,7 +166,6 @@ class MLTrainingWorkflowPro:
             
             st.success(f"✅ **{n_removed} colonne(s)** supprimée(s) automatiquement")
             
-            # Affichage détaillé des colonnes supprimées
             with st.expander("📋 Détail des colonnes supprimées", expanded=True):
                 if constant_cols:
                     st.error(f"**{len(constant_cols)} colonne(s) constante(s)**:")
@@ -589,20 +183,13 @@ class MLTrainingWorkflowPro:
                         missing_pct = df[col].isnull().mean() * 100
                         st.markdown(f"- `{col}` ({missing_pct:.1f}% manquant)")
             
-            # Mise à jour du DataFrame
+            # Mise à jour via StateManager
             df = df_cleaned
             STATE.data.df = df_cleaned
-            
-            st.info(f"📊 **Dimensions mises à jour :** {original_shape} → {df.shape}")
-        
         else:
             st.success("✅ Aucune colonne problématique détectée - Dataset conservé intact")
         
-        # ========================================================================
-        # SUITE DU CODE EXISTANT (validation, métriques, etc.)
-        # ========================================================================
-        
-        # Validation avec DataValidator
+        # Validation des données
         validation_result = DataValidator.validate_dataframe_for_ml(df)
         
         if not validation_result['is_valid']:
@@ -612,80 +199,37 @@ class MLTrainingWorkflowPro:
                     st.error(f"• {issue}")
             
             if st.button("🔄 Recharger un nouveau dataset", type="primary"):
-                st.switch_page("pages/1_dashboard.py")
+                STATE.switch(AppPage.DASHBOARD)
             
             st.markdown('</div>', unsafe_allow_html=True)
             return
         
-        # Métriques principales avec design moderne
+        # Métriques principales avec UIComponents
         st.subheader("📈 Statistiques Principales")
         col1, col2, col3, col4, col5 = st.columns(5)
         
-        with col1:
-            st.markdown(
-                f"""
-                <div class='metric-card' style='background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);'>
-                    <h3>📏</h3>
-                    <h4>Lignes</h4>
-                    <h2>{len(df):,}</h2>
-                </div>
-                """,
-                unsafe_allow_html=True
-            )
+        metrics_data = [
+            {"icon": "📏", "label": "Lignes", "value": f"{len(df):,}", "color": "linear-gradient(135deg, #667eea 0%, #764ba2 100%)"},
+            {"icon": "📋", "label": "Colonnes", "value": f"{len(df.columns)}", "color": "linear-gradient(135deg, #f093fb 0%, #f5576c 100%)"},
+            {"icon": "💾", "label": "Mémoire", "value": f"{df.memory_usage(deep=True).sum() / (1024**2):.1f} MB", "color": "linear-gradient(135deg, #4facfe 0%, #00f2fe 100%)"},
+            {"icon": "🕳️", "label": "Manquant", "value": f"{df.isnull().mean().mean() * 100:.1f}%", "color": "#28a745" if df.isnull().mean().mean() * 100 < 5 else "#ffc107"},
+            {"icon": "🔢", "label": "Numériques", "value": f"{len(df.select_dtypes(include='number').columns)}", "color": "linear-gradient(135deg, #fa709a 0%, #fee140 100%)"}
+        ]
         
-        with col2:
-            st.markdown(
-                f"""
-                <div class='metric-card' style='background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);'>
-                    <h3>📋</h3>
-                    <h4>Colonnes</h4>
-                    <h2>{len(df.columns)}</h2>
-                </div>
-                """,
-                unsafe_allow_html=True
-            )
+        for col, metric in zip([col1, col2, col3, col4, col5], metrics_data):
+            with col:
+                st.markdown(
+                    f"""
+                    <div class='metric-card' style='background: {metric["color"]};'>
+                        <h3>{metric['icon']}</h3>
+                        <h4>{metric['label']}</h4>
+                        <h2>{metric['value']}</h2>
+                    </div>
+                    """,
+                    unsafe_allow_html=True
+                )
         
-        with col3:
-            memory_mb = df.memory_usage(deep=True).sum() / (1024**2)
-            st.markdown(
-                f"""
-                <div class='metric-card' style='background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);'>
-                    <h3>💾</h3>
-                    <h4>Mémoire</h4>
-                    <h2>{memory_mb:.1f} MB</h2>
-                </div>
-                """,
-                unsafe_allow_html=True
-            )
-        
-        with col4:
-            missing_pct = df.isnull().mean().mean() * 100
-            missing_color = "#28a745" if missing_pct < 5 else "#ffc107" if missing_pct < 20 else "#dc3545"
-            st.markdown(
-                f"""
-                <div class='metric-card' style='background: {missing_color};'>
-                    <h3>🕳️</h3>
-                    <h4>Manquant</h4>
-                    <h2>{missing_pct:.1f}%</h2>
-                </div>
-                """,
-                unsafe_allow_html=True
-            )
-        
-        with col5:
-            numeric_cols = len(df.select_dtypes(include='number').columns)
-            st.markdown(
-                f"""
-                <div class='metric-card' style='background: linear-gradient(135deg, #fa709a 0%, #fee140 100%);'>
-                    <h3>🔢</h3>
-                    <h4>Numériques</h4>
-                    <h2>{numeric_cols}</h2>
-                </div>
-                """,
-                unsafe_allow_html=True
-            )
-        
-        # Détection automatique des types de colonnes SUR LE DATASET NETTOYÉ
+        # Détection automatique des types de colonnes
         st.markdown("---")
         st.subheader("🔍 Analyse Automatique des Colonnes")
         
@@ -729,11 +273,7 @@ class MLTrainingWorkflowPro:
             else:
                 st.info("ℹ️ Aucune colonne temporelle")
         
-        # ========================================================================
-        # 🆕 INITIALISATION ROBUSTE DE FEATURE_LIST
-        # ========================================================================
-        
-        # Détermination automatique des features (toutes les colonnes restantes)
+        # Initialisation robuste des features
         feature_list = df.columns.tolist()
         
         st.markdown("---")
@@ -742,17 +282,16 @@ class MLTrainingWorkflowPro:
         st.info(f"**{len(feature_list)} features** détectées automatiquement")
         
         with st.expander("📋 Liste complète des features", expanded=False):
-            # Affichage organisé des features
             cols_display = st.columns(2)
             for idx, feature in enumerate(feature_list):
                 with cols_display[idx % 2]:
                     col_type = "🔢" if feature in column_types.get('numeric', []) else "📝"
                     st.markdown(f"{col_type} `{feature}`")
         
-        # Navigation
+        # Navigation avec StateManager
         st.markdown("---")
         if st.button("💾 Valider et Continuer ➡️", type="primary", use_container_width=True):
-            # 🆕 SAUVEGARDE ROBUSTE DANS TOUS LES ENDROITS NÉCESSAIRES
+            # Sauvegarde via StateManager
             STATE.dataset_loaded = True
             STATE.dataset_info = {
                 'n_rows': len(df),
@@ -760,41 +299,28 @@ class MLTrainingWorkflowPro:
                 'memory_mb': df.memory_usage(deep=True).sum() / (1024**2),
                 'missing_pct': df.isnull().mean().mean() * 100,
                 'column_types': column_types,
-                'features_initial': feature_list,  # 🆕 Sauvegarde explicite
+                'features_initial': feature_list,
                 'cleaning_applied': len(cols_to_remove) > 0 if 'cols_to_remove' in locals() else False,
                 'cols_removed': cols_to_remove if 'cols_to_remove' in locals() else []
             }
             
-            # 🆕 INITIALISATION EXPLICITE DE FEATURE_LIST
             STATE.feature_list = feature_list
-            
-            # Debug optionnel
-            if st.session_state.get('debug_mode', False):
-                st.json({
-                    "feature_list_saved": STATE.feature_list,
-                    "length": len(STATE.feature_list),
-                    "first_10": STATE.feature_list[:10]
-                })
-            
             STATE.current_step = 1
+            
             st.success("✅ Dataset validé et nettoyé avec succès!")
             time.sleep(0.5)
             st.rerun()
         
         st.markdown('</div>', unsafe_allow_html=True)
-
-    # ============================================================================
-    # ÉTAPE 2: SÉLECTION DE LA CIBLE
-    # ============================================================================
     
     def render_target_selection_step(self):
-        """Étape 2: Sélection de la variable cible et du type de tâche"""
+        """Étape 2: Sélection de la variable cible avec StateManager"""
         st.markdown('<div class="workflow-step-card">', unsafe_allow_html=True)
         st.header("🎯 Étape 2: Sélection de la Cible")
         
         df = STATE.data.df
         
-        # Sélection du type de tâche avec cards modernes
+        # Sélection du type de tâche
         st.subheader("📋 Type de Problème")
         st.markdown("Sélectionnez le type d'apprentissage adapté à votre objectif")
         
@@ -826,7 +352,6 @@ class MLTrainingWorkflowPro:
         for idx, (task_key, task_info) in enumerate(task_options.items()):
             with cols[idx]:
                 is_selected = STATE.task_type == task_key
-                
                 card_class = "task-card selected" if is_selected else "task-card"
                 
                 st.markdown(
@@ -869,18 +394,12 @@ class MLTrainingWorkflowPro:
         if task_type in ['classification', 'regression']:
             st.subheader("🎯 Variable Cible (Y)")
             
-            # Filtrage des colonnes selon le type
+            # Utilisation des helpers pour la sélection des cibles
             if task_type == 'classification':
-                available_targets = [
-                    col for col in df.columns
-                    if df[col].nunique() <= 50 or not pd.api.types.is_numeric_dtype(df[col])
-                ]
+                available_targets = self.target_helpers.get_classification_targets(df)
                 help_text = "📊 Colonne avec classes à prédire (≤50 valeurs uniques recommandé)"
             else:
-                available_targets = [
-                    col for col in df.columns
-                    if pd.api.types.is_numeric_dtype(df[col]) and df[col].nunique() > 10
-                ]
+                available_targets = self.target_helpers.get_regression_targets(df)
                 help_text = "📈 Colonne numérique avec valeurs continues (>10 valeurs uniques)"
             
             if not available_targets:
@@ -917,7 +436,6 @@ class MLTrainingWorkflowPro:
                             n_classes = df[target_column].nunique()
                             class_dist = df[target_column].value_counts()
                             
-                            # Graphique de distribution
                             if n_classes <= 20:
                                 fig = go.Figure(data=[
                                     go.Bar(
@@ -948,27 +466,7 @@ class MLTrainingWorkflowPro:
                                 st.info(f"ℹ️ Trop de classes ({n_classes}) pour afficher le graphique")
                         
                         else:  # Régression
-                            # Histogramme pour la distribution
-                            fig = go.Figure(data=[
-                                go.Histogram(
-                                    x=df[target_column],
-                                    nbinsx=50,
-                                    marker=dict(
-                                        color='#667eea',
-                                        line=dict(color='white', width=1)
-                                    ),
-                                    hovertemplate='Valeur: %{x}<br>Fréquence: %{y}<extra></extra>'
-                                )
-                            ])
-                            
-                            fig.update_layout(
-                                title="Distribution de la Variable Cible",
-                                xaxis_title=target_column,
-                                yaxis_title="Fréquence",
-                                template="plotly_white",
-                                height=400
-                            )
-                            
+                            fig = self.ui_components.create_modern_histogram(df[target_column], '#667eea')
                             st.plotly_chart(fig, use_container_width=True)
                     
                     with col_info2:
@@ -986,31 +484,19 @@ class MLTrainingWorkflowPro:
                             
                             st.markdown("<br>", unsafe_allow_html=True)
                             
-                            # Analyse du déséquilibre
+                            # Analyse du déséquilibre avec UIComponents
                             imbalance_info = detect_imbalance(df, target_column)
                             
                             if imbalance_info.get('is_imbalanced', False):
                                 ratio = imbalance_info.get('imbalance_ratio', 0)
-                                
-                                if ratio > 10:
-                                    color = "#dc3545"
-                                    level = "Critique"
-                                    icon = "🚨"
-                                elif ratio > 5:
-                                    color = "#fd7e14"
-                                    level = "Élevé"
-                                    icon = "⚠️"
-                                else:
-                                    color = "#ffc107"
-                                    level = "Modéré"
-                                    icon = "ℹ️"
+                                imbalance_level = self.ui_components.get_imbalance_level(ratio)
                                 
                                 st.markdown(
                                     f"""
-                                    <div class='metric-card' style='background: {color};'>
-                                        <h3>{icon}</h3>
+                                    <div class='metric-card' style='background: {imbalance_level["color"]};'>
+                                        <h3>{imbalance_level["icon"]}</h3>
                                         <h4>Déséquilibre</h4>
-                                        <h2>{level}</h2>
+                                        <h2>{imbalance_level["label"]}</h2>
                                         <p style='margin-top: 0.5rem; font-size: 0.9rem;'>Ratio: {ratio:.1f}:1</p>
                                     </div>
                                     """,
@@ -1061,23 +547,14 @@ class MLTrainingWorkflowPro:
                                 """,
                                 unsafe_allow_html=True
                             )
-                            
-                            # Valeurs manquantes
-                            missing_count = df[target_column].isnull().sum()
-                            if missing_count > 0:
-                                missing_pct = (missing_count / len(df)) * 100
-                                st.warning(f"⚠️ {missing_count} valeurs manquantes ({missing_pct:.1f}%)")
                 
                     st.subheader("📊 Variables Explicatives (X)")
                     if target_column:
-                        # Pour la classification et la régression, on propose de sélectionner les features
                         available_features = [col for col in df.columns if col != target_column]
                         
-                        # Option de sélection automatique ou manuelle
                         auto_features = st.checkbox("Sélection automatique des features", value=True, key="auto_features")
                         
                         if auto_features:
-                            # Détection automatique des types de colonnes
                             column_types = auto_detect_column_types(df)
                             numeric_features = column_types.get('numeric', [])
                             categorical_features = [col for col in column_types.get('categorical', []) 
@@ -1086,30 +563,25 @@ class MLTrainingWorkflowPro:
                             recommended_features = [col for col in recommended_features if col in available_features]
                             recommended_features = recommended_features[:50]
                             
-                            # Sauvegarde dans l'état
                             STATE.feature_list = recommended_features
                             
                             st.success(f"✅ {len(recommended_features)} features sélectionnées automatiquement")
                             
-                            # Affichage des features sélectionnées
                             with st.expander("📋 Voir les features sélectionnées", expanded=False):
                                 for feat in recommended_features[:20]:
                                     st.markdown(f"- `{feat}`")
                                 if len(recommended_features) > 20:
                                     st.caption(f"... et {len(recommended_features) - 20} autres")
                         else:
-                            # Sélection manuelle
                             selected_features = st.multiselect(
                                 "Sélectionnez les variables explicatives",
                                 options=available_features,
-                                default=STATE.feature_list if hasattr(STATE, 'feature_list') and STATE.feature_list else [],
+                                default=STATE.feature_list if STATE.feature_list else [],
                                 key="manual_features"
                             )
                             
-                            # Sauvegarde dans l'état
                             STATE.feature_list = selected_features
                         
-                        # Feedback sur la sélection des features
                         if STATE.feature_list and len(STATE.feature_list) > 0:
                             st.info(f"**{len(STATE.feature_list)}** features sélectionnées")
                         else:
@@ -1167,12 +639,9 @@ class MLTrainingWorkflowPro:
         
         st.markdown('</div>', unsafe_allow_html=True)
     
-    # ============================================================================
-    # ÉTAPE 3: GESTION DU DÉSÉQUILIBRE
-    # ============================================================================
-    
+
     def render_imbalance_analysis_step(self):
-        """Étape 3: Analyse et correction du déséquilibre (classification uniquement)"""
+        """Étape 3: Analyse et correction du déséquilibre"""
         st.markdown('<div class="workflow-step-card">', unsafe_allow_html=True)
         st.header("⚖️ Étape 3: Gestion du Déséquilibre")
         
@@ -1184,7 +653,7 @@ class MLTrainingWorkflowPro:
         if task_type != 'classification':
             st.markdown(
                 f"""
-                <div style='background: linear-gradient(135deg, #17a2b815 0%, #138496 15 100%); 
+                <div style='background: linear-gradient(135deg, #17a2b815 0%, #13849615 100%); 
                             padding: 2rem; border-radius: 15px; text-align: center;'>
                     <h3>ℹ️ Cette étape ne s'applique qu'à la classification</h3>
                     <p>Type actuel: <strong>{task_type.upper()}</strong></p>
@@ -1211,46 +680,63 @@ class MLTrainingWorkflowPro:
         
         # Analyse du déséquilibre
         imbalance_info = detect_imbalance(df, target_column)
-        
-        # Statistiques des classes
         class_counts = df[target_column].value_counts()
         total_samples = len(df)
+        ratio = imbalance_info.get('imbalance_ratio', 1.0)
         
-        # Métriques principales
+        # Niveau déséquilibre dynamique
+        def get_imbalance_level_dynamic(ratio: float) -> Dict[str, str]:
+            """Retourne niveau, couleur, icône selon le ratio"""
+            if ratio < 1.5:
+                return {
+                    "level": "Équilibré",
+                    "color": "#28a745",
+                    "icon": "✅",
+                    "severity": "low",
+                    "description": "Distribution saine, pas d'action requise"
+                }
+            elif ratio < 3:
+                return {
+                    "level": "Léger",
+                    "color": "#ffc107",
+                    "icon": "⚠️",
+                    "severity": "medium",
+                    "description": "Déséquilibre modéré, poids de classe recommandés"
+                }
+            elif ratio < 10:
+                return {
+                    "level": "Modéré",
+                    "color": "#ff9800",
+                    "icon": "⚠️",
+                    "severity": "high",
+                    "description": "Déséquilibre important, SMOTE + poids recommandés"
+                }
+            else:
+                return {
+                    "level": "Sévère",
+                    "color": "#dc3545",
+                    "icon": "❌",
+                    "severity": "critical",
+                    "description": "Déséquilibre critique, resampling obligatoire"
+                }
+        
+        imbalance_level = get_imbalance_level_dynamic(ratio)
+        
+        # MÉTRIQUES PRINCIPALES DYNAMIQUES
         st.subheader("📊 Analyse du Déséquilibre")
         
         col1, col2, col3 = st.columns(3)
         
         with col1:
-            ratio = imbalance_info.get('imbalance_ratio', 1.0)
-            
-            if ratio > 10:
-                color = "#dc3545"
-                icon = "🚨"
-                level = "Critique"
-                gradient = "linear-gradient(135deg, #dc3545 0%, #c82333 100%)"
-            elif ratio > 5:
-                color = "#fd7e14"
-                icon = "⚠️"
-                level = "Élevé"
-                gradient = "linear-gradient(135deg, #fd7e14 0%, #e8590c 100%)"
-            elif ratio > 2:
-                color = "#ffc107"
-                icon = "ℹ️"
-                level = "Modéré"
-                gradient = "linear-gradient(135deg, #ffc107 0%, #ff9800 100%)"
-            else:
-                color = "#28a745"
-                icon = "✅"
-                level = "Faible"
-                gradient = "linear-gradient(135deg, #28a745 0%, #20c997 100%)"
-            
             st.markdown(
                 f"""
-                <div class='metric-card' style='background: {gradient}; animation: pulse 2s infinite;'>
-                    <h3 style='font-size: 2.5rem;'>{icon}</h3>
+                <div class='metric-card' style='background: {imbalance_level["color"]}; animation: pulse 2s infinite;'>
+                    <h3 style='font-size: 2.5rem;'>{imbalance_level["icon"]}</h3>
                     <h4>Niveau de Déséquilibre</h4>
-                    <h2>{level}</h2>
+                    <h2>{imbalance_level["level"]}</h2>
+                    <p style='margin-top: 0.5rem; font-size: 0.8rem; opacity: 0.9;'>
+                        {imbalance_level["description"]}
+                    </p>
                 </div>
                 """,
                 unsafe_allow_html=True
@@ -1279,54 +765,100 @@ class MLTrainingWorkflowPro:
                     <h4>Échantillons Total</h4>
                     <h2>{total_samples:,}</h2>
                     <p style='margin-top: 0.5rem; font-size: 0.85rem; opacity: 0.9;'>
-                        Images d'entraînement
+                        Lignes d'entraînement
                     </p>
                 </div>
                 """,
                 unsafe_allow_html=True
             )
         
-        # Graphique de distribution interactif
+        # GRAPHIQUE DISTRIBUTION DYNAMIQUE
         st.markdown("---")
         st.subheader("📈 Distribution des Classes")
         
-        fig = go.Figure()
+        # Création graphique avec couleurs adaptées au déséquilibre
+        colors = []
+        max_count = class_counts.max()
+        min_count = class_counts.min()
         
-        # Couleurs dynamiques selon la taille
-        colors = ['#2ecc71' if i == class_counts.idxmax() else '#e74c3c' if i == class_counts.idxmin() else '#3498db'
-                  for i in class_counts.index]
+        for count in class_counts.values:
+            if count == max_count and ratio > 2:
+                colors.append('#dc3545')  # Rouge pour classe majoritaire
+            elif count == min_count and ratio > 2:
+                colors.append('#ffc107')  # Jaune pour classe minoritaire
+            else:
+                colors.append('#667eea')  # Bleu standard
         
-        fig.add_trace(go.Bar(
-            x=class_counts.index.astype(str),
-            y=class_counts.values,
-            text=[f"{count:,}<br>({count/total_samples*100:.1f}%)" for count in class_counts.values],
-            textposition='auto',
-            marker=dict(
-                color=colors,
-                line=dict(color='white', width=2)
-            ),
-            hovertemplate='<b>Classe: %{x}</b><br>Échantillons: %{y}<br>Pourcentage: %{text}<extra></extra>'
-        ))
+        fig = go.Figure(data=[
+            go.Bar(
+                x=class_counts.index.astype(str),
+                y=class_counts.values,
+                text=class_counts.values,
+                textposition='auto',
+                marker=dict(
+                    color=colors,
+                    line=dict(color='white', width=2)
+                ),
+                hovertemplate='<b>Classe: %{x}</b><br>Échantillons: %{y}<br>Pourcentage: %{customdata:.1f}%<extra></extra>',
+                customdata=[(count/total_samples)*100 for count in class_counts.values]
+            )
+        ])
         
         fig.update_layout(
             title={
-                'text': "Distribution des Classes dans le Dataset",
+                'text': f"Distribution des Classes (Ratio {ratio:.1f}:1)",
                 'x': 0.5,
-                'xanchor': 'center'
+                'xanchor': 'center',
+                'font': {'size': 18, 'color': imbalance_level['color']}
             },
             xaxis_title="Classe",
             yaxis_title="Nombre d'échantillons",
             template="plotly_white",
-            height=450,
+            height=400,
             showlegend=False,
             plot_bgcolor='rgba(0,0,0,0)',
             paper_bgcolor='rgba(0,0,0,0)'
         )
         
+        # Ligne de référence pour équilibre
+        avg_count = total_samples / len(class_counts)
+        fig.add_hline(
+            y=avg_count,
+            line_dash="dash",
+            line_color="green",
+            annotation_text="Équilibre idéal",
+            annotation_position="top right"
+        )
+        
         st.plotly_chart(fig, use_container_width=True)
         
+        # ALERTES CONTEXTUELLES
+        if ratio > 10:
+            st.error(
+                f"🚨 **ATTENTION** : Déséquilibre CRITIQUE détecté (ratio {ratio:.1f}:1)\n\n"
+                f"La classe minoritaire représente seulement **{(class_counts.min()/total_samples)*100:.1f}%** des données. "
+                f"**Actions fortement recommandées** : SMOTE + Poids de classe"
+            )
+        elif ratio > 3:
+            st.warning(
+                f"⚠️ **Déséquilibre modéré** détecté (ratio {ratio:.1f}:1)\n\n"
+                f"Nous recommandons d'activer **SMOTE** et les **poids de classe** pour de meilleures performances."
+            )
+        elif ratio > 1.5:
+            st.info(
+                f"ℹ️ **Léger déséquilibre** détecté (ratio {ratio:.1f}:1)\n\n"
+                f"Les **poids de classe** suffisent généralement pour ce niveau."
+            )
+        else:
+            st.success(
+                f"✅ **Distribution équilibrée** (ratio {ratio:.1f}:1)\n\n"
+                f"Aucune correction nécessaire, mais vous pouvez tester les options ci-dessous."
+            )
+        
+        # Stratégies de correction
+        st.markdown("---")
         st.markdown("### 🎯 Stratégies de Correction")
-    
+        
         col_strat1, col_strat2 = st.columns(2)
         
         with col_strat1:
@@ -1335,106 +867,201 @@ class MLTrainingWorkflowPro:
                 """
                 <div style='background: #f8f9fa; padding: 1rem; border-radius: 8px; border-left: 4px solid #28a745;'>
                     <p><strong>Principe:</strong> Ajuste la fonction de perte pour donner plus d'importance aux classes minoritaires.</p>
-                    <p><strong>Avantage:</strong> Ne modifie pas les données, rapide</p>
-                    <p><strong>Inconvénient:</strong> Peut sur-ajuster les classes rares</p>
+                    <p><strong>✅ Avantages:</strong></p>
+                    <ul>
+                        <li>Ne modifie pas les données</li>
+                        <li>Rapide à appliquer</li>
+                        <li>Fonctionne avec tous les modèles</li>
+                    </ul>
+                    <p><strong>⚠️ Limites:</strong> Peut sur-ajuster sur classes rares si ratio > 10:1</p>
                 </div>
                 """,
                 unsafe_allow_html=True
             )
             
-            # ✅ CORRECTION : Initialisation sécurisée
-            if not hasattr(STATE, 'imbalance_config') or STATE.imbalance_config is None:
-                STATE.imbalance_config = {}
-            
-            ratio = imbalance_info.get('imbalance_ratio', 1.0)
+            # SUGGESTION AUTOMATIQUE basée sur ratio
+            default_class_weights = ratio >= 2
             
             use_class_weights = st.checkbox(
                 "✅ Activer les poids de classe",
-                value=ratio > 2,
-                help="Recommandé pour ratios > 2:1"
+                value=default_class_weights,
+                help=f"{'✅ RECOMMANDÉ' if ratio >= 2 else '⚪ Optionnel'} (ratio actuel: {ratio:.1f}:1)",
+                key="use_class_weights_checkbox"
             )
             
+            STATE.imbalance_config['use_class_weights'] = use_class_weights
+            
             if use_class_weights:
-                st.success("✅ Les poids seront calculés automatiquement lors de l'entraînement")
+                st.success("✅ Les poids seront calculés automatiquement : sklearn 'balanced' mode")
                 
-                # ✅ CORRECTION : Sauvegarde uniforme
-                STATE.imbalance_config['use_class_weights'] = True
+                # Aperçu des poids calculés
+                from sklearn.utils.class_weight import compute_class_weight
+                weights = compute_class_weight('balanced', classes=np.unique(df[target_column]), y=df[target_column])
+                weight_dict = dict(zip(np.unique(df[target_column]), weights))
                 
-                # Aperçu des poids
-                with st.expander("👁️ Aperçu des poids (estimation)", expanded=False):
-                    weights = len(df) / (len(class_counts) * class_counts)
-                    for cls, weight in weights.items():
-                        st.markdown(f"- **Classe {cls}**: `{weight:.3f}` (×{weight:.1f} importance)")
-            else:
-                STATE.imbalance_config['use_class_weights'] = False
+                with st.expander("🔍 Aperçu des poids calculés", expanded=False):
+                    for cls, weight in weight_dict.items():
+                        st.markdown(f"- Classe `{cls}`: poids **{weight:.2f}x**")
         
         with col_strat2:
             st.markdown("#### 🎭 SMOTE (Suréchantillonnage Synthétique)")
             st.markdown(
                 """
                 <div style='background: #f8f9fa; padding: 1rem; border-radius: 8px; border-left: 4px solid #17a2b8;'>
-                    <p><strong>Principe:</strong> Génère des exemples synthétiques pour les classes minoritaires.</p>
-                    <p><strong>Avantage:</strong> Augmente les données, améliore la généralisation</p>
-                    <p><strong>Inconvénient:</strong> Peut introduire du bruit</p>
+                    <p><strong>Principe:</strong> Génère des exemples synthétiques pour les classes minoritaires via interpolation.</p>
+                    <p><strong>✅ Avantages:</strong></p>
+                    <ul>
+                        <li>Augmente les données de manière intelligente</li>
+                        <li>Améliore la généralisation</li>
+                        <li>Réduit l'overfitting sur minorité</li>
+                    </ul>
+                    <p><strong>⚠️ Limites:</strong> Peut introduire du bruit si classes se chevauchent</p>
                 </div>
                 """,
                 unsafe_allow_html=True
             )
             
+            # VALIDATION AUTOMATIQUE k_neighbors
+            min_class_count = class_counts.min()
+            max_k_safe = max(1, min_class_count - 1)
+            
+            # Suggestion automatique
+            default_smote = ratio >= 3 and min_class_count > 5
+            
             use_smote = st.checkbox(
                 "✅ Activer SMOTE",
-                value=ratio > 3,
-                help="Recommandé pour ratios > 3:1"
+                value=default_smote,
+                help=f"{'✅ RECOMMANDÉ' if ratio >= 3 else '⚪ Optionnel'} (ratio: {ratio:.1f}:1, min classe: {min_class_count})",
+                key="use_smote_checkbox"
             )
             
-            smote_k_neighbors = 5  # Valeur par défaut
+            smote_k_neighbors = 5
             
             if use_smote:
-                min_class_count = class_counts.min()
-                
-                st.markdown("**⚙️ Configuration SMOTE**")
-                
-                smote_k_neighbors = st.slider(
-                    "Nombre de voisins (k)",
-                    min_value=1,
-                    max_value=min(20, max(1, min_class_count - 1)),
-                    value=min(5, max(1, min_class_count - 1)),
-                    help="Nombre de plus proches voisins utilisés"
-                )
-                
-                st.info(f"💡 SMOTE générera ~{int((class_counts.max() - class_counts.min()) * 0.8):,} exemples synthétiques")
-                
-                # ✅ CORRECTION : Sauvegarde uniforme via dict
-                if not hasattr(STATE, 'preprocessing_config') or STATE.preprocessing_config is None:
-                    STATE.preprocessing_config = {}
-                
-                STATE.preprocessing_config['use_smote'] = True
-                STATE.preprocessing_config['smote_k_neighbors'] = smote_k_neighbors
-                STATE.imbalance_config['use_smote'] = True
-                
-                if min_class_count < smote_k_neighbors:
-                    st.warning(f"⚠️ Classe minoritaire trop petite ({min_class_count} samples) pour k={smote_k_neighbors}")
+                if min_class_count < 6:
+                    st.error(
+                        f"❌ **SMOTE IMPOSSIBLE** : Classe minoritaire trop petite ({min_class_count} échantillons)\n\n"
+                        f"SMOTE nécessite au moins **6 échantillons** par classe. "
+                        f"Veuillez collecter plus de données ou utiliser uniquement les poids de classe."
+                    )
+                    use_smote = False
+                    STATE.preprocessing_config['use_smote'] = False
+                    STATE.imbalance_config['use_smote'] = False
+                else:
+                    st.markdown("**⚙️ Configuration SMOTE**")
+                    
+                    # k_neighbors avec validation dynamique
+                    smote_k_neighbors = st.slider(
+                        "Nombre de voisins (k)",
+                        min_value=1,
+                        max_value=min(20, max_k_safe),
+                        value=min(5, max_k_safe),
+                        help=f"Maximum autorisé: {max_k_safe} (basé sur classe minoritaire de {min_class_count} échantillons)"
+                    )
+                    
+                    # 🆕 ESTIMATION PRÉCISE du nombre de samples générés
+                    minority_classes = class_counts[class_counts < class_counts.max()]
+                    estimated_synthetic = 0
+                    for count in minority_classes:
+                        estimated_synthetic += (class_counts.max() - count)
+                    
+                    st.info(
+                        f"💡 **Estimation** : ~**{estimated_synthetic:,} exemples synthétiques** seront générés\n\n"
+                        f"📊 Nouvelle distribution après SMOTE:\n"
+                        f"- Classe majoritaire: {class_counts.max():,} (inchangé)\n"
+                        f"- Classes minoritaires: ≈{class_counts.max():,} (équilibrées)\n"
+                        f"- **Total après SMOTE**: ≈{total_samples + estimated_synthetic:,} lignes"
+                    )
+                    
+                    # SAUVEGARDE DANS STATE avec validation
+                    STATE.preprocessing_config['use_smote'] = True
+                    STATE.preprocessing_config['smote_k_neighbors'] = smote_k_neighbors
+                    STATE.preprocessing_config['smote_sampling_strategy'] = 'auto'
+                    
+                    STATE.imbalance_config['use_smote'] = True
+                    STATE.imbalance_config['smote_k_neighbors'] = smote_k_neighbors
+                    
+                    st.success(f"✅ SMOTE configuré (k={smote_k_neighbors})")
             else:
-                if not hasattr(STATE, 'preprocessing_config') or STATE.preprocessing_config is None:
-                    STATE.preprocessing_config = {}
-                
                 STATE.preprocessing_config['use_smote'] = False
                 STATE.imbalance_config['use_smote'] = False
         
-        # Recommandations
+        # RECOMMANDATIONS INTELLIGENTES
         if ratio > 5:
             st.markdown("---")
-            st.markdown("### 💡 Recommandations")
-            st.warning(
-                f"""
-                ⚠️ **Déséquilibre élevé détecté (ratio: {ratio:.1f}:1)**
-                
-                Nous vous recommandons **fortement** d'activer au moins une stratégie:
-                - ✅ **Poids de classe**: Rapide et efficace
-                - ✅ **SMOTE**: Utile si peu de données minoritaires
-                - 🎯 **Les deux combinés**: Pour déséquilibre critique (>10:1)
-                """
-            )
+            st.markdown("### 💡 Recommandations Personnalisées")
+            
+            recommendations = []
+            
+            if ratio > 10:
+                recommendations.append(
+                    "🚨 **CRITIQUE** : Ratio > 10:1 → Activez **SMOTE + Poids de classe** obligatoirement"
+                )
+                recommendations.append(
+                    "📊 **Alternative** : Si possible, collectez plus de données pour la classe minoritaire"
+                )
+            
+            if min_class_count < 50:
+                recommendations.append(
+                    f"⚠️ Classe minoritaire très petite ({min_class_count} échantillons) → Risque d'overfitting élevé"
+                )
+            
+            if use_smote and use_class_weights:
+                recommendations.append(
+                    "✅ **Configuration optimale** détectée : SMOTE + Poids combinés pour maximum d'efficacité"
+                )
+            elif ratio > 3 and not (use_smote or use_class_weights):
+                recommendations.append(
+                    "⚠️ **Attention** : Aucune correction activée avec ratio élevé → Performances réduites attendues"
+                )
+            
+            if len(class_counts) > 10:
+                recommendations.append(
+                    f"🎯 **Multi-classes** détecté ({len(class_counts)} classes) → SMOTE appliquera une stratégie intelligente"
+                )
+            
+            for rec in recommendations:
+                st.warning(rec)
+        
+        # TABLEAU RÉCAPITULATIF
+        st.markdown("---")
+        st.markdown("### 📋 Récapitulatif Configuration")
+        
+        recap_data = {
+            "Paramètre": [
+                "Ratio déséquilibre",
+                "Niveau",
+                "Classe majoritaire",
+                "Classe minoritaire",
+                "Poids de classe",
+                "SMOTE",
+                "k_neighbors SMOTE"
+            ],
+            "Valeur": [
+                f"{ratio:.2f}:1",
+                imbalance_level['level'],
+                f"{class_counts.max():,} échantillons",
+                f"{class_counts.min():,} échantillons",
+                "✅ Activé" if use_class_weights else "❌ Désactivé",
+                "✅ Activé" if use_smote else "❌ Désactivé",
+                f"{smote_k_neighbors}" if use_smote else "N/A"
+            ],
+            "Statut": [
+                imbalance_level['icon'],
+                imbalance_level['icon'],
+                "📊",
+                "⚠️" if class_counts.min() < 50 else "📊",
+                "✅" if use_class_weights else "⚪",
+                "✅" if use_smote else "⚪",
+                "✅" if use_smote else "⚪"
+            ]
+        }
+        
+        st.dataframe(
+            pd.DataFrame(recap_data),
+            hide_index=True,
+            use_container_width=True
+        )
         
         # Navigation
         st.markdown("---")
@@ -1447,27 +1074,30 @@ class MLTrainingWorkflowPro:
         
         with col_nav2:
             if st.button("💾 Sauvegarder et Continuer ➡️", type="primary", use_container_width=True):
-                # ✅ CORRECTION : Sauvegarde complète avec mise à jour
+                # SAUVEGARDE COMPLÈTE avec validation
                 STATE.imbalance_config.update({
                     'use_class_weights': use_class_weights,
                     'use_smote': use_smote,
                     'smote_k_neighbors': smote_k_neighbors if use_smote else 5,
-                    'imbalance_ratio': float(ratio)
+                    'smote_sampling_strategy': 'auto',
+                    'imbalance_ratio': float(ratio),
+                    'imbalance_level': imbalance_level['level'],
+                    'min_class_count': int(class_counts.min()),
+                    'max_class_count': int(class_counts.max())
                 })
                 
+                # Log pour debug
+                logger.info(f"✅ Imbalance config sauvegardée: {STATE.imbalance_config}")
+                
                 STATE.current_step = 3
-                st.success("✅ Configuration du déséquilibre sauvegardée!")
-                time.sleep(0.3)
+                st.success("✅ Configuration du déséquilibre sauvegardée avec succès!")
+                time.sleep(0.5)
                 st.rerun()
         
         st.markdown('</div>', unsafe_allow_html=True)
-    
-    # ============================================================================
-    # ÉTAPE 4: PRÉTRAITEMENT
-    # ============================================================================
-    
+
     def render_preprocessing_step(self):
-        """Étape 4: Configuration du prétraitement des données"""
+        """Étape 4: Configuration du prétraitement avec StateManager"""
         st.markdown('<div class="workflow-step-card">', unsafe_allow_html=True)
         st.header("🔧 Étape 4: Prétraitement des Données")
         
@@ -1483,16 +1113,11 @@ class MLTrainingWorkflowPro:
             unsafe_allow_html=True
         )
         
-        # Initialisation sécurisée
-        if not hasattr(STATE, 'preprocessing_config') or STATE.preprocessing_config is None:
-            STATE.preprocessing_config = {}
-        
         # Analyse des features sélectionnées
         df = STATE.data.df
-        feature_list = getattr(STATE, 'feature_list', [])
+        feature_list = STATE.feature_list
         
         if feature_list:
-            # Détection automatique des colonnes numériques dans les features sélectionnées
             numeric_features = [col for col in feature_list 
                             if col in df.select_dtypes(include=['number']).columns]
             categorical_features = [col for col in feature_list 
@@ -1538,7 +1163,6 @@ class MLTrainingWorkflowPro:
         with col1:
             st.subheader("🧩 Gestion des Valeurs Manquantes")
             
-            # Imputation numérique en fonction des features sélectionnées
             if n_numeric > 0:
                 st.markdown("**Variables Numériques**")
                 STATE.preprocessing_config['numeric_imputation'] = st.selectbox(
@@ -1552,9 +1176,8 @@ class MLTrainingWorkflowPro:
                 )
             else:
                 st.info("ℹ️ Aucune variable numérique sélectionnée")
-                STATE.preprocessing_config['numeric_imputation'] = 'mean'  # Valeur par défaut
+                STATE.preprocessing_config['numeric_imputation'] = 'mean'
             
-            # Imputation catégorielle en fonction des features sélectionnées
             if n_categorical > 0:
                 st.markdown("**Variables Catégorielles**")
                 STATE.preprocessing_config['categorical_imputation'] = st.selectbox(
@@ -1568,7 +1191,7 @@ class MLTrainingWorkflowPro:
                 )
             else:
                 st.info("ℹ️ Aucune variable catégorielle sélectionnée")
-                STATE.preprocessing_config['categorical_imputation'] = 'most_frequent'  # Valeur par défaut
+                STATE.preprocessing_config['categorical_imputation'] = 'most_frequent'
             
             st.markdown("---")
             
@@ -1589,7 +1212,6 @@ class MLTrainingWorkflowPro:
         with col2:
             st.subheader("📏 Normalisation des Features")
             
-            # ✅ CORRECTION CRITIQUE : Normalisation uniquement pour variables numériques
             if n_numeric > 0:
                 STATE.preprocessing_config['scale_features'] = st.checkbox(
                     "✅ Activer la normalisation",
@@ -1613,33 +1235,24 @@ class MLTrainingWorkflowPro:
                     
                     st.info(f"📊 **{n_numeric}** variables numériques seront normalisées")
                     
-                    # Avertissement pour variables catégorielles
                     if n_categorical > 0:
                         st.success(
                             f"✅ **{n_categorical}** variables catégorielles seront encodées "
                             f"(One-Hot ou Label Encoding) mais **PAS** normalisées"
                         )
             else:
-                # Désactivation automatique si pas de variables numériques
                 STATE.preprocessing_config['scale_features'] = False
                 st.warning(
                     "⚠️ **Normalisation désactivée**\n\n"
                     "Aucune variable numérique dans votre sélection. "
                     "La normalisation ne s'applique qu'aux variables numériques."
                 )
-                
-                if n_categorical > 0:
-                    st.info(
-                        f"ℹ️ Les **{n_categorical}** variables catégorielles seront automatiquement "
-                        f"encodées (One-Hot ou Label Encoding) lors de l'entraînement."
-                    )
             
             st.markdown("---")
             
             st.subheader("🔍 Réduction Dimensionnelle")
             
-            # PCA uniquement si variables numériques
-            if n_numeric > 10:  # Seuil recommandé
+            if n_numeric > 10:
                 STATE.preprocessing_config['pca_preprocessing'] = st.checkbox(
                     "🎯 Activer PCA",
                     value=STATE.preprocessing_config.get('pca_preprocessing', False),
@@ -1649,7 +1262,6 @@ class MLTrainingWorkflowPro:
                 if STATE.preprocessing_config.get('pca_preprocessing', False):
                     st.success(f"✅ PCA sera appliqué sur les **{n_numeric}** variables numériques")
                     
-                    # Seuil de variance expliquée
                     pca_variance_threshold = st.slider(
                         "Seuil de variance expliquée (%)",
                         min_value=70,
@@ -1702,39 +1314,6 @@ class MLTrainingWorkflowPro:
         else:
             st.info("ℹ️ Aucune transformation configurée")
         
-        # Analyse colonnes à nettoyer (code existant inchangé)
-        if STATE.preprocessing_config.get('remove_constant_cols') or STATE.preprocessing_config.get('remove_identifier_cols'):
-            st.markdown("---")
-            st.subheader("🔍 Analyse des Colonnes à Nettoyer")
-            
-            with st.spinner("🔍 Analyse des colonnes en cours..."):
-                numeric_cols = df.select_dtypes(include='number').columns
-                constant_cols = [col for col in numeric_cols if df[col].std() == 0] if len(numeric_cols) > 0 else []
-                identifier_cols = [col for col in df.columns if df[col].nunique() == len(df)]
-                
-                if constant_cols or identifier_cols:
-                    col_clean1, col_clean2 = st.columns(2)
-                    
-                    with col_clean1:
-                        if constant_cols:
-                            st.warning(f"⚠️ {len(constant_cols)} colonne(s) constante(s)")
-                            with st.expander("📋 Voir colonnes", expanded=False):
-                                for col in constant_cols:
-                                    st.markdown(f"- `{col}`")
-                        else:
-                            st.success("✅ Aucune colonne constante")
-                    
-                    with col_clean2:
-                        if identifier_cols:
-                            st.warning(f"⚠️ {len(identifier_cols)} colonne(s) identifiante(s)")
-                            with st.expander("📋 Voir colonnes", expanded=False):
-                                for col in identifier_cols:
-                                    st.markdown(f"- `{col}`")
-                        else:
-                            st.success("✅ Aucune colonne identifiante")
-                else:
-                    st.success("✅ Aucune colonne problématique")
-        
         # Navigation
         st.markdown("---")
         col_nav1, col_nav2 = st.columns(2)
@@ -1746,7 +1325,6 @@ class MLTrainingWorkflowPro:
         
         with col_nav2:
             if st.button("💾 Sauvegarder et Continuer ➡️", type="primary", use_container_width=True):
-                # ✅ CORRECTION : Sauvegarde du nombre de features par type
                 STATE.preprocessing_config['n_numeric_features'] = n_numeric
                 STATE.preprocessing_config['n_categorical_features'] = n_categorical
                 STATE.preprocessing_config['numeric_features'] = numeric_features
@@ -1759,19 +1337,14 @@ class MLTrainingWorkflowPro:
         
         st.markdown('</div>', unsafe_allow_html=True)
 
-    
-    # ============================================================================
-    # ÉTAPE 5: SÉLECTION DES MODÈLES
-    # ============================================================================
-    
     def render_model_selection_step(self):
-        """Étape 5: Sélection des algorithmes de machine learning"""
+        """Étape 5: Sélection des algorithmes avec StateManager"""
         st.markdown('<div class="workflow-step-card">', unsafe_allow_html=True)
         st.header("🤖 Étape 5: Sélection des Modèles")
         
         task_type = STATE.task_type
         
-        # Récupération des modèles disponibles pour la tâche
+        # Récupération des modèles disponibles
         available_models = MODEL_CATALOG.get(task_type, {})
         
         if not available_models:
@@ -1815,7 +1388,6 @@ class MLTrainingWorkflowPro:
                 
             st.markdown(f"### {category}")
             
-            # Création des colonnes pour les cartes de modèles
             cols = st.columns(3)
             col_idx = 0
             
@@ -1823,7 +1395,6 @@ class MLTrainingWorkflowPro:
                 with cols[col_idx]:
                     is_selected = model_name in selected_models
                     
-                    # Couleur selon la complexité
                     complexity = config.get('complexity', 'medium')
                     if complexity == 'low':
                         color = "#28a745"
@@ -1895,7 +1466,6 @@ class MLTrainingWorkflowPro:
                 )
             
             with col_sum2:
-                # Calcul de la complexité moyenne
                 complexities = []
                 for model_name in selected_models:
                     config = available_models[model_name]
@@ -1930,12 +1500,11 @@ class MLTrainingWorkflowPro:
                 )
             
             with col_sum3:
-                # Estimation du temps d'entraînement
-                base_time = len(selected_models) * 30  # 30 secondes par modèle de base
+                base_time = len(selected_models) * 30
                 if STATE.optimize_hyperparams:
-                    base_time *= 3  # ×3 pour l'optimisation
+                    base_time *= 3
                 if STATE.preprocessing_config.get('pca_preprocessing', False):
-                    base_time *= 1.2  # +20% pour PCA
+                    base_time *= 1.2
                 
                 minutes = max(1, int(base_time / 60))
                 
@@ -1950,7 +1519,6 @@ class MLTrainingWorkflowPro:
                     unsafe_allow_html=True
                 )
             
-            # Liste des modèles sélectionnés
             with st.expander("📋 Détail des modèles sélectionnés", expanded=True):
                 cols = st.columns(3)
                 for idx, model_name in enumerate(selected_models):
@@ -1961,7 +1529,6 @@ class MLTrainingWorkflowPro:
                         st.caption(f"• Complexité: {config.get('complexity', 'medium')}")
                         st.caption(f"• Vitesse: {config.get('training_speed', 'medium')}")
             
-            # Recommandations
             if len(selected_models) > 5:
                 st.warning("⚠️ Nombre élevé de modèles sélectionnés")
                 st.info("💡 Pour un entraînement plus rapide, sélectionnez 3-5 modèles maximum")
@@ -1985,7 +1552,7 @@ class MLTrainingWorkflowPro:
                     "Pourcentage de test",
                     min_value=10,
                     max_value=40,
-                    value=STATE.get('test_size', 20),
+                    value=STATE.test_size,
                     help="Pourcentage de données réservées pour l'évaluation finale"
                 )
                 STATE.test_size = test_size
@@ -1996,7 +1563,7 @@ class MLTrainingWorkflowPro:
         with col_adv2:
             optimize = st.checkbox(
                 "🔍 Optimisation des hyperparamètres",
-                value=STATE.get('optimize_hyperparams', False),
+                value=STATE.optimize_hyperparams,
                 help="Recherche automatique des meilleurs paramètres (×3 temps d'entraînement)"
             )
             STATE.optimize_hyperparams = optimize
@@ -2031,13 +1598,58 @@ class MLTrainingWorkflowPro:
                     st.error("⚠️ Veuillez sélectionner au moins un modèle")
         
         st.markdown('</div>', unsafe_allow_html=True)
-    
-    # ============================================================================
-    # ÉTAPE 6: LANCEMENT DE L'ENTRAÎNEMENT
-    # ============================================================================
-    
-    def render_training_launch_step(self):
+
+
+    def _estimate_training_resources(self, df, n_models, sys_metrics):
+        """Estime les ressources nécessaires pour l'entraînement"""
+        if df is None:
+            return {
+                "has_enough_resources": True,
+                "estimated_memory_mb": 0,
+                "available_memory_mb": sys_metrics.get("memory_total_mb", 1000),
+                "warnings": ["Dataset non disponible pour estimation"],
+                "issues": []
+            }
         
+        n_samples = len(df)
+        n_features = len(df.columns)
+        
+        # Estimation mémoire basique
+        base_memory = n_samples * n_features * 8 / (1024**2)  # MB
+        estimated_memory = base_memory * n_models * (3 if STATE.optimize_hyperparams else 1)
+        
+        # Ressources disponibles
+        available_memory = (100 - sys_metrics.get("memory_percent", 80)) / 100 * sys_metrics.get("memory_total_mb", 1000)
+        
+        # Seuils
+        memory_ok = estimated_memory < available_memory * 0.7
+        cpu_ok = sys_metrics.get("cpu_percent", 0) < 80
+        
+        issues = []
+        warnings = []
+        
+        if not memory_ok:
+            issues.append(f"Mémoire insuffisante: {estimated_memory:.1f}MB estimés vs {available_memory:.1f}MB disponibles")
+        
+        if not cpu_ok:
+            warnings.append("CPU très utilisé - entraînement potentiellement lent")
+        
+        if n_models > 5:
+            warnings.append("Nombre élevé de modèles - temps d'entraînement prolongé")
+        
+        if n_samples > 100000 and n_models > 3:
+            warnings.append("Grand dataset avec plusieurs modèles - temps d'entraînement très long")
+        
+        return {
+            "has_enough_resources": memory_ok and cpu_ok,
+            "estimated_memory_mb": estimated_memory,
+            "available_memory_mb": available_memory,
+            "warnings": warnings,
+            "issues": issues
+        }
+
+    def render_training_launch_step(self):
+        """Étape 6: Lancement de l'entraînement avec StateManager"""
         st.markdown('<div class="workflow-step-card">', unsafe_allow_html=True)
         st.header("🚀 Étape 6: Lancement de l'Entraînement")
         
@@ -2052,42 +1664,25 @@ class MLTrainingWorkflowPro:
             if STATE.target_column:
                 st.markdown(f"- **Variable cible**: `{STATE.target_column}`")
             
-            # Accès safe à feature_list
-            feature_list = STATE.feature_list if hasattr(STATE, 'feature_list') else []
-            
-            # Affichage debug 
-            if st.checkbox("🔍 Debug feature_list", value=False, key="debug_features"):
-                st.json({
-                    "feature_list_from_property": STATE.feature_list if hasattr(STATE, 'feature_list') else "N/A",
-                    "feature_list_from_data": STATE.data.feature_list if hasattr(STATE.data, 'feature_list') else "N/A",
-                    "length": len(feature_list),
-                    "first_5": feature_list[:5] if feature_list else []
-                })
-            
+            feature_list = STATE.feature_list
             st.markdown(f"- **Features**: `{len(feature_list)}` variables")
             
             if STATE.task_type != 'clustering':
-                test_size = STATE.test_size if hasattr(STATE, 'test_size') else 20
+                test_size = STATE.test_size
                 st.markdown(f"- **Split test**: `{test_size}%`")
         
         with col_recap2:
             st.markdown("#### 🤖 Configuration des Modèles")
             
-            # Accès safe à selected_models
-            selected_models = STATE.selected_models if hasattr(STATE, 'selected_models') else []
+            selected_models = STATE.selected_models
             st.markdown(f"- **Modèles sélectionnés**: `{len(selected_models)}`")
             
-            optimize = STATE.optimize_hyperparams if hasattr(STATE, 'optimize_hyperparams') else False
+            optimize = STATE.optimize_hyperparams
             st.markdown(f"- **Optimisation HP**: `{'✅ Oui' if optimize else '❌ Non'}`")
             
             if STATE.task_type == 'classification':
-                
-                # Accès safe aux configs de déséquilibre
-                preprocessing_config = STATE.preprocessing_config if hasattr(STATE, 'preprocessing_config') else {}
-                imbalance_config = STATE.imbalance_config if hasattr(STATE, 'imbalance_config') else {}
-                
-                use_smote = preprocessing_config.get('use_smote', False) if preprocessing_config else False
-                use_weights = imbalance_config.get('use_class_weights', False) if imbalance_config else False
+                use_smote = STATE.preprocessing_config.get('use_smote', False)
+                use_weights = STATE.imbalance_config.get('use_class_weights', False)
                 
                 st.markdown(f"- **SMOTE**: `{'✅ Activé' if use_smote else '❌ Désactivé'}`")
                 st.markdown(f"- **Poids de classe**: `{'✅ Activés' if use_weights else '❌ Désactivés'}`")
@@ -2106,19 +1701,16 @@ class MLTrainingWorkflowPro:
             if not STATE.target_column:
                 validation_issues.append("❌ Variable cible non définie")
             
-            # Vérification des features
             if not feature_list or len(feature_list) == 0:
                 validation_issues.append("❌ Aucune feature sélectionnée")
                 
-                # 🔍 Diagnostic approfondi
+                # Diagnostic approfondi
                 if st.checkbox("🔍 Diagnostic approfondi", value=True, key="deep_debug"):
                     st.warning("🔍 **Diagnostic des features manquantes**")
                     
-                    # Vérifier toutes les sources possibles
                     possible_sources = {
-                        "STATE.feature_list": STATE.feature_list if hasattr(STATE, 'feature_list') else None,
-                        "STATE.data.feature_list": STATE.data.feature_list if hasattr(STATE.data, 'feature_list') else None,
-                        "session_state.feature_list": st.session_state.get('feature_list', None),
+                        "STATE.feature_list": STATE.feature_list,
+                        "STATE.data.feature_list": STATE.data.feature_list,
                         "Colonnes du DataFrame": list(STATE.data.df.columns) if STATE.loaded and STATE.data.df is not None else None
                     }
                     
@@ -2138,10 +1730,9 @@ class MLTrainingWorkflowPro:
             # Clustering : pas besoin de target ni features spécifiques
             pass
         
-        if not STATE.selected_models or len(STATE.selected_models) == 0:
+        if not selected_models or len(selected_models) == 0:
             validation_issues.append("❌ Aucun modèle sélectionné")
         
-        # Détermination de can_launch AVANT son utilisation
         can_launch = len(validation_issues) == 0
         
         if validation_issues:
@@ -2156,13 +1747,9 @@ class MLTrainingWorkflowPro:
             st.markdown("---")
             st.subheader("💻 Estimation des Ressources")
             
-            from utils.system_utils import check_system_resources
-            
             try:
-                resource_check = check_system_resources(
-                    STATE.data.df, 
-                    len(STATE.selected_models)
-                )
+                sys_metrics = check_system_resources()
+                resource_check = self._estimate_training_resources(STATE.data.df, len(selected_models), sys_metrics)
                 
                 col_res1, col_res2, col_res3 = st.columns(3)
                 
@@ -2181,11 +1768,10 @@ class MLTrainingWorkflowPro:
                         unsafe_allow_html=True
                     )
                     
-                    # Mise à jour de can_launch avec ressources
                     can_launch = can_launch and has_resources
                 
                 with col_res2:
-                    n_models = len(STATE.selected_models)
+                    n_models = len(selected_models)
                     st.markdown(
                         f"""
                         <div class='metric-card'>
@@ -2198,9 +1784,8 @@ class MLTrainingWorkflowPro:
                     )
                 
                 with col_res3:
-                    # Estimation du temps
                     base_time = n_models * 30
-                    if STATE.optimize_hyperparams:
+                    if optimize:
                         base_time *= 3
                     minutes = max(1, int(base_time / 60))
                     
@@ -2215,7 +1800,6 @@ class MLTrainingWorkflowPro:
                         unsafe_allow_html=True
                     )
                 
-                # Avertissements ressources
                 if resource_check.get("warnings"):
                     with st.expander("⚠️ Avertissements Système", expanded=True):
                         for warning in resource_check["warnings"]:
@@ -2231,7 +1815,6 @@ class MLTrainingWorkflowPro:
             
             except Exception as e:
                 st.warning(f"⚠️ Impossible de vérifier les ressources: {e}")
-                # On laisse can_launch tel quel si erreur de vérification
         
         # Bouton de lancement
         st.markdown("---")
@@ -2239,12 +1822,11 @@ class MLTrainingWorkflowPro:
         col_launch1, col_launch2, col_launch3 = st.columns([1, 2, 1])
         
         with col_launch2:
-            # can_launch est maintenant défini AVANT son utilisation
             if st.button(
                 "🚀 Lancer l'Entraînement",
                 type="primary",
                 use_container_width=True,
-                disabled=not can_launch,  # SAFE : Variable définie plus haut
+                disabled=not can_launch,
                 key="launch_training"
             ):
                 self.launch_training()
@@ -2267,21 +1849,39 @@ class MLTrainingWorkflowPro:
         
         st.markdown('</div>', unsafe_allow_html=True)
 
-    
     def launch_training(self):
-        """Lance l'entraînement avec l'orchestrateur"""
+        """Lance l'entraînement avec l'orchestrateur via StateManager - VERSION CORRIGÉE"""
         try:
-            # Préparation des paramètres
+            # Préparation des paramètres avec StateManager
             df = STATE.data.df
-            target_column = STATE.target_column
-            feature_list = getattr(STATE, 'feature_list', [])
-            task_type = STATE.task_type
-            test_size = getattr(STATE, 'test_size', 20) / 100.0
-            selected_models = getattr(STATE, 'selected_models', [])
-            optimize = getattr(STATE, 'optimize_hyperparams', False)
-            preprocessing_config = getattr(STATE, 'preprocessing_config', {})
-            use_smote = preprocessing_config.get('use_smote', False) if preprocessing_config else False
             
+            # VALIDATION CRITIQUE des données
+            if df is None or df.empty:
+                st.error("❌ Aucun dataset chargé pour l'entraînement")
+                return
+            
+            target_column = STATE.target_column
+            feature_list = STATE.feature_list
+            task_type = STATE.task_type
+            test_size = STATE.test_size / 100.0
+            selected_models = STATE.selected_models
+            optimize = STATE.optimize_hyperparams
+            preprocessing_config = STATE.preprocessing_config
+            use_smote = preprocessing_config.get('use_smote', False)
+            
+            # VALIDATION configuration minimale
+            if not selected_models:
+                st.error("❌ Aucun modèle sélectionné")
+                return
+            
+            if task_type in ['classification', 'regression'] and not target_column:
+                st.error("❌ Variable cible non définie")
+                return
+            
+            if not feature_list:
+                st.error("❌ Aucune feature sélectionnée")
+                return
+
             # Création du contexte d'entraînement
             context = MLTrainingContext(
                 df=df,
@@ -2308,29 +1908,91 @@ class MLTrainingWorkflowPro:
             status_text.text("🚀 Initialisation de l'entraînement...")
             progress_bar.progress(10)
             
-            # Exécution avec l'orchestrateur
-            result = ml_training_orchestrator.train(context)
+            # EXÉCUTION AVEC GESTION D'ERREUR ROBUSTE
+            try:
+                result = ml_training_orchestrator.train(context)
+                
+                # VALIDATION du résultat
+                if result is None:
+                    raise ValueError("L'orchestrateur a retourné None")
+                    
+            except Exception as training_error:
+                st.error(f"❌ Erreur pendant l'entraînement: {str(training_error)}")
+                logger.error(f"Training execution error: {training_error}", exc_info=True)
+                
+                # Création d'un résultat d'erreur
+                result = MLTrainingResult(
+                    success=False,
+                    results=[],
+                    summary={},
+                    errors=[str(training_error)],
+                    warnings=[],
+                    training_time=0,
+                    metadata={'error': True}
+                )
             
             # Mise à jour interface
             status_text.text("✅ Entraînement terminé!")
             progress_bar.progress(100)
             
-            # Sauvegarde des résultats
-            STATE.training_results = result
-            STATE.workflow_complete = True
-            
-            # Affichage des résultats
-            self.display_training_results(result, results_container)
-            
+            # SAUVEGARDE SÉCURISÉE des résultats
+            if result is not None:
+                STATE.training_results = result
+                STATE.workflow_complete = True
+                
+                # 🆕 SYNCHRONISATION FINALE depuis collecteur
+                collector = get_mlflow_collector()
+                final_runs = collector.get_runs()
+                
+                if final_runs:
+                    logger.info(f"📊 {len(final_runs)} runs MLflow disponibles dans collecteur")
+                    
+                    # Synchronisation explicite vers toutes les sources
+                    try:
+                        from monitoring.state_managers import sync_mlflow_runs_all_sources
+                        sync_counters = sync_mlflow_runs_all_sources(final_runs)
+                    except Exception as sync_error:
+                        logger.warning(f"Sync MLflow non disponible: {sync_error}")
+                        sync_counters = {'total_synchronized': len(final_runs) if final_runs else 0}
+                    
+                    if sync_counters['total_synchronized'] > 0:
+                        st.success(
+                            f"✅ {sync_counters['total_synchronized']} runs MLflow synchronisés "
+                            f"vers tous les états"
+                        )
+                    else:
+                        st.info("ℹ️ Tous les runs MLflow déjà synchronisés")
+                
+                # Affichage des résultats
+                self.display_training_results(result, results_container)
+            else:
+                st.error("❌ Aucun résultat disponible après l'entraînement")
+                
         except Exception as e:
-            st.error(f"❌ Erreur lors de l'entraînement: {str(e)}")
-            logger.error(f"Training error: {e}", exc_info=True)
-            STATE.workflow_complete = False
-    
+            st.error(f"❌ Erreur inattendue lors du lancement de l'entraînement: {str(e)}")
+            logger.error(f"Unexpected error in launch_training: {e}", exc_info=True)
+
     def display_training_results(self, result: MLTrainingResult, container):
-        """Affiche les résultats de l'entraînement"""
+        """Affiche les résultats de l'entraînement - VERSION CORRIGÉE"""
+        
+        # VALIDATION ROBUSTE du résultat
+        if result is None:
+            container.error("❌ Aucun résultat d'entraînement disponible")
+            logger.error("display_training_results: result est None")
+            return
+        
+        # VALIDATION des attributs essentiels
+        if not hasattr(result, 'successful_models') or not hasattr(result, 'results'):
+            container.error("❌ Format de résultat invalide")
+            logger.error(f"Résultat invalide: {type(result)} - {dir(result)}")
+            return
+        
         with container.container():
             st.markdown("## 📊 Résultats de l'Entraînement")
+            
+            # UTILISATION SÉCURISÉE des attributs
+            n_successful = len(result.successful_models)
+            n_total = len(result.results)
             
             # Métriques principales
             col_res1, col_res2, col_res3, col_res4 = st.columns(4)
@@ -2341,30 +2003,37 @@ class MLTrainingWorkflowPro:
                     <div class='metric-card'>
                         <h3>🤖</h3>
                         <h4>Modèles Réussis</h4>
-                        <h2>{len(result.successful_models)}/{len(result.results)}</h2>
+                        <h2>{n_successful}/{n_total}</h2>
                     </div>
                     """,
                     unsafe_allow_html=True
                 )
             
             with col_res2:
+                training_time = getattr(result, 'training_time', 0)
                 st.markdown(
                     f"""
                     <div class='metric-card'>
                         <h3>⏱️</h3>
                         <h4>Temps Total</h4>
-                        <h2>{result.training_time:.1f}s</h2>
+                        <h2>{training_time:.1f}s</h2>
                     </div>
                     """,
                     unsafe_allow_html=True
                 )
             
             with col_res3:
-                best_model = result.best_model
-                if best_model:
-                    task_type = STATE.task_type
-                    metric_key = 'accuracy' if task_type == 'classification' else 'r2' if task_type == 'regression' else 'silhouette_score'
-                    best_score = best_model['metrics'].get(metric_key, 0)
+                best_model = getattr(result, 'best_model', None)
+                task_type = STATE.task_type
+                
+                if best_model and hasattr(best_model, 'metrics'):
+                    metric_key = {
+                        'classification': 'accuracy',
+                        'regression': 'r2', 
+                        'clustering': 'silhouette_score'
+                    }.get(task_type, 'accuracy')
+                    
+                    best_score = best_model.metrics.get(metric_key, 0)
                     
                     st.markdown(
                         f"""
@@ -2390,58 +2059,61 @@ class MLTrainingWorkflowPro:
             
             with col_res4:
                 if best_model:
+                    model_name = getattr(best_model, 'model_name', 'Inconnu')
                     st.markdown(
                         f"""
                         <div class='metric-card'>
                             <h3>👑</h3>
                             <h4>Meilleur Modèle</h4>
-                            <h2>{best_model['model_name']}</h2>
+                            <h2>{model_name}</h2>
                         </div>
                         """,
                         unsafe_allow_html=True
                     )
             
-            # Détails des résultats
+            # Détails des performances
             st.markdown("---")
             st.subheader("📋 Détail des Performances")
             
-            # Tableau des résultats
             results_data = []
             for model_result in result.successful_models:
-                metrics = model_result.get('metrics', {})
+                metrics = getattr(model_result, 'metrics', {})
                 results_data.append({
-                    'Modèle': model_result['model_name'],
+                    'Modèle': getattr(model_result, 'model_name', 'Inconnu'),
                     'Statut': '✅ Succès',
-                    'Temps (s)': f"{model_result.get('training_time', 0):.1f}",
+                    'Temps (s)': f"{getattr(model_result, 'training_time', 0):.1f}",
                     **{k: f"{v:.3f}" if isinstance(v, (int, float)) else str(v) 
-                       for k, v in metrics.items()}
+                    for k, v in metrics.items()}
                 })
             
             for model_result in result.failed_models:
                 results_data.append({
-                    'Modèle': model_result['model_name'],
+                    'Modèle': getattr(model_result, 'model_name', 'Inconnu'),
                     'Statut': '❌ Échec',
-                    'Temps (s)': f"{model_result.get('training_time', 0):.1f}",
-                    'Erreur': model_result.get('metrics', {}).get('error', 'Erreur inconnue')
+                    'Temps (s)': f"{getattr(model_result, 'training_time', 0):.1f}",
+                    'Erreur': getattr(model_result, 'error', 'Erreur inconnue')
                 })
             
             if results_data:
                 st.dataframe(pd.DataFrame(results_data), use_container_width=True)
+            else:
+                st.warning("⚠️ Aucun résultat à afficher")
             
             # Recommandations
-            if result.summary.get('recommendations'):
+            summary = getattr(result, 'summary', {})
+            if summary and summary.get('recommendations'):
                 st.markdown("---")
                 st.subheader("💡 Recommandations")
                 
-                for recommendation in result.summary['recommendations']:
+                for recommendation in summary['recommendations']:
                     st.info(recommendation)
             
             # Bouton pour voir l'analyse détaillée
             st.markdown("---")
             if st.button("📈 Voir l'Analyse Détaillée des Résultats", type="primary", use_container_width=True):
                 STATE.ml_results = result.results
-                st.switch_page("pages/3_evaluation.py")
-    
+                STATE.switch(AppPage.ML_EVALUATION)
+
     def render_complete_step(self):
         """Étape finale après entraînement complet"""
         st.markdown('<div class="workflow-step-card">', unsafe_allow_html=True)
@@ -2455,7 +2127,7 @@ class MLTrainingWorkflowPro:
         
         with col1:
             if st.button("📊 Voir l'Analyse", type="primary", use_container_width=True):
-                st.switch_page("pages/3_evaluation.py")
+                STATE.switch(AppPage.ML_EVALUATION)
         
         with col2:
             if st.button("🔄 Nouvel Entraînement", use_container_width=True):
@@ -2464,19 +2136,19 @@ class MLTrainingWorkflowPro:
         
         with col3:
             if st.button("🏠 Retour à l'Accueil", use_container_width=True):
-                st.switch_page("main.py")
+                STATE.switch(AppPage.HOME)
         
         st.markdown('</div>', unsafe_allow_html=True)
-    
+
     def run(self):
-        """Exécute le workflow complet"""
+        """Exécute le workflow complet avec StateManager"""
         self.render_header()
         self.render_workflow_progress()
         
         if STATE.workflow_complete and STATE.training_results:
             self.render_complete_step()
         else:
-            # Routing des étapes
+            # Routing des étapes avec StateManager
             steps = [
                 self.render_dataset_analysis_step,
                 self.render_target_selection_step,
@@ -2494,16 +2166,16 @@ class MLTrainingWorkflowPro:
                 st.rerun()
 
 def debug_feature_state():
-    """Fonction de debug pour l'état des features"""
+    """Fonction de debug pour l'état des features avec StateManager"""
     if st.sidebar.checkbox("🐛 Mode Debug Features", value=False):
         st.sidebar.markdown("### 🐛 État des Features")
         
         feature_sources = {
-            "STATE.feature_list": getattr(STATE, 'feature_list', "N/A"),
-            "STATE.data.feature_list": getattr(STATE.data, 'feature_list', "N/A") if hasattr(STATE, 'data') else "N/A",
-            "Dataset columns": STATE.data.df.columns.tolist() if hasattr(STATE, 'data') and STATE.data.df is not None else "N/A",
-            "Target column": getattr(STATE, 'target_column', "N/A"),
-            "Task type": getattr(STATE, 'task_type', "N/A")
+            "STATE.feature_list": STATE.feature_list,
+            "STATE.data.feature_list": STATE.data.feature_list,
+            "Dataset columns": STATE.data.df.columns.tolist() if STATE.loaded and STATE.data.df is not None else "N/A",
+            "Target column": STATE.target_column,
+            "Task type": STATE.task_type
         }
         
         for source, value in feature_sources.items():
@@ -2516,17 +2188,15 @@ def debug_feature_state():
         
         # Bouton de réinitialisation
         if st.sidebar.button("🔄 Reset Feature State"):
-            if hasattr(STATE, 'feature_list'):
-                STATE.feature_list = []
-            if hasattr(STATE.data, 'feature_list'):
-                STATE.data.feature_list = []
+            STATE.feature_list = []
+            STATE.data.feature_list = []
             st.sidebar.success("Feature state reset!")
             time.sleep(1)
             st.rerun()
 
 # Point d'entrée de l'application   
 def main():
-    """Fonction principale de l'application"""
+    """Fonction principale de l'application avec StateManager"""
     try:
         debug_feature_state()
         

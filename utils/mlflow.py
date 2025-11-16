@@ -12,7 +12,7 @@ from src.evaluation.metrics import MetricsLogger
 # Intégration MLflow
 try:
     import mlflow
-    import mlflow.sklearn
+    import mlflow.sklearn # type: ignore
     MLFLOW_AVAILABLE = True
 except ImportError:
     MLFLOW_AVAILABLE = False
