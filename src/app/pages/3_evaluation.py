@@ -1,5 +1,6 @@
 """
-ML Factory Pro - Page Évaluation ML
+📊 ML Factory Pro - Page Évaluation ML v4.0
+Version Complète et Moderne avec Toutes les Fonctionnalités
 """
 
 import streamlit as st
@@ -9,15 +10,18 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import time
 from typing import Dict, List, Any, Optional
-from dataclasses import dataclass
+from datetime import datetime
+import json
+import tempfile
+import base64
 
 # Imports internes
 from src.evaluation.model_plots import ModelEvaluationVisualizer
 from src.shared.logging import get_logger
 from monitoring.state_managers import init, AppPage, STATE
 from ui.styles import UIStyles
+from ui.evaluation_styles import EvaluationStyles
 from helpers.ui_components import UIComponents
-from monitoring.decorators import monitor_operation
 
 # Initialisation
 STATE = init()
@@ -33,191 +37,67 @@ st.set_page_config(
 
 # CSS
 st.markdown(UIStyles.get_main_css(), unsafe_allow_html=True)
-
-st.markdown("""
-<style>
-    /* Métriques horizontales */
-    .metrics-horizontal {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-        gap: 1rem;
-        margin: 1.5rem 0;
-    }
-    
-    .metric-card-horizontal {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        border-radius: 15px;
-        padding: 1.5rem;
-        color: white;
-        text-align: center;
-        box-shadow: 0 8px 32px rgba(102, 126, 234, 0.3);
-        transition: all 0.3s ease;
-    }
-    
-    .metric-card-horizontal:hover {
-        transform: translateY(-5px);
-        box-shadow: 0 12px 40px rgba(102, 126, 234, 0.4);
-    }
-    
-    .metric-icon-horizontal {
-        font-size: 3rem;
-        margin-bottom: 0.5rem;
-    }
-    
-    .metric-value-horizontal {
-        font-size: 2.5rem;
-        font-weight: 800;
-        margin: 0.5rem 0;
-    }
-    
-    .metric-label-horizontal {
-        font-size: 0.9rem;
-        opacity: 0.9;
-        text-transform: uppercase;
-        letter-spacing: 0.1em;
-    }
-    
-    /* Graphiques */
-    .plot-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(500px, 1fr));
-        gap: 2rem;
-        margin: 2rem 0;
-    }
-    
-    .plot-container-modern {
-        background: white;
-        border-radius: 15px;
-        padding: 1.5rem;
-        box-shadow: 0 4px 20px rgba(0,0,0,0.08);
-    }
-</style>
-""", unsafe_allow_html=True)
-
-# ============================================================================
-# 📦 DATA CLASSES
-# ============================================================================
-
-@dataclass
-class ValidationResult:
-    is_valid: bool
-    successful_models: List[Dict]
-    failed_models: List[Dict]
-    task_type: str
-    best_model: Optional[str]
-    errors: List[str]
-    warnings: List[str]
+st.markdown(EvaluationStyles.get_evaluation_css(), unsafe_allow_html=True)
 
 
 # ============================================================================
-# 🔧 FONCTIONS UTILITAIRES
+# 🎨 FONCTIONS UTILITAIRES AVANCÉES
 # ============================================================================
 
-def get_mlflow_runs_robust() -> List[Dict[str, Any]]:
-    """Récupération MLflow multi-sources"""
-    mlflow_runs = []
+def get_metric_badge(value: float, metric_type: str) -> str:
+    """Retourne un badge HTML selon la performance avec couleurs adaptatives"""
+    if value is None:
+        return '<span class="metric-badge badge-neutral">N/A</span>'
     
-    try:
-        if hasattr(st.session_state, 'mlflow_runs') and st.session_state.mlflow_runs:
-            mlflow_runs = st.session_state.mlflow_runs
-            logger.info(f"✅ {len(mlflow_runs)} runs depuis session_state")
-            return mlflow_runs
-    except Exception as e:
-        logger.warning(f"⚠️ session_state.mlflow_runs: {e}")
-    
-    try:
-        if hasattr(STATE, 'mlflow_runs') and STATE.mlflow_runs:
-            mlflow_runs = STATE.mlflow_runs
-            logger.info(f"✅ {len(mlflow_runs)} runs depuis STATE")
-            if not hasattr(st.session_state, 'mlflow_runs'):
-                st.session_state.mlflow_runs = mlflow_runs
-            return mlflow_runs
-    except Exception as e:
-        logger.warning(f"⚠️ STATE.mlflow_runs: {e}")
-    
-    try:
-        if hasattr(STATE, 'training') and hasattr(STATE.training, 'mlflow_runs'):
-            if STATE.training.mlflow_runs:
-                mlflow_runs = STATE.training.mlflow_runs
-                logger.info(f"✅ {len(mlflow_runs)} runs depuis STATE.training")
-                return mlflow_runs
-    except Exception as e:
-        logger.warning(f"⚠️ STATE.training.mlflow_runs: {e}")
-    
-    logger.warning("❌ Aucune source MLflow disponible")
-    return []
-
-
-def validate_training_results(results_data: Any) -> ValidationResult:
-    """Validation stricte"""
-    successful_models = []
-    failed_models = []
-    task_type = 'unknown'
-    best_model = None
-    errors = []
-    warnings = []
-    
-    try:
-        if hasattr(results_data, 'results') and hasattr(results_data, 'summary'):
-            results_list = results_data.results
-            
-            for result in results_list:
-                if not isinstance(result, dict):
-                    continue
-                if result.get('success', False):
-                    successful_models.append(result)
-                else:
-                    failed_models.append(result)
-            
-            if successful_models:
-                task_type = successful_models[0].get('task_type', 'unknown')
-            
-            if hasattr(results_data, 'summary'):
-                best_model = results_data.summary.get('best_model')
-        
-        elif isinstance(results_data, list):
-            for result in results_data:
-                if not isinstance(result, dict):
-                    continue
-                if result.get('success', False):
-                    successful_models.append(result)
-                else:
-                    failed_models.append(result)
-            
-            if successful_models:
-                task_type = successful_models[0].get('task_type', 'unknown')
-                
-                metric_key = {
-                    'classification': 'accuracy',
-                    'regression': 'r2',
-                    'clustering': 'silhouette_score'
-                }.get(task_type, 'accuracy')
-                
-                best = max(
-                    successful_models,
-                    key=lambda x: x.get('metrics', {}).get(metric_key, -float('inf'))
-                )
-                best_model = best.get('model_name')
+    if metric_type in ['accuracy', 'precision', 'recall', 'f1_score', 'r2', 'silhouette_score']:
+        if value >= 0.9:
+            return f'<span class="metric-badge badge-excellent">{value:.3f}</span>'
+        elif value >= 0.75:
+            return f'<span class="metric-badge badge-good">{value:.3f}</span>'
+        elif value >= 0.6:
+            return f'<span class="metric-badge badge-fair">{value:.3f}</span>'
         else:
-            errors.append(f"Format non supporté: {type(results_data)}")
-    
-    except Exception as e:
-        errors.append(f"Erreur validation: {str(e)}")
-        logger.error(f"❌ Validation: {e}", exc_info=True)
-    
-    is_valid = len(successful_models) > 0 and len(errors) == 0
-    
-    return ValidationResult(is_valid, successful_models, failed_models, task_type, best_model, errors, warnings)
+            return f'<span class="metric-badge badge-poor">{value:.3f}</span>'
+    elif metric_type in ['mae', 'rmse']:
+        if value <= 0.1:
+            return f'<span class="metric-badge badge-excellent">{value:.3f}</span>'
+        elif value <= 0.3:
+            return f'<span class="metric-badge badge-good">{value:.3f}</span>'
+        elif value <= 0.5:
+            return f'<span class="metric-badge badge-fair">{value:.3f}</span>'
+        else:
+            return f'<span class="metric-badge badge-poor">{value:.3f}</span>'
+    else:
+        return f'<span class="metric-badge badge-neutral">{value:.3f}</span>'
 
 
-# ============================================================================
-# 🎨 COMPOSANTS UI
-# ============================================================================
-def render_metrics_horizontal(validation):
-    """Dashboard métriques horizontal"""
+def get_progress_bar(value: float, metric_type: str) -> str:
+    """Retourne une barre de progression visuelle"""
+    if value is None:
+        return '<div class="progress-container"><div class="progress-bar" style="width: 0%"></div></div>'
+    
+    width = min(100, max(0, value * 100))
+    
+    if metric_type in ['accuracy', 'precision', 'recall', 'f1_score', 'r2', 'silhouette_score']:
+        if value >= 0.9:
+            progress_class = "progress-excellent"
+        elif value >= 0.75:
+            progress_class = "progress-good"
+        elif value >= 0.6:
+            progress_class = "progress-fair"
+        else:
+            progress_class = "progress-poor"
+    else:
+        progress_class = "progress-fair"
+    
+    return f'<div class="progress-container"><div class="progress-bar {progress_class}" style="width: {width}%"></div></div>'
+
+
+def render_metrics_dashboard_horizontal(validation: Dict[str, Any]):
+    """Dashboard de métriques horizontal compact"""
     try:
-        total = len(validation['successful_models']) + len(validation['failed_models'])
-        success_rate = (len(validation['successful_models']) / total * 100) if total > 0 else 0
+        total_models = len(validation['successful_models']) + len(validation['failed_models'])
+        success_rate = (len(validation['successful_models']) / total_models * 100) if total_models > 0 else 0
         
         task_type = validation.get('task_type', 'classification')
         metric_key = {
@@ -226,342 +106,76 @@ def render_metrics_horizontal(validation):
             'classification': 'accuracy'
         }.get(task_type, 'accuracy')
         
+        # Calcul du meilleur score
         best_score = max(
             [m.get('metrics', {}).get(metric_key, 0) for m in validation['successful_models']],
             default=0
         )
         
-        # Calcul temps moyen
+        # Temps moyen d'entraînement
         avg_time = np.mean([
             m.get('training_time', 0) 
             for m in validation['successful_models']
         ]) if validation['successful_models'] else 0
         
-        # MÉTRIQUES HORIZONTALES
-        st.markdown('<div class="metrics-horizontal">', unsafe_allow_html=True)
-        
-        metrics_data = [
-            {
-                'icon': '✅',
-                'value': f"{success_rate:.0f}%",
-                'label': 'Taux de Réussite',
-                'bg': 'linear-gradient(135deg, #28a745 0%, #20c997 100%)'
-            },
-            {
-                'icon': '🏆',
-                'value': validation.get('best_model', 'N/A'),
-                'label': 'Meilleur Modèle',
-                'bg': 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)'
-            },
-            {
-                'icon': '📈',
-                'value': f"{best_score:.3f}",
-                'label': f'Meilleur Score ({metric_key})',
-                'bg': 'linear-gradient(135deg, #f093fb 0%, #f5576c 100%)'
-            },
-            {
-                'icon': '⏱️',
-                'value': f"{avg_time:.1f}s",
-                'label': 'Temps Moyen',
-                'bg': 'linear-gradient(135deg, #4facfe 0%, #00f2fe 100%)'
-            },
-            {
-                'icon': '🤖',
-                'value': f"{len(validation['successful_models'])}",
-                'label': 'Modèles Réussis',
-                'bg': 'linear-gradient(135deg, #fa709a 0%, #fee140 100%)'
-            }
-        ]
-        
-        for metric in metrics_data:
-            st.markdown(
-                f"""
-                <div class="metric-card-horizontal" style="background: {metric['bg']};">
-                    <div class="metric-icon-horizontal">{metric['icon']}</div>
-                    <div class="metric-value-horizontal">{metric['value']}</div>
-                    <div class="metric-label-horizontal">{metric['label']}</div>
-                </div>
-                """,
-                unsafe_allow_html=True
-            )
-        
-        st.markdown('</div>', unsafe_allow_html=True)
-    
-    except Exception as e:
-        st.error(f"❌ Erreur métriques: {str(e)}")
+        # Score moyen
+        avg_score = np.mean([
+            m.get('metrics', {}).get(metric_key, 0) 
+            for m in validation['successful_models']
+        ]) if validation['successful_models'] else 0
 
-def create_advanced_comparison(visualizer, validation):
-    """Graphique de comparaison avancé"""
-    try:
-        successful_models = validation['successful_models']
-        task_type = validation['task_type']
+        st.markdown('<div class="metrics-horizontal-compact">', unsafe_allow_html=True)
         
-        model_names = [m.get('model_name', 'Unknown') for m in successful_models]
-        
-        if task_type == 'classification':
-            metrics_keys = ['accuracy', 'precision', 'recall', 'f1_score']
-            metrics_labels = ['Accuracy', 'Precision', 'Recall', 'F1-Score']
-        elif task_type == 'regression':
-            metrics_keys = ['r2', 'mae', 'rmse']
-            metrics_labels = ['R²', 'MAE', 'RMSE']
-        else:
-            metrics_keys = ['silhouette_score']
-            metrics_labels = ['Silhouette']
-        
-        # Création subplots
-        fig = make_subplots(
-            rows=2, cols=2,
-            subplot_titles=(
-                'Comparaison Métriques',
-                'Temps d\'Entraînement',
-                'Distribution Performances',
-                'Radar Comparatif'
-            ),
-            specs=[
-                [{"type": "bar"}, {"type": "bar"}],
-                [{"type": "box"}, {"type": "scatterpolar"}]
-            ]
-        )
-        
-        # 1. Comparaison métriques
-        for i, (key, label) in enumerate(zip(metrics_keys[:2], metrics_labels[:2])):
-            values = [m.get('metrics', {}).get(key, 0) for m in successful_models]
-            fig.add_trace(
-                go.Bar(
-                    x=model_names,
-                    y=values,
-                    name=label,
-                    text=[f"{v:.3f}" for v in values],
-                    textposition='auto'
-                ),
-                row=1, col=1
-            )
-        
-        # 2. Temps d'entraînement
-        times = [m.get('training_time', 0) for m in successful_models]
-        fig.add_trace(
-            go.Bar(
-                x=model_names,
-                y=times,
-                name='Temps (s)',
-                marker_color='lightblue',
-                text=[f"{t:.1f}s" for t in times],
-                textposition='auto'
-            ),
-            row=1, col=2
-        )
-        
-        # 3. Distribution performances
-        for key, label in zip(metrics_keys[:2], metrics_labels[:2]):
-            values = [m.get('metrics', {}).get(key, 0) for m in successful_models]
-            fig.add_trace(
-                go.Box(
-                    y=values,
-                    name=label,
-                    boxmean='sd'
-                ),
-                row=2, col=1
-            )
-        
-        # 4. Radar chart
-        if len(metrics_keys) >= 3:
-            for model in successful_models[:3]:  # Top 3 modèles
-                values = [model.get('metrics', {}).get(key, 0) for key in metrics_keys]
-                values_closed = values + [values[0]]
-                labels_closed = metrics_labels + [metrics_labels[0]]
-                
-                fig.add_trace(
-                    go.Scatterpolar(
-                        r=values_closed,
-                        theta=labels_closed,
-                        fill='toself',
-                        name=model.get('model_name', 'Unknown')
-                    ),
-                    row=2, col=2
-                )
-        
-        fig.update_layout(
-            height=800,
-            showlegend=True,
-            template="plotly_white",
-            title_text="Dashboard Comparatif Avancé"
-        )
-        
-        st.plotly_chart(fig, use_container_width=True)
-    
-    except Exception as e:
-        st.error(f"❌ Erreur graphique avancé: {str(e)}")
-
-def create_mlflow_dashboard(mlflow_runs):
-    """Dashboard MLflow enrichi"""
-    if not mlflow_runs:
-        st.info("ℹ️ Aucun run MLflow disponible")
-        return
-    
-    try:
-        st.markdown("### 🔗 Dashboard MLflow")
-        
-        # Métriques MLflow
-        col1, col2, col3, col4 = st.columns(4)
-        
-        with col1:
-            st.metric("📊 Total Runs", len(mlflow_runs))
-        
-        with col2:
-            finished = len([r for r in mlflow_runs if r.get('status') == 'FINISHED'])
-            st.metric("✅ Terminés", finished)
-        
-        with col3:
-            models = set(r.get('model_name', 'Unknown') for r in mlflow_runs)
-            st.metric("🤖 Modèles Uniques", len(models))
-        
-        with col4:
-            avg_time = np.mean([
-                r.get('metrics', {}).get('training_time', 0) 
-                for r in mlflow_runs
-            ])
-            st.metric("⏱️ Temps Moyen", f"{avg_time:.1f}s")
-        
-        # Graphique évolution runs
-        st.markdown("#### 📈 Évolution des Performances")
-        
-        df_runs = pd.DataFrame([
-            {
-                'model_name': r.get('model_name', 'Unknown'),
-                'accuracy': r.get('metrics', {}).get('accuracy', 0),
-                'timestamp': r.get('start_time', 0)
-            }
-            for r in mlflow_runs
-        ])
-        
-        if not df_runs.empty:
-            fig = go.Figure()
-            
-            for model in df_runs['model_name'].unique():
-                df_model = df_runs[df_runs['model_name'] == model]
-                fig.add_trace(
-                    go.Scatter(
-                        x=list(range(len(df_model))),
-                        y=df_model['accuracy'],
-                        mode='lines+markers',
-                        name=model,
-                        line=dict(width=3),
-                        marker=dict(size=10)
-                    )
-                )
-            
-            fig.update_layout(
-                title="Évolution des Scores par Modèle",
-                xaxis_title="Run #",
-                yaxis_title="Accuracy",
-                template="plotly_white",
-                height=400
-            )
-            
-            st.plotly_chart(fig, use_container_width=True)
-    
-    except Exception as e:
-        st.error(f"❌ Erreur dashboard MLflow: {str(e)}")
-
-
-def render_hero_section():
-    """Hero section compact"""
-    st.markdown("""
-    <div style="text-align: center; padding: 1.5rem 0 1rem 0;">
-        <h1 style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-                   -webkit-background-clip: text; -webkit-text-fill-color: transparent;
-                   font-size: 2.5rem; font-weight: 800; margin: 0;">
-            📊 Évaluation ML Pro
-        </h1>
-        <p style="color: #666; font-size: 1rem; margin-top: 0.5rem;">
-            Analyse Complète des Performances
-        </p>
-    </div>
-    """, unsafe_allow_html=True)
-
-
-def render_metrics_dashboard(validation: ValidationResult):
-    """Dashboard 4 métriques compact"""
-    try:
-        total = len(validation.successful_models) + len(validation.failed_models)
-        success_rate = (len(validation.successful_models) / total * 100) if total > 0 else 0
-        
-        metric_key = {
-            'clustering': 'silhouette_score',
-            'regression': 'r2',
-            'classification': 'accuracy'
-        }.get(validation.task_type, 'accuracy')
-        
-        metric_name = {
-            'clustering': 'Silhouette',
-            'regression': 'R²',
-            'classification': 'Accuracy'
-        }.get(validation.task_type, 'Score')
-        
-        best_score = max(
-            [m.get('metrics', {}).get(metric_key, 0) for m in validation.successful_models],
-            default=0
-        )
-        
+        # Carte 1: Taux de réussite
         color = "#28a745" if success_rate > 80 else "#ffc107" if success_rate > 50 else "#dc3545"
-        
-        st.markdown('<div class="metrics-compact">', unsafe_allow_html=True)
-        
-        # Carte 1
         st.markdown(f"""
-        <div class="metric-card-compact" style="--card-color: {color};">
-            <div class="metric-icon-compact">✅</div>
-            <div class="metric-label-compact">Taux de Réussite</div>
-            <div class="metric-value-compact" style="color: {color};">{success_rate:.1f}%</div>
-            <div class="metric-subtitle-compact">{len(validation.successful_models)}/{total} modèles</div>
+        <div class="metric-card-horizontal" style="--card-color: {color};">
+            <div class="metric-icon-horizontal">✅</div>
+            <div class="metric-value-horizontal" style="color: {color};">{success_rate:.0f}%</div>
+            <div class="metric-label-horizontal">Taux Réussite</div>
+            <div class="metric-subtitle-horizontal">{len(validation['successful_models'])}/{total_models}</div>
         </div>
         """, unsafe_allow_html=True)
         
-        # Carte 2
+        # Carte 2: Meilleur modèle
         st.markdown(f"""
-        <div class="metric-card-compact" style="--card-color: #667eea;">
-            <div class="metric-icon-compact">🏆</div>
-            <div class="metric-label-compact">Meilleur Modèle</div>
-            <div class="metric-value-compact" style="font-size: 1.5rem;">{validation.best_model or 'N/A'}</div>
-            <div class="metric-subtitle-compact">Type: {validation.task_type.title()}</div>
+        <div class="metric-card-horizontal" style="--card-color: #667eea;">
+            <div class="metric-icon-horizontal">🏆</div>
+            <div class="metric-value-horizontal" style="font-size: 1.3rem;">{validation.get('best_model', 'N/A')}</div>
+            <div class="metric-label-horizontal">Meilleur Modèle</div>
+            <div class="metric-subtitle-horizontal">{task_type.title()}</div>
         </div>
         """, unsafe_allow_html=True)
         
-        # Carte 3
+        # Carte 3: Meilleur score
         st.markdown(f"""
-        <div class="metric-card-compact" style="--card-color: #17a2b8;">
-            <div class="metric-icon-compact">📈</div>
-            <div class="metric-label-compact">Meilleur {metric_name}</div>
-            <div class="metric-value-compact">{best_score:.3f}</div>
-            <div class="metric-subtitle-compact">Score optimal</div>
+        <div class="metric-card-horizontal" style="--card-color: #17a2b8;">
+            <div class="metric-icon-horizontal">📈</div>
+            <div class="metric-value-horizontal">{best_score:.3f}</div>
+            <div class="metric-label-horizontal">Meilleur Score</div>
+            <div class="metric-subtitle-horizontal">{metric_key}</div>
         </div>
         """, unsafe_allow_html=True)
         
-        # Carte 4
-        try:
-            import psutil # type: ignore
-            mem = psutil.virtual_memory()
-            mem_pct = mem.percent
-            mem_gb = mem.available / (1024**3)
-            mem_color = "#28a745" if mem_pct < 70 else "#ffc107" if mem_pct < 85 else "#dc3545"
-            
-            st.markdown(f"""
-            <div class="metric-card-compact" style="--card-color: {mem_color};">
-                <div class="metric-icon-compact">💻</div>
-                <div class="metric-label-compact">Mémoire Système</div>
-                <div class="metric-value-compact">{mem_pct:.1f}%</div>
-                <div class="metric-subtitle-compact">{mem_gb:.1f} GB dispo</div>
-            </div>
-            """, unsafe_allow_html=True)
-        except:
-            st.markdown("""
-            <div class="metric-card-compact" style="--card-color: #28a745;">
-                <div class="metric-icon-compact">✅</div>
-                <div class="metric-label-compact">Système</div>
-                <div class="metric-value-compact">OK</div>
-                <div class="metric-subtitle-compact">Opérationnel</div>
-            </div>
-            """, unsafe_allow_html=True)
+        # Carte 4: Score moyen
+        st.markdown(f"""
+        <div class="metric-card-horizontal" style="--card-color: #f39c12;">
+            <div class="metric-icon-horizontal">📊</div>
+            <div class="metric-value-horizontal">{avg_score:.3f}</div>
+            <div class="metric-label-horizontal">Score Moyen</div>
+            <div class="metric-subtitle-horizontal">Tous modèles</div>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # Carte 5: Temps moyen
+        st.markdown(f"""
+        <div class="metric-card-horizontal" style="--card-color: #6f42c1;">
+            <div class="metric-icon-horizontal">⏱️</div>
+            <div class="metric-value-horizontal">{avg_time:.1f}s</div>
+            <div class="metric-label-horizontal">Temps Moyen</div>
+            <div class="metric-subtitle-horizontal">Par modèle</div>
+        </div>
+        """, unsafe_allow_html=True)
         
         st.markdown('</div>', unsafe_allow_html=True)
     
@@ -569,550 +183,878 @@ def render_metrics_dashboard(validation: ValidationResult):
         st.error(f"❌ Erreur métriques: {str(e)[:100]}")
 
 
-def render_model_comparison_chart(validation: ValidationResult):
-    """Graphique de comparaison moderne"""
+def create_complex_comparison_table(validation: Dict[str, Any]):
+    """Tableau de comparaison complexe avec design avancé"""
     try:
-        model_names = []
-        scores = []
+        successful_models = validation['successful_models']
+        failed_models = validation['failed_models']
+        task_type = validation['task_type']
+        best_model_name = validation.get('best_model')
         
-        metric_label, metric_key = {
-            'clustering': ('Score Silhouette', 'silhouette_score'),
-            'regression': ('R² Score', 'r2'),
-            'classification': ('Accuracy', 'accuracy')
-        }.get(validation.task_type, ('Accuracy', 'accuracy'))
-        
-        for model in validation.successful_models:
-            model_names.append(model.get('model_name', 'Unknown'))
-            scores.append(model.get('metrics', {}).get(metric_key, 0))
-        
-        if not model_names:
-            st.info("ℹ️ Aucun modèle à comparer")
-            return
-        
-        max_score = max(scores)
-        colors = ['#28a745' if score == max_score else '#667eea' for score in scores]
-        
-        fig = go.Figure(data=[
-            go.Bar(
-                x=model_names,
-                y=scores,
-                text=[f'{score:.3f}' for score in scores],
-                textposition='auto',
-                marker=dict(
-                    color=colors,
-                    line=dict(color='white', width=2)
-                ),
-                hovertemplate='<b>%{x}</b><br>Score: %{y:.3f}<extra></extra>'
-            )
-        ])
-        
-        fig.update_layout(
-            title={
-                'text': f"Comparaison des Modèles - {metric_label}",
-                'x': 0.5,
-                'xanchor': 'center',
-                'font': {'size': 20, 'color': '#333', 'family': 'Inter'}
-            },
-            xaxis=dict(
-                title="Modèles",
-                tickangle=-45,
-                showgrid=False
-            ),
-            yaxis=dict(
-                title=metric_label,
-                showgrid=True,
-                gridcolor='rgba(0,0,0,0.05)'
-            ),
-            template="plotly_white",
-            height=500,
-            plot_bgcolor='rgba(0,0,0,0)',
-            paper_bgcolor='rgba(0,0,0,0)',
-            font=dict(family="Inter, sans-serif"),
-            margin=dict(l=80, r=40, t=80, b=120)
-        )
-        
-        st.plotly_chart(fig, use_container_width=True, key="comparison_chart_main")
-    
-    except Exception as e:
-        st.error(f"❌ Erreur graphique: {str(e)[:100]}")
-
-
-def render_summary_table(validation: ValidationResult):
-    """Tableau récapitulatif professionnel"""
-    try:
-        summary_data = []
-        
-        for model in validation.successful_models:
-            metrics = model.get('metrics', {})
-            
-            row = {
-                'Modèle': model.get('model_name', 'Unknown'),
-                'Temps (s)': f"{model.get('training_time', 0):.2f}"
-            }
-            
-            if validation.task_type == 'clustering':
-                row.update({
-                    'Silhouette': f"{metrics.get('silhouette_score', 0):.3f}",
-                    'Clusters': str(metrics.get('n_clusters', 'N/A')),
-                    'Index DB': f"{metrics.get('davies_bouldin_score', 0):.3f}" 
-                               if isinstance(metrics.get('davies_bouldin_score'), (int, float)) 
-                               else 'N/A'
-                })
-            elif validation.task_type == 'regression':
-                row.update({
-                    'R²': f"{metrics.get('r2', 0):.3f}",
-                    'MAE': f"{metrics.get('mae', 0):.3f}",
-                    'RMSE': f"{metrics.get('rmse', 0):.3f}"
-                })
-            else:  # classification
-                row.update({
-                    'Accuracy': f"{metrics.get('accuracy', 0):.3f}",
-                    'Precision': f"{metrics.get('precision', 0):.3f}",
-                    'Recall': f"{metrics.get('recall', 0):.3f}",
-                    'F1': f"{metrics.get('f1_score', 0):.3f}"
-                })
-            
-            summary_data.append(row)
-        
-        if summary_data:
-            df = pd.DataFrame(summary_data)
-            st.dataframe(
-                df,
-                use_container_width=True,
-                hide_index=True,
-                height=min(500, len(df) * 45 + 50)
-            )
-    
-    except Exception as e:
-        st.error(f"❌ Erreur tableau: {str(e)[:100]}")
-
-
-@monitor_operation
-def render_model_details(
-    visualizer: ModelEvaluationVisualizer,
-    model_result: Dict[str, Any],
-    task_type: str
-):
-    """Affichage détaillé d'un modèle avec visualisations"""
-    try:
-        model_name = model_result.get('model_name', 'Unknown')
-        unique_id = f"{model_name}_{int(time.time() * 1000)}"
-        
-        # En-tête
-        st.markdown(f"""
-        <div class="plot-container">
-            <div class="plot-title">
-                🔍 {model_name} - Analyse Détaillée
+        # En-tête du tableau
+        st.markdown("""
+        <div class="complex-table-container">
+            <div class="table-header-modern">
+                <div>
+                    <div class="table-title">📊 Comparaison Détaillée des Modèles</div>
+                    <div class="table-subtitle">Analyse complète des performances et métriques</div>
+                </div>
+                <div style="font-size: 0.8rem; opacity: 0.9;">
+                    🟢 Meilleur modèle • 🔴 Échecs
+                </div>
             </div>
-        </div>
         """, unsafe_allow_html=True)
         
-        # Validation données
-        if not model_result.get('model') or not model_result.get('metrics'):
-            st.error("❌ Données insuffisantes")
-            return
+        # Construction du tableau
+        table_html = '<table class="complex-table">'
         
-        # Métriques principales
-        st.markdown("#### 📊 Métriques de Performance")
-        
-        metrics = model_result.get('metrics', {})
-        
+        # En-têtes selon le type de tâche
         if task_type == 'classification':
-            cols = st.columns(4)
-            metrics_list = [
-                ('Accuracy', 'accuracy'),
-                ('Precision', 'precision'),
-                ('Recall', 'recall'),
-                ('F1-Score', 'f1_score')
-            ]
-            
-            for col, (label, key) in zip(cols, metrics_list):
-                value = metrics.get(key, 0)
-                col.metric(label, f"{value:.3f}")
-        
+            headers = ['Modèle', 'Statut', 'Accuracy', 'Precision', 'Recall', 'F1-Score', 'ROC-AUC', 'Temps (s)', 'Performance']
         elif task_type == 'regression':
-            cols = st.columns(3)
-            metrics_list = [
-                ('R² Score', 'r2'),
-                ('MAE', 'mae'),
-                ('RMSE', 'rmse')
-            ]
-            
-            for col, (label, key) in zip(cols, metrics_list):
-                value = metrics.get(key, 0)
-                col.metric(label, f"{value:.3f}")
+            headers = ['Modèle', 'Statut', 'R² Score', 'MAE', 'RMSE', 'R² Adj.', 'Temps (s)', 'Performance']
+        else:  # clustering
+            headers = ['Modèle', 'Statut', 'Silhouette', 'Clusters', 'DB Index', 'Calinski', 'Temps (s)', 'Performance']
         
-        elif task_type == 'clustering':
-            cols = st.columns(3)
-            cols[0].metric("Silhouette", f"{metrics.get('silhouette_score', 0):.3f}")
-            cols[1].metric("Clusters", str(metrics.get('n_clusters', 'N/A')))
-            db = metrics.get('davies_bouldin_score', 'N/A')
-            cols[2].metric("Index DB", f"{db:.3f}" if isinstance(db, (int, float)) else str(db))
+        table_html += '<thead><tr>'
+        for header in headers:
+            table_html += f'<th>{header}</th>'
+        table_html += '</tr></thead><tbody>'
         
-        # Visualisations
-        st.markdown("---")
-        st.markdown("#### 📈 Visualisations")
+        # Lignes des modèles réussis
+        for model in successful_models:
+            metrics = model.get('metrics', {})
+            model_name = model.get('model_name', 'Unknown')
+            training_time = model.get('training_time', 0)
+            
+            # Classe CSS pour le meilleur modèle
+            row_class = 'best-model-row' if model_name == best_model_name else ''
+            
+            table_html += f'<tr class="{row_class}">'
+            
+            # Colonne Modèle
+            table_html += f'<td><strong>{model_name}</strong>'
+            if model_name == best_model_name:
+                table_html += '&nbsp;<span style="color: #28a745; font-size: 0.8rem;">👑</span>'
+            table_html += '</td>'
+            
+            # Colonne Statut
+            table_html += '<td><span class="status-indicator status-success">✅ Succès</span></td>'
+            
+            # Métriques selon le type de tâche
+            if task_type == 'classification':
+                table_html += f'<td>{get_metric_badge(metrics.get("accuracy", 0), "accuracy")}</td>'
+                table_html += f'<td>{get_metric_badge(metrics.get("precision", 0), "precision")}</td>'
+                table_html += f'<td>{get_metric_badge(metrics.get("recall", 0), "recall")}</td>'
+                table_html += f'<td>{get_metric_badge(metrics.get("f1_score", 0), "f1_score")}</td>'
+                table_html += f'<td>{get_metric_badge(metrics.get("roc_auc", 0), "accuracy")}</td>'
+            elif task_type == 'regression':
+                table_html += f'<td>{get_metric_badge(metrics.get("r2", 0), "r2")}</td>'
+                table_html += f'<td>{get_metric_badge(metrics.get("mae", 0), "mae")}</td>'
+                table_html += f'<td>{get_metric_badge(metrics.get("rmse", 0), "rmse")}</td>'
+                table_html += f'<td>{get_metric_badge(metrics.get("r2_adj", 0), "r2")}</td>'
+            else:  # clustering
+                table_html += f'<td>{get_metric_badge(metrics.get("silhouette_score", 0), "silhouette_score")}</td>'
+                table_html += f'<td>{metrics.get("n_clusters", "N/A")}</td>'
+                table_html += f'<td>{get_metric_badge(metrics.get("davies_bouldin_score", 0), "accuracy")}</td>'
+                table_html += f'<td>{get_metric_badge(metrics.get("calinski_harabasz_score", 0), "accuracy")}</td>'
+            
+            # Colonne Temps
+            table_html += f'<td>{training_time:.1f}s</td>'
+            
+            # Colonne Performance (barre visuelle)
+            main_metric = {
+                'classification': 'accuracy',
+                'regression': 'r2',
+                'clustering': 'silhouette_score'
+            }.get(task_type, 'accuracy')
+            
+            score = metrics.get(main_metric, 0)
+            table_html += f'<td>{get_progress_bar(score, main_metric)}</td>'
+            
+            table_html += '</tr>'
         
-        def safe_plot(plot_func, plot_name: str):
-            """Génère un plot avec gestion d'erreurs"""
-            try:
-                with st.spinner(f"Génération {plot_name}..."):
-                    fig = plot_func()
-                    return fig
-            except Exception as e:
-                logger.error(f"Erreur {plot_name}: {e}")
-                return None
+        # Lignes des modèles échoués
+        for model in failed_models:
+            model_name = model.get('model_name', 'Unknown')
+            training_time = model.get('training_time', 0)
+            error_msg = model.get('error', 'Erreur inconnue')
+            
+            table_html += f'<tr class="failed-model-row">'
+            table_html += f'<td><strong>{model_name}</strong></td>'
+            table_html += f'<td><span class="status-indicator status-failed">❌ Échec</span></td>'
+            
+            # Colonnes vides pour les métriques
+            empty_cols = 6 if task_type == 'clustering' else 5
+            table_html += f'<td colspan="{empty_cols}" style="color: #dc3545; font-style: italic;">{error_msg[:80]}...</td>'
+            
+            table_html += f'<td>{training_time:.1f}s</td>'
+            table_html += '<td><div class="progress-container"><div class="progress-bar progress-poor" style="width: 0%"></div></div></td>'
+            table_html += '</tr>'
         
-        if task_type == 'clustering':
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                st.markdown('<div class="plot-container">', unsafe_allow_html=True)
-                st.markdown('<div class="plot-title">🔮 Visualisation Clusters</div>', unsafe_allow_html=True)
-                fig = safe_plot(
-                    lambda: visualizer.create_cluster_visualization(model_result),
-                    "Clusters"
-                )
-                if fig:
-                    st.plotly_chart(fig, use_container_width=True, key=f"cluster_{unique_id}")
-                else:
-                    st.info("ℹ️ Visualisation non disponible")
-                st.markdown('</div>', unsafe_allow_html=True)
-            
-            with col2:
-                st.markdown('<div class="plot-container">', unsafe_allow_html=True)
-                st.markdown('<div class="plot-title">📊 Analyse Silhouette</div>', unsafe_allow_html=True)
-                fig = safe_plot(
-                    lambda: visualizer.create_silhouette_analysis(model_result),
-                    "Silhouette"
-                )
-                if fig:
-                    st.plotly_chart(fig, use_container_width=True, key=f"sil_{unique_id}")
-                else:
-                    st.info("ℹ️ Analyse non disponible")
-                st.markdown('</div>', unsafe_allow_html=True)
+        table_html += '</tbody></table></div>'
         
-        elif task_type == 'classification':
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                st.markdown('<div class="plot-container">', unsafe_allow_html=True)
-                st.markdown('<div class="plot-title">📊 Matrice de Confusion</div>', unsafe_allow_html=True)
-                fig = safe_plot(
-                    lambda: visualizer.create_confusion_matrix(model_result),
-                    "Confusion Matrix"
-                )
-                if fig:
-                    st.plotly_chart(fig, use_container_width=True, key=f"cm_{unique_id}")
-                else:
-                    st.info("ℹ️ Matrice non disponible")
-                st.markdown('</div>', unsafe_allow_html=True)
-            
-            with col2:
-                st.markdown('<div class="plot-container">', unsafe_allow_html=True)
-                st.markdown('<div class="plot-title">📈 Courbe ROC</div>', unsafe_allow_html=True)
-                fig = safe_plot(
-                    lambda: visualizer.create_roc_curve(model_result),
-                    "ROC Curve"
-                )
-                if fig:
-                    st.plotly_chart(fig, use_container_width=True, key=f"roc_{unique_id}")
-                else:
-                    st.info("ℹ️ Courbe non disponible")
-                st.markdown('</div>', unsafe_allow_html=True)
-            
-            st.markdown('<div class="plot-container">', unsafe_allow_html=True)
-            st.markdown('<div class="plot-title">🎯 Importance des Features</div>', unsafe_allow_html=True)
-            fig = safe_plot(
-                lambda: visualizer.create_feature_importance_plot(model_result),
-                "Feature Importance"
-            )
-            if fig:
-                st.plotly_chart(fig, use_container_width=True, key=f"feat_{unique_id}")
+        st.markdown(table_html, unsafe_allow_html=True)
+        
+        # Légende
+        col1, col2, col3, col4 = st.columns([2, 1, 1, 1])
+        with col1:
+            st.markdown("""
+            <div style="font-size: 0.8rem; color: #6c757d; margin-top: 0.5rem;">
+                <strong>Légende:</strong> 
+                <span class="metric-badge badge-excellent">Excellent</span>
+                <span class="metric-badge badge-good">Bon</span>
+                <span class="metric-badge badge-fair">Moyen</span>
+                <span class="metric-badge badge-poor">Faible</span>
+            </div>
+            """, unsafe_allow_html=True)
+    
+    except Exception as e:
+        st.error(f"❌ Erreur tableau comparaison: {str(e)[:100]}")
+
+
+def _empty_fig(msg: str) -> go.Figure:
+    """Retourne une figure vide avec un message"""
+    fig = go.Figure()
+    fig.add_annotation(
+        text=msg,
+        x=0.5, y=0.5, xref="paper", yref="paper",
+        showarrow=False,
+        font=dict(size=14, color="red")
+    )
+    fig.update_layout(
+        height=300,
+        template="plotly_white",
+        margin=dict(l=20, r=20, t=20, b=20)
+    )
+    return fig
+
+
+# ============================================================================
+# 🎨 FONCTIONS PRINCIPALES PAR ONGLET - VERSION COMPLÈTE
+# ============================================================================
+
+def render_tab_overview(validation: Dict[str, Any], visualizer: ModelEvaluationVisualizer):
+    """Onglet Vue d'ensemble avec 6-8 graphiques horizontaux"""
+    st.markdown("## 🎯 Vue d'Ensemble des Performances")
+    
+    # Métriques horizontales compactes
+    render_metrics_dashboard_horizontal(validation)
+    
+    # Tableau de comparaison complexe
+    create_complex_comparison_table(validation)
+    
+    # Graphiques principaux en grille 2x3
+    st.markdown('<div class="section-header">📊 Visualisations des Performances</div>', unsafe_allow_html=True)
+    
+    # Première ligne de graphiques
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        st.markdown('<div class="plot-container-modern">', unsafe_allow_html=True)
+        st.markdown('**📈 Comparaison des Scores**')
+        try:
+            fig1 = visualizer.create_comparison_plot()
+            st.plotly_chart(fig1, use_container_width=True, key="overview_comparison")
+        except Exception as e:
+            st.error(f"❌ Erreur graphique: {str(e)[:100]}")
+            st.plotly_chart(_empty_fig("Graphique non disponible"), use_container_width=True)
+        st.markdown('</div>', unsafe_allow_html=True)
+    
+    with col2:
+        st.markdown('<div class="plot-container-modern">', unsafe_allow_html=True)
+        st.markdown('**⏱️ Temps vs Performance**')
+        try:
+            fig2 = visualizer.create_time_vs_performance_plot()
+            st.plotly_chart(fig2, use_container_width=True, key="overview_time")
+        except Exception as e:
+            st.error(f"❌ Erreur graphique: {str(e)[:100]}")
+            st.plotly_chart(_empty_fig("Graphique non disponible"), use_container_width=True)
+        st.markdown('</div>', unsafe_allow_html=True)
+    
+    with col3:
+        st.markdown('<div class="plot-container-modern">', unsafe_allow_html=True)
+        st.markdown('**📊 Distribution des Performances**')
+        try:
+            fig3 = visualizer.create_performance_distribution()
+            st.plotly_chart(fig3, use_container_width=True, key="overview_dist")
+        except Exception as e:
+            st.error(f"❌ Erreur graphique: {str(e)[:100]}")
+            st.plotly_chart(_empty_fig("Graphique non disponible"), use_container_width=True)
+        st.markdown('</div>', unsafe_allow_html=True)
+    
+    # Deuxième ligne de graphiques
+    col4, col5, col6 = st.columns(3)
+    
+    with col4:
+        st.markdown('<div class="plot-container-modern">', unsafe_allow_html=True)
+        st.markdown('**🎯 Radar de Comparaison**')
+        try:
+            fig4 = visualizer.create_radar_comparison()
+            st.plotly_chart(fig4, use_container_width=True, key="overview_radar")
+        except Exception as e:
+            st.error(f"❌ Erreur graphique: {str(e)[:100]}")
+            st.plotly_chart(_empty_fig("Graphique non disponible"), use_container_width=True)
+        st.markdown('</div>', unsafe_allow_html=True)
+    
+    with col5:
+        st.markdown('<div class="plot-container-modern">', unsafe_allow_html=True)
+        st.markdown('**📈 Courbes d\'Apprentissage**')
+        try:
+            # Prendre le meilleur modèle pour la courbe d'apprentissage
+            best_model_name = validation.get('best_model')
+            best_model = next((m for m in validation['successful_models'] 
+                             if m.get('model_name') == best_model_name), 
+                             validation['successful_models'][0] if validation['successful_models'] else None)
+            if best_model:
+                fig5 = visualizer.create_learning_curve(best_model)
+                st.plotly_chart(fig5, use_container_width=True, key="overview_learning")
             else:
-                st.info("ℹ️ Importance non disponible")
+                st.plotly_chart(_empty_fig("Aucun modèle disponible"), use_container_width=True)
+        except Exception as e:
+            st.error(f"❌ Erreur graphique: {str(e)[:100]}")
+            st.plotly_chart(_empty_fig("Graphique non disponible"), use_container_width=True)
+        st.markdown('</div>', unsafe_allow_html=True)
+    
+    with col6:
+        st.markdown('<div class="plot-container-modern">', unsafe_allow_html=True)
+        st.markdown('**🔍 Importance des Features (Top)**')
+        try:
+            best_model_name = validation.get('best_model')
+            best_model = next((m for m in validation['successful_models'] 
+                             if m.get('model_name') == best_model_name), 
+                             validation['successful_models'][0] if validation['successful_models'] else None)
+            if best_model:
+                fig6 = visualizer.create_feature_importance_plot_fixed(best_model)
+                st.plotly_chart(fig6, use_container_width=True, key="overview_feat")
+            else:
+                st.plotly_chart(_empty_fig("Aucun modèle disponible"), use_container_width=True)
+        except Exception as e:
+            st.error(f"❌ Erreur graphique: {str(e)[:100]}")
+            st.plotly_chart(_empty_fig("Graphique non disponible"), use_container_width=True)
+        st.markdown('</div>', unsafe_allow_html=True)
+
+
+def render_tab_details(validation: Dict[str, Any], visualizer: ModelEvaluationVisualizer):
+    """Onglet Détails par Modèle avec 4-6 graphiques spécifiques"""
+    st.markdown("## 🔍 Analyse Détaillée par Modèle")
+    
+    successful_models = validation['successful_models']
+    task_type = validation['task_type']
+    
+    if not successful_models:
+        st.info("ℹ️ Aucun modèle disponible pour analyse détaillée")
+        return
+    
+    # Sélecteur de modèle avec style
+    model_names = [m.get('model_name', 'Unknown') for m in successful_models]
+    selected_model_name = st.selectbox(
+        "📌 Sélectionnez un modèle à analyser",
+        options=model_names,
+        key="detail_model_select"
+    )
+    
+    # Trouver le modèle sélectionné
+    selected_model = next(
+        (m for m in successful_models if m.get('model_name') == selected_model_name),
+        None
+    )
+    
+    if not selected_model:
+        st.error("❌ Modèle introuvable")
+        return
+    
+    # En-tête du modèle
+    is_best = selected_model_name == validation.get('best_model')
+    best_badge = " 🏆" if is_best else ""
+    
+    st.markdown(f"""
+    <div style="background: {'linear-gradient(135deg, #28a74520 0%, #20c99720 100%)' if is_best else 'white'}; 
+                border-radius: 15px; padding: 1.5rem; margin: 1rem 0; 
+                border: 2px solid {'#28a745' if is_best else '#e9ecef'};">
+        <h3 style="margin: 0; color: #2d3748;">
+            🤖 {selected_model_name}{best_badge}
+        </h3>
+        <p style="margin: 0.5rem 0 0 0; color: #6c757d;">
+            {task_type.title()} • Temps d'entraînement: {selected_model.get('training_time', 0):.2f}s
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Métriques détaillées
+    metrics = selected_model.get('metrics', {})
+    
+    st.markdown('<div class="section-header">📊 Métriques de Performance</div>', unsafe_allow_html=True)
+    
+    # Affichage des métriques selon le type de tâche
+    if task_type == 'classification':
+        display_metrics = [
+            ('Accuracy', 'accuracy', metrics.get('accuracy', 0)),
+            ('Precision', 'precision', metrics.get('precision', 0)),
+            ('Recall', 'recall', metrics.get('recall', 0)),
+            ('F1-Score', 'f1_score', metrics.get('f1_score', 0)),
+            ('ROC-AUC', 'accuracy', metrics.get('roc_auc', 0))
+        ]
+        cols = st.columns(5)
+        
+    elif task_type == 'regression':
+        display_metrics = [
+            ('R² Score', 'r2', metrics.get('r2', 0)),
+            ('MAE', 'mae', metrics.get('mae', 0)),
+            ('RMSE', 'rmse', metrics.get('rmse', 0)),
+            ('R² Adj.', 'r2', metrics.get('r2_adj', 0))
+        ]
+        cols = st.columns(4)
+        
+    else:  # clustering
+        display_metrics = [
+            ('Silhouette', 'silhouette_score', metrics.get('silhouette_score', 0)),
+            ('Clusters', 'neutral', metrics.get('n_clusters', 0)),
+            ('DB Index', 'accuracy', metrics.get('davies_bouldin_score', 0)),
+            ('Calinski', 'accuracy', metrics.get('calinski_harabasz_score', 0))
+        ]
+        cols = st.columns(4)
+    
+    # Affichage des métriques
+    for col, (label, metric_type, value) in zip(cols, display_metrics):
+        with col:
+            st.markdown(f"**{label}**")
+            
+            if metric_type == 'neutral':
+                # Cas spécial pour les valeurs non-métriques
+                st.markdown(f"<div style='font-size: 1.2rem; font-weight: bold; color: #667eea;'>{value}</div>", unsafe_allow_html=True)
+            else:
+                # Cas normal pour les métriques
+                st.markdown(get_metric_badge(value, metric_type), unsafe_allow_html=True)
+                
+                # Barre de progression seulement pour les métriques principales
+                if metric_type in ['accuracy', 'precision', 'recall', 'f1_score', 'r2', 'silhouette_score']:
+                    st.markdown(get_progress_bar(value, metric_type), unsafe_allow_html=True)
+    
+    # Visualisations spécifiques au type de tâche
+    st.markdown('<div class="section-header">📈 Visualisations Spécifiques</div>', unsafe_allow_html=True)
+    
+    try:
+        if task_type == 'classification':
+            # Ligne 1: Matrice de confusion et ROC
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.markdown('<div class="plot-container-modern">', unsafe_allow_html=True)
+                st.markdown('**📊 Matrice de Confusion**')
+                try:
+                    fig = visualizer.create_confusion_matrix(selected_model)
+                    st.plotly_chart(fig, use_container_width=True, key=f"cm_{selected_model_name}")
+                except Exception:
+                    st.info("ℹ️ Matrice de confusion non disponible")
+                st.markdown('</div>', unsafe_allow_html=True)
+            
+            with col2:
+                st.markdown('<div class="plot-container-modern">', unsafe_allow_html=True)
+                st.markdown('**📈 Courbe ROC**')
+                try:
+                    fig = visualizer.create_roc_curve(selected_model)
+                    st.plotly_chart(fig, use_container_width=True, key=f"roc_{selected_model_name}")
+                except Exception:
+                    st.info("ℹ️ Courbe ROC non disponible")
+                st.markdown('</div>', unsafe_allow_html=True)
+            
+            # Ligne 2: Precision-Recall et Calibration
+            col3, col4 = st.columns(2)
+            
+            with col3:
+                st.markdown('<div class="plot-container-modern">', unsafe_allow_html=True)
+                st.markdown('**📊 Courbe Precision-Recall**')
+                try:
+                    fig = visualizer.create_precision_recall_curve(selected_model)
+                    st.plotly_chart(fig, use_container_width=True, key=f"pr_{selected_model_name}")
+                except Exception:
+                    st.info("ℹ️ Courbe Precision-Recall non disponible")
+                st.markdown('</div>', unsafe_allow_html=True)
+            
+            with col4:
+                st.markdown('<div class="plot-container-modern">', unsafe_allow_html=True)
+                st.markdown('**⚖️ Courbe de Calibration**')
+                try:
+                    fig = visualizer.create_calibration_plot(selected_model)
+                    st.plotly_chart(fig, use_container_width=True, key=f"calib_{selected_model_name}")
+                except Exception:
+                    st.info("ℹ️ Courbe de calibration non disponible")
+                st.markdown('</div>', unsafe_allow_html=True)
+            
+            # Importance des features
+            st.markdown('<div class="plot-container-modern">', unsafe_allow_html=True)
+            st.markdown('**🎯 Importance des Features**')
+            try:
+                fig = visualizer.create_feature_importance_plot_fixed(selected_model)
+                st.plotly_chart(fig, use_container_width=True, key=f"feat_{selected_model_name}")
+            except Exception:
+                st.info("ℹ️ Importance des features non disponible")
             st.markdown('</div>', unsafe_allow_html=True)
         
         elif task_type == 'regression':
+            # Ligne 1: Résidus et Prédictions vs Réelles
             col1, col2 = st.columns(2)
             
             with col1:
-                st.markdown('<div class="plot-container">', unsafe_allow_html=True)
-                st.markdown('<div class="plot-title">📉 Résidus</div>', unsafe_allow_html=True)
-                fig = safe_plot(
-                    lambda: visualizer.create_residuals_plot(model_result),
-                    "Residuals"
-                )
-                if fig:
-                    st.plotly_chart(fig, use_container_width=True, key=f"res_{unique_id}")
-                else:
-                    st.info("ℹ️ Graphique non disponible")
+                st.markdown('<div class="plot-container-modern">', unsafe_allow_html=True)
+                st.markdown('**📉 Analyse des Résidus**')
+                try:
+                    fig = visualizer.create_residuals_plot(selected_model)
+                    st.plotly_chart(fig, use_container_width=True, key=f"res_{selected_model_name}")
+                except Exception:
+                    st.info("ℹ️ Graphique des résidus non disponible")
                 st.markdown('</div>', unsafe_allow_html=True)
             
             with col2:
-                st.markdown('<div class="plot-container">', unsafe_allow_html=True)
-                st.markdown('<div class="plot-title">🎯 Prédictions vs Réelles</div>', unsafe_allow_html=True)
-                fig = safe_plot(
-                    lambda: visualizer.create_predicted_vs_actual(model_result),
-                    "Predictions"
-                )
-                if fig:
-                    st.plotly_chart(fig, use_container_width=True, key=f"pred_{unique_id}")
-                else:
-                    st.info("ℹ️ Graphique non disponible")
+                st.markdown('<div class="plot-container-modern">', unsafe_allow_html=True)
+                st.markdown('**🎯 Prédictions vs Réelles**')
+                try:
+                    fig = visualizer.create_predicted_vs_actual(selected_model)
+                    st.plotly_chart(fig, use_container_width=True, key=f"pred_{selected_model_name}")
+                except Exception:
+                    st.info("ℹ️ Graphique prédictions vs réelles non disponible")
+                st.markdown('</div>', unsafe_allow_html=True)
+            
+            # Ligne 2: Distribution erreurs et Importance features
+            col3, col4 = st.columns(2)
+            
+            with col3:
+                st.markdown('<div class="plot-container-modern">', unsafe_allow_html=True)
+                st.markdown('**📊 Distribution des Erreurs**')
+                try:
+                    fig = visualizer.create_error_distribution(selected_model)
+                    st.plotly_chart(fig, use_container_width=True, key=f"err_{selected_model_name}")
+                except Exception:
+                    st.info("ℹ️ Distribution des erreurs non disponible")
+                st.markdown('</div>', unsafe_allow_html=True)
+            
+            with col4:
+                st.markdown('<div class="plot-container-modern">', unsafe_allow_html=True)
+                st.markdown('**🎯 Importance des Features**')
+                try:
+                    fig = visualizer.create_feature_importance_plot_fixed(selected_model)
+                    st.plotly_chart(fig, use_container_width=True, key=f"feat_{selected_model_name}")
+                except Exception:
+                    st.info("ℹ️ Importance des features non disponible")
                 st.markdown('</div>', unsafe_allow_html=True)
         
-        # Infos complémentaires
-        st.markdown("---")
-        st.markdown("#### ℹ️ Informations Complémentaires")
-        
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            training_time = model_result.get('training_time', 0)
-            st.metric("⏱️ Temps d'entraînement", f"{training_time:.2f}s")
-        
-        with col2:
-            if model_result.get('X_train') is not None:
-                n_samples = len(model_result['X_train'])
-                st.metric("📊 Échantillons train", f"{n_samples:,}")
-        
-        with col3:
-            status = "✅ Réussi" if model_result.get('success', False) else "❌ Échoué"
-            st.metric("🔧 Statut", status)
-        
-        # Infos SMOTE et déséquilibre
-        if model_result.get('smote_applied'):
-            st.info("ℹ️ **SMOTE activé** pour ce modèle")
-        
-        if model_result.get('imbalance_ratio'):
-            ratio = model_result['imbalance_ratio']
-            st.info(f"📊 **Ratio de déséquilibre**: {ratio:.2f}:1")
+        elif task_type == 'clustering':
+            # Ligne 1: Visualisation clusters et Analyse silhouette
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.markdown('<div class="plot-container-modern">', unsafe_allow_html=True)
+                st.markdown('**🔮 Visualisation des Clusters**')
+                try:
+                    fig = visualizer.create_cluster_visualization(selected_model)
+                    st.plotly_chart(fig, use_container_width=True, key=f"cluster_{selected_model_name}")
+                except Exception:
+                    st.info("ℹ️ Visualisation clusters non disponible")
+                st.markdown('</div>', unsafe_allow_html=True)
+            
+            with col2:
+                st.markdown('<div class="plot-container-modern">', unsafe_allow_html=True)
+                st.markdown('**📊 Analyse Silhouette**')
+                try:
+                    fig = visualizer.create_silhouette_analysis(selected_model)
+                    st.plotly_chart(fig, use_container_width=True, key=f"sil_{selected_model_name}")
+                except Exception:
+                    st.info("ℹ️ Analyse silhouette non disponible")
+                st.markdown('</div>', unsafe_allow_html=True)
+            
+            # Matrice de corrélation
+            st.markdown('<div class="plot-container-modern">', unsafe_allow_html=True)
+            st.markdown('**📈 Matrice de Corrélation**')
+            try:
+                fig = visualizer.create_feature_correlation_matrix(selected_model)
+                st.plotly_chart(fig, use_container_width=True, key=f"corr_{selected_model_name}")
+            except Exception:
+                st.info("ℹ️ Matrice de corrélation non disponible")
+            st.markdown('</div>', unsafe_allow_html=True)
     
     except Exception as e:
-        logger.error(f"❌ Erreur détails modèle: {e}", exc_info=True)
-        st.error(f"❌ Erreur affichage: {str(e)[:100]}")
+        st.error(f"❌ Erreur visualisations: {str(e)[:100]}")
 
 
-def render_mlflow_tab():
-    """Onglet MLflow avec design moderne"""
-    st.markdown('<div class="plot-container">', unsafe_allow_html=True)
-    st.markdown('<div class="plot-title">🔗 Exploration des Runs MLflow</div>', unsafe_allow_html=True)
+def render_tab_advanced(validation: Dict[str, Any], visualizer: ModelEvaluationVisualizer):
+    """Onglet Analyse Avancée avec 3-5 graphiques avancés"""
+    st.markdown("## 🔬 Analyse Avancée")
     
-    try:
-        import mlflow # type: ignore
-        from mlflow.tracking import MlflowClient # type: ignore
-        MLFLOW_AVAILABLE = True
-    except ImportError:
-        MLFLOW_AVAILABLE = False
+    successful_models = validation['successful_models']
     
-    if not MLFLOW_AVAILABLE:
-        st.error("🚫 MLflow non disponible")
-        st.info("📦 Installez MLflow: `pip install mlflow`")
-        st.markdown('</div>', unsafe_allow_html=True)
+    if not successful_models:
+        st.info("ℹ️ Aucun modèle disponible pour l'analyse avancée")
         return
     
-    # Récupération runs
-    with st.spinner("🔄 Synchronisation des runs MLflow..."):
-        mlflow_runs = get_mlflow_runs_robust()
+    # Sélecteur de modèle pour l'analyse avancée
+    model_names = [m.get('model_name', 'Unknown') for m in successful_models]
+    selected_model_name = st.selectbox(
+        "🔍 Sélectionnez un modèle pour l'analyse avancée",
+        options=model_names,
+        key="advanced_model_select"
+    )
+    
+    selected_model = next(
+        (m for m in successful_models if m.get('model_name') == selected_model_name),
+        None
+    )
+    
+    if not selected_model:
+        st.error("❌ Modèle introuvable")
+        return
+    
+    st.markdown(f"### 🤖 Analyse Avancée - {selected_model_name}")
+    
+    # Graphiques avancés
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown('<div class="plot-container-modern">', unsafe_allow_html=True)
+        st.markdown('**🧠 Analyse SHAP**')
+        try:
+            fig = visualizer.create_shap_analysis(selected_model)
+            st.plotly_chart(fig, use_container_width=True, key=f"shap_{selected_model_name}")
+        except Exception as e:
+            st.info(f"ℹ️ Analyse SHAP non disponible: {str(e)[:100]}")
+        st.markdown('</div>', unsafe_allow_html=True)
+    
+    with col2:
+        st.markdown('<div class="plot-container-modern">', unsafe_allow_html=True)
+        st.markdown('**📚 Courbe d\'Apprentissage**')
+        try:
+            fig = visualizer.create_learning_curve(selected_model)
+            st.plotly_chart(fig, use_container_width=True, key=f"learn_{selected_model_name}")
+        except Exception as e:
+            st.info(f"ℹ️ Courbe d'apprentissage non disponible: {str(e)[:100]}")
+        st.markdown('</div>', unsafe_allow_html=True)
+    
+    # Matrice de corrélation des features
+    st.markdown('<div class="plot-container-modern">', unsafe_allow_html=True)
+    st.markdown('**📊 Matrice de Corrélation des Features**')
+    try:
+        fig = visualizer.create_feature_correlation_matrix(selected_model)
+        st.plotly_chart(fig, use_container_width=True, key=f"corr_adv_{selected_model_name}")
+    except Exception as e:
+        st.info(f"ℹ️ Matrice de corrélation non disponible: {str(e)[:100]}")
+    st.markdown('</div>', unsafe_allow_html=True)
+    
+    # Distribution des erreurs (pour régression) ou autre analyse
+    task_type = validation['task_type']
+    if task_type == 'regression':
+        st.markdown('<div class="plot-container-modern">', unsafe_allow_html=True)
+        st.markdown('**📈 Distribution des Erreurs**')
+        try:
+            fig = visualizer.create_error_distribution(selected_model)
+            st.plotly_chart(fig, use_container_width=True, key=f"err_adv_{selected_model_name}")
+        except Exception as e:
+            st.info(f"ℹ️ Distribution des erreurs non disponible: {str(e)[:100]}")
+        st.markdown('</div>', unsafe_allow_html=True)
+    
+    # Analyse de calibration (pour classification)
+    if task_type == 'classification':
+        st.markdown('<div class="plot-container-modern">', unsafe_allow_html=True)
+        st.markdown('**⚖️ Courbe de Calibration**')
+        try:
+            fig = visualizer.create_calibration_plot(selected_model)
+            st.plotly_chart(fig, use_container_width=True, key=f"calib_adv_{selected_model_name}")
+        except Exception as e:
+            st.info(f"ℹ️ Courbe de calibration non disponible: {str(e)[:100]}")
+        st.markdown('</div>', unsafe_allow_html=True)
+
+
+def render_tab_mlflow(mlflow_runs: List[Dict[str, Any]]):
+    """Onglet MLflow avec tableau et filtres"""
+    st.markdown("## 🔗 Exploration des Runs MLflow")
     
     if not mlflow_runs:
-        st.warning("⚠️ Aucun run MLflow disponible")
-        
-        st.info("""
-        **💡 Pour générer des runs MLflow:**
-        1. Allez dans **Configuration ML** (Training)
-        2. Lancez un entraînement de modèles
-        3. Revenez ici pour voir les résultats
-        
-        **🔍 Sources vérifiées:**
-        - ✅ `st.session_state.mlflow_runs`
-        - ✅ `STATE.mlflow_runs`
-        - ✅ `STATE.training.mlflow_runs`
-        - ✅ Recherche MLflow API
-        """)
-        
-        with st.expander("🔧 Diagnostic Avancé", expanded=False):
-            diagnostic = {
-                'session_state.mlflow_runs': hasattr(st.session_state, 'mlflow_runs'),
-                'STATE.mlflow_runs': hasattr(STATE, 'mlflow_runs'),
-                'STATE.training.mlflow_runs': (
-                    hasattr(STATE, 'training') and 
-                    hasattr(STATE.training, 'mlflow_runs')
-                ),
-                'MLFLOW_AVAILABLE': MLFLOW_AVAILABLE
-            }
-            
-            if hasattr(st.session_state, 'mlflow_runs'):
-                diagnostic['session_state count'] = len(st.session_state.mlflow_runs)
-            if hasattr(STATE, 'mlflow_runs'):
-                diagnostic['STATE count'] = len(STATE.mlflow_runs)
-            
-            st.json(diagnostic)
-        
-        st.markdown('</div>', unsafe_allow_html=True)
+        st.markdown("""
+        <div style="text-align: center; padding: 4rem 2rem; color: #6c757d;">
+            <div style="font-size: 4rem; margin-bottom: 1rem;">📭</div>
+            <h3 style="color: #495057;">Aucun Run MLflow Disponible</h3>
+            <p>Lancez un entraînement depuis la page Training pour générer des runs MLflow</p>
+        </div>
+        """, unsafe_allow_html=True)
         return
     
     st.success(f"**📊 {len(mlflow_runs)} runs MLflow disponibles**")
     
     # Filtres
-    col1, col2, col3 = st.columns([2, 2, 1])
+    col1, col2, col3 = st.columns(3)
     
     with col1:
-        status_filter = st.multiselect(
+        # Filtre par statut
+        status_options = list(set(run.get('status', 'UNKNOWN') for run in mlflow_runs))
+        selected_status = st.multiselect(
             "Filtrer par statut",
-            options=['FINISHED', 'RUNNING', 'FAILED', 'SCHEDULED'],
-            default=['FINISHED'],
-            key="mlflow_status_filter_v3"
+            options=status_options,
+            default=status_options
         )
     
     with col2:
-        unique_models = set()
-        for run in mlflow_runs:
-            if isinstance(run, dict):
-                model_name = (
-                    run.get('tags', {}).get('mlflow.runName') or 
-                    run.get('model_name', 'Unknown')
-                )
-                unique_models.add(model_name)
-        
-        model_filter = st.multiselect(
+        # Filtre par modèle
+        model_options = list(set(run.get('model_name', 'Unknown') for run in mlflow_runs))
+        selected_models = st.multiselect(
             "Filtrer par modèle",
-            options=sorted(list(unique_models)),
-            default=None,
-            key="mlflow_model_filter_v3"
+            options=model_options,
+            default=model_options
         )
     
     with col3:
-        sort_by = st.selectbox(
-            "Trier par",
-            options=['Date (récent)', 'Nom', 'Score'],
-            key="mlflow_sort_v3"
-        )
+        # Filtre par métrique
+        st.write("Trier par:")
+        sort_options = ['date', 'score', 'temps']
+        sort_by = st.selectbox("Critère de tri", options=sort_options)
     
-    # Filtrage
-    filtered_runs = []
-    for run in mlflow_runs:
+    # Application des filtres
+    filtered_runs = [
+        run for run in mlflow_runs 
+        if run.get('status') in selected_status 
+        and run.get('model_name') in selected_models
+    ]
+    
+    st.info(f"**{len(filtered_runs)}** runs correspondant aux filtres")
+    
+    # Affichage des runs filtrés
+    for i, run in enumerate(filtered_runs[:20]):  # Limiter à 20 runs
         if not isinstance(run, dict):
             continue
-        
-        if run.get('status') not in status_filter:
-            continue
-        
-        if model_filter:
-            model_name = (
-                run.get('tags', {}).get('mlflow.runName') or 
-                run.get('model_name', 'Unknown')
-            )
-            if model_name not in model_filter:
-                continue
-        
-        filtered_runs.append(run)
-    
-    # Tri
-    if sort_by == 'Date (récent)':
-        filtered_runs.sort(key=lambda x: x.get('start_time', 0), reverse=True)
-    elif sort_by == 'Nom':
-        filtered_runs.sort(key=lambda x: x.get('model_name', 'Unknown'))
-    elif sort_by == 'Score':
-        filtered_runs.sort(
-            key=lambda x: max(x.get('metrics', {}).values(), default=0),
-            reverse=True
-        )
-    
-    if not filtered_runs:
-        st.info("ℹ️ Aucun run ne correspond aux filtres")
-        st.markdown('</div>', unsafe_allow_html=True)
-        return
-    
-    # Tableau
-    run_data = []
-    for run in filtered_runs:
+            
         run_id = run.get('run_id', 'N/A')
-        model_name = (
-            run.get('tags', {}).get('mlflow.runName') or 
-            run.get('model_name', 'Unknown')
-        )
+        model_name = run.get('model_name', 'Unknown')
+        status = run.get('status', 'UNKNOWN')
         metrics = run.get('metrics', {})
         params = run.get('params', {})
         
-        row = {
-            'Run ID': run_id[:8] + '...' if len(run_id) > 8 else run_id,
-            'Modèle': model_name,
-            'Statut': run.get('status', 'UNKNOWN')
-        }
-        
-        # Métriques
-        for metric in ['accuracy', 'f1', 'precision', 'recall', 'r2', 'rmse', 'silhouette_score']:
-            if metric in metrics:
-                row[metric.upper()] = f"{metrics[metric]:.3f}"
-        
-        # Params
-        if 'use_smote' in params:
-            row['SMOTE'] = '✅' if params['use_smote'] == 'true' else '❌'
-        
-        if 'optimize_hyperparams' in params:
-            row['Optim HP'] = '✅' if params['optimize_hyperparams'] == 'true' else '❌'
-        
-        run_data.append(row)
+        with st.expander(f"🧪 {model_name} - {status}", expanded=i==0):
+            col1, col2, col3 = st.columns([2, 1, 1])
+            
+            with col1:
+                st.write("**📈 Métriques principales:**")
+                for metric, value in list(metrics.items())[:3]:
+                    st.write(f"- {metric}: `{value:.4f}`")
+            
+            with col2:
+                st.write("**⚙️ Paramètres:**")
+                for param, value in list(params.items())[:3]:
+                    st.write(f"- {param}: `{value}`")
+            
+            with col3:
+                st.write("**📋 Infos:**")
+                st.write(f"- Run ID: `{run_id[:8]}...`")
+                st.write(f"- Statut: `{status}`")
+                
+                # Bouton pour voir les détails
+                if st.button("📖 Détails", key=f"details_{run_id}", use_container_width=True):
+                    st.write("**Métriques complètes:**")
+                    st.json(metrics)
+                    st.write("**Paramètres complets:**")
+                    st.json(params)
+
+
+def render_tab_export(validation: Dict[str, Any], visualizer: ModelEvaluationVisualizer):
+    """Onglet Export avec CSV, JSON et téléchargement modèle"""
+    st.markdown("## 📥 Export des Résultats")
     
-    if run_data:
-        df_runs = pd.DataFrame(run_data)
+    successful_models = validation['successful_models']
+    best_model_name = validation.get('best_model')
+    
+    # Section export données
+    st.markdown("### 💾 Export des Données d'Évaluation")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown("#### 📊 Format CSV")
+        st.markdown("Tableau de comparaison des modèles avec toutes les métriques")
         
-        st.markdown(f"**📊 Affichage de {len(df_runs)} runs**")
-        
-        st.dataframe(
-            df_runs,
-            use_container_width=True,
-            hide_index=True,
-            height=min(600, len(df_runs) * 45 + 50)
-        )
-        
-        # Export
-        if st.button("📥 Exporter en CSV", key="export_mlflow_v3"):
-            csv = df_runs.to_csv(index=False)
+        try:
+            df_comparison = visualizer.get_comparison_dataframe()
+            csv = df_comparison.to_csv(index=False)
+            
             st.download_button(
-                label="💾 Télécharger CSV",
-                data=csv,
-                file_name=f"mlflow_runs_{int(time.time())}.csv",
-                mime="text/csv"
+                "📥 Télécharger CSV Complet",
+                csv,
+                f"evaluation_comparison_{int(time.time())}.csv",
+                "text/csv",
+                use_container_width=True,
+                key="export_csv"
             )
+        except Exception as e:
+            st.error(f"❌ Erreur export CSV: {str(e)[:100]}")
     
-    st.markdown('</div>', unsafe_allow_html=True)
+    with col2:
+        st.markdown("#### 📄 Format JSON")
+        st.markdown("Données complètes avec métriques détaillées et statistiques")
+        
+        try:
+            export_data = visualizer.get_export_data()
+            json_str = json.dumps(export_data, indent=2, ensure_ascii=False)
+            
+            st.download_button(
+                "📥 Télécharger JSON Complet",
+                json_str,
+                f"evaluation_complete_{int(time.time())}.json",
+                "application/json",
+                use_container_width=True,
+                key="export_json"
+            )
+        except Exception as e:
+            st.error(f"❌ Erreur export JSON: {str(e)[:100]}")
+    
+    # Section export modèle
+    st.markdown("### 🤖 Export du Modèle Entraîné")
+    
+    if best_model_name:
+        best_model = next((m for m in successful_models 
+                          if m.get('model_name') == best_model_name), None)
+        
+        if best_model and best_model.get('model'):
+            st.success(f"**🏆 Modèle sélectionné pour l'export:** {best_model_name}")
+            
+            col3, col4 = st.columns(2)
+            
+            with col3:
+                # Export modèle pickle
+                try:
+                    import pickle
+                    model_bytes = pickle.dumps(best_model['model'])
+                    st.download_button(
+                        "💾 Télécharger Modèle (Pickle)",
+                        model_bytes,
+                        f"model_{best_model_name}_{int(time.time())}.pkl",
+                        "application/octet-stream",
+                        use_container_width=True,
+                        key="export_model_pkl"
+                    )
+                except Exception as e:
+                    st.error(f"❌ Erreur export modèle: {str(e)[:100]}")
+            
+            with col4:
+                # Export rapport détaillé
+                try:
+                    report_data = {
+                        "model_name": best_model_name,
+                        "export_date": datetime.now().isoformat(),
+                        "task_type": validation['task_type'],
+                        "metrics": best_model.get('metrics', {}),
+                        "training_time": best_model.get('training_time', 0),
+                        "performance_summary": f"Meilleur modèle avec score {max(best_model.get('metrics', {}).values()):.3f}"
+                    }
+                    
+                    report_json = json.dumps(report_data, indent=2, ensure_ascii=False)
+                    st.download_button(
+                        "📋 Rapport du Modèle",
+                        report_json,
+                        f"model_report_{best_model_name}_{int(time.time())}.json",
+                        "application/json",
+                        use_container_width=True,
+                        key="export_report"
+                    )
+                except Exception as e:
+                    st.error(f"❌ Erreur création rapport: {str(e)[:100]}")
+        else:
+            st.warning("ℹ️ Le modèle entraîné n'est pas disponible pour l'export")
+    else:
+        st.warning("ℹ️ Aucun modèle optimal identifié pour l'export")
+
+
+def render_tab_debug(validation: Dict[str, Any], visualizer: ModelEvaluationVisualizer):
+    """Onglet DEBUG avec tous les graphiques dans des expanders"""
+    st.markdown("## 🐛 Mode DEBUG - Tous les Graphiques")
+    
+    successful_models = validation['successful_models']
+    
+    if not successful_models:
+        st.info("ℹ️ Aucun modèle disponible pour le debug")
+        return
+    
+    # Option pour voir tous les graphiques
+    show_all = st.checkbox("📋 Afficher TOUS les graphiques pour TOUS les modèles", value=False)
+    
+    models_to_debug = successful_models if show_all else [successful_models[0]]
+    
+    for model in models_to_debug:
+        model_name = model.get('model_name', 'Unknown')
+        
+        with st.expander(f"🔧 DEBUG - {model_name}", expanded=not show_all):
+            st.markdown(f"### 📊 Graphiques pour {model_name}")
+            
+            # Liste de toutes les méthodes de visualisation disponibles
+            plot_methods = [
+                ('Comparaison', 'create_comparison_plot'),
+                ('Temps vs Performance', 'create_time_vs_performance_plot'), 
+                ('Distribution Performance', 'create_performance_distribution'),
+                ('Radar Comparaison', 'create_radar_comparison'),
+                ('Feature Importance', 'create_feature_importance_plot_fixed'),
+                ('Matrice Confusion', 'create_confusion_matrix'),
+                ('Courbe ROC', 'create_roc_curve'),
+                ('Courbe Precision-Recall', 'create_precision_recall_curve'),
+                ('Courbe Calibration', 'create_calibration_plot'),
+                ('Résidus', 'create_residuals_plot'),
+                ('Prédictions vs Réelles', 'create_predicted_vs_actual'),
+                ('Distribution Erreurs', 'create_error_distribution'),
+                ('Visualisation Clusters', 'create_cluster_visualization'),
+                ('Analyse Silhouette', 'create_silhouette_analysis'),
+                ('Matrice Corrélation', 'create_feature_correlation_matrix'),
+                ('Courbe Apprentissage', 'create_learning_curve'),
+                ('Analyse SHAP', 'create_shap_analysis')
+            ]
+            
+            # Création des graphiques
+            cols = st.columns(2)
+            col_idx = 0
+            
+            for plot_name, method_name in plot_methods:
+                with cols[col_idx]:
+                    try:
+                        if hasattr(visualizer, method_name):
+                            method = getattr(visualizer, method_name)
+                            
+                            # Appel avec ou sans paramètre selon la méthode
+                            if method_name in ['create_comparison_plot', 'create_time_vs_performance_plot', 
+                                             'create_performance_distribution', 'create_radar_comparison']:
+                                fig = method()
+                            else:
+                                fig = method(model)
+                            
+                            if fig:
+                                st.markdown(f"**{plot_name}**")
+                                st.plotly_chart(fig, use_container_width=True, 
+                                              key=f"debug_{method_name}_{model_name}")
+                            else:
+                                st.info(f"ℹ️ {plot_name} non disponible")
+                        else:
+                            st.warning(f"⚠️ Méthode {method_name} non trouvée")
+                    
+                    except Exception as e:
+                        st.error(f"❌ Erreur {plot_name}: {str(e)[:100]}")
+                
+                col_idx = (col_idx + 1) % 2
 
 
 # ============================================================================
-# 🚀 FONCTION PRINCIPALE
+# 🚀 FONCTION PRINCIPALE - VERSION COMPLÈTE
 # ============================================================================
 
 def main():
-    """Point d'entrée principal"""
+    """Point d'entrée principal - Version complète et moderne"""
     try:
         # Hero section
         st.markdown("""
-        <div style="text-align: center; padding: 2rem 0;">
+        <div style="text-align: center; padding: 2rem 0 1rem 0;">
             <h1 style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
                        -webkit-background-clip: text; -webkit-text-fill-color: transparent;
-                       font-size: 3rem; font-weight: 800;">
+                       font-size: 3rem; font-weight: 800; margin: 0;">
                 📊 Évaluation ML Pro
             </h1>
-            <p style="color: #666; font-size: 1.2rem;">
-                Analyse Avancée des Performances
+            <p style="color: #666; font-size: 1.1rem; margin-top: 0.5rem;">
+                Analyse Complète et Tableaux Détaillés - Version 4.0
             </p>
         </div>
         """, unsafe_allow_html=True)
         
-        # Sidebar
-        with st.sidebar:
-            st.markdown("### ⚙️ Options")
-            show_failed = st.checkbox("Afficher modèles échoués", value=False)
-            show_mlflow = st.checkbox("Dashboard MLflow", value=True)
-            
-            if st.button("🔄 Rafraîchir", use_container_width=True):
-                st.cache_data.clear()
-                st.rerun()
-        
-        # Récupération résultats
+        # Récupération des résultats
         training_results = None
         results_data = None
         
@@ -1121,23 +1063,22 @@ def main():
         elif hasattr(STATE, 'ml_results') and STATE.ml_results:
             results_data = STATE.ml_results
         else:
-            st.error("🚫 Aucun résultat d'entraînement")
-            st.info("Lancez un entraînement depuis **Training ML**")
-            if st.button("⚙️ Aller au Training", type="primary"):
+            st.error("🚫 Aucun résultat d'entraînement disponible")
+            st.info("💡 Lancez un entraînement depuis la page **Training ML**")
+            
+            if st.button("⚙️ Aller au Training", type="primary", use_container_width=True):
                 STATE.switch(AppPage.ML_TRAINING)
             return
         
-        # Extraction
+        # Extraction des données
         if training_results:
             if hasattr(training_results, 'results'):
                 results_data = training_results.results
             else:
-                st.error("❌ Format invalide")
+                st.error("❌ Format de résultat invalide")
                 return
         
-        # Validation
-        from helpers.data_validators import DataValidator
-        
+        # Validation des résultats
         validation = {
             'successful_models': [],
             'failed_models': [],
@@ -1151,10 +1092,10 @@ def main():
                 validation['failed_models'].append(r)
         
         if not validation['successful_models']:
-            st.error("❌ Aucun modèle réussi")
+            st.error("❌ Aucun modèle n'a réussi l'entraînement")
             return
         
-        # Meilleur modèle
+        # Détermination du meilleur modèle
         task_type = validation['task_type']
         metric_key = {
             'classification': 'accuracy',
@@ -1168,85 +1109,49 @@ def main():
         )
         validation['best_model'] = best_model_result.get('model_name', 'Unknown')
         
-        # === MÉTRIQUES HORIZONTALES ===
-        render_metrics_horizontal(validation)
-        
-        # === VISUALISEUR ===
+        # Initialisation du visualiseur
         visualizer = ModelEvaluationVisualizer(results_data)
         
-        # === GRAPHIQUE AVANCÉ ===
-        st.markdown("---")
-        create_advanced_comparison(visualizer, validation)
+        # Récupération des runs MLflow
+        mlflow_runs = getattr(STATE, 'mlflow_runs', [])
         
-        # === GRILLE GRAPHIQUES ===
-        st.markdown("---")
-        st.markdown("### 📊 Analyses Détaillées")
+        # ============================================
+        # 🎨 ONGLETS PRINCIPAUX COMPLETS
+        # ============================================
         
-        st.markdown('<div class="plot-grid">', unsafe_allow_html=True)
+        tab_overview, tab_details, tab_advanced, tab_mlflow, tab_export, tab_debug = st.tabs([
+            "📊 Vue d'Ensemble",
+            "🔍 Détails", 
+            "🔬 Analyse Avancée",
+            "🔗 MLflow",
+            "📥 Export",
+            "🐛 DEBUG"
+        ])
         
-        # Graphique 1: Comparaison standard
-        st.markdown('<div class="plot-container-modern">', unsafe_allow_html=True)
-        fig1 = visualizer.create_comparison_plot()
-        st.plotly_chart(fig1, use_container_width=True)
-        st.markdown('</div>', unsafe_allow_html=True)
+        with tab_overview:
+            render_tab_overview(validation, visualizer)
         
-        # Graphique 2: Distribution performances
-        st.markdown('<div class="plot-container-modern">', unsafe_allow_html=True)
-        fig2 = visualizer.create_performance_distribution()
-        st.plotly_chart(fig2, use_container_width=True)
-        st.markdown('</div>', unsafe_allow_html=True)
+        with tab_details:
+            render_tab_details(validation, visualizer)
         
-        # Graphique 3: Temps vs Performance
-        st.markdown('<div class="plot-container-modern">', unsafe_allow_html=True)
-        fig3 = visualizer.create_time_vs_performance_plot()
-        st.plotly_chart(fig3, use_container_width=True)
-        st.markdown('</div>', unsafe_allow_html=True)
+        with tab_advanced:
+            render_tab_advanced(validation, visualizer)
         
-        st.markdown('</div>', unsafe_allow_html=True)
+        with tab_mlflow:
+            render_tab_mlflow(mlflow_runs)
         
-        # === DASHBOARD MLFLOW ===
-        if show_mlflow:
-            st.markdown("---")
-            mlflow_runs = STATE.get_mlflow_runs()
-            create_mlflow_dashboard(mlflow_runs)
+        with tab_export:
+            render_tab_export(validation, visualizer)
         
-        # === TABLEAU RÉCAPITULATIF ===
-        st.markdown("---")
-        st.markdown("### 📋 Tableau Récapitulatif")
-        df_comparison = visualizer.get_comparison_dataframe()
-        st.dataframe(df_comparison, use_container_width=True, hide_index=True)
-        
-        # === EXPORT ===
-        st.markdown("---")
-        st.markdown("### 📥 Export")
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            csv = df_comparison.to_csv(index=False)
-            st.download_button(
-                "💾 Télécharger CSV",
-                csv,
-                f"evaluation_{int(time.time())}.csv",
-                "text/csv",
-                use_container_width=True
-            )
-        
-        with col2:
-            export_data = visualizer.get_export_data()
-            import json
-            json_str = json.dumps(export_data, indent=2)
-            st.download_button(
-                "💾 Télécharger JSON",
-                json_str,
-                f"evaluation_{int(time.time())}.json",
-                "application/json",
-                use_container_width=True
-            )
+        with tab_debug:
+            render_tab_debug(validation, visualizer)
     
     except Exception as e:
         logger.error(f"❌ Erreur page évaluation: {e}", exc_info=True)
-        st.error(f"❌ Erreur: {str(e)}")
+        st.error(f"❌ Une erreur s'est produite: {str(e)[:200]}")
+        
+        if st.button("🔄 Rafraîchir la page"):
+            st.rerun()
 
 
 if __name__ == "__main__":

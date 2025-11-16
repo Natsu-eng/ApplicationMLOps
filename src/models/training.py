@@ -391,6 +391,15 @@ def train_single_model_supervised(
                 
                 from src.evaluation.metrics import evaluate_single_train_test_split
                 
+                # AJOUT: Passer y_proba si disponible
+                y_proba_test = None
+                if hasattr(result["model"], 'predict_proba'):
+                    try:
+                        y_proba_test = result["model"].predict_proba(X_test)
+                        logger.info(f"✅ {model_name}: Probabilités calculées ({y_proba_test.shape})")
+                    except Exception as proba_error:
+                        logger.warning(f"⚠️ {model_name}: predict_proba échoué: {proba_error}")
+                
                 evaluation_result = evaluate_single_train_test_split(
                     model=result["model"],
                     X_test=X_test,
@@ -404,22 +413,45 @@ def train_single_model_supervised(
                 # FUSION INTELLIGENTE avec validation type
                 if evaluation_result and isinstance(evaluation_result, dict):
                     if evaluation_result.get('success', False):
-                        # Extraction SÉCURISÉE des métriques
-                        computed_metrics = {
-                            k: v for k, v in evaluation_result.items()
-                            if k not in ['success', 'warnings', 'error', 'task_type']
-                            and isinstance(v, (int, float, np.number))
-                            and not (isinstance(v, float) and (np.isnan(v) or np.isinf(v)))
-                        }
+                        # EXTRACTION SÉCURISÉE des métriques (incluant None)
+                        computed_metrics = {}
+                        
+                        for k, v in evaluation_result.items():
+                            # Ignorer les métadonnées
+                            if k in ['success', 'warnings', 'error', 'task_type', 'n_samples']:
+                                continue
+                            
+                            # GARDER TOUTES les métriques, même None (pour debug)
+                            if isinstance(v, (int, float, np.number)):
+                                if not (isinstance(v, float) and (np.isnan(v) or np.isinf(v))):
+                                    computed_metrics[k] = float(v)
+                                else:
+                                    logger.warning(f"⚠️ {model_name}: {k} est NaN/Inf, ignoré")
+                            elif v is None:
+                                # GARDER None pour traçabilité
+                                computed_metrics[k] = 0.0  # Fallback à 0.0
+                                logger.warning(f"⚠️ {model_name}: {k} est None, fallback à 0.0")
                         
                         if computed_metrics:
                             result['metrics'] = computed_metrics
+                            
+                            # LOG DÉTAILLÉ pour debug
                             logger.info(f"✅ Métriques {model_name}: {list(computed_metrics.keys())}")
+                            
+                            # VÉRIFICATION CRITIQUE f1_score et roc_auc
+                            if task_type == 'classification':
+                                if 'f1_score' in computed_metrics:
+                                    logger.info(f"   ✅ f1_score: {computed_metrics['f1_score']:.4f}")
+                                else:
+                                    logger.error(f"   ❌ f1_score MANQUANT!")
+                                
+                                if 'roc_auc' in computed_metrics:
+                                    logger.info(f"   ✅ roc_auc: {computed_metrics['roc_auc']:.4f}")
+                                else:
+                                    logger.warning(f"   ⚠️ roc_auc MANQUANT (probablement pas de predict_proba)")
                         else:
                             logger.warning(f"⚠️ Aucune métrique valide calculée pour {model_name}")
-                            # Garder default_metrics
                     else:
-                        # Évaluation échouée, ajouter erreur mais garder default_metrics
                         error_msg = evaluation_result.get('error', 'Évaluation échouée')
                         result['metrics']['error'] = error_msg
                         logger.warning(f"⚠️ Évaluation échouée {model_name}: {error_msg}")
@@ -429,10 +461,9 @@ def train_single_model_supervised(
                 
             except Exception as eval_error:
                 logger.error(f"❌ Erreur évaluation {model_name}: {eval_error}", exc_info=True)
-                # 🆕 FALLBACK: metrics par défaut + erreur
                 result['metrics'] = default_metrics.copy()
                 result['metrics']['error'] = f'Erreur évaluation: {str(eval_error)[:100]}'
-        
+                
         # ========================================================================
         # VALIDATION FINALE STRICTE
         # ========================================================================

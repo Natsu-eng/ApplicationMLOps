@@ -34,7 +34,7 @@ from src.shared.logging import get_logger
 
 # Imports conditionnels
 try:
-    import psutil
+    import psutil # type: ignore
     PSUTIL_AVAILABLE = True
 except ImportError:
     PSUTIL_AVAILABLE = False
@@ -61,6 +61,9 @@ except ImportError:
         "SLOW_OPERATION_THRESHOLD": 30.0,
         "HIGH_MEMORY_THRESHOLD": 100.0
     }
+
+# Initialisation du logger
+logger = get_logger(__name__)
 
 # Configuration des warnings
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -163,6 +166,7 @@ class EvaluationMetrics:
                                         y_proba: Optional[np.ndarray] = None) -> Dict[str, Any]:
         """
         Calcule les métriques classification de façon robuste.
+        GARANTIT le calcul de f1_score et roc_auc (si possible)
         """
         with self._calculation_lock:
             metrics = {
@@ -180,17 +184,32 @@ class EvaluationMetrics:
                     metrics["warnings"].extend(validation["warnings"])
                     return metrics
                 
-                # Métriques de base
+                # CALCUL OBLIGATOIRE des métriques de base
+                logger.debug("📊 Calcul accuracy...")
                 metrics['accuracy'] = self.safe_metric_calculation(accuracy_score, y_true, y_pred)
+                
+                logger.debug("📊 Calcul precision...")
                 metrics['precision'] = self.safe_metric_calculation(
                     precision_score, y_true, y_pred, average='weighted', zero_division=0
                 )
+                
+                logger.debug("📊 Calcul recall...")
                 metrics['recall'] = self.safe_metric_calculation(
                     recall_score, y_true, y_pred, average='weighted', zero_division=0
                 )
-                metrics['f1_score'] = self.safe_metric_calculation(
+                
+                # F1_SCORE CRITIQUE
+                logger.debug("📊 Calcul f1_score...")
+                f1 = self.safe_metric_calculation(
                     f1_score, y_true, y_pred, average='weighted', zero_division=0
                 )
+                
+                if f1 is not None:
+                    metrics['f1_score'] = float(f1)
+                    logger.info(f"✅ f1_score calculé: {f1:.4f}")
+                else:
+                    metrics['f1_score'] = 0.0
+                    logger.error("❌ f1_score est None, fallback à 0.0")
                 
                 # Rapport de classification
                 try:
@@ -199,20 +218,48 @@ class EvaluationMetrics:
                 except Exception as e:
                     self.warnings.append(f"Erreur rapport classification: {str(e)}")
                 
-                # ROC-AUC si probabilités disponibles
+                # ROC-AUC CRITIQUE (avec log détaillé)
                 if y_proba is not None and len(y_proba) > 0:
+                    logger.debug(f"📊 Calcul roc_auc... (y_proba shape: {y_proba.shape})")
+                    
                     n_classes = len(np.unique(y_true))
+                    logger.debug(f"   Nombre de classes: {n_classes}")
+                    
                     try:
                         if n_classes > 2:
-                            metrics['roc_auc'] = self.safe_metric_calculation(
-                                roc_auc_score, y_true, y_proba, multi_class='ovr', average='weighted'
+                            logger.debug("   Mode multi-classe (OvR)")
+                            auc = self.safe_metric_calculation(
+                                roc_auc_score, y_true, y_proba, 
+                                multi_class='ovr', average='weighted'
                             )
                         else:
-                            metrics['roc_auc'] = self.safe_metric_calculation(
-                                roc_auc_score, y_true, y_proba[:, 1] if y_proba.ndim > 1 else y_proba
+                            logger.debug("   Mode binaire")
+                            # GESTION ROBUSTE dimension
+                            if y_proba.ndim > 1:
+                                proba_positive = y_proba[:, 1]
+                            else:
+                                proba_positive = y_proba
+                            
+                            logger.debug(f"   Probas classe positive: {proba_positive.shape}")
+                            auc = self.safe_metric_calculation(
+                                roc_auc_score, y_true, proba_positive
                             )
+                        
+                        if auc is not None:
+                            metrics['roc_auc'] = float(auc)
+                            logger.info(f"✅ roc_auc calculé: {auc:.4f}")
+                        else:
+                            metrics['roc_auc'] = 0.0
+                            logger.warning("⚠️ roc_auc est None, fallback à 0.0")
+                            
                     except Exception as e:
+                        logger.error(f"❌ ROC-AUC échoué: {str(e)}", exc_info=True)
                         self.warnings.append(f"ROC-AUC échoué: {str(e)}")
+                        metrics['roc_auc'] = 0.0
+                else:
+                    logger.warning("⚠️ y_proba non disponible, roc_auc non calculé")
+                    metrics['roc_auc'] = None  # ✅ Explicite
+                    self.warnings.append("ROC-AUC non calculé: probabilités non disponibles")
                 
                 # Matrice de confusion
                 try:
@@ -224,9 +271,12 @@ class EvaluationMetrics:
                 metrics['success'] = True
                 metrics['warnings'] = self.warnings
                 
+                # LOG RÉCAPITULATIF FINAL
                 log_metrics("INFO", "Métriques classification calculées", {
                     "n_samples": metrics['n_samples'],
                     "accuracy": metrics.get('accuracy'),
+                    "f1_score": metrics.get('f1_score'),
+                    "roc_auc": metrics.get('roc_auc'),
                     "success": True
                 })
                 
@@ -566,6 +616,7 @@ def calculate_global_metrics(
 @safe_metric_calculation(
     fallback_value={"error": "Erreur évaluation", "success": False, "warnings": []}
 )
+
 @monitor_performance
 def evaluate_single_train_test_split(
     model: Any,
@@ -731,17 +782,35 @@ def evaluate_single_train_test_split(
             # ========================================================================
             try:
                 # Prédictions
+                logger.debug(f"📊 Prédiction sur {len(X_test)} échantillons...")
                 y_pred = model.predict(X_test)
-                y_proba = None
+                logger.debug(f"✅ y_pred shape: {y_pred.shape}")
                 
+                # PROBABILITÉS AVEC GESTION D'ERREUR ROBUSTE
+                y_proba = None
                 if hasattr(model, 'predict_proba'):
                     try:
+                        logger.debug("📊 Calcul predict_proba...")
                         y_proba = model.predict_proba(X_test)
-                    except Exception as e:
-                        result["warnings"].append(f"predict_proba échoué: {str(e)}")
-                        log_metrics("WARNING", "predict_proba échoué", {"error": str(e)})
+                        logger.info(f"✅ y_proba calculé: {y_proba.shape}")
+                        
+                        # ✅ VALIDATION probabilités
+                        if y_proba is not None:
+                            if np.any(np.isnan(y_proba)):
+                                logger.warning("⚠️ NaN détectés dans y_proba")
+                                y_proba = None
+                            elif np.any(np.isinf(y_proba)):
+                                logger.warning("⚠️ Inf détectés dans y_proba")
+                                y_proba = None
+                                
+                    except Exception as proba_error:
+                        logger.error(f"❌ predict_proba échoué: {proba_error}", exc_info=True)
+                        result["warnings"].append(f"predict_proba échoué: {str(proba_error)}")
+                        y_proba = None
+                else:
+                    logger.warning("⚠️ Modèle n'a pas predict_proba")
                 
-                # 🆕 CALCUL DIRECT (pas via calculate_global_metrics)
+                # CALCUL DIRECT (pas via calculate_global_metrics)
                 evaluator = EvaluationMetrics(task_type)
                 
                 if task_type == 'classification':

@@ -1973,7 +1973,7 @@ class MLTrainingWorkflowPro:
             logger.error(f"Unexpected error in launch_training: {e}", exc_info=True)
 
     def display_training_results(self, result: MLTrainingResult, container):
-        """Affiche les résultats de l'entraînement - VERSION CORRIGÉE"""
+        """Affiche les résultats de l'entraînement - VERSION COMPLÈTE CORRIGÉE"""
         
         # VALIDATION ROBUSTE du résultat
         if result is None:
@@ -1994,7 +1994,61 @@ class MLTrainingWorkflowPro:
             n_successful = len(result.successful_models)
             n_total = len(result.results)
             
-            # Métriques principales
+            # ========================================================================
+            # 🆕 DÉTECTION DU MEILLEUR MODÈLE (VERSION CORRIGÉE)
+            # ========================================================================
+            best_model_data = None
+            best_score = 0.0
+            task_type = STATE.task_type
+            
+            # Détermination de la métrique clé
+            metric_key = {
+                'classification': 'accuracy',
+                'regression': 'r2',
+                'clustering': 'silhouette_score'
+            }.get(task_type, 'accuracy')
+            
+            logger.debug(f"🔍 Recherche meilleur modèle avec métrique: {metric_key}")
+            
+            # PARCOURS DES MODÈLES RÉUSSIS (ce sont des DICTS)
+            if result.successful_models:
+                for model_result in result.successful_models:
+                    # Vérification que c'est bien un dict
+                    if not isinstance(model_result, dict):
+                        logger.warning(f"⚠️ Résultat modèle non-dict: {type(model_result)}")
+                        continue
+                    
+                    # Extraction des métriques
+                    metrics = model_result.get('metrics', {})
+                    if not isinstance(metrics, dict):
+                        logger.warning(f"⚠️ Métriques non-dict pour {model_result.get('model_name', 'Unknown')}")
+                        continue
+                    
+                    # Récupération du score
+                    score = metrics.get(metric_key, 0)
+                    if score is None:
+                        score = 0.0
+                    
+                    logger.debug(f"   {model_result.get('model_name', 'Unknown')}: {metric_key}={score}")
+                    
+                    # Comparaison
+                    if score > best_score:
+                        best_score = float(score)
+                        best_model_data = model_result
+                
+                if best_model_data:
+                    logger.info(
+                        f"✅ Meilleur modèle: {best_model_data.get('model_name', 'Unknown')} "
+                        f"({metric_key}={best_score:.3f})"
+                    )
+                else:
+                    logger.warning("⚠️ Aucun meilleur modèle trouvé")
+            else:
+                logger.warning("⚠️ Aucun modèle réussi")
+            
+            # ========================================================================
+            # MÉTRIQUES PRINCIPALES (VERSION CORRIGÉE)
+            # ========================================================================
             col_res1, col_res2, col_res3, col_res4 = st.columns(4)
             
             with col_res1:
@@ -2023,18 +2077,8 @@ class MLTrainingWorkflowPro:
                 )
             
             with col_res3:
-                best_model = getattr(result, 'best_model', None)
-                task_type = STATE.task_type
-                
-                if best_model and hasattr(best_model, 'metrics'):
-                    metric_key = {
-                        'classification': 'accuracy',
-                        'regression': 'r2', 
-                        'clustering': 'silhouette_score'
-                    }.get(task_type, 'accuracy')
-                    
-                    best_score = best_model.metrics.get(metric_key, 0)
-                    
+                # ✅ UTILISATION DE best_model_data (DICT)
+                if best_model_data:
                     st.markdown(
                         f"""
                         <div class='metric-card' style='background: linear-gradient(135deg, #28a745 0%, #20c997 100%);'>
@@ -2058,59 +2102,336 @@ class MLTrainingWorkflowPro:
                     )
             
             with col_res4:
-                if best_model:
-                    model_name = getattr(best_model, 'model_name', 'Inconnu')
+                # UTILISATION DE best_model_data (DICT)
+                if best_model_data:
+                    model_name = best_model_data.get('model_name', 'Inconnu')
                     st.markdown(
                         f"""
                         <div class='metric-card'>
                             <h3>👑</h3>
                             <h4>Meilleur Modèle</h4>
-                            <h2>{model_name}</h2>
+                            <h2 style="font-size: 1.5rem;">{model_name}</h2>
+                        </div>
+                        """,
+                        unsafe_allow_html=True
+                    )
+                else:
+                    st.markdown(
+                        f"""
+                        <div class='metric-card'>
+                            <h3>👑</h3>
+                            <h4>Meilleur Modèle</h4>
+                            <h2>Inconnu</h2>
                         </div>
                         """,
                         unsafe_allow_html=True
                     )
             
-            # Détails des performances
+            # ========================================================================
+            # 🎨 TABLEAU RÉCAPITULATIF STYLÉ (VERSION CORRIGÉE)
+            # ========================================================================
             st.markdown("---")
-            st.subheader("📋 Détail des Performances")
+            st.markdown("### 📋 Détail des Performances")
             
-            results_data = []
+            # CSS pour le tableau stylé
+            st.markdown("""
+            <style>
+                .styled-table {
+                    width: 100%;
+                    border-collapse: collapse;
+                    margin: 1.5rem 0;
+                    font-size: 0.95rem;
+                    box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+                    border-radius: 10px;
+                    overflow: hidden;
+                }
+                
+                .styled-table thead tr {
+                    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                    color: white;
+                    text-align: left;
+                    font-weight: 600;
+                }
+                
+                .styled-table thead th {
+                    padding: 1rem;
+                    text-transform: uppercase;
+                    font-size: 0.85rem;
+                    letter-spacing: 0.5px;
+                }
+                
+                .styled-table tbody tr {
+                    border-bottom: 1px solid #e9ecef;
+                    transition: all 0.3s ease;
+                }
+                
+                .styled-table tbody tr:nth-child(even) {
+                    background-color: rgba(102, 126, 234, 0.05);
+                }
+                
+                .styled-table tbody tr:hover {
+                    background-color: rgba(102, 126, 234, 0.15);
+                    transform: scale(1.01);
+                    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+                }
+                
+                .styled-table tbody td {
+                    padding: 1rem;
+                }
+                
+                .styled-table tbody tr.best-model {
+                    background: linear-gradient(90deg, rgba(40, 167, 69, 0.15) 0%, transparent 100%);
+                    border-left: 4px solid #28a745;
+                }
+                
+                .styled-table tbody tr.failed-model {
+                    background: linear-gradient(90deg, rgba(220, 53, 69, 0.1) 0%, transparent 100%);
+                    border-left: 4px solid #dc3545;
+                }
+                
+                .metric-badge {
+                    display: inline-block;
+                    padding: 0.3rem 0.8rem;
+                    border-radius: 20px;
+                    font-size: 0.85rem;
+                    font-weight: 600;
+                    white-space: nowrap;
+                }
+                
+                .badge-excellent {
+                    background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+                    color: white;
+                }
+                
+                .badge-good {
+                    background: linear-gradient(135deg, #17a2b8 0%, #138496 100%);
+                    color: white;
+                }
+                
+                .badge-fair {
+                    background: linear-gradient(135deg, #ffc107 0%, #ff9800 100%);
+                    color: #333;
+                }
+                
+                .badge-poor {
+                    background: linear-gradient(135deg, #dc3545 0%, #c82333 100%);
+                    color: white;
+                }
+                
+                .status-success {
+                    color: #28a745;
+                    font-weight: 600;
+                }
+                
+                .status-failed {
+                    color: #dc3545;
+                    font-weight: 600;
+                }
+            </style>
+            """, unsafe_allow_html=True)
+            
+            # Construction du HTML du tableau
+            table_html = '<table class="styled-table"><thead><tr>'
+            
+            # En-têtes dynamiques selon task_type
+            headers = ['Modèle', 'Statut', 'Temps (s)']
+            
+            if task_type == 'classification':
+                headers.extend(['Accuracy', 'Precision', 'Recall', 'F1-Score', 'ROC-AUC'])
+            elif task_type == 'regression':
+                headers.extend(['R²', 'MAE', 'RMSE'])
+            elif task_type == 'clustering':
+                headers.extend(['Silhouette', 'N_Clusters', 'DB Index'])
+            
+            for header in headers:
+                table_html += f'<th>{header}</th>'
+            
+            table_html += '</tr></thead><tbody>'
+            
+            # LIGNES DES MODÈLES RÉUSSIS (VERSION CORRIGÉE)
             for model_result in result.successful_models:
-                metrics = getattr(model_result, 'metrics', {})
-                results_data.append({
-                    'Modèle': getattr(model_result, 'model_name', 'Inconnu'),
-                    'Statut': '✅ Succès',
-                    'Temps (s)': f"{getattr(model_result, 'training_time', 0):.1f}",
-                    **{k: f"{v:.3f}" if isinstance(v, (int, float)) else str(v) 
-                    for k, v in metrics.items()}
-                })
+                if not isinstance(model_result, dict):
+                    continue
+                
+                metrics = model_result.get('metrics', {})
+                if not isinstance(metrics, dict):
+                    metrics = {}
+                
+                model_name = model_result.get('model_name', 'Inconnu')
+                training_time_model = model_result.get('training_time', 0)
+                
+                # Classe CSS spéciale pour le meilleur modèle
+                row_class = 'best-model' if best_model_data and model_name == best_model_data.get('model_name') else ''
+                
+                table_html += f'<tr class="{row_class}">'
+                table_html += f'<td><strong>{model_name}</strong></td>'
+                table_html += f'<td><span class="status-success">✅ Succès</span></td>'
+                table_html += f'<td>{training_time_model:.1f}s</td>'
+                
+                # Métriques selon task_type - VERSION CORRIGÉE
+                if task_type == 'classification':
+                    accuracy = metrics.get('accuracy', 0)
+                    precision = metrics.get('precision', 0)
+                    recall = metrics.get('recall', 0)
+                    f1 = metrics.get('f1_score', 0)
+                    roc_auc = metrics.get('roc_auc')
+                    
+                    # ✅ CORRECTION : Formatage conditionnel séparé
+                    roc_auc_str = f"{roc_auc:.3f}" if roc_auc is not None else "N/A"
+                    
+                    # Badge coloré pour accuracy
+                    if accuracy >= 0.9:
+                        acc_badge = f'<span class="metric-badge badge-excellent">{accuracy:.3f}</span>'
+                    elif accuracy >= 0.75:
+                        acc_badge = f'<span class="metric-badge badge-good">{accuracy:.3f}</span>'
+                    elif accuracy >= 0.6:
+                        acc_badge = f'<span class="metric-badge badge-fair">{accuracy:.3f}</span>'
+                    else:
+                        acc_badge = f'<span class="metric-badge badge-poor">{accuracy:.3f}</span>'
+                    
+                    table_html += f'<td>{acc_badge}</td>'
+                    table_html += f'<td>{precision:.3f}</td>'
+                    table_html += f'<td>{recall:.3f}</td>'
+                    table_html += f'<td>{f1:.3f}</td>'
+                    table_html += f'<td>{roc_auc_str}</td>'  # ✅ CORRIGÉ
+                    
+                elif task_type == 'regression':
+                    r2 = metrics.get('r2', 0)
+                    mae = metrics.get('mae', 0)
+                    rmse = metrics.get('rmse', 0)
+                    
+                    # Badge coloré pour R²
+                    if r2 >= 0.8:
+                        r2_badge = f'<span class="metric-badge badge-excellent">{r2:.3f}</span>'
+                    elif r2 >= 0.6:
+                        r2_badge = f'<span class="metric-badge badge-good">{r2:.3f}</span>'
+                    elif r2 >= 0.4:
+                        r2_badge = f'<span class="metric-badge badge-fair">{r2:.3f}</span>'
+                    else:
+                        r2_badge = f'<span class="metric-badge badge-poor">{r2:.3f}</span>'
+                    
+                    table_html += f'<td>{r2_badge}</td>'
+                    table_html += f'<td>{mae:.3f}</td>'
+                    table_html += f'<td>{rmse:.3f}</td>'
+                    
+                elif task_type == 'clustering':
+                    silhouette = metrics.get('silhouette_score', 0)
+                    n_clusters = metrics.get('n_clusters', 'N/A')
+                    db_index = metrics.get('davies_bouldin_score')
+                    
+                    # CORRECTION : Formatage conditionnel séparé
+                    db_index_str = f"{db_index:.3f}" if db_index is not None else "N/A"
+                    
+                    # Badge coloré pour Silhouette
+                    if silhouette >= 0.7:
+                        sil_badge = f'<span class="metric-badge badge-excellent">{silhouette:.3f}</span>'
+                    elif silhouette >= 0.5:
+                        sil_badge = f'<span class="metric-badge badge-good">{silhouette:.3f}</span>'
+                    elif silhouette >= 0.3:
+                        sil_badge = f'<span class="metric-badge badge-fair">{silhouette:.3f}</span>'
+                    else:
+                        sil_badge = f'<span class="metric-badge badge-poor">{silhouette:.3f}</span>'
+                    
+                    table_html += f'<td>{sil_badge}</td>'
+                    table_html += f'<td>{n_clusters}</td>'
+                    table_html += f'<td>{db_index_str}</td>'  # ✅ CORRIGÉ
+                
+                table_html += '</tr>'
             
+            # LIGNES DES MODÈLES ÉCHOUÉS
             for model_result in result.failed_models:
-                results_data.append({
-                    'Modèle': getattr(model_result, 'model_name', 'Inconnu'),
-                    'Statut': '❌ Échec',
-                    'Temps (s)': f"{getattr(model_result, 'training_time', 0):.1f}",
-                    'Erreur': getattr(model_result, 'error', 'Erreur inconnue')
-                })
+                if not isinstance(model_result, dict):
+                    continue
+                
+                model_name = model_result.get('model_name', 'Inconnu')
+                training_time_model = model_result.get('training_time', 0)
+                error_msg = model_result.get('error', 'Erreur inconnue')
+                
+                table_html += f'<tr class="failed-model">'
+                table_html += f'<td><strong>{model_name}</strong></td>'
+                table_html += f'<td><span class="status-failed">❌ Échec</span></td>'
+                table_html += f'<td>{training_time_model:.1f}s</td>'
+                table_html += f'<td colspan="{len(headers)-3}" style="color: #dc3545; font-style: italic;">{error_msg[:100]}</td>'
+                table_html += '</tr>'
             
-            if results_data:
-                st.dataframe(pd.DataFrame(results_data), use_container_width=True)
+            table_html += '</tbody></table>'
+            
+            # Affichage du tableau
+            if result.successful_models or result.failed_models:
+                st.markdown(table_html, unsafe_allow_html=True)
             else:
                 st.warning("⚠️ Aucun résultat à afficher")
             
-            # Recommandations
+            # ========================================================================
+            # RECOMMANDATIONS
+            # ========================================================================
             summary = getattr(result, 'summary', {})
             if summary and summary.get('recommendations'):
                 st.markdown("---")
-                st.subheader("💡 Recommandations")
+                st.markdown("### 💡 Recommandations")
                 
                 for recommendation in summary['recommendations']:
                     st.info(recommendation)
             
-            # Bouton pour voir l'analyse détaillée
+            # ========================================================================
+            # INFORMATIONS COMPLÉMENTAIRES (SMOTE, IMBALANCE, etc.)
+            # ========================================================================
+            if task_type == 'classification' and best_model_data:
+                st.markdown("---")
+                st.markdown("### ℹ️ Informations Complémentaires")
+                
+                col_info1, col_info2, col_info3 = st.columns(3)
+                
+                with col_info1:
+                    smote_applied = best_model_data.get('smote_applied', False)
+                    st.markdown(
+                        f"""
+                        <div style='padding: 1rem; border-radius: 10px; 
+                                    background: {"linear-gradient(135deg, #28a74520 0%, #20c99720 100%)" if smote_applied else "rgba(0,0,0,0.05)"};
+                                    border-left: 4px solid {"#28a745" if smote_applied else "#6c757d"};'>
+                            <strong>SMOTE</strong><br>
+                            <span style='font-size: 1.5rem;'>{"✅ Activé" if smote_applied else "❌ Désactivé"}</span>
+                        </div>
+                        """,
+                        unsafe_allow_html=True
+                    )
+                
+                with col_info2:
+                    imbalance_ratio = best_model_data.get('imbalance_ratio')
+                    if imbalance_ratio:
+                        color = "#dc3545" if imbalance_ratio > 10 else "#ffc107" if imbalance_ratio > 3 else "#28a745"
+                        st.markdown(
+                            f"""
+                            <div style='padding: 1rem; border-radius: 10px; 
+                                        background: {color}20;
+                                        border-left: 4px solid {color};'>
+                                <strong>Ratio Déséquilibre</strong><br>
+                                <span style='font-size: 1.5rem; color: {color};'>{imbalance_ratio:.1f}:1</span>
+                            </div>
+                            """,
+                            unsafe_allow_html=True
+                        )
+                
+                with col_info3:
+                    n_features = best_model_data.get('n_features', 0)
+                    st.markdown(
+                        f"""
+                        <div style='padding: 1rem; border-radius: 10px; 
+                                    background: rgba(102, 126, 234, 0.1);
+                                    border-left: 4px solid #667eea;'>
+                            <strong>Features Utilisées</strong><br>
+                            <span style='font-size: 1.5rem; color: #667eea;'>{n_features}</span>
+                        </div>
+                        """,
+                        unsafe_allow_html=True
+                    )
+            
+            # ========================================================================
+            # BOUTON ANALYSE DÉTAILLÉE
+            # ========================================================================
             st.markdown("---")
             if st.button("📈 Voir l'Analyse Détaillée des Résultats", type="primary", use_container_width=True):
+                # SAUVEGARDE CORRECTE dans STATE
                 STATE.ml_results = result.results
                 STATE.switch(AppPage.ML_EVALUATION)
 
