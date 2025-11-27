@@ -6,13 +6,11 @@ src/data/data_analysis.py
 
 import pandas as pd
 import numpy as np
-import time
-from typing import Union, Tuple, Dict, Any, List, Optional
+from typing import Union, Dict, Any, List, Optional
 import gc
 
 # Import des modules déplacés
 from monitoring.decorators import monitor_performance, safe_execute
-from monitoring.system_monitor import check_system_resources as check_resources
 from helpers.dask_helpers import is_dask_dataframe, compute_if_dask
 from helpers.data_samplers import safe_sample
 from helpers.data_transformers import optimize_dataframe
@@ -729,84 +727,199 @@ def get_relevant_features(
 @monitor_performance
 def detect_useless_columns(
     df: Union[pd.DataFrame, 'dd.DataFrame'],
-    threshold_missing: float = 0.6,
-    min_unique_ratio: float = 0.0001,
-    max_sample_size: int = 50000
-) -> List[str]:
+    threshold_missing: float = 0.8,  # Augmenté à 80% pour être moins strict
+    min_unique_ratio: float = 0.01,  # Augmenté à 1% pour être plus réaliste
+    max_sample_size: int = 50000,
+    threshold_quasi_constant: float = 0.8  # Nouveau: détection quasi-constant
+) -> Dict[str, List[str]]:  # Changé pour retourner un dict structuré
     """
-    Détecte les colonnes inutiles - version robuste.
+    Détecte les colonnes inutiles - version améliorée et robuste.
+    
+    Args:
+        df: DataFrame à analyser
+        threshold_missing: Seuil pour valeurs manquantes (0.8 = 80%)
+        min_unique_ratio: Ratio minimum de valeurs uniques
+        max_sample_size: Taille max d'échantillon
+        threshold_quasi_constant: Seuil pour colonnes quasi-constantes
+    
+    Returns:
+        Dict avec catégories de colonnes problématiques
     """
     try:
-        # Validation initiale
-        if df is None or len(df.columns) == 0:
-            logger.warning("⚠️ DataFrame vide ou sans colonnes")
-            return []
+        # Validation initiale plus robuste
+        if df is None:
+            logger.warning("⚠️ DataFrame est None")
+            return {}
         
         if hasattr(df, 'empty') and df.empty:
-            return []
+            logger.warning("⚠️ DataFrame vide")
+            return {}
+        
+        if len(df.columns) == 0:
+            logger.warning("⚠️ DataFrame sans colonnes")
+            return {}
 
-        # Échantillonnage
-        sample_df = safe_sample(df, sample_frac=0.05, max_rows=max_sample_size)
-        if sample_df.empty or len(sample_df.columns) == 0:
-            return []
+        # Échantillonnage intelligent
+        sample_size = min(max_sample_size, len(df))
+        if sample_size < 100:  # Trop petit pour être significatif
+            logger.warning(f"⚠️ Dataset trop petit: {len(df)} lignes")
+            return {}
+            
+        sample_df = safe_sample(df, sample_frac=0.1, max_rows=sample_size)  # 10% pour plus de précision
+        
+        if sample_df.empty:
+            logger.warning("⚠️ Échantillon vide après sampling")
+            return {}
 
-        useless_columns = set()
+        # Structure pour organiser les résultats
+        problematic_columns = {
+            "high_missing": [],      # Trop de valeurs manquantes
+            "constant": [],          # Colonnes constantes
+            "quasi_constant": [],    # Colonnes quasi-constantes  
+            "low_variance": [],      # Faible variance numérique
+            "high_cardinality": [],  # Cardinalité trop élevée
+            "single_value": []       # Une seule valeur non-nulle
+        }
 
-        # 1. Colonnes avec trop de NaN
+        # 1. Analyse des valeurs manquantes
         try:
             missing_ratios = sample_df.isna().mean()
-            high_missing = missing_ratios[missing_ratios > threshold_missing].index
-            useless_columns.update(high_missing)
-            logger.debug(f"Colonnes avec NaN excessifs: {len(high_missing)}")
+            high_missing_cols = missing_ratios[missing_ratios > threshold_missing].index.tolist()
+            problematic_columns["high_missing"] = high_missing_cols
+            logger.info(f"🔍 Colonnes avec +{threshold_missing*100}% NaN: {len(high_missing_cols)}")
         except Exception as e:
-            logger.warning(f"⚠️ Vérification NaN échouée: {e}")
+            logger.warning(f"⚠️ Analyse des valeurs manquantes échouée: {e}")
 
-        # 2. Colonnes constantes
+        # 2. Analyse des colonnes constantes et quasi-constantes
         try:
-            nunique_counts = sample_df.nunique(dropna=True)
-            constant_cols = nunique_counts[nunique_counts <= 1].index
-            useless_columns.update(constant_cols)
-            logger.debug(f"Colonnes constantes: {len(constant_cols)}")
+            for col in sample_df.columns:
+                if col in problematic_columns["high_missing"]:
+                    continue
+                    
+                # Compter les valeurs non-nulles
+                non_null_data = sample_df[col].dropna()
+                if len(non_null_data) == 0:
+                    problematic_columns["constant"].append(col)
+                    continue
+                
+                # Valeurs uniques
+                unique_values = non_null_data.unique()
+                n_unique = len(unique_values)
+                
+                # Colonne constante
+                if n_unique <= 1:
+                    problematic_columns["constant"].append(col)
+                    continue
+                
+                # Colonne quasi-constante
+                value_counts = non_null_data.value_counts(normalize=True)
+                dominant_ratio = value_counts.iloc[0]  # Ratio de la valeur la plus fréquente
+                
+                if dominant_ratio > threshold_quasi_constant:
+                    problematic_columns["quasi_constant"].append(col)
+                    continue
+                
+                # Cardinalité trop élevée (pour colonnes catégorielles)
+                if not pd.api.types.is_numeric_dtype(sample_df[col].dtype):
+                    cardinality_ratio = n_unique / len(non_null_data)
+                    if cardinality_ratio > 0.9:  # 90% de valeurs uniques
+                        problematic_columns["high_cardinality"].append(col)
+                        
         except Exception as e:
-            logger.warning(f"⚠️ Vérification constantes échouée: {e}")
+            logger.warning(f"⚠️ Analyse des constantes échouée: {e}")
 
-        # 3. Colonnes à faible variance (version robuste)
+        # 3. Analyse de variance pour colonnes numériques
         try:
             numeric_cols = sample_df.select_dtypes(include=np.number).columns
             for col in numeric_cols:
-                if col in useless_columns:  # Déjà détecté
+                if col in problematic_columns["high_missing"] + problematic_columns["constant"] + problematic_columns["quasi_constant"]:
                     continue
-                    
-                std_val = sample_df[col].std()
-                if pd.isna(std_val):
+                
+                col_data = sample_df[col].dropna()
+                if len(col_data) < 10:  # Trop peu de données pour analyse variance
                     continue
-                    
-                # Variance nulle
-                if std_val == 0:
-                    useless_columns.add(col)
+                
+                # Variance absolue
+                std_val = col_data.std()
+                if pd.isna(std_val) or std_val == 0:
+                    problematic_columns["low_variance"].append(col)
                     continue
-                    
-                # Faible coefficient de variation
-                mean_val = sample_df[col].mean()
-                if mean_val != 0 and abs(std_val / mean_val) < min_unique_ratio:
-                    useless_columns.add(col)
-                    
-            logger.debug(f"Colonnes numériques vérifiées: {len(numeric_cols)}")
+                
+                # Coefficient de variation
+                mean_val = col_data.mean()
+                if mean_val != 0:
+                    cv = std_val / abs(mean_val)
+                    if cv < min_unique_ratio:
+                        problematic_columns["low_variance"].append(col)
+                else:
+                    # Si moyenne = 0, vérifier l'écart-type absolu
+                    if std_val < 1e-10:  # Seuil très bas pour variance nulle
+                        problematic_columns["low_variance"].append(col)
+                        
+            logger.info(f"🔢 Colonnes numériques analysées: {len(numeric_cols)}")
         except Exception as e:
-            logger.warning(f"⚠️ Vérification variance échouée: {e}")
+            logger.warning(f"⚠️ Analyse variance échouée: {e}")
 
-        # 4. Validation finale
-        valid_columns = [col for col in useless_columns if col in df.columns]
+        # 4. Détection des colonnes avec une seule valeur non-nulle
+        try:
+            for col in sample_df.columns:
+                if col in problematic_columns["high_missing"]:
+                    non_null_values = sample_df[col].dropna()
+                    if len(non_null_values) > 0 and non_null_values.nunique() == 1:
+                        problematic_columns["single_value"].append(col)
+        except Exception as e:
+            logger.warning(f"⚠️ Détection single value échouée: {e}")
+
+        # 5. Nettoyage des résultats (supprimer les catégories vides)
+        final_result = {k: v for k, v in problematic_columns.items() if v}
         
-        logger.info(f"✅ Colonnes inutiles détectées: {len(valid_columns)}/{len(df.columns)}")
-        if valid_columns:
-            logger.debug(f"Colonnes: {valid_columns}")
-            
-        return valid_columns
+        # Statistiques détaillées
+        total_problematic = sum(len(v) for v in final_result.values())
+        logger.info(f"✅ Analyse complète: {total_problematic} colonnes problématiques sur {len(df.columns)}")
+        
+        if total_problematic > 0:
+            for category, cols in final_result.items():
+                logger.info(f"   - {category}: {len(cols)} colonnes")
+                if len(cols) <= 5:  # Log seulement les premières colonnes
+                    logger.debug(f"     Colonnes: {cols}")
+
+        return final_result
 
     except Exception as e:
-        logger.error(f"❌ Erreur critique: {e}")
+        logger.error(f"❌ Erreur critique dans detect_useless_columns: {e}", exc_info=True)
+        return {}
+   
+def get_all_problematic_columns(problematic_dict: Dict[str, List[str]]) -> List[str]:
+    """
+    Extrait toutes les colonnes problématiques d'un dictionnaire structuré. 
+    Args:
+        problematic_dict: Résultat de detect_useless_columns     
+    Returns:
+        Liste de toutes les colonnes problématiques (sans doublons)
+    """
+    if not problematic_dict:
         return []
+    
+    all_columns = []
+    for columns in problematic_dict.values():
+        all_columns.extend(columns)
+    
+    # Supprimer les doublons tout en conservant l'ordre
+    seen = set()
+    unique_columns = []
+    for col in all_columns:
+        if col not in seen:
+            seen.add(col)
+            unique_columns.append(col)
+    
+    return unique_columns
+
+# Une fonction pour compter le total
+def count_problematic_columns(problematic_dict: Dict[str, List[str]]) -> int:
+    """Compte le nombre total de colonnes problématiques."""
+    if not problematic_dict:
+        return 0
+    return sum(len(cols) for cols in problematic_dict.values())
 
 @conditional_cache(use_cache=True)
 @safe_execute(fallback_value={})

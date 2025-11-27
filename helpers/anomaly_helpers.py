@@ -5,7 +5,7 @@ Helpers simples pour l'affichage des images dans Streamlit.
 import streamlit as st
 import os
 from PIL import Image
-from src.data.image_processing import detect_dataset_structure, _get_image_files, get_dataset_info
+from src.explorations.image_exploration_plots import detect_dataset_structure, _get_image_files, get_dataset_info
 
 def preview_images(data_dir: str, max_images: int = 5):
     """

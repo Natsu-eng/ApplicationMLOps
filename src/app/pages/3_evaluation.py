@@ -21,7 +21,7 @@ from src.shared.logging import get_logger
 from monitoring.state_managers import init, AppPage, STATE
 from ui.styles import UIStyles
 from ui.evaluation_styles import EvaluationStyles
-from helpers.ui_components import UIComponents
+from helpers.ui_component import UIComponents
 
 # Initialisation
 STATE = init()

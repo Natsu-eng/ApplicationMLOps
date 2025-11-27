@@ -458,34 +458,3 @@ def get_augmentation_config_info(config_name: str) -> Dict[str, Any]:
     
     return config_mapping[config_name]
 
-# === FONCTION DE TEST ===
-
-def test_augmentor():
-    """Fonction de test pour vérifier le bon fonctionnement de l'augmentation."""
-    try:
-        # Créer une image de test
-        test_image = np.random.randint(0, 255, (64, 64, 3), dtype=np.uint8)
-        
-        # Tester chaque configuration
-        for config_name in ["light", "default", "heavy", "anomaly", "balanced"]:
-            augmentor = get_augmentor_config(config_name)
-            augmented = augmentor.augment(test_image)
-            
-            print(f"✅ Configuration {config_name}: OK - Shape: {augmented.shape}, Range: [{augmented.min()}, {augmented.max()}]")
-        
-        # Tester l'augmentation de batch
-        test_batch = np.random.randint(0, 255, (10, 64, 64, 3), dtype=np.uint8)
-        augmentor = get_augmentor_config("default")
-        augmented_batch = augmentor.augment_batch(test_batch)
-        
-        print(f"✅ Augmentation de batch: OK - Shape: {augmented_batch.shape}")
-        
-        return True
-        
-    except Exception as e:
-        print(f"❌ Test échoué: {e}")
-        return False
-
-if __name__ == "__main__":
-    # Exécuter les tests si le fichier est exécuté directement
-    test_augmentor()

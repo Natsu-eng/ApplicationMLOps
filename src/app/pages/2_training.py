@@ -29,7 +29,7 @@ from monitoring.state_managers import init, AppPage, TrainingStep
 from monitoring.mlflow_collector import get_mlflow_collector
 
 # Import des composants UI centralisés
-from helpers.ui_components import UIComponents, TargetAnalysisHelpers
+from helpers.ui_component import UIComponents, TargetAnalysisHelpers
 from ui.styles import UIStyles
 
 # Initialisation du StateManager

@@ -4,14 +4,13 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import pandas as pd
 import numpy as np
-from scipy.stats import pointbiserialr, f_oneway, chi2_contingency
+from scipy.stats import f_oneway, chi2_contingency
 import time
 import streamlit as st
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Dict, List, Optional, Tuple
 import warnings
-from concurrent.futures import ThreadPoolExecutor, as_completed
 import seaborn as sns
-from .import templates  # Fichier de templates
+from ..evaluation import templates  # Fichier de templates
 
 from src.shared.logging import get_logger
 

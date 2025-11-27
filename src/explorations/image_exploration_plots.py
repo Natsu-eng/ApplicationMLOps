@@ -10,7 +10,6 @@ Fonctionnalités:
 - Statistiques et distributions
 - Support MVTec AD, catégoriel, plat
 
-src/data/image_processing.py
 """
 
 import os

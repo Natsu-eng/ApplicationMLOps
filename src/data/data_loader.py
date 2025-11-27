@@ -12,6 +12,10 @@ from monitoring.decorators import monitor_performance, safe_execute
 from helpers.data_transformers import intelligent_type_coercion, optimize_dataframe
 from utils.file_utils import validate_file_integrity, get_file_extension, is_supported_extension, get_file_size_mb
 
+# OPTIMISATION: Configuration pandas pour la performance
+pd.set_option('mode.chained_assignment', None)  # Désactive les warnings de chainage
+pd.set_option('future.no_silent_downcasting', True)
+
 # Configuration du logging pour production
 from src.shared.logging import get_logger
 logger = get_logger(__name__)

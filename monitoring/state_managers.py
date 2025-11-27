@@ -1,15 +1,6 @@
 """
 DataLab Pro - State Manager Global avec MLflow intégré
-Version: 5.0.0 | Production-Ready | Thread-Safe | MLflow-Enhanced
-Auteur: DataLab Team
-Date: 2025
-
-🆕 NOUVEAUTÉS v5.0:
-- Stockage MLflow multi-niveaux (session_state + STATE + training)
-- Synchronisation automatique runs MLflow
-- Helpers dédiés pour gestion runs
-- Support complet ML classique + Computer Vision
-- Validation stricte et logging renforcé
+Gestion centralisée de l'état de l'application Streamlit.
 """
 
 import os
@@ -323,7 +314,7 @@ class StateManager:
             self.mlflow_collector.register_callback(self._on_mlflow_run_collected)
             
             self._initialized = True
-            logger.info("StateManager v5.0 initialisé avec collecteur MLflow intégré")
+            logger.info("StateManager v1.0 initialisé avec collecteur MLflow intégré")
 
 
     def _on_mlflow_run_collected(self, run: Dict[str, Any]):
@@ -1401,7 +1392,7 @@ def require_images(func):
 # ========================
 
 logger.info(
-    "StateManager v5.0.0 chargé | "
+    "StateManager v1.0.0 chargé | "
     f"Features: MLflow multi-sources, Thread-safe, "
     f"Debugging helpers"
 )
