@@ -61,10 +61,10 @@ class ComputerVisionMLflowTracker:
                 Path(artifact_store).mkdir(parents=True, exist_ok=True)
             
             logger.info(
-                "✅ MLflow Computer Vision configuré",
-                tracking_uri=tracking_uri,
-                experiment=experiment_name,
-                artifact_store=artifact_store
+                f"✅ MLflow Computer Vision configuré - "
+                f"tracking_uri: {tracking_uri}, "
+                f"experiment: {experiment_name}, "
+                f"artifact_store: {artifact_store}"
             )
             
         except Exception as e:

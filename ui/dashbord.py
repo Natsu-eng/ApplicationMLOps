@@ -181,7 +181,12 @@ class ModernDashboard:
             
             mem_mb = d.X.nbytes/(1024**2) if d.X is not None else 0
             shape_str = f"{d.img_shape[1]}×{d.img_shape[2]}" if d.img_shape else "N/A"
-            task = "Anomalies" if d.task == "anomaly_detection" else "Classification"
+            if d.task == "anomaly_detection_unsupervised":
+                task = "Anomalies (Unsupervised)"
+            elif "classification" in d.task:
+                task = "Classification"
+            else:
+                task = d.task.replace("_", " ").title()
             
             self.layout.metric_row([
                 {
@@ -1034,7 +1039,7 @@ class ModernDashboard:
                         
                         # ✅ CORRECTION : Vérification sécurisée de problematic_count
                         problematic_summary = report.get('problematic_summary', {})
-                        problematic_count = problematic_summary.get('problematic_count', 0)
+                        problematic_count = problematic_summary.get('total_problematic', 0)
                         
                         if problematic_count > 0:
                             st.markdown("#### ⚠️ Images Problématiques Détectées")
@@ -1042,12 +1047,17 @@ class ModernDashboard:
                             problematic_details = []
                             problematic_by_type = problematic_summary.get('problematic_by_type', {})
                             
+                            problematic_by_type = {
+                                'dark': problematic_summary.get('total_dark', 0),
+                                'bright': problematic_summary.get('total_bright', 0),
+                                'low_contrast': problematic_summary.get('total_low_contrast', 0)
+                            }
                             for issue_type, count in problematic_by_type.items():
                                 if count > 0:
                                     problematic_details.append({
                                         "Type de Problème": issue_type.replace('_', ' ').title(),
                                         "Nombre": count,
-                                        "Pourcentage": f"{(count/len(brightness_values))*100:.1f}%" if brightness_values else "N/A"
+                                        "Pourcentage": f"{(count/len(brightness_values)*100):.1f}%" if brightness_values else "N/A"
                                     })
                             
                             if problematic_details:
@@ -1213,6 +1223,73 @@ class ModernDashboard:
                 badge_type="warning",
                 icon="ℹ️"
             )
+
+    def _render_images_overview(self):
+        """Overview images avec badge mode"""
+        logger.debug("Rendu images overview")
+        perf_logger.start_operation("images_overview")
+        
+        try:
+            d = self.state.data
+            
+            # ✅ DÉTECTION DU MODE
+            if hasattr(d, 'task_metadata') and d.task_metadata:
+                task_desc = d.task_metadata.get('description', d.task)
+            else:
+                task_desc = d.task or 'unknown'
+            
+            # Badge mode
+            if 'unsupervised' in task_desc.lower():
+                mode_badge = '<span class="status-badge badge-info">🔍 Unsupervised</span>'
+            elif 'anomaly' in task_desc.lower():
+                mode_badge = '<span class="status-badge badge-warning">⚠️ Anomaly (Supervised)</span>'
+            else:
+                mode_badge = '<span class="status-badge badge-success">🎯 Classification</span>'
+            
+            st.markdown(f"### Mode Détecté\n{mode_badge}", unsafe_allow_html=True)
+            
+            # Métriques
+            mem_mb = d.X.nbytes/(1024**2) if d.X is not None else 0
+            shape_str = f"{d.img_shape[1]}×{d.img_shape[2]}" if d.img_shape else "N/A"
+            
+            self.layout.metric_row([
+                {
+                    "label": "Images",
+                    "value": f"{d.img_count:,}",
+                    "icon": "🖼️",
+                    "color": "#667eea"
+                },
+                {
+                    "label": "Résolution",
+                    "value": shape_str,
+                    "icon": "📐",
+                    "color": "#f093fb"
+                },
+                {
+                    "label": "Classes",
+                    "value": d.n_classes,
+                    "icon": "🏷️",
+                    "color": "#4facfe"
+                },
+                {
+                    "label": "Mémoire",
+                    "value": f"{mem_mb:.1f} MB",
+                    "icon": "💾",
+                    "color": "#43e97b"
+                },
+                {
+                    "label": "Tâche",
+                    "value": task_desc.split('-')[0].strip(),
+                    "icon": "🎯",
+                    "color": "#feca57"
+                }
+            ])
+            
+            perf_logger.end_operation("images_overview", f"{d.img_count} images")
+            
+        except Exception as e:
+            logger.error(f"❌ Erreur images overview: {e}", exc_info=True)
+            st.error("Erreur lors du calcul des métriques images")
 
     def render(self):
         """Rendu complet du dashboard - Version moderne"""

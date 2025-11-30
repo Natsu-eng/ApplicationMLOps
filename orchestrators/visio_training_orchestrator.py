@@ -12,7 +12,9 @@ from src.models.computer_vision_training import (
     AnomalyAwareTrainer,
     ModelConfig,
     TrainingConfig,
-    ModelType
+    ModelType,
+    OptimizerType,  
+    SchedulerType  
 )
 from src.data.computer_vision_preprocessing import DataPreprocessor
 from monitoring.mlflow_vision_tracker import cv_mlflow_tracker
@@ -47,7 +49,6 @@ class TrainingResult:
     error: Optional[str] = None
     metadata: Dict[str, Any] = None
 
-
 class ComputerVisionTrainingOrchestrator:
     """
     Orchestrateur d'entraînement Computer Vision.
@@ -75,6 +76,12 @@ class ComputerVisionTrainingOrchestrator:
         run_id = None
         
         try:
+            
+            # ========================================
+            # 0. CONVERSION ROBUSTE DES CONFIGS (NOUVEAU)
+            # ========================================
+            context.training_config = self._ensure_training_config_object(context.training_config)
+
             # ========================================
             # 1. VALIDATION DES DONNÉES
             # ========================================
@@ -161,6 +168,137 @@ class ComputerVisionTrainingOrchestrator:
             )
 
 
+    def _ensure_training_config_object(self, training_config: Any) -> TrainingConfig:
+        """
+        Convertit une configuration d'entraînement en objet TrainingConfig.
+        - Validation stricte des EnumType (optimizer, scheduler)
+        - Gestion des erreurs de conversion explicites
+        - Fallback sécurisé sur valeurs par défaut
+        
+        Args:
+            training_config: Configuration sous forme d'objet ou dict
+            
+        Returns:
+            TrainingConfig: Objet de configuration typé
+            
+        Raises:
+            ValueError: Si la configuration est invalide
+        """
+        try:
+            # Cas 1: Déjà un objet TrainingConfig
+            if isinstance(training_config, TrainingConfig):
+                self.logger.info("✅ Configuration training: objet TrainingConfig détecté")
+                return training_config
+            
+            # Cas 2: Dict venant de STATE
+            elif isinstance(training_config, dict):
+                self.logger.info("🔄 Conversion dict → TrainingConfig")
+                
+                # === VALIDATION ET CONVERSION OPTIMIZER ===
+                optimizer_value = training_config.get('optimizer', 'adamw')
+                
+                # Si déjà OptimizerType, conserver
+                if isinstance(optimizer_value, OptimizerType):
+                    optimizer_enum = optimizer_value
+                # Si string, valider et convertir
+                elif isinstance(optimizer_value, str):
+                    try:
+                        optimizer_enum = OptimizerType(optimizer_value.lower())
+                    except ValueError as e:
+                        self.logger.error(
+                            f"❌ Optimizer invalide: '{optimizer_value}'. "
+                            f"Valeurs acceptées: {[e.value for e in OptimizerType]}"
+                        )
+                        raise ValueError(
+                            f"Optimizer '{optimizer_value}' non supporté. "
+                            f"Utilisez: {', '.join([e.value for e in OptimizerType])}"
+                        ) from e
+                else:
+                    self.logger.warning(f"⚠️ Type optimizer inattendu: {type(optimizer_value)}, fallback adamw")
+                    optimizer_enum = OptimizerType.ADAMW
+                
+                # === VALIDATION ET CONVERSION SCHEDULER ===
+                scheduler_value = training_config.get('scheduler', 'reduce_on_plateau')
+                
+                if isinstance(scheduler_value, SchedulerType):
+                    scheduler_enum = scheduler_value
+                elif isinstance(scheduler_value, str):
+                    try:
+                        scheduler_enum = SchedulerType(scheduler_value.lower())
+                    except ValueError as e:
+                        self.logger.error(
+                            f"❌ Scheduler invalide: '{scheduler_value}'. "
+                            f"Valeurs acceptées: {[e.value for e in SchedulerType]}"
+                        )
+                        raise ValueError(
+                            f"Scheduler '{scheduler_value}' non supporté. "
+                            f"Utilisez: {', '.join([e.value for e in SchedulerType])}"
+                        ) from e
+                else:
+                    self.logger.warning(f"⚠️ Type scheduler inattendu: {type(scheduler_value)}, fallback reduce_on_plateau")
+                    scheduler_enum = SchedulerType.REDUCE_ON_PLATEAU
+                
+                # === CONSTRUCTION DICT AVEC VALEURS VALIDÉES ===
+                config_dict = {
+                    'epochs': int(training_config.get('epochs', 100)),
+                    'batch_size': int(training_config.get('batch_size', 32)),
+                    'learning_rate': float(training_config.get('learning_rate', 1e-4)),
+                    'weight_decay': float(training_config.get('weight_decay', 0.01)),
+                    'gradient_clip': float(training_config.get('gradient_clip', 1.0)),
+                    'optimizer': optimizer_enum,  # ✅ Enum validé
+                    'scheduler': scheduler_enum,  # ✅ Enum validé
+                    'early_stopping_patience': int(training_config.get('early_stopping_patience', 15)),
+                    'reduce_lr_patience': int(training_config.get('reduce_lr_patience', 8)),
+                    'min_lr': float(training_config.get('min_lr', 1e-7)),
+                    'use_class_weights': bool(training_config.get('use_class_weights', False)),
+                    'use_mixed_precision': bool(training_config.get('use_mixed_precision', False)),
+                    'deterministic': bool(training_config.get('deterministic', True)),
+                    'seed': int(training_config.get('seed', 42)),
+                    'num_workers': int(training_config.get('num_workers', 0)),
+                    'pin_memory': bool(training_config.get('pin_memory', False)),
+                    'checkpoint_dir': training_config.get('checkpoint_dir'),
+                    'save_best_only': bool(training_config.get('save_best_only', True))
+                }
+                
+                # === VALIDATION DES VALEURS CRITIQUES ===
+                if config_dict['epochs'] <= 0:
+                    raise ValueError(f"epochs doit être > 0, reçu: {config_dict['epochs']}")
+                if config_dict['batch_size'] <= 0:
+                    raise ValueError(f"batch_size doit être > 0, reçu: {config_dict['batch_size']}")
+                if not (0 < config_dict['learning_rate'] < 1):
+                    raise ValueError(f"learning_rate doit être dans ]0,1[, reçu: {config_dict['learning_rate']}")
+                if config_dict['gradient_clip'] <= 0:
+                    raise ValueError(f"gradient_clip doit être > 0, reçu: {config_dict['gradient_clip']}")
+                
+                # === CRÉATION DE L'OBJET ===
+                training_config_obj = TrainingConfig(**config_dict)
+                
+                self.logger.info(
+                    f"✅ Configuration training convertie avec succès - "
+                    f"epochs: {training_config_obj.epochs}, "
+                    f"batch_size: {training_config_obj.batch_size}, "
+                    f"lr: {training_config_obj.learning_rate}, "
+                    f"optimizer: {training_config_obj.optimizer.value}, "
+                    f"scheduler: {training_config_obj.scheduler.value}"
+                )
+                
+                return training_config_obj
+            
+            # Cas 3: Format inconnu
+            else:
+                raise ValueError(f"Format de configuration non supporté: {type(training_config)}")
+                
+        except ValueError as e:
+            # Erreurs de validation remontées telles quelles
+            self.logger.error(f"❌ Erreur validation TrainingConfig: {e}")
+            raise
+        
+        except Exception as e:
+            # Autres erreurs wrappées
+            self.logger.error(f"❌ Erreur inattendue conversion TrainingConfig: {e}", exc_info=True)
+            raise ValueError(f"Configuration d'entraînement invalide: {str(e)}")
+
+
     def _validate_training_context(self, context: TrainingContext):
         """Valide le contexte d'entraînement"""
         if context.X_train is None or context.X_val is None:
@@ -170,9 +308,7 @@ class ComputerVisionTrainingOrchestrator:
             raise ValueError("Datasets vides")
         
         self.logger.info(
-            "Données validées",
-            X_train_shape=context.X_train.shape,
-            X_val_shape=context.X_val.shape
+            f"Données validées - X_train_shape: {context.X_train.shape}, X_val_shape: {context.X_val.shape}"
         )
     
     def _start_mlflow_run(self, context: TrainingContext) -> Optional[str]:
@@ -368,13 +504,13 @@ class ComputerVisionTrainingOrchestrator:
             # LOG DÉTAILLÉ DU RÉSULTAT FINAL
             # ========================================================================
             self.logger.info(
-                f"✅ Entraînement terminé - Format normalisé",
-                success=result['success'],
-                has_data=bool(result.get('data')),
-                has_history='history' in result.get('data', {}),
-                has_error=result.get('error') is not None,
-                result_keys=list(result.keys()),
-                data_keys=list(result.get('data', {}).keys())
+                f"✅ Entraînement terminé - Format normalisé - "
+                f"success: {result['success']}, "
+                f"has_data: {bool(result.get('data'))}, "
+                f"has_history: {'history' in result.get('data', {})}, "
+                f"has_error: {result.get('error') is not None}, "
+                f"result_keys: {list(result.keys())}, "
+                f"data_keys: {list(result.get('data', {}).keys())}"
             )
             
             # ========================================================================

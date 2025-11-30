@@ -364,60 +364,76 @@ def get_dataset_stats(data_dir: str) -> pd.DataFrame:
 # ===================================
 # FONCTIONS DE CHARGEMENT D'IMAGES
 # ===================================
+def _load_mvtec_train_labels(data_dir: str) -> np.ndarray:
+    """
+    Charge UNIQUEMENT les labels du dossier train/good pour MVTec AD.
+    Retourne toujours un tableau de 0 (images normales).
+    Utilisé pour détecter correctement la tâche UNSUPERVISED.
+    """
+    try:
+        train_good_path = Path(data_dir) / "train" / "good"
+        if not train_good_path.exists() or not train_good_path.is_dir():
+            logger.warning("Dossier train/good introuvable → fallback y_train vide")
+            return np.array([], dtype=int)
+        
+        image_files = _get_image_files(train_good_path)
+        logger.debug(f"{len(image_files)} images normales dans train/good → y_train = [0]")
+        return np.zeros(len(image_files), dtype=int)
+    
+    except Exception as e:
+        logger.error(f"Erreur chargement y_train MVTec: {e}")
+        return np.array([], dtype=int)
+    
 
 def load_images_flexible(
     data_dir: str,
     target_size: Tuple[int, int] = (256, 256),
     config: Optional[ImageConfig] = None
-) -> Tuple[np.ndarray, np.ndarray]:
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, Optional[np.ndarray]]:
     """
-    Charge les images depuis n'importe quelle structure de dossier.
-    Version robuste avec gestion d'erreurs et validation.
-    
-    Args:
-        data_dir: Chemin vers le dossier du dataset
-        target_size: Taille cible pour le redimensionnement
-        config: Configuration optionnelle avancée
-        
-    Returns:
-        Tuple (images, labels) sous forme de numpy arrays
-        
-    Raises:
-        ValueError: Si la structure n'est pas supportée
-        RuntimeError: Si aucune image n'est trouvée
+    Retourne: X, X_norm, y (complet), y_train (seulement train/good)
     """
     try:
         if config is None:
             config = ImageConfig(target_size=target_size)
         
+        if config.max_images:
+            logger.warning(f"max_images={config.max_images} ignoré pour MVTec AD")
+
         structure = detect_dataset_structure(data_dir)
         structure_type = structure.get("type")
         
         logger.info(f"Structure détectée: {structure_type}")
         
         if structure_type == DatasetType.INVALID.value:
-            raise ValueError(f"Structure de dataset invalide: {structure.get('error')}")
-        
-        # Dispatcher selon le type
+            raise ValueError(f"Structure invalide: {structure.get('error')}")
+
+        y_train = None
+
         if structure_type == DatasetType.MVTEC_AD.value:
-            X, y = _load_mvtec_structure(data_dir, config)
+            X, y_full = _load_mvtec_structure(data_dir, config)        # ← y complet
+            y_train = _load_mvtec_train_labels(data_dir)               # ← seulement train/good
         elif structure_type == DatasetType.CATEGORICAL.value:
-            X, y = _load_categorical_folders(data_dir, config)
+            X, y_full = _load_categorical_folders(data_dir, config)
         elif structure_type == DatasetType.FLAT.value:
-            X, y = _load_flat_directory(data_dir, config)
+            X, y_full = _load_flat_directory(data_dir, config)
         else:
             raise ValueError(f"Structure non supportée: {structure_type}")
-        
-        # Validation
+
         if len(X) == 0:
-            raise RuntimeError("Aucune image valide trouvée dans le dataset")
-        
-        logger.info(f"Chargement terminé: {len(X)} images, {len(np.unique(y))} classes")
-        
-        return X, y
-    
+            raise RuntimeError("Aucune image valide trouvée")
+
+        logger.info(f"Chargement terminé: {len(X)} images, {len(np.unique(y_full))} classes au total")
+        if y_train is not None:
+            logger.info(f"→ y_train: {len(y_train)} images normales uniquement → UNSUPERVISED")
+
+        # Normalisation
+        X_norm = X.astype(np.float32) / 255.0
+
+        return X.astype(np.uint8), X_norm, y_full, y_train
+
     except Exception as e:
-        logger.error(f"Erreur dans load_images_flexible: {e}", exc_info=True)
+        logger.error(f"Erreur load_images_flexible: {e}", exc_info=True)
         raise
 
 def load_images_from_folder(
@@ -426,24 +442,10 @@ def load_images_from_folder(
     normalize: bool = True
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
-    Version compatible ancien code - utilise la nouvelle fonction flexible.
-    
-    Args:
-        data_dir: Chemin vers le dossier du dataset
-        target_size: Taille cible pour le redimensionnement
-        normalize: Si True, normalise les valeurs entre 0 et 1
-        
-    Returns:
-        Tuple (images, labels) sous forme de numpy arrays
+    Ancienne API conservée pour compatibilité.
     """
-    config = ImageConfig(target_size=target_size, normalize=normalize)
-    X, y = load_images_flexible(data_dir, config=config)
-    
-    # Appliquer la normalisation si demandée
-    if normalize and len(X) > 0 and X.max() > 1.0:
-        X = X / 255.0
-    
-    return X, y
+    X, X_norm, _ = load_images_flexible(data_dir, target_size=target_size, config=ImageConfig(normalize=normalize))
+    return X_norm if normalize else X, None  
 
 # ===================================
 # FONCTIONS PRIVÉES DE CHARGEMENT

@@ -45,11 +45,11 @@ class LoggingCallback(TrainingCallback):
     def on_epoch_end(self, epoch: int, logs: Dict = None):
         if (epoch + 1) % self.log_every_n_epochs == 0:
             logger.info(
-                f"Epoch {epoch + 1}",
-                train_loss=logs.get('train_loss'),
-                val_loss=logs.get('val_loss'),
-                val_acc=logs.get('val_accuracy'),
-                lr=logs.get('lr')
+                f"Epoch {epoch + 1} - "
+                f"train_loss: {logs.get('train_loss')}, "
+                f"val_loss: {logs.get('val_loss')}, "
+                f"val_acc: {logs.get('val_accuracy')}, "
+                f"lr: {logs.get('lr')}"
             )
 
 

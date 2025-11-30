@@ -128,10 +128,10 @@ class ModelBuilder:
             n_trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
             
             logger.info(
-                f"Modèle construit: {config.model_type.value}",
-                total_params=n_params,
-                trainable_params=n_trainable,
-                device=str(self.device_manager.device)
+                f"Modèle construit: {config.model_type.value} - "
+                f"total_params: {n_params}, "
+                f"trainable_params: {n_trainable}, "
+                f"device: {str(self.device_manager.device)}"
             )
             
             return Result.ok(

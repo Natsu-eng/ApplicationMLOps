@@ -18,6 +18,7 @@ from monitoring.mlflow_collector import get_mlflow_collector
 
 # Import du système de logging centralisé
 from src.shared.logging import get_logger
+from utils.task_detector import TaskType
 
 # ========================
 # LOGGER
@@ -487,25 +488,18 @@ class StateManager:
         y: np.ndarray, 
         dir_path: str, 
         structure: dict, 
-        info: dict
+        info: dict,
+        y_train: Optional[np.ndarray] = None  # ✅ AJOUT
     ) -> bool:
         """
-        Charge des données images.
+        Charge des données images avec détection intelligente unsupervised/supervised.
         
         Args:
-            X: Images brutes
-            X_norm: Images normalisées
-            y: Labels
-            dir_path: Chemin du dossier
-            structure: Structure des dossiers
-            info: Métadonnées
-            
-        Returns:
-            True si succès, False si échec
+            y_train: Labels du TRAIN UNIQUEMENT (pour MVTec AD → détection unsupervised)
         """
         try:
             if len(X) == 0 or len(X) != len(y):
-                logger.error(f"❌ Images invalides: len(X)={len(X)}, len(y)={len(y)}")
+                logger.error(f"Images invalides: len(X)={len(X)}, len(y)={len(y)}")
                 return False
             
             # Reset avant chargement
@@ -523,24 +517,41 @@ class StateManager:
             d.loaded = True
             d.loaded_at = time.time()
             d.img_count = len(X)
-            d.img_shape = X.shape
-            d.n_classes = len(np.unique(y))
+            d.img_shape = X.shape[1:] if len(X.shape) > 3 else X.shape[1:]
             
-            # Détection tâche
-            unique_labels = set(np.unique(y))
-            if len(unique_labels) == 2 and unique_labels == {0, 1}:
-                d.task = "anomaly_detection"
-            else:
-                d.task = "classification"
+            d.y_train = y_train
+            
+            # === DÉTECTION INTELLIGENTE DE LA TÂCHE ===
+            from utils.task_detector import detect_cv_task
+            
+            # Si y_train fourni, l'utiliser pour détection
+            labels_for_detection = y_train if y_train is not None else y
+            
+            task_type, task_metadata = detect_cv_task(labels_for_detection)
+            
+            d.task = task_type.value
+            d.n_classes = task_metadata["n_classes"]
+            d.task_metadata = task_metadata
             
             self._update_auth()
             
+            # Logs détaillés
+            task_name = {
+                "unsupervised": "🔍 Unsupervised (MVTec AD)",
+                "anomaly_detection": "⚠️ Anomaly Supervised",
+                "binary_classification": "🎯 Binary Classification",
+                "multiclass_classification": "🎯 Multiclass Classification"
+            }.get(task_type.value, task_type.value)
+            
             logger.info(
-                f"✅ Images loaded: {len(X)} images | "
-                f"{d.n_classes} classes | Task: {d.task}"
+                f"✅ Images chargées: {len(X)} images | "
+                f"Tâche détectée: {task_name} | "
+                f"y_train fourni: {y_train is not None} | "
+                f"Classes détectées: {len(np.unique(labels_for_detection))}"
             )
+            
             return True
-        
+            
         except Exception as e:
             logger.error(f"❌ set_images error: {e}", exc_info=True)
             st.error(f"Erreur chargement images: {e}")

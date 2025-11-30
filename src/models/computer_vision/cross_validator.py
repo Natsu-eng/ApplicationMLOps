@@ -101,10 +101,10 @@ class CrossValidator:
                 }
             
             logger.info(
-                "Cross-validation terminée",
-                n_successful_folds=len(fold_results),
-                avg_accuracy=aggregated['accuracy']['mean'],
-                std_accuracy=aggregated['accuracy']['std']
+                f"Cross-validation terminée - "
+                f"n_successful_folds: {len(fold_results)}, "
+                f"avg_accuracy: {aggregated['accuracy']['mean']:.4f}, "
+                f"std_accuracy: {aggregated['accuracy']['std']:.4f}"
             )
             
             return Result.ok({

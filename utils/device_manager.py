@@ -22,9 +22,9 @@ class DeviceManager:
         elif torch.cuda.is_available():
             self._device = torch.device("cuda")
             logger.info(
-                "Device sélectionné: CUDA",
-                gpu_count=torch.cuda.device_count(),
-                gpu_name=torch.cuda.get_device_name(0)
+                f"Device sélectionné: CUDA - "
+                f"gpu_count: {torch.cuda.device_count()}, "
+                f"gpu_name: {torch.cuda.get_device_name(0)}"
             )
         else:
             self._device = torch.device("cpu")

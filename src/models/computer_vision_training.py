@@ -1,7 +1,6 @@
 """
 Production-Ready Computer Vision Training Pipeline
-Version 3.0 - Enterprise Grade
-
+Version 1.0 - Enterprise Grade
 Architecture:
 ✅ Configuration typée avec validation (Pydantic)
 ✅ Pipeline de preprocessing isolé et robuste
@@ -14,7 +13,6 @@ Architecture:
 ✅ Prédictions unifiées pour classification + autoencoders
 ✅ Gestion de mémoire optimisée
 """
-
 import time
 import warnings
 import copy
@@ -92,13 +90,13 @@ class TrainingConfig:
     use_class_weights: bool = False
     
     # Performance et reproductibilité
-    use_mixed_precision: bool = False  # Désactivé par défaut pour stabilité
+    use_mixed_precision: bool = False
     deterministic: bool = True
     seed: int = 42
     
     # DataLoader
-    num_workers: int = 0  # 0 pour éviter les problèmes de multiprocessing
-    pin_memory: bool = False  # False par défaut pour compatibilité CPU
+    num_workers: int = 0
+    pin_memory: bool = False
     
     # Sauvegarde
     checkpoint_dir: Optional[Path] = None
@@ -249,7 +247,7 @@ class SchedulerFactory:
 
 class ComputerVisionTrainer:
     """
-    Trainer principal production-ready pour Computer Vision.
+    Trainer principal pour Computer Vision Supervisé.
     
     Architecture garantissant:
     - Pas de fuite de données (fit sur train uniquement)
@@ -511,7 +509,13 @@ class ComputerVisionTrainer:
         
         # Analyse déséquilibre
         imbalance = DataValidator.check_class_imbalance(y_train)
-        logger.info("Analyse déséquilibre classes", **imbalance)
+        
+        # CORRECTION: Logging sans kwargs arbitraires
+        logger.info(
+            f"Analyse déséquilibre classes - "
+            f"severity: {imbalance.get('severity', 'unknown')}, "
+            f"ratio: {imbalance.get('ratio', 0):.2f}"
+        )
         
         if imbalance['severity'] in ['critical', 'high']:
             logger.warning(
@@ -547,12 +551,13 @@ class ComputerVisionTrainer:
             if X_val is None or len(X_val) == 0:
                 return Result.err("Données de validation vides")
             
+            # CORRECTION: Logging sans kwargs incompatibles
             logger.info(
-                "Début setup preprocessing",
-                train_shape=X_train.shape,
-                val_shape=X_val.shape,
-                train_dtype=X_train.dtype,
-                val_dtype=X_val.dtype
+                f"Début setup preprocessing - "
+                f"train_shape: {X_train.shape}, "
+                f"val_shape: {X_val.shape}, "
+                f"train_dtype: {X_train.dtype}, "
+                f"val_dtype: {X_val.dtype}"
             )
             
             # Création du preprocessor avec auto-détection de format
@@ -573,7 +578,10 @@ class ComputerVisionTrainer:
                 output_format="channels_first"
             )
             
-            # Validation post-processing critique
+            # CORRECTION: Validation post-processing ROBUSTE
+            if X_train_norm is None or X_val_norm is None:
+                return Result.err("Preprocessing a retourné None")
+            
             if X_train_norm.ndim != 4:
                 return Result.err(
                     f"Format invalide après preprocessing: {X_train_norm.ndim}D au lieu de 4D"
@@ -585,16 +593,23 @@ class ComputerVisionTrainer:
                     f"Attendu 1 (grayscale) ou 3 (RGB)"
                 )
             
-            # Logging détaillé pour traçabilité
+            # CORRECTION: Vérification NaN/Inf
+            if np.any(np.isnan(X_train_norm)) or np.any(np.isinf(X_train_norm)):
+                return Result.err("Données normalisées contiennent NaN ou Inf")
+            
+            # CORRECTION: Logging détaillé SANS kwargs problématiques
+            input_format = getattr(self.preprocessor, 'data_format_', 'unknown')
+            preprocessor_config_str = str(self.preprocessor.get_config() if hasattr(self.preprocessor, 'get_config') else {})
+            
             logger.info(
-                "Preprocessing configuré avec succès",
-                strategy="standardize",
-                input_format=getattr(self.preprocessor, 'data_format_', 'unknown'),
-                output_format="channels_first",
-                train_original_shape=X_train.shape,
-                train_processed_shape=X_train_norm.shape,
-                val_processed_shape=X_val_norm.shape,
-                preprocessor_config=self.preprocessor.get_config() if hasattr(self.preprocessor, 'get_config') else {}
+                f"Preprocessing configuré avec succès - "
+                f"strategy: standardize, "
+                f"input_format: {input_format}, "
+                f"output_format: channels_first, "
+                f"train_original: {X_train.shape}, "
+                f"train_processed: {X_train_norm.shape}, "
+                f"val_processed: {X_val_norm.shape}, "
+                f"config: {preprocessor_config_str[:100]}"
             )
             
             return Result.ok((X_train_norm, y_train, X_val_norm, y_val))
@@ -604,10 +619,10 @@ class ComputerVisionTrainer:
             return Result.err(f"Données invalides: {str(e)}")
         except Exception as e:
             logger.error(
-                f"Erreur technique preprocessing: {str(e)}",
-                exc_info=True,
-                train_shape=getattr(X_train, 'shape', None),
-                val_shape=getattr(X_val, 'shape', None)
+                f"Erreur technique preprocessing: {str(e)} - "
+                f"train_shape: {getattr(X_train, 'shape', None)}, "
+                f"val_shape: {getattr(X_val, 'shape', None)}",
+                exc_info=True
             )
             return Result.err(f"Erreur preprocessing: {str(e)}")
     
@@ -618,11 +633,15 @@ class ComputerVisionTrainer:
         
         if result.success:
             self.model = result.data
+            total_params = sum(p.numel() for p in self.model.parameters())
+            trainable_params = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
+            
+            # CORRECTION: Logging sans kwargs
             logger.info(
-                "Modèle construit avec succès",
-                model_type=self.model_config.model_type.value,
-                total_params=sum(p.numel() for p in self.model.parameters()),
-                trainable_params=sum(p.numel() for p in self.model.parameters() if p.requires_grad)
+                f"Modèle construit avec succès - "
+                f"model_type: {self.model_config.model_type.value}, "
+                f"total_params: {total_params}, "
+                f"trainable_params: {trainable_params}"
             )
         
         return result
@@ -661,7 +680,9 @@ class ComputerVisionTrainer:
                         device=self.device_manager.device
                     )
                     self.train_criterion = nn.CrossEntropyLoss(weight=weights_tensor)
-                    logger.info("Class weights appliqués sur train", weights=weights.tolist())
+                    
+                    # CORRECTION: Logging sans kwargs
+                    logger.info(f"Class weights appliqués sur train: {weights.tolist()}")
                 else:
                     self.train_criterion = nn.CrossEntropyLoss()
                 
@@ -669,11 +690,13 @@ class ComputerVisionTrainer:
                 self.val_criterion = nn.CrossEntropyLoss()
                 logger.info("Criterion: CrossEntropyLoss (classification)")
             
+            # CORRECTION: Logging sans kwargs
+            scheduler_name = self.training_config.scheduler.value if self.scheduler else "none"
             logger.info(
-                "Training setup complété",
-                optimizer=self.training_config.optimizer.value,
-                scheduler=self.training_config.scheduler.value if self.scheduler else "none",
-                use_class_weights=self.training_config.use_class_weights
+                f"Training setup complété - "
+                f"optimizer: {self.training_config.optimizer.value}, "
+                f"scheduler: {scheduler_name}, "
+                f"use_class_weights: {self.training_config.use_class_weights}"
             )
             
             return Result.ok(None)
@@ -701,16 +724,22 @@ class ComputerVisionTrainer:
             
             start_time = time.time()
             
-            # Callbacks train begin
+            # CORRECTION: Callbacks avec try/catch
             for cb in self.callbacks:
-                cb.on_train_begin()
+                try:
+                    cb.on_train_begin()
+                except Exception as e:
+                    logger.warning(f"Callback on_train_begin échoué: {e}")
             
             for epoch in range(self.training_config.epochs):
                 epoch_start = time.time()
                 
-                # Callbacks epoch begin
+                # CORRECTION: Callbacks avec try/catch
                 for cb in self.callbacks:
-                    cb.on_epoch_begin(epoch)
+                    try:
+                        cb.on_epoch_begin(epoch)
+                    except Exception as e:
+                        logger.warning(f"Callback on_epoch_begin échoué: {e}")
                 
                 # === TRAIN ===
                 train_loss = self._train_epoch(train_loader, is_autoencoder)
@@ -722,7 +751,7 @@ class ComputerVisionTrainer:
                 else:
                     val_loss, val_metrics = self._validate_epoch(val_loader, y_val)
                 
-                # Mise à jour historique
+                # CORRECTION: Indentation fix - Mise à jour historique
                 self.history['train_loss'].append(float(train_loss))
                 self.history['val_loss'].append(float(val_loss))
                 
@@ -740,7 +769,7 @@ class ComputerVisionTrainer:
                     else:
                         self.scheduler.step()
                 
-                # Callbacks epoch end
+                # CORRECTION: Callbacks avec try/catch et logging corrigé
                 logs = {
                     'epoch': epoch,
                     'train_loss': float(train_loss),
@@ -758,7 +787,10 @@ class ComputerVisionTrainer:
                     })
                 
                 for cb in self.callbacks:
-                    cb.on_epoch_end(epoch, logs)
+                    try:
+                        cb.on_epoch_end(epoch, logs)
+                    except Exception as e:
+                        logger.warning(f"Callback on_epoch_end échoué: {e}")
                 
                 # === EARLY STOPPING ===
                 if is_autoencoder:
@@ -776,9 +808,10 @@ class ComputerVisionTrainer:
                     patience_counter = 0
                     
                     metric_name = "loss" if is_autoencoder else "F1"
+                    # CORRECTION: Logging sans kwargs problématiques
                     logger.info(
-                        f"✨ Nouveau meilleur modèle ({metric_name}={best_val_metric:.4f})",
-                        epoch=epoch+1
+                        f"✨ Nouveau meilleur modèle ({metric_name}={best_val_metric:.4f}) - "
+                        f"epoch: {epoch+1}"
                     )
                     
                     # Sauvegarde checkpoint si configuré
@@ -789,10 +822,11 @@ class ComputerVisionTrainer:
                 
                 # Check early stopping
                 if patience_counter >= self.training_config.early_stopping_patience:
+                    # CORRECTION: Logging sans kwargs
                     logger.info(
-                        f"🛑 Early stopping déclenché",
-                        epoch=epoch+1,
-                        patience=patience_counter
+                        f"🛑 Early stopping déclenché - "
+                        f"epoch: {epoch+1}, "
+                        f"patience: {patience_counter}"
                     )
                     break
             
@@ -803,17 +837,21 @@ class ComputerVisionTrainer:
             
             training_time = time.time() - start_time
             
-            # Callbacks train end
+            # CORRECTION: Callbacks avec try/catch
             for cb in self.callbacks:
-                cb.on_train_end({'training_time': training_time})
+                try:
+                    cb.on_train_end({'training_time': training_time})
+                except Exception as e:
+                    logger.warning(f"Callback on_train_end échoué: {e}")
             
+            # CORRECTION: Logging sans kwargs problématiques
             logger.info(
-                "🎯 Entraînement terminé avec succès",
-                total_epochs=epoch+1,
-                best_epoch=best_epoch,
-                best_metric=best_val_metric,
-                training_time=f"{training_time:.1f}s",
-                avg_epoch_time=f"{training_time/(epoch+1):.2f}s"
+                f"🎯 Entraînement terminé avec succès - "
+                f"total_epochs: {epoch+1}, "
+                f"best_epoch: {best_epoch}, "
+                f"best_metric: {best_val_metric}, "
+                f"training_time: {training_time:.1f}s, "
+                f"avg_epoch_time: {training_time/(epoch+1):.2f}s"
             )
             
             result_metadata = {
@@ -832,7 +870,7 @@ class ComputerVisionTrainer:
         except Exception as e:
             logger.error(f"Erreur boucle training: {e}", exc_info=True)
             return Result.err(f"Training loop échoué: {str(e)}")
-    
+
     def _train_epoch(self, train_loader: DataLoader, is_autoencoder: bool = False) -> float:
         """Entraîne une époque - unifié pour classification et autoencoders"""
         self.model.train()
@@ -964,7 +1002,7 @@ class ComputerVisionTrainer:
             
         except Exception as e:
             logger.warning(f"Impossible de sauvegarder le checkpoint: {e}")
-    
+
     # ==================
     # MÉTHODES PUBLIQUES
     # ==================
@@ -1195,10 +1233,11 @@ class ComputerVisionTrainer:
                 zero_division=0
             )
             
+            # CORRECTION: Logging sans kwargs problématiques
             logger.info(
-                "✅ Évaluation classification complétée",
-                accuracy=metrics['accuracy'],
-                f1=metrics['f1']
+                f"✅ Évaluation classification complétée - "
+                f"accuracy: {metrics['accuracy']}, "
+                f"f1: {metrics['f1']}"
             )
             
             return Result.ok(metrics)
@@ -1272,11 +1311,12 @@ class ComputerVisionTrainer:
             except:
                 metrics['auc_roc'] = None
             
+            # CORRECTION: Logging sans kwargs problématiques
             logger.info(
-                "✅ Évaluation autoencoder complétée",
-                mean_error=metrics['mean_reconstruction_error'],
-                threshold=threshold,
-                accuracy=metrics['accuracy']
+                f"✅ Évaluation autoencoder complétée - "
+                f"mean_error: {metrics['mean_reconstruction_error']}, "
+                f"threshold: {threshold}, "
+                f"accuracy: {metrics['accuracy']}"
             )
             
             return Result.ok(metrics)
@@ -1358,52 +1398,79 @@ class ComputerVisionTrainer:
 
 
 # =================================
-# INTÉGRATION AVEC ANOMALY TAXONOMY
+# INTÉGRATION AVEC ANOMALY TAXONOMY  
 # =================================
 
 class AnomalyAwareTrainer:
     """
     Trainer spécialisé pour la détection d'anomalies avec taxonomie.
     
-    Fonctionnalités:
-    - Configuration optimale par type d'anomalie
-    - Seuils adaptés à la difficulté de détection
-    - Métriques ajustées selon l'impact business
-    - Support configuration manuelle ou automatique
+    NOUVEAU: Intégration complète restaurée depuis l'ancienne version
     """
     
     def __init__(
         self,
-        anomaly_type: str,
+        anomaly_type: Optional[str] = None,  
         *,
         model_config: Optional[ModelConfig] = None,
         training_config: Optional[TrainingConfig] = None,
         taxonomy_config: Optional[Dict[str, Any]] = None,
-        callbacks: Optional[List[TrainingCallback]] = None
+        callbacks: Optional[List[TrainingCallback]] = None,
+        auto_detect_from_state: bool = True
     ):
         """
         Initialise le trainer pour anomalies.
         
         Args:
-            anomaly_type: Type d'anomalie (structural, visual, geometric, etc.)
+            anomaly_type: Type d'anomalie (structural, visual, geometric) ou None pour auto
             model_config: Configuration du modèle (optionnel, sinon auto-configuré)
             training_config: Configuration d'entraînement (optionnel, sinon auto-configuré)
             taxonomy_config: Configuration de taxonomie personnalisée (optionnel)
             callbacks: Callbacks pour monitoring (optionnel)
+            auto_detect_from_state: Active détection automatique depuis STATE si anomaly_type=None
         """
+        from monitoring.state_managers import STATE
+        
+        # Détection automatique si nécessaire
+        if anomaly_type is None and auto_detect_from_state:
+            logger.info("🔍 Détection automatique du type d'anomalie depuis STATE")
+            anomaly_type = self._detect_anomaly_type_from_state(STATE)
+            
+            if anomaly_type is None:
+                logger.warning("⚠️ Impossible de détecter anomaly_type, fallback 'structural'")
+                anomaly_type = "structural"
+        
+        elif anomaly_type is None:
+            logger.info("ℹ️ Anomaly_type=None sans auto-détection, fallback 'structural'")
+            anomaly_type = "structural"
+        
         self.anomaly_type = anomaly_type
         self.taxonomy_config = taxonomy_config or self._get_default_taxonomy()
         self.callbacks = callbacks or []
         
-        # Validation de model_config si fourni
+        # Validation model_config si fourni
         if model_config is not None:
             if not isinstance(model_config.model_type, ModelType):
                 raise ValueError(
                     f"model_config.model_type doit être une instance de ModelType, "
                     f"reçu: {type(model_config.model_type)}"
                 )
+            
+            # Vérifier que c'est un modèle compatible anomalies
+            valid_anomaly_models = [
+                ModelType.CONV_AUTOENCODER,
+                ModelType.VAE,
+                ModelType.DENOISING_AE,
+                ModelType.PATCH_CORE
+            ]
+            
+            if model_config.model_type not in valid_anomaly_models:
+                logger.warning(
+                    f"⚠️ Modèle {model_config.model_type.value} inhabituel pour anomalies. "
+                    f"Modèles recommandés: {[m.value for m in valid_anomaly_models]}"
+                )
         
-        # Configuration automatique OU manuelle
+        # Configuration automatique ou manuelle
         if model_config is None or training_config is None:
             auto_model_config, auto_training_config = self._configure_for_anomaly()
             self.model_config = model_config or auto_model_config
@@ -1418,84 +1485,186 @@ class AnomalyAwareTrainer:
         self.model: Optional[nn.Module] = None
         self.preprocessor: Optional[DataPreprocessor] = None
         self.history: Dict[str, Any] = {}
-        
-        logger.info(
-            "✅ AnomalyAwareTrainer initialisé",
-            anomaly_type=anomaly_type,
-            model_type=self.model_config.model_type.value
-        )
+    
+    def _detect_anomaly_type_from_state(self, STATE) -> Optional[str]:
+        """
+        Détecte le type d'anomalie depuis STATE.data.
+        """
+        try:
+            # Stratégie 1: Metadata explicite
+            if hasattr(STATE.data, 'metadata') and STATE.data.metadata:
+                anomaly_type = STATE.data.metadata.get('anomaly_type')
+                if anomaly_type:
+                    logger.info(f"✅ Anomaly type depuis metadata: {anomaly_type}")
+                    return anomaly_type
+            
+            # Stratégie 2: Nom du dataset
+            if hasattr(STATE.data, 'name') and STATE.data.name:
+                name_lower = STATE.data.name.lower()
+                
+                if any(kw in name_lower for kw in ['crack', 'corrosion', 'deformation']):
+                    logger.info(f"✅ Anomaly type depuis nom: structural")
+                    return "structural"
+                
+                if any(kw in name_lower for kw in ['scratch', 'stain', 'color']):
+                    logger.info(f"✅ Anomaly type depuis nom: visual")
+                    return "visual"
+                
+                if any(kw in name_lower for kw in ['dimension', 'alignment', 'size']):
+                    logger.info(f"✅ Anomaly type depuis nom: geometric")
+                    return "geometric"
+            
+            # Stratégie 3: Structure MVTec AD
+            if hasattr(STATE.data, 'structure') and STATE.data.structure:
+                if STATE.data.structure.get('type') == 'mvtec_ad':
+                    logger.info(f"✅ Structure MVTec AD détectée → structural")
+                    return "structural"
+            
+            logger.warning("⚠️ Impossible de détecter anomaly_type automatiquement")
+            return None
+            
+        except Exception as e:
+            logger.error(f"❌ Erreur détection anomaly_type: {e}", exc_info=True)
+            return None
     
     def _get_default_taxonomy(self) -> Dict[str, Any]:
-        """Taxonomie par défaut si module externe indisponible"""
+        """Taxonomie par défaut production-ready."""
         return {
             "structural": {
                 "recommended_model": ModelType.CONV_AUTOENCODER,
                 "difficulty": "high",
                 "threshold": 0.90,
+                "description": "Défauts structurels (cracks, corrosion, deformation)",
                 "params": {
                     "latent_dim": 256,
                     "learning_rate": 1e-4,
-                    "base_filters": 32
+                    "base_filters": 32,
+                    "num_stages": 4
+                },
+                "training_params": {
+                    "epochs": 100,
+                    "batch_size": 32,
+                    "early_stopping_patience": 15,
+                    "use_class_weights": False  
                 }
             },
             "visual": {
                 "recommended_model": ModelType.DENOISING_AE,
                 "difficulty": "medium",
                 "threshold": 0.85,
+                "description": "Défauts visuels (scratch, stain, discoloration)",
                 "params": {
                     "latent_dim": 128,
                     "learning_rate": 1e-3,
-                    "base_filters": 64
+                    "base_filters": 64,
+                    "noise_factor": 0.1
+                },
+                "training_params": {
+                    "epochs": 80,
+                    "batch_size": 32,
+                    "early_stopping_patience": 12,
+                    "use_class_weights": False
                 }
             },
             "geometric": {
-                "recommended_model": ModelType.CUSTOM_RESNET,
+                "recommended_model": ModelType.VAE,
                 "difficulty": "low",
                 "threshold": 0.95,
+                "description": "Défauts géométriques (misalignment, dimension errors)",
                 "params": {
+                    "latent_dim": 64,
                     "learning_rate": 1e-3,
-                    "dropout_rate": 0.5
+                    "base_filters": 32,
+                    "beta": 1.0
+                },
+                "training_params": {
+                    "epochs": 60,
+                    "batch_size": 32,
+                    "early_stopping_patience": 10,
+                    "use_class_weights": False
                 }
             }
         }
     
     def _configure_for_anomaly(self) -> Tuple[ModelConfig, TrainingConfig]:
-        """Configure modèle et training selon le type d'anomalie"""
+        """Configure modèle et training selon le type d'anomalie."""
         category = self._get_anomaly_category(self.anomaly_type)
         config = self.taxonomy_config.get(category, self.taxonomy_config["structural"])
         
-        # Configuration du modèle
-        model_config = ModelConfig(
-            model_type=config["recommended_model"],
-            num_classes=2,  # Anomalie binaire
-            **config.get("params", {})
+        logger.info(
+            f"🔧 Configuration pour anomalie: {self.anomaly_type} (catégorie: {category}) - "
+            f"difficulty: {config.get('difficulty')}, "
+            f"recommended_model: {config['recommended_model'].value}"
         )
         
-        # Configuration de l'entraînement
+        # Configuration du modèle
+        model_params = config.get("params", {})
+        model_config = ModelConfig(
+            model_type=config["recommended_model"],
+            num_classes=2,
+            input_channels=model_params.get("input_channels", 3),
+            dropout_rate=model_params.get("dropout_rate", 0.0),
+            base_filters=model_params.get("base_filters", 32),
+            latent_dim=model_params.get("latent_dim", 256),
+            num_stages=model_params.get("num_stages", 4)
+        )
+        
+        # Configuration de l'entraînement depuis taxonomie
+        training_params = config.get("training_params", {})
         training_config = TrainingConfig(
-            learning_rate=config["params"].get("learning_rate", 1e-4),
-            epochs=100,
-            batch_size=32,
-            early_stopping_patience=15,
-            use_class_weights=True
+            epochs=training_params.get("epochs", 100),
+            batch_size=training_params.get("batch_size", 32),
+            learning_rate=model_params.get("learning_rate", 1e-4),
+            optimizer=OptimizerType.ADAMW,
+            scheduler=SchedulerType.REDUCE_ON_PLATEAU,
+            early_stopping_patience=training_params.get("early_stopping_patience", 15),
+            reduce_lr_patience=8,
+            use_class_weights=False,
+            gradient_clip=1.0,
+            deterministic=True,
+            seed=42,
+            num_workers=0,
+            pin_memory=False
+        )
+        
+        logger.info(
+            f"✅ Configuration générée - "
+            f"latent_dim: {model_config.latent_dim}, "
+            f"epochs: {training_config.epochs}, "
+            f"lr: {training_config.learning_rate}"
         )
         
         return model_config, training_config
     
     def _get_anomaly_category(self, anomaly_type: str) -> str:
-        """Détermine la catégorie d'anomalie"""
-        structural_types = ["crack", "corrosion", "deformation", "structural"]
-        visual_types = ["scratch", "stain", "discoloration", "visual"]
-        geometric_types = ["misalignment", "dimension_error", "geometric"]
+        """Détermine la catégorie d'anomalie avec mapping enrichi."""
+        category_mappings = {
+            "structural": [
+                "crack", "corrosion", "deformation", "structural",
+                "break", "fracture", "damage"
+            ],
+            "visual": [
+                "scratch", "stain", "discoloration", "visual",
+                "contamination", "dirt", "mark", "spot"
+            ],
+            "geometric": [
+                "misalignment", "dimension_error", "geometric",
+                "size", "position", "orientation"
+            ]
+        }
         
-        if anomaly_type in structural_types:
-            return "structural"
-        elif anomaly_type in visual_types:
-            return "visual"
-        elif anomaly_type in geometric_types:
-            return "geometric"
-        else:
-            return "structural"  # Fallback
+        anomaly_type_lower = anomaly_type.lower()
+        
+        for category, keywords in category_mappings.items():
+            if anomaly_type_lower in keywords:
+                logger.info(f"✅ Anomaly '{anomaly_type}' mappée à catégorie '{category}'")
+                return category
+        
+        logger.warning(
+            f"⚠️ Anomaly type '{anomaly_type}' non reconnue. "
+            f"Fallback catégorie 'structural'"
+        )
+        return "structural"
     
     def train(
         self,
@@ -1507,50 +1676,81 @@ class AnomalyAwareTrainer:
     ) -> Result:
         """
         Entraîne le modèle pour le type d'anomalie spécifique.
-        
-        Args:
-            X_train: Training features
-            y_train: Training labels
-            X_val: Validation features
-            y_val: Validation labels
-            callbacks: Callbacks supplémentaires (optionnel)
-            
-        Returns:
-            Result avec succès/échec et métadonnées
         """
-        active_callbacks = callbacks or self.callbacks
-        
-        trainer = ComputerVisionTrainer(
-            model_config=self.model_config,
-            training_config=self.training_config,
-            callbacks=active_callbacks
-        )
-        
-        result = trainer.fit(X_train, y_train, X_val, y_val)
-        
-        # Copier les attributs pour compatibilité
-        if result.success:
-            self.model = trainer.model
-            self.preprocessor = trainer.preprocessor
-            self.history = result.data['history']
-        
-        return result
+        try:
+            logger.info(
+                f"🚀 Début entraînement anomalies - "
+                f"anomaly_type: {self.anomaly_type}, "
+                f"model_type: {self.model_config.model_type.value}, "
+                f"X_train_shape: {X_train.shape}, "
+                f"X_val_shape: {X_val.shape}"
+            )
+            
+            # Fusion des callbacks
+            active_callbacks = (callbacks or []) + self.callbacks
+            
+            # Création du trainer standard
+            trainer = ComputerVisionTrainer(
+                model_config=self.model_config,
+                training_config=self.training_config,
+                callbacks=active_callbacks
+            )
+            
+            # Délégation à fit standard
+            result = trainer.fit(X_train, y_train, X_val, y_val)
+            
+            # Copie des attributs pour compatibilité
+            if result.success:
+                self.model = trainer.model
+                self.preprocessor = trainer.preprocessor
+                self.history = result.data['history']
+                
+                logger.info(
+                    f"✅ Entraînement anomalies terminé - "
+                    f"best_epoch: {self.history.get('best_epoch', 0)}, "
+                    f"best_loss: {self.history.get('best_val_loss', float('inf'))}"
+                )
+            else:
+                logger.error(
+                    f"❌ Entraînement anomalies échoué: {result.error}",
+                    exc_info=True
+                )
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"❌ Erreur critique entraînement anomalies: {e}", exc_info=True)
+            return Result.err(f"Entraînement anomalies échoué: {str(e)}")
     
     def predict(self, X: np.ndarray, **kwargs) -> Result:
-        """Wrapper pour prédictions - délègue au trainer interne"""
+        """Wrapper pour prédictions - délègue au trainer interne."""
         if self.model is None or self.preprocessor is None:
             return Result.err("Modèle non entraîné")
         
-        # Créer un trainer temporaire pour predict
-        temp_trainer = ComputerVisionTrainer(
-            self.model_config,
-            self.training_config
-        )
-        temp_trainer.model = self.model
-        temp_trainer.preprocessor = self.preprocessor
-        temp_trainer.device_manager = DeviceManager()
+        logger.info(f"🔮 Prédictions anomalies sur {len(X)} images")
         
-        return temp_trainer.predict(X, **kwargs)
+        try:
+            # Créer un trainer temporaire pour predict
+            temp_trainer = ComputerVisionTrainer(
+                self.model_config,
+                self.training_config
+            )
+            temp_trainer.model = self.model
+            temp_trainer.preprocessor = self.preprocessor
+            temp_trainer.device_manager = DeviceManager()
+            
+            result = temp_trainer.predict(X, **kwargs)
+            
+            if result.success:
+                logger.info("✅ Prédictions anomalies terminées")
+            else:
+                logger.error(f"❌ Prédictions anomalies échouées: {result.error}")
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"❌ Erreur prédictions anomalies: {e}", exc_info=True)
+            return Result.err(f"Prédictions échouées: {str(e)}")
 
 
 # ==================
@@ -1568,9 +1768,6 @@ class ModelInterpreter:
     ) -> Result:
         """
         Calcule l'importance des features via gradient.
-        
-        Simple approximation pour démonstration.
-        En production, utiliser SHAP, Grad-CAM, etc.
         
         Args:
             model: Modèle PyTorch
@@ -1663,8 +1860,6 @@ class DataAugmenter:
 class MLflowIntegration:
     """
     Intégration avec MLflow pour tracking d'expériences.
-    
-    Note: Nécessite mlflow installé
     """
     
     def __init__(self, experiment_name: str = "computer_vision_training"):
@@ -1689,12 +1884,6 @@ class MLflowIntegration:
     ) -> None:
         """
         Log une session d'entraînement complète.
-        
-        Args:
-            model_config: Configuration du modèle
-            training_config: Configuration d'entraînement
-            history: Historique d'entraînement
-            test_metrics: Métriques sur test set
         """
         if not self.mlflow_available:
             return
@@ -1751,17 +1940,7 @@ class ConfigFactory:
         - 'balanced': Configuration équilibrée
         - 'high_accuracy': Optimisé pour précision
         - 'production': Configuration production robuste
-        
-        Args:
-            preset: Nom du preset
-            
-        Returns:
-            (ModelConfig, TrainingConfig)
-            
-        Raises:
-            ValueError: Si le preset n'existe pas
         """
-        
         presets = {
             'quick_test': (
                 ModelConfig(

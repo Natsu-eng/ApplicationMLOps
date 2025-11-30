@@ -114,11 +114,7 @@ class DataPreprocessor:
         self.data_format_ = None  # 'channels_first' ou 'channels_last'
         self.original_shape_ = None
         
-        logger.info(
-            "DataPreprocessor initialisé",
-            strategy=strategy,
-            auto_detect_format=auto_detect_format
-        )
+        logger.info(f"Initialisation DataPreprocessor - strategy: {strategy}, auto_detect_format: {auto_detect_format}")
     
     def _detect_data_format(self, X: np.ndarray) -> str:
         """
@@ -208,12 +204,12 @@ class DataPreprocessor:
         self.fitted = True
         
         logger.info(
-            "Preprocessing fitted",
-            original_shape=self.original_shape_,
-            data_format=self.data_format_,
-            strategy=self.strategy,
-            mean_shape=getattr(self.mean_, 'shape', None),
-            std_shape=getattr(self.std_, 'shape', None)
+            f"Preprocessing fitted - "
+            f"original_shape: {self.original_shape_}, "
+            f"data_format: {self.data_format_}, "
+            f"strategy: {self.strategy}, "
+            f"mean_shape: {getattr(self.mean_, 'shape', None)}, "
+            f"std_shape: {getattr(self.std_, 'shape', None)}"
         )
         
         return self
@@ -262,10 +258,10 @@ class DataPreprocessor:
             raise ValueError(f"Format de sortie non supporté: {output_format}")
         
         logger.debug(
-            "Transformation appliquée",
-            input_shape=X.shape,
-            output_shape=X_out.shape,
-            output_format=output_format
+            f"Transformation appliquée - "
+            f"input_shape: {X.shape}, "
+            f"output_shape: {X_out.shape}, "
+            f"output_format: {output_format}"
         )
         
         return X_out
@@ -403,11 +399,11 @@ class DataValidator:
             class_counts = Counter(y)
             
             logger.info(
-                f"Validation {name} OK",
-                shape=X.shape,
-                n_samples=len(X),
-                n_classes=len(unique_classes),
-                class_distribution=dict(class_counts)
+                f"Validation {name} OK - "
+                f"shape: {X.shape}, "
+                f"n_samples: {len(X)}, "
+                f"n_classes: {len(unique_classes)}, "
+                f"class_distribution: {dict(class_counts)}"
             )
             
             return Result.ok(
@@ -510,22 +506,22 @@ class DataLoaderFactory:
             )
             
             logger.debug(
-                "DataLoader créé avec succès",
-                n_samples=len(dataset),
-                input_shape=X.shape,
-                tensor_shape=X_tensor.shape,
-                n_batches=len(loader),
-                batch_size=batch_size
+                f"DataLoader créé avec succès - "
+                f"n_samples: {len(dataset)}, "
+                f"input_shape: {X.shape}, "
+                f"tensor_shape: {X_tensor.shape}, "
+                f"n_batches: {len(loader)}, "
+                f"batch_size: {batch_size}"
             )
             
             return loader
             
         except Exception as e:
             logger.error(
-                f"Erreur création DataLoader: {str(e)}",
-                exc_info=True,
-                X_shape=getattr(X, 'shape', None),
-                y_shape=getattr(y, 'shape', None),
-                batch_size=batch_size
+                f"Erreur création DataLoader: {str(e)} - "
+                f"X_shape: {getattr(X, 'shape', None)}, "
+                f"y_shape: {getattr(y, 'shape', None)}, "
+                f"batch_size: {batch_size}",
+                exc_info=True
             )
             raise

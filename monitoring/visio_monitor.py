@@ -105,7 +105,7 @@ class ProductionMonitor:
                 result_data['alerts'] = alerts
                 
                 if alerts:
-                    logger.warning(f"Alertes détectées", alerts=alerts)
+                    logger.warning(f"Alertes détectées - alerts: {alerts}")
             
             return Result.ok(result_data)
             

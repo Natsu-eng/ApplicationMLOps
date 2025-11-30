@@ -38,9 +38,9 @@ class HyperparameterTuner:
         self.trials_history = []
         
         logger.info(
-            f"HyperparameterTuner initialisé",
-            n_trials=n_trials,
-            param_grid=param_grid
+            f"HyperparameterTuner initialisé - "
+            f"n_trials: {n_trials}, "
+            f"param_grid: {param_grid}"
         )
     
     def tune(
@@ -64,7 +64,7 @@ class HyperparameterTuner:
                 # Échantillonnage aléatoire des hyperparamètres
                 trial_params = self._sample_params()
                 
-                logger.info(f"Trial {trial + 1}/{self.n_trials}", params=trial_params)
+                logger.info(f"Trial {trial + 1}/{self.n_trials} - params: {trial_params}")
                 
                 # Configuration pour ce trial
                 trial_config = self._create_trial_config(trial_params)
@@ -98,18 +98,18 @@ class HyperparameterTuner:
                     self.best_score = score
                     self.best_params = trial_params
                     logger.info(
-                        f"Nouveau meilleur score!",
-                        score=score,
-                        params=trial_params
+                        f"Nouveau meilleur score! - "
+                        f"score: {score:.4f}, "
+                        f"params: {trial_params}"
                     )
             
             if self.best_params is None:
                 return Result.err("Aucun trial réussi")
             
             logger.info(
-                f"Tuning terminé",
-                best_score=self.best_score,
-                best_params=self.best_params
+                f"Tuning terminé - "
+                f"best_score: {self.best_score:.4f}, "
+                f"best_params: {self.best_params}"
             )
             
             return Result.ok({

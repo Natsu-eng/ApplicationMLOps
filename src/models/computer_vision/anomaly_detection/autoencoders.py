@@ -689,11 +689,11 @@ def get_autoencoder(
     
     except Exception as e:
         logger.error(
-            f"Erreur création AutoEncoder {model_type}: {e}",
-            exc_info=True,
-            input_size=input_size,
-            input_channels=input_channels,
-            latent_dim=latent_dim
+            f"Erreur création AutoEncoder {model_type}: {e} - "
+            f"input_size: {input_size}, "
+            f"input_channels: {input_channels}, "
+            f"latent_dim: {latent_dim}",
+            exc_info=True
         )
         raise
 

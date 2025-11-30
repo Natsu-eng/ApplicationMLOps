@@ -1,434 +1,284 @@
 """
-🚀 ML FACTORY PRO - Interface Professionnelle d'Entraînement Computer Vision
-Version fusionnée complète : Logique métier existante + Interface moderne
+🚀 ML FACTORY PRO - Training Computer Vision 
+Architecture propre avec séparation UI/logique métier
+Support supervisé + non-supervisé unifié
 """
 
 import streamlit as st
-import pandas as pd
 import numpy as np
-import plotly.graph_objects as go
-import plotly.express as px
-from datetime import datetime
+import torch
 import time
-import sys
-import os
-from src.shared.logging import get_logger
-import torch # type: ignore
-from typing import Any, Dict, Optional, Tuple, Union
+import plotly.graph_objects as go
+from typing import Dict, Any, List
 from collections import Counter
-from sklearn.model_selection import train_test_split
-from sklearn.utils.class_weight import compute_class_weight
 
+from src.shared.logging import get_logger
+
+# === IMPORTS COMPOSANTS UI ===
 from monitoring.state_managers import init, AppPage, STATE
+from ui.training_vision import (
+    inject_training_vision_css,
+    detect_training_mode,
+    perform_stratified_split,
+    validate_split_quality,
+    render_mode_badge,
+    render_split_distribution_chart,
+    render_split_stats_table,
+    render_validation_warnings,
+    filter_models_by_mode,
+    analyze_imbalance_by_mode,
+    render_imbalance_analysis
+)
 
-# Note: STATE est déjà un singleton, pas besoin de réassigner
-# Configuration des chemins d'import (si nécessaire)
-# sys.path.append(os.path.join(os.path.dirname(__file__), '..'))  # Redondant avec projet root
+# === IMPORTS LOGIQUE MÉTIER ===
+from src.models.computer_vision_training import (
+    TrainingConfig,
+    ModelType,
+    OptimizerType,
+    SchedulerType,
+    DataAugmenter,
+)
+from orchestrators.visio_training_orchestrator import (
+    training_orchestrator,
+    TrainingContext
+)
+from utils.callbacks import LoggingCallback, StreamlitCallback
+from sklearn.utils.class_weight import compute_class_weight
 
 logger = get_logger(__name__)
 
-# Imports de votre logique métier existante
-try:
-    from src.models.computer_vision_training import (
-        ComputerVisionTrainer,
-        AnomalyAwareTrainer,
-        ModelConfig,
-        TrainingConfig,
-        ModelType,
-        OptimizerType,
-        SchedulerType,
-        DataAugmenter,
-        MLflowIntegration
-    )
-    from src.data.computer_vision_preprocessing import DataPreprocessor, DataValidator
-    from src.shared.logging import get_logger
-    from utils.callbacks import LoggingCallback, StreamlitCallback
-    from utils.device_manager import DeviceManager
-    LOGIC_METIER_AVAILABLE = True
-except ImportError as e:
-    LOGIC_METIER_AVAILABLE = False
-    st.warning(f"⚠️ Logique métier non disponible: {e}")
-
 # Configuration Streamlit
 st.set_page_config(
-    page_title="ML Factory Pro | Entraînement Computer Vision",
+    page_title="ML Factory Pro | Training CV",
     page_icon="🚀",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# CSS moderne professionnel
-st.markdown("""
-<style>
-    .main-header {
-        font-size: 2.5rem;
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        font-weight: 700;
-        margin-bottom: 1rem;
-    }
-    .workflow-step-card {
-        background: white;
-        padding: 2rem;
-        border-radius: 15px;
-        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-        border: 1px solid #e0e0e0;
-        margin-bottom: 1.5rem;
-    }
-    .model-card {
-        background: white;
-        padding: 1.5rem;
-        border-radius: 12px;
-        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-        border: 2px solid transparent;
-        transition: all 0.3s ease;
-        cursor: pointer;
-        height: 100%;
-    }
-    .model-card:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 6px 12px rgba(0, 0, 0, 0.15);
-    }
-    .model-card.selected {
-        border-color: #667eea;
-        background: linear-gradient(135deg, #f8f9ff 0%, #f0f4ff 100%);
-    }
-    .metric-card {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        color: white;
-        padding: 1.5rem;
-        border-radius: 10px;
-        text-align: center;
-    }
-    .status-badge {
-        display: inline-block;
-        padding: 0.3rem 0.8rem;
-        border-radius: 20px;
-        font-size: 0.8rem;
-        font-weight: 600;
-        margin: 0.2rem;
-    }
-    .badge-success { background: #28a745; color: white; }
-    .badge-warning { background: #ffc107; color: black; }
-    .badge-danger { background: #dc3545; color: white; }
-    .badge-info { background: #17a2b8; color: white; }
-    .param-section {
-        background: #f8f9fa;
-        padding: 1.5rem;
-        border-radius: 10px;
-        margin: 1rem 0;
-        border-left: 4px solid #28a745;
-    }
-    .config-error {
-        background: linear-gradient(135deg, #ff7979 0%, #eb4d4b 100%);
-        color: white;
-        padding: 1rem;
-        border-radius: 8px;
-        margin: 1rem 0;
-    }
-</style>
-""", unsafe_allow_html=True)
+# Initialisation STATE
+init()
+
 
 class MLTrainingWorkflowPro:
     """
-    🚀 Workflow professionnel d'entraînement Computer Vision
-    Combine la logique métier existante avec une interface moderne
+    Workflow professionnel refactorisé
+    Support complet supervisé + non-supervisé
     """
     
     def __init__(self):
-        self.logger = get_logger(__name__)
+        self.logger = logger
+        inject_training_vision_css()
     
     def render_header(self):
-        """En-tête professionnel avec navigation et métriques"""
+        """Header avec détection mode automatique"""
         col1, col2, col3 = st.columns([2, 1, 1])
         
         with col1:
             st.markdown('<div class="main-header">🚀 ML Factory Pro</div>', unsafe_allow_html=True)
-            st.markdown("**Workflow Intelligent d'Entraînement Computer Vision**")
+            st.markdown("**Workflow Intelligent Computer Vision**")
         
         with col2:
-            st.metric("Étape Actuelle", f"{STATE.current_step + 1}/6")
+            st.metric("Étape", f"{STATE.current_step + 1}/6")
             
         with col3:
-            if STATE.current_experiment:
-                st.info(f"🔄 Expérience: {STATE.current_experiment}")
-            else:
-                st.warning("⚡ Configuration en cours")
-                
-            # Statut GPU/CPU
             device = "CUDA 🚀" if torch.cuda.is_available() else "CPU ⚡"
             st.caption(f"Device: {device}")
+            
+            # Affichage mode si détecté
+            if STATE.loaded and STATE.data.y is not None:
+                mode, _ = detect_training_mode(STATE.data.y)
+                badge_color = "#4facfe" if mode == "supervised" else "#f5576c"
+                st.markdown(
+                    f"<div style='background:{badge_color};color:white;padding:0.3rem;border-radius:5px;text-align:center;font-size:0.7rem;'>"
+                    f"{'🎯 SUPERVISÉ' if mode == 'supervised' else '🔍 ANOMALIES'}"
+                    f"</div>",
+                    unsafe_allow_html=True
+                )
     
     def render_workflow_progress(self):
-        """Barre de progression intelligente avec étapes détaillées"""
+        """Barre progression"""
         steps = [
-            {"name": "📊 Données", "icon": "📊", "description": "Split et Analyse"},
-            {"name": "⚖️ Déséquilibre", "icon": "⚖️", "description": "Analyse et Correction"}, 
-            {"name": "🎨 Prétraitement", "icon": "🎨", "description": "Normalisation et Augmentation"},
-            {"name": "🤖 Modèle", "icon": "🤖", "description": "Architecture et Paramètres"},
-            {"name": "⚙️ Entraînement", "icon": "⚙️", "description": "Configuration Hyperparamètres"},
-            {"name": "🚀 Lancement", "icon": "🚀", "description": "Démarrage et Monitoring"}
+            ("📊", "Données", "Split et Analyse"),
+            ("⚖️", "Déséquilibre", "Analyse et Correction"),
+            ("🎨", "Prétraitement", "Normalisation"),
+            ("🤖", "Modèle", "Architecture"),
+            ("⚙️", "Entraînement", "Hyperparamètres"),
+            ("🚀", "Lancement", "Monitoring")
         ]
-        
-        current_step = STATE.current_step
         
         st.markdown("### 📋 Progression du Workflow")
         
-        # Affichage des étapes en grille responsive
         cols = st.columns(len(steps))
-        for idx, (col, step) in enumerate(zip(cols, steps)):
+        for idx, (col, (icon, name, desc)) in enumerate(zip(cols, steps)):
             with col:
-                if idx < current_step:
-                    status_icon = "✅"
-                    status_color = "#28a745"
-                    status_text = "Terminé"
-                elif idx == current_step:
-                    status_icon = "🔵" 
-                    status_color = "#667eea"
-                    status_text = "En cours"
+                if idx < STATE.current_step:
+                    status = ("✅", "#28a745", "Terminé")
+                elif idx == STATE.current_step:
+                    status = ("🔵", "#667eea", "En cours")
                 else:
-                    status_icon = "⚪"
-                    status_color = "#6c757d"
-                    status_text = "À venir"
+                    status = ("⚪", "#6c757d", "À venir")
                 
                 st.markdown(
-                    f"""
-                    <div style="text-align: center; padding: 1rem; border-radius: 10px; 
-                                background: {'#f8f9ff' if idx == current_step else 'white'}; 
-                                border: 2px solid {status_color};">
-                        <div style="font-size: 1.5rem; margin-bottom: 0.5rem;">{step['icon']}</div>
-                        <div style="font-weight: bold; color: {status_color}; margin-bottom: 0.25rem;">
-                            {step['name']}
-                        </div>
-                        <div style="font-size: 0.8rem; color: #666;">{step['description']}</div>
-                        <div style="font-size: 0.7rem; color: {status_color}; margin-top: 0.5rem;">
-                            {status_icon} {status_text}
-                        </div>
-                    </div>
-                    """,
+                    f"""<div style="text-align:center;padding:1rem;border-radius:10px;
+                    background:{'#f8f9ff' if idx == STATE.current_step else 'white'};
+                    border:2px solid {status[1]};">
+                    <div style="font-size:1.5rem;margin-bottom:0.5rem;">{icon}</div>
+                    <div style="font-weight:bold;color:{status[1]};">{name}</div>
+                    <div style="font-size:0.8rem;color:#666;">{desc}</div>
+                    <div style="font-size:0.7rem;color:{status[1]};margin-top:0.5rem;">
+                    {status[0]} {status[2]}</div></div>""",
                     unsafe_allow_html=True
                 )
         
         st.markdown("---")
     
-    # ============================================================================
-    # ÉTAPE 1: ANALYSE DES DONNÉES
-    # ============================================================================
+    # ========================================================================
+    # ÉTAPE 1: SPLIT AVEC DÉTECTION MODE
+    # ========================================================================
     
     def render_data_analysis_step(self):
-        """Étape 1: Analyse et préparation des données avec validation"""
+        """Étape 1 refactorisée avec détection mode"""
         st.markdown('<div class="workflow-step-card">', unsafe_allow_html=True)
-        st.header("📊 Étape 1: Analyse des Données")
+        st.header("📊 Étape 1: Analyse et Split des Données")
         
-        # Vérification des données chargées
-        if not STATE.loaded or STATE.data.X is None or STATE.data.y is None:
-            st.error("❌ Aucun dataset d'images chargé")
-            st.info("Veuillez charger un dataset depuis le dashboard principal.")
-            if st.button("📊 Aller au Dashboard", type="primary"):
+        # Vérification chargement
+        if not STATE.loaded or STATE.data.X is None:
+            st.error("❌ Aucun dataset chargé")
+            st.info("Chargez un dataset depuis le dashboard")
+            if st.button("📊 Dashboard", type="primary"):
                 st.switch_page("pages/1_dashboard.py")
             st.markdown('</div>', unsafe_allow_html=True)
             return
         
-        X = STATE.data.X
-        y = STATE.data.y
+        X, y = STATE.data.X, STATE.data.y
         
-        # Métriques principales des données
-        col1, col2, col3, col4 = st.columns(4)
-        
-        with col1:
-            st.metric("📷 Images Total", f"{len(X):,}")
-        
-        with col2:
-            unique_classes = len(np.unique(y))
-            st.metric("🎯 Classes", unique_classes)
-        
-        with col3:
-            if len(X.shape) > 2:
-                img_shape = f"{X.shape[1]}×{X.shape[2]}"
-                if len(X.shape) > 3:
-                    img_shape += f"×{X.shape[3]}"
+        # === DÉTECTION AUTOMATIQUE DU MODE ===
+        try:
+            if hasattr(STATE.data, 'y_train') and STATE.data.y_train is not None:
+                mode, metadata = detect_training_mode(STATE.data.y_train)
             else:
-                img_shape = "N/A"
-            st.metric("📐 Taille Images", img_shape)
+                # Fallback si pas encore splitté
+                mode, metadata = detect_training_mode(STATE.data.y)
+            
+            logger.info(f"Mode détecté: {mode} | Metadata: {metadata}")
+        except ValueError as e:
+            st.error(f"❌ {e}")
+            st.markdown('</div>', unsafe_allow_html=True)
+            return
         
-        with col4:
-            data_type = "RGB" if (len(X.shape) > 3 and X.shape[-1] == 3) else "Grayscale" if (len(X.shape) > 3 and X.shape[-1] == 1) else "Unknown"
-            st.metric("🎨 Type", data_type)
+        # Badge mode
+        col_mode1, col_mode2 = st.columns([1, 2])
+        with col_mode1:
+            render_mode_badge(mode, metadata)
         
-        # Validation des données avec DataValidator (logique métier)
-        if LOGIC_METIER_AVAILABLE:
-            with st.expander("🔍 Validation Automatique des Données"):
-                validation_result = DataValidator.validate_input_data(X, y, "dataset")
-                if validation_result.success:
-                    st.success("✅ Données validées avec succès")
-                    st.json(validation_result.metadata)
-                else:
-                    st.error(f"❌ Problèmes détectés: {validation_result.error}")
+        with col_mode2:
+            st.info(f"""
+            **Caractéristiques Détectées:**
+            - **Images totales:** {len(X):,}
+            - **Classes:** {metadata['n_classes']}
+            - **Tâche:** {metadata['task'].replace('_', ' ').title()}
+            """)
         
         st.markdown("---")
         
-        # Configuration du split des données
-        st.subheader("🔧 Configuration du Split Train/Validation/Test")
+        # === CONFIGURATION SPLIT ===
+        st.subheader("🔧 Configuration du Split")
         
-        col_split1, col_split2 = st.columns(2)
-        
-        with col_split1:
+        col1, col2 = st.columns(2)
+        with col1:
             test_size = st.slider(
-                "Taille du Test Set (%)",
-                min_value=10,
-                max_value=40, 
-                value=20,
-                step=5,
-                help="Pourcentage d'images réservées pour le test final"
+                "Taille Test Set (%)",
+                10, 40, 20, 5,
+                help="Pourcentage réservé au test final"
             )
         
-        with col_split2:
+        with col2:
             val_size = st.slider(
-                "Taille du Validation Set (%)", 
-                min_value=10,
-                max_value=30,
-                value=20,
-                step=5,
-                help="Pourcentage des données d'entraînement pour la validation pendant l'entraînement"
+                "Taille Validation Set (%)",
+                10, 30, 20, 5,
+                help="Pourcentage du train_val pour validation"
             )
         
-        # Calcul des tailles réelles
+        # Calcul tailles
         test_ratio = test_size / 100
         val_ratio = val_size / 100
         
         n_test = int(len(X) * test_ratio)
         n_train_val = len(X) - n_test
-        n_val = int(n_train_val * val_ratio) 
+        n_val = int(n_train_val * val_ratio)
         n_train = n_train_val - n_val
         
-        # Visualisation de la répartition
-        st.markdown("### 📈 Répartition des Données")
+        # Métriques
+        col_met1, col_met2, col_met3 = st.columns(3)
+        with col_met1:
+            st.metric("🏋️ Training", f"{n_train:,}")
+        with col_met2:
+            st.metric("📊 Validation", f"{n_val:,}")
+        with col_met3:
+            st.metric("🧪 Test", f"{n_test:,}")
         
-        fig = go.Figure(data=[
-            go.Pie(
-                labels=['Train', 'Validation', 'Test'],
-                values=[n_train, n_val, n_test],
-                hole=0.4,
-                marker_colors=['#28a745', '#17a2b8', '#6c757d'],
-                textinfo='percent+value',
-                hovertemplate='<b>%{label}</b><br>Échantillons: %{value}<br>Pourcentage: %{percent}<extra></extra>'
-            )
-        ])
-        
-        fig.update_layout(
-            title="Distribution Train/Validation/Test",
-            showlegend=True,
-            height=300,
-            annotations=[dict(text=f'Total: {len(X):,}', x=0.5, y=0.5, font_size=12, showarrow=False)]
-        )
-        
-        st.plotly_chart(fig, use_container_width=True)
-        
-        # Affichage des statistiques détaillées
-        col_stats1, col_stats2, col_stats3 = st.columns(3)
-        
-        with col_stats1:
-            st.markdown(
-                f"<div class='metric-card'>"
-                f"<h3>🏋️</h3>"
-                f"<h4>Training Set</h4>"
-                f"<h2>{n_train:,}</h2>"
-                f"<p>Échantillons</p>"
-                f"</div>",
-                unsafe_allow_html=True
-            )
-        
-        with col_stats2:
-            st.markdown(
-                f"<div class='metric-card'>"
-                f"<h3>📊</h3>"
-                f"<h4>Validation Set</h4>"
-                f"<h2>{n_val:,}</h2>"
-                f"<p>Échantillons</p>"
-                f"</div>",
-                unsafe_allow_html=True
-            )
-        
-        with col_stats3:
-            st.markdown(
-                f"<div class='metric-card'>"
-                f"<h3>🧪</h3>"
-                f"<h4>Test Set</h4>"
-                f"<h2>{n_test:,}</h2>"
-                f"<p>Échantillons</p>"
-                f"</div>",
-                unsafe_allow_html=True
-            )
-        
-        # Bouton de validation et split
+        # === BOUTON SPLIT ===
         st.markdown("---")
-        if st.button("🔄 Effectuer le Split et Continuer", type="primary", use_container_width=True):
-            with st.spinner("Séparation des données avec stratification..."):
+        if st.button("🔄 Effectuer le Split", type="primary", use_container_width=True):
+            with st.spinner("Split en cours..."):
                 try:
-                    # Split des données avec stratification
-                    X_train_val, X_test, y_train_val, y_test = train_test_split(
-                        X, y, test_size=test_ratio, stratify=y, random_state=42
-                    )
-                    X_train, X_val, y_train, y_val = train_test_split(
-                        X_train_val, y_train_val, 
-                        test_size=val_ratio / (1 - test_ratio),
-                        stratify=y_train_val, 
-                        random_state=42
+                    # Split avec fonction helper
+                    split_result = perform_stratified_split(
+                        X, y,
+                        test_size=test_ratio,
+                        val_size=val_ratio,
+                        mode=mode
                     )
                     
-                    # Sauvegarde dans session_state
-                    # APRÈS - Utilisez les propriétés du StateManager
-                    STATE.data.X_train = X_train
-                    STATE.data.X_val = X_val
-                    STATE.data.X_test = X_test
-                    STATE.data.y_train = y_train
-                    STATE.data.y_val = y_val
-                    STATE.data.y_test = y_test
-
-                    # Pour les autres attributs, utilisez les setters ou créez des attributs dans data
-                    STATE.data.split_config = {
-                        "test_size": test_size,
-                        "val_size": val_size,
-                        "train_samples": n_train,
-                        "val_samples": n_val, 
-                        "test_samples": n_test
-                    }
-
-                    STATE.data.loaded = True
-
-                    STATE.data.dataset_info = {
-                        "original_samples": len(X),
-                        "train_samples": n_train,
-                        "val_samples": n_val,
-                        "test_samples": n_test,
-                        "num_classes": unique_classes,
-                        "input_shape": X.shape[1:] if len(X.shape) > 2 else X.shape
-                    }
+                    # Validation
+                    is_valid, warnings = validate_split_quality(split_result, mode, metadata)
                     
+                    if not is_valid:
+                        st.error("❌ Split invalide")
+                        render_validation_warnings(warnings)
+                        st.markdown('</div>', unsafe_allow_html=True)
+                        return
+                    
+                    # Sauvegarde STATE
+                    STATE.data.X_train = split_result["X_train"]
+                    STATE.data.X_val = split_result["X_val"]
+                    STATE.data.X_test = split_result["X_test"]
+                    STATE.data.y_train = split_result["y_train"]
+                    STATE.data.y_val = split_result["y_val"]
+                    STATE.data.y_test = split_result["y_test"]
+                    
+                    STATE.data.split_config = split_result["split_info"]
+                    STATE.data.split_config["mode"] = mode
+                    STATE.data.split_config["metadata"] = metadata
+                    
+                    # Visualisation
+                    st.success("✅ Split effectué avec succès")
+                    render_split_distribution_chart(split_result, mode)
+                    render_split_stats_table(split_result, mode, metadata)
+                    render_validation_warnings(warnings)
+                    
+                    st.balloons()
                     STATE.current_step = 1
-                    st.success("✅ Split effectué avec succès!")
                     st.rerun()
-                    
+                
                 except Exception as e:
-                    st.error(f"❌ Erreur lors du split: {str(e)}")
-                    self.logger.error(f"Split error: {e}", exc_info=True)
+                    logger.error(f"Erreur split: {e}", exc_info=True)
+                    st.error(f"❌ Erreur: {e}")
         
         st.markdown('</div>', unsafe_allow_html=True)
     
-    # ============================================================================
-    # ÉTAPE 2: ANALYSE DU DÉSÉQUILIBRE
-    # ============================================================================
+    # ========================================================================
+    # ÉTAPE 2: DÉSÉQUILIBRE ADAPTATIF
+    # ========================================================================
     
     def render_imbalance_analysis_step(self):
-        """Étape 2: Analyse et correction du déséquilibre des classes"""
+        """Étape 2 refactorisée avec logique par mode"""
         st.markdown('<div class="workflow-step-card">', unsafe_allow_html=True)
         st.header("⚖️ Étape 2: Gestion du Déséquilibre")
         
-        # Vérification des données d'entraînement
         if not STATE.loaded or STATE.data.y_train is None:
-            st.error("❌ Données d'entraînement non disponibles")
-            if st.button("⬅️ Retour à l'étape 1", use_container_width=True):
+            st.error("❌ Données d'entraînement manquantes")
+            if st.button("⬅️ Retour Étape 1"):
                 STATE.current_step = 0
                 st.rerun()
             st.markdown('</div>', unsafe_allow_html=True)
@@ -436,629 +286,291 @@ class MLTrainingWorkflowPro:
         
         y_train = STATE.data.y_train
         
-        # Analyse du déséquilibre des classes
-        label_counts = Counter(y_train)
-        total_samples = len(y_train)
-        percentages = [count / total_samples * 100 for count in label_counts.values()]
+        # Récupération mode
+        split_config = getattr(STATE.data, 'split_config', {})
+        mode = split_config.get('mode', 'supervised')
+        metadata = split_config.get('metadata', {})
         
-        # Calcul du ratio de déséquilibre
-        max_count = max(label_counts.values())
-        min_count = min(label_counts.values()) 
-        imbalance_ratio = max_count / min_count if min_count > 0 else float('inf')
+        # Badge rappel mode
+        render_mode_badge(mode, metadata)
+        st.markdown("---")
         
-        # Détermination du niveau de déséquilibre
-        if imbalance_ratio > 10:
-            imbalance_level = "critique"
-            imbalance_color = "#dc3545"
-            imbalance_icon = "🚨"
-            recommendation = "Correction impérative nécessaire"
-        elif imbalance_ratio > 5:
-            imbalance_level = "élevé" 
-            imbalance_color = "#fd7e14"
-            imbalance_icon = "⚠️"
-            recommendation = "Correction fortement recommandée"
-        elif imbalance_ratio > 2:
-            imbalance_level = "modéré"
-            imbalance_color = "#ffc107"
-            imbalance_icon = "ℹ️"
-            recommendation = "Correction recommandée"
-        else:
-            imbalance_level = "faible"
-            imbalance_color = "#28a745"
-            imbalance_icon = "✅"
-            recommendation = "Aucune correction nécessaire"
+        # === ANALYSE DÉSÉQUILIBRE ===
+        imbalance_info = analyze_imbalance_by_mode(y_train, mode, metadata)
         
-        # Métriques d'analyse
-        col1, col2, col3 = st.columns(3)
+        render_imbalance_analysis(imbalance_info, y_train)
         
-        with col1:
-            st.markdown(
-                f"<div style='background: {imbalance_color}; color: white; padding: 1.5rem; border-radius: 10px; text-align: center;'>"
-                f"<h3 style='margin: 0; font-size: 2rem;'>{imbalance_icon}</h3>"
-                f"<h4 style='margin: 0.5rem 0;'>Niveau de Déséquilibre</h4>"
-                f"<h2 style='margin: 0;'>{imbalance_level.title()}</h2>"
-                f"</div>",
-                unsafe_allow_html=True
-            )
+        st.markdown("---")
         
-        with col2:
-            st.markdown(
-                f"<div class='metric-card'>"
-                f"<h3>⚖️</h3>"
-                f"<h4>Ratio de Déséquilibre</h4>"
-                f"<h2>{imbalance_ratio:.1f}:1</h2>"
-                f"<p>{recommendation}</p>"
-                f"</div>",
-                unsafe_allow_html=True
-            )
+        # === OPTIONS CORRECTION (CONDITIONNELLES) ===
+        st.subheader("🎯 Stratégies de Correction")
         
-        with col3:
-            st.markdown(
-                f"<div class='metric-card'>"
-                f"<h3>📊</h3>"
-                f"<h4>Échantillons Total</h4>"
-                f"<h2>{total_samples:,}</h2>"
-                f"<p>Images d'entraînement</p>"
-                f"</div>",
-                unsafe_allow_html=True
-            )
-        
-        # Graphique de distribution des classes
-        st.markdown("### 📈 Distribution des Classes")
-        
-        # Labels intelligents selon le contexte
-        if len(label_counts) == 2 and set(label_counts.keys()) == {0, 1}:
-            labels = ['Normal', 'Anomalie']
-            colors = ['#2ecc71', '#e74c3c']
-        else:
-            labels = [f"Classe {cls}" for cls in sorted(label_counts.keys())]
-            colors = px.colors.qualitative.Set3[:len(labels)]
-        
-        fig = go.Figure(data=[
-            go.Bar(
-                x=labels,
-                y=list(label_counts.values()),
-                text=[f"{count}<br>({perc:.1f}%)" for count, perc in zip(label_counts.values(), percentages)],
-                textposition='auto',
-                marker_color=colors,
-                hovertemplate='<b>%{x}</b><br>Count: %{y}<br>Percentage: %{text}<extra></extra>'
-            )
-        ])
-        
-        fig.update_layout(
-            title="Distribution des Classes dans le Training Set",
-            xaxis_title="Classes",
-            yaxis_title="Nombre d'images", 
-            template="plotly_white",
-            height=400
-        )
-        
-        st.plotly_chart(fig, use_container_width=True)
-        
-        # ============================================================================
-        # 🔥 CORRECTION CRITIQUE : Gestion uniforme des configs
-        # ============================================================================
-        
-        st.markdown("### 🎯 Stratégies de Correction du Déséquilibre")
-        
-        col_corr1, col_corr2 = st.columns(2)
-        
-        with col_corr1:
-            st.subheader("⚖️ Poids de Classe")
+        if mode == "supervised":
+            col1, col2 = st.columns(2)
             
-            # ✅ CORRECTION : Initialisation sécurisée
-            if not hasattr(STATE, 'imbalance_config') or STATE.imbalance_config is None:
-                STATE.imbalance_config = {}
-            
-            use_class_weights = st.checkbox(
-                "Activer les poids de classe automatiques",
-                value=imbalance_ratio > 2,
-                help="Ajuste automatiquement la loss function pour compenser le déséquilibre. Recommandé pour les ratios > 2:1"
-            )
-            
-            if use_class_weights:
-                classes = np.unique(y_train)
-                weights = compute_class_weight('balanced', classes=classes, y=y_train)
-                
-                # ✅ CORRECTION : Conversion explicite des types NumPy
-                weight_dict = {int(cls): float(weight) for cls, weight in zip(classes, weights)}
-                
-                st.info("**Poids calculés automatiquement:**")
-                for cls, weight in weight_dict.items():
-                    cls_name = "Normal" if cls == 0 else "Anomalie" if len(label_counts) == 2 else f"Classe {cls}"
-                    st.write(f"- **{cls_name}**: `{weight:.3f}` (×{weight:.1f} importance)")
-                
-                st.success("✅ Les poids seront calculés automatiquement lors de l'entraînement")
-                
-                # ✅ CORRECTION : Sauvegarde uniforme via dict
-                STATE.imbalance_config['use_class_weights'] = True
-                STATE.class_weights = weight_dict
-                
-                # ✅ CORRECTION : Propagation safe vers training_config
-                if not hasattr(STATE, 'training_config') or STATE.training_config is None:
-                    STATE.training_config = {}
-                
-                if isinstance(STATE.training_config, dict):
-                    STATE.training_config['use_class_weights'] = True
-                elif hasattr(STATE.training_config, 'use_class_weights'):
-                    STATE.training_config.use_class_weights = True
-            
-            else:
-                # ✅ CORRECTION : Désactivation safe
-                STATE.imbalance_config['use_class_weights'] = False
-                
-                if hasattr(STATE, 'training_config') and STATE.training_config is not None:
-                    if isinstance(STATE.training_config, dict):
-                        STATE.training_config['use_class_weights'] = False
-                    elif hasattr(STATE.training_config, 'use_class_weights'):
-                        STATE.training_config.use_class_weights = False
-        
-        with col_corr2:
-            st.subheader("🎭 Augmentation Ciblée")
-            use_targeted_augmentation = st.checkbox(
-                "Augmenter les classes minoritaires",
-                value=imbalance_ratio > 3,
-                help="Applique plus d'augmentation de données aux classes sous-représentées"
-            )
-            
-            augmentation_factor = 1  # Valeur par défaut
-            if use_targeted_augmentation:
-                augmentation_factor = st.slider(
-                    "Facteur d'augmentation maximal",
-                    min_value=2,
-                    max_value=10,
-                    value=min(5, int(imbalance_ratio)),
-                    help="Facteur de multiplication maximal pour les classes minoritaires"
+            with col1:
+                st.markdown("#### ⚖️ Poids de Classe")
+                use_weights = st.checkbox(
+                    "Activer poids automatiques",
+                    value=imbalance_info["use_class_weights"],
+                    help="Ajuste loss function selon déséquilibre"
                 )
                 
-                st.info(f"Les classes minoritaires seront augmentées jusqu'à x{augmentation_factor}")
-                
-                # ✅ CORRECTION : Sauvegarde uniforme
-                STATE.imbalance_config['use_targeted_augmentation'] = True
-                STATE.imbalance_config['augmentation_factor'] = augmentation_factor
-            else:
-                STATE.imbalance_config['use_targeted_augmentation'] = False
-                STATE.imbalance_config['augmentation_factor'] = 1
+                if use_weights:
+                    classes = np.unique(y_train)
+                    weights = compute_class_weight('balanced', classes=classes, y=y_train)
+                    weight_dict = {int(cls): float(weight) for cls, weight in zip(classes, weights)}
+                    
+                    st.info("**Poids calculés:**")
+                    for cls, weight in weight_dict.items():
+                        st.write(f"- Classe {cls}: `{weight:.3f}`")
+                    
+                    STATE.class_weights = weight_dict
+            
+            with col2:
+                st.markdown("#### 🎭 SMOTE")
+                use_smote = st.checkbox(
+                    "Activer SMOTE",
+                    value=imbalance_info["use_smote"],
+                    disabled=not imbalance_info["use_smote"],
+                    help="Génère échantillons synthétiques classes minoritaires"
+                )
         
-        # Validation avec DataValidator (logique métier)
-        if LOGIC_METIER_AVAILABLE:
-            with st.expander("🔍 Analyse Détaillée du Déséquilibre"):
-                try:
-                    imbalance_result = DataValidator.check_class_imbalance(y_train)
-                    if imbalance_result:
-                        # ✅ CORRECTION : Conversion des types NumPy pour JSON
-                        def convert_to_native_types(obj):
-                            if isinstance(obj, (np.integer, np.int32, np.int64)):
-                                return int(obj)
-                            elif isinstance(obj, (np.floating, np.float32, np.float64)):
-                                return float(obj)
-                            elif isinstance(obj, np.ndarray):
-                                return obj.tolist()
-                            elif isinstance(obj, dict):
-                                return {convert_to_native_types(k): convert_to_native_types(v) 
-                                        for k, v in obj.items()}
-                            elif isinstance(obj, list):
-                                return [convert_to_native_types(item) for item in obj]
-                            else:
-                                return obj
-                        
-                        imbalance_result_native = convert_to_native_types(imbalance_result)
-                        st.json(imbalance_result_native)
-                except Exception as e:
-                    st.error(f"Erreur lors de l'analyse du déséquilibre: {e}")
+        else:  # unsupervised
+            st.info("""
+            **ℹ️ Mode Détection d'Anomalies**
+            
+            Les autoencoders apprennent à reconstruire uniquement les images **normales**.
+            Le déséquilibre normal/anomalie est **attendu et souhaité**.
+            
+            ⚠️ **Class weights désactivés** (contre-productif pour autoencoders)
+            """)
+            use_weights = False
+            use_smote = False
         
         # Navigation
         st.markdown("---")
         col_nav1, col_nav2 = st.columns(2)
         
         with col_nav1:
-            if st.button("⬅️ Retour", use_container_width=True):
+            if st.button("⬅️ Retour"):
                 STATE.current_step = 0
                 st.rerun()
         
         with col_nav2:
-            if st.button("💾 Sauvegarder et Continuer ➡️", type="primary", use_container_width=True):
-                # ✅ CORRECTION : Sauvegarde complète avec conversion des types
-                label_counts_native = {int(k): int(v) for k, v in label_counts.items()}
+            if st.button("💾 Continuer ➡️", type="primary"):
+                # Sauvegarde config
+                STATE.imbalance_config = {
+                    "use_class_weights": use_weights,
+                    "use_smote": use_smote,
+                    "imbalance_ratio": float(imbalance_info["ratio"]),
+                    "mode": mode,
+                    "metadata": metadata
+                }
                 
-                STATE.imbalance_config.update({
-                    "use_class_weights": use_class_weights,
-                    "use_targeted_augmentation": use_targeted_augmentation,
-                    "augmentation_factor": augmentation_factor,
-                    "imbalance_ratio": float(imbalance_ratio),
-                    "imbalance_level": imbalance_level,
-                    "label_counts": label_counts_native
-                })
+                # Propager aux configs training si nécessaire
+                if not hasattr(STATE, 'training_config') or STATE.training_config is None:
+                    STATE.training_config = {}
                 
-                if use_class_weights and hasattr(STATE, 'class_weights') and STATE.class_weights:
-                    # Propager aux autres configs si nécessaire
-                    if not hasattr(STATE, 'training_config') or STATE.training_config is None:
-                        STATE.training_config = {}
-                    
-                    if isinstance(STATE.training_config, dict):
-                        STATE.training_config['use_class_weights'] = True
-                    elif hasattr(STATE.training_config, 'use_class_weights'):
-                        STATE.training_config.use_class_weights = True
+                if isinstance(STATE.training_config, dict):
+                    STATE.training_config['use_class_weights'] = use_weights
                 
-                st.success("✅ Configuration du déséquilibre sauvegardée")
+                st.success("✅ Configuration sauvegardée")
                 STATE.current_step = 2
                 st.rerun()
         
         st.markdown('</div>', unsafe_allow_html=True)
-
-
-    # ============================================================================
-    # ÉTAPE 3: PRÉTRAITEMENT ET AUGMENTATION
-    # ============================================================================
-
+    
+    # ========================================================================
+    # ÉTAPE 3: PRÉTRAITEMENT
+    # ========================================================================
+    
     def render_preprocessing_step(self):
-        """Étape 3: Configuration du prétraitement et de l'augmentation"""
+        """Étape 3 - Prétraitement"""
         st.markdown('<div class="workflow-step-card">', unsafe_allow_html=True)
         st.header("🎨 Étape 3: Prétraitement des Images")
         
-        st.markdown("""
-        **Configuration du pipeline de prétraitement**
-        Optimisez vos images pour l'entraînement avec des techniques standards du domaine.
-        """)
+        # Récupération mode
+        split_config = getattr(STATE.data, 'split_config', {})
+        mode = split_config.get('mode', 'supervised')
         
-        # Configuration de la normalisation
-        st.subheader("🔧 Normalisation des Images")
+        st.markdown("**Configuration du pipeline de prétraitement**")
         
-        col_norm1, col_norm2 = st.columns(2)
+        # Normalisation
+        st.subheader("🔧 Normalisation")
         
-        with col_norm1:
-            normalization_method = st.selectbox(
-                "Méthode de normalisation",
-                options=["standardize", "normalize", "none"],
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            normalization = st.selectbox(
+                "Méthode",
+                ["standardize", "normalize", "none"],
                 index=0,
-                help=(
-                    "**Standardize**: (x - mean) / std (recommandé)\n\n"
-                    "**Normalize**: min-max scaling [0, 1]\n\n"
-                    "**None**: Aucune normalisation (déconseillé)"
-                )
+                help="standardize: (x-mean)/std | normalize: [0,1] | none: aucune"
             )
         
-        with col_norm2:
-            if STATE.loaded and STATE.data.X is not None:
-                current_shape = STATE.data.X.shape
-                if len(current_shape) > 2:
-                    current_size = f"{current_shape[1]}×{current_shape[2]}"
-                    if len(current_shape) > 3:
-                        current_size += f"×{current_shape[3]}"
-                else:
-                    current_size = "N/A"
-                
-                st.info(f"**Taille actuelle:** {current_size}")
+        with col2:
+            if STATE.data.X is not None:
+                current_shape = STATE.data.X.shape[1:3]
+                st.info(f"Taille actuelle: {current_shape[0]}×{current_shape[1]}")
             
-            resize_option = st.selectbox(
+            resize = st.selectbox(
                 "Redimensionnement",
-                options=["Conserver original", "128×128", "224×224", "256×256", "384×384"],
-                index=0,
-                help="Taille cible pour les images. 224×224 est standard."
+                ["Conserver", "128×128", "224×224", "256×256"],
+                index=0
             )
         
         st.markdown("---")
         
-        # Configuration de l'augmentation de données
+        # Augmentation
         st.subheader("🎭 Augmentation de Données")
         
-        # ✅ CORRECTION : Initialisation sécurisée
         if not hasattr(STATE, 'preprocessing_config') or STATE.preprocessing_config is None:
             STATE.preprocessing_config = {}
         
         augmentation_enabled = st.checkbox(
-            "Activer l'augmentation de données",
-            value=STATE.preprocessing_config.get("augmentation_enabled", False),
-            help="Génère des variations des images d'entraînement"
+            "Activer augmentation",
+            value=STATE.preprocessing_config.get("augmentation_enabled", False)
         )
         
-        methods = []  # Initialisation par défaut
-        augmentation_factor = 1  # Valeur par défaut
+        methods = []
+        augmentation_factor = 1
         
         if augmentation_enabled:
-            st.markdown("#### 🔧 Méthodes d'Augmentation")
-            
             col_aug1, col_aug2 = st.columns(2)
             
             with col_aug1:
                 augmentation_factor = st.slider(
-                    "Facteur de multiplication",
-                    min_value=1,
-                    max_value=5,
-                    value=STATE.preprocessing_config.get("augmentation_factor", 2),
-                    help="Nombre de variations générées par image originale"
+                    "Facteur multiplication",
+                    1, 5,
+                    STATE.preprocessing_config.get("augmentation_factor", 2)
                 )
             
             with col_aug2:
-                st.markdown("**Techniques sélectionnées:**")
-                
+                st.markdown("**Techniques:**")
                 if st.checkbox("Flip horizontal", value=True):
                     methods.append('flip')
-                if st.checkbox("Rotation (±15°)", value=True):
+                if st.checkbox("Rotation ±15°", value=True):
                     methods.append('rotate')
                 if st.checkbox("Zoom aléatoire", value=False):
                     methods.append('zoom')
-                if st.checkbox("Décalage de luminosité", value=False):
+                if st.checkbox("Luminosité", value=False):
                     methods.append('brightness')
-                if st.checkbox("Ajout de bruit gaussien", value=False):
-                    methods.append('noise')
             
-            # Affichage de l'impact de l'augmentation
-            if STATE.loaded and STATE.data.X_train is not None:
-                original_count = len(STATE.data.X_train)
-                augmented_count = original_count * augmentation_factor
-                
-                st.info(f"""
-                **Impact de l'augmentation:**
-                - Images originales: {original_count:,}
-                - Après augmentation: {augmented_count:,} (x{augmentation_factor})
-                - Gain: +{augmented_count - original_count:,} images
-                """)
-        
-        # ✅ CORRECTION : Configuration safe de DataAugmenter
-        if LOGIC_METIER_AVAILABLE and augmentation_enabled:
-            with st.expander("🔍 Configuration Avancée de l'Augmentation"):
-                try:
-                    if methods:
-                        # ✅ CORRECTION : Instanciation correcte avec paramètres
-                        augmenter = DataAugmenter(methods=methods)
-                        st.success("✅ DataAugmenter configuré avec succès")
-                        st.json({"methods": methods, "factor": augmentation_factor})
-                    else:
-                        st.warning("⚠️ Aucune méthode d'augmentation sélectionnée")
-                except TypeError as e:
-                    # ✅ CORRECTION : Gestion explicite de l'erreur d'instanciation
-                    st.error(f"❌ Erreur configuration DataAugmenter: {e}")
-                    st.info("💡 Vérifiez la signature du constructeur DataAugmenter")
-                except Exception as e:
-                    st.error(f"❌ Erreur inattendue: {e}")
+            # Warning si mode anomalie
+            if mode == "unsupervised":
+                st.warning("⚠️ Mode anomalies: augmentation appliquée uniquement sur images normales")
         
         # Navigation
         st.markdown("---")
         col_nav1, col_nav2 = st.columns(2)
         
         with col_nav1:
-            if st.button("⬅️ Retour", use_container_width=True):
+            if st.button("⬅️ Retour"):
                 STATE.current_step = 1
                 st.rerun()
         
         with col_nav2:
-            if st.button("💾 Sauvegarder et Continuer ➡️", type="primary", use_container_width=True):
-                # ✅ CORRECTION : Mise à jour safe du dict
-                STATE.preprocessing_config.update({
-                    "strategy": normalization_method,
+            if st.button("💾 Continuer ➡️", type="primary"):
+                STATE.preprocessing_config = {
+                    "strategy": normalization,
                     "augmentation_enabled": augmentation_enabled,
                     "augmentation_factor": augmentation_factor,
                     "methods": methods,
-                    "resize": resize_option
-                })
+                    "resize": resize
+                }
                 
-                st.success("✅ Configuration de prétraitement sauvegardée")
+                st.success("✅ Configuration sauvegardée")
                 STATE.current_step = 3
                 st.rerun()
         
         st.markdown('</div>', unsafe_allow_html=True)
-        
-    # ============================================================================
-    # ÉTAPE 4: SÉLECTION ET CONFIGURATION DU MODÈLE
-    # ============================================================================
     
-    def get_model_categories(self):
-        """
-        Retourne les catégories de modèles organisées par use-case.
-        
-        Returns:
-            dict: Dictionnaire structuré avec catégories et modèles
-        """
-        return {
-            "🎯 Classification Supervisée": {
-                "color": "#28a745",
-                "description": "Modèles pour classification d'images avec labels",
-                "models": [
-                    {
-                        "id": "simple_cnn",
-                        "name": "CNN Simple", 
-                        "description": "Réseau convolutionnel basique - Idéal pour débuter et prototyper rapidement",
-                        "icon": "🖼️",
-                        "complexity": "Débutant",
-                        "training_time": "Rapide (~5-10 min)",
-                        "use_cases": ["Prototypage rapide", "Images simples", "Apprentissage CNN"],
-                        "requires_labels": True,
-                        "min_samples": 500,
-                        "gpu_recommended": False
-                    },
-                    {
-                        "id": "custom_resnet", 
-                        "name": "ResNet Personnalisé",
-                        "description": "Architecture résiduelle profonde avec skip connections - Performances élevées",
-                        "icon": "🏗️",
-                        "complexity": "Intermédiaire", 
-                        "training_time": "Moyen (~15-30 min)",
-                        "use_cases": ["Images complexes", "Haute précision", "Datasets moyens/larges"],
-                        "requires_labels": True,
-                        "min_samples": 1000,
-                        "gpu_recommended": True
-                    },
-                    {
-                        "id": "transfer_learning",
-                        "name": "Transfer Learning",
-                        "description": "Modèles pré-entraînés ImageNet fine-tunés - State-of-the-art avec peu de données",
-                        "icon": "🔄",
-                        "complexity": "Avancé",
-                        "training_time": "Variable (~10-20 min)",
-                        "use_cases": ["Données limitées", "Production", "Précision maximale"],
-                        "requires_labels": True,
-                        "min_samples": 200,
-                        "gpu_recommended": True
-                    }
-                ]
-            },
-            
-            "🔍 Détection d'Anomalies": {
-                "color": "#dc3545",
-                "description": "Modèles pour détecter des anomalies sans/avec peu de labels",
-                "models": [
-                    {
-                        "id": "conv_autoencoder",
-                        "name": "AutoEncodeur Convolutif", 
-                        "description": "Reconstruit les images normales - Détecte anomalies via erreur de reconstruction",
-                        "icon": "🎭",
-                        "complexity": "Intermédiaire",
-                        "training_time": "Moyen (~10-20 min)",
-                        "use_cases": ["Anomalies structurelles", "Contrôle qualité", "Images médicales"],
-                        "requires_labels": False,
-                        "min_samples": 500,
-                        "gpu_recommended": True,
-                        "note": "Entraîne uniquement sur images normales"
-                    },
-                    {
-                        "id": "variational_autoencoder",
-                        "name": "VAE (Variational)",
-                        "description": "Modèle génératif probabiliste - Robuste aux variations naturelles", 
-                        "icon": "🌌",
-                        "complexity": "Avancé",
-                        "training_time": "Long (~20-40 min)",
-                        "use_cases": ["Données multimodales", "Anomalies subtiles", "Génération d'images"],
-                        "requires_labels": False,
-                        "min_samples": 1000,
-                        "gpu_recommended": True,
-                        "note": "Meilleur pour anomalies complexes"
-                    },
-                    {
-                        "id": "denoising_autoencoder",
-                        "name": "AutoEncodeur Denoiseur",
-                        "description": "Apprend à débruiter les images - Très robuste en environnement réel bruité",
-                        "icon": "🧹", 
-                        "complexity": "Intermédiaire",
-                        "training_time": "Moyen (~15-25 min)",
-                        "use_cases": ["Données bruitées", "Environnements industriels", "Surveillance"],
-                        "requires_labels": False,
-                        "min_samples": 500,
-                        "gpu_recommended": True,
-                        "note": "Robuste au bruit et aux perturbations"
-                    },
-                    {
-                        "id": "patch_core",
-                        "name": "PatchCore",
-                        "description": "Mémoire bank de patchs avec coreset sampling - State-of-the-art pour défauts locaux",
-                        "icon": "🧩",
-                        "complexity": "Expert", 
-                        "training_time": "Variable (~10-30 min)",
-                        "use_cases": ["Anomalies locales", "Industrie 4.0", "Défauts de surface"],
-                        "requires_labels": False,
-                        "min_samples": 200,
-                        "gpu_recommended": True,
-                        "note": "⚠️ Nécessite FAISS installé | Excellent pour localisation précise"
-                    }
-                ]
-            },
-            
-            "📐 Similarité & Métrique": {
-                "color": "#ffc107",
-                "description": "Apprentissage métrique pour comparaison et recherche d'images",
-                "models": [
-                    {
-                        "id": "siamese_network",
-                        "name": "Réseau Siamois",
-                        "description": "Apprentissage métrique par paires - Compare similarité entre images", 
-                        "icon": "👯",
-                        "complexity": "Avancé",
-                        "training_time": "Long (~30-60 min)",
-                        "use_cases": ["Re-identification", "Recherche visuelle", "One-shot learning"],
-                        "requires_labels": True,
-                        "min_samples": 500,
-                        "gpu_recommended": True,
-                        "note": "⚠️ ATTENTION: Nécessite des paires d'images (similaires/dissimilaires)",
-                        "special_data_format": "pairs"
-                    }
-                ]
-            }
-        }
+    # ========================================================================
+    # ÉTAPE 4: SÉLECTION MODÈLE AVEC FILTRAGE
+    # ========================================================================
     
     def render_model_selection_step(self):
-        """Étape 4: Sélection et configuration du modèle avec interface moderne"""
+        """Étape 4 avec filtrage modèles par mode"""
         st.markdown('<div class="workflow-step-card">', unsafe_allow_html=True)
         st.header("🤖 Étape 4: Sélection du Modèle")
         
-        st.markdown("### 🎯 Choisissez votre architecture de modèle")
+        # Récupération mode
+        split_config = getattr(STATE.data, 'split_config', {})
+        mode = split_config.get('mode', 'supervised')
+        metadata = split_config.get('metadata', {})
         
-        categories = self.get_model_categories()
+        # Rappel mode
+        col_mode, _ = st.columns([1, 2])
+        with col_mode:
+            render_mode_badge(mode, metadata)
         
-        # Navigation par catégories avec tabs
-        category_tabs = st.tabs([f"{category}" for category in categories.keys()])
+        st.markdown("---")
         
-        for i, (category, category_data) in enumerate(categories.items()):
-            with category_tabs[i]:
-                st.markdown(f"**{category}** - {len(category_data['models'])} modèles disponibles")
+        # Catalogue complet
+        all_models = self.get_model_categories()
+        
+        # === FILTRAGE PAR MODE ===
+        available_models = filter_models_by_mode(all_models, mode, metadata)
+        
+        if not available_models:
+            st.error(f"❌ Aucun modèle compatible avec mode {mode}")
+            st.markdown('</div>', unsafe_allow_html=True)
+            return
+        
+        n_models = sum(len(cat['models']) for cat in available_models.values())
+        st.info(f"**{n_models} modèles** disponibles pour mode **{mode}**")
+        
+        st.markdown("### 🎯 Modèles Disponibles")
+        
+        # Affichage par catégorie
+        for category, category_data in available_models.items():
+            with st.expander(f"{category} ({len(category_data['models'])} modèles)", expanded=True):
+                st.markdown(f"*{category_data['description']}*")
                 
-                # Affichage des modèles en grille responsive
+                # Grille 2 colonnes
                 model_cols = st.columns(2)
                 
                 for idx, model in enumerate(category_data["models"]):
                     col = model_cols[idx % 2]
                     
                     with col:
-                        # Vérification de la compatibilité avec les données
-                        has_labels = STATE.loaded and STATE.data.y_train is not None
-                        is_compatible = has_labels or not model["requires_labels"]
                         is_selected = STATE.selected_model_type == model["id"]
                         
                         card_class = "model-card selected" if is_selected else "model-card"
                         
-                        card_content = f"""
-                        <div class="{card_class}" style="opacity: {'1' if is_compatible else '0.6'};">
-                            <div style="display: flex; align-items: start; margin-bottom: 1rem;">
-                                <span style="font-size: 2rem; margin-right: 1rem;">{model['icon']}</span>
-                                <div style="flex: 1;">
-                                    <h4 style="margin: 0 0 0.5rem 0; color: #333;">{model['name']}</h4>
-                                    <span class="status-badge badge-{'success' if is_compatible else 'warning'}">
-                                        {'✅ Compatible' if is_compatible else '⚠️ Labels requis'}
-                                    </span>
-                                    <span class="status-badge" style="background: {category_data['color']}; color: white;">
-                                        {model['complexity']}
-                                    </span>
+                        st.markdown(
+                            f"""<div class="{card_class}">
+                            <div style="display:flex;align-items:start;margin-bottom:1rem;">
+                                <span style="font-size:2rem;margin-right:1rem;">{model['icon']}</span>
+                                <div style="flex:1;">
+                                    <h4 style="margin:0 0 0.5rem 0;">{model['name']}</h4>
+                                    <span class="status-badge badge-info">{model['complexity']}</span>
                                 </div>
                             </div>
-                            <p style="color: #666; font-size: 0.9rem; margin-bottom: 1rem;">{model['description']}</p>
-                            <div style="margin-bottom: 1rem;">
-                        """
+                            <p style="color:#666;font-size:0.9rem;">{model['description']}</p>
+                            </div>""",
+                            unsafe_allow_html=True
+                        )
                         
-                        for use_case in model['use_cases']:
-                            card_content += f'<span class="status-badge badge-info">{use_case}</span>'
-                        
-                        card_content += "</div></div>"
-                        
-                        st.markdown(card_content, unsafe_allow_html=True)
-                        
-                        # Bouton de sélection
-                        if is_compatible:
-                            if st.button(
-                                "✅ Sélectionné" if is_selected else "📝 Sélectionner",
-                                key=f"select_{model['id']}",
-                                use_container_width=True,
-                                type="primary" if is_selected else "secondary"
-                            ):
-                                STATE.selected_model_type = model["id"]
-                                STATE.model_config = {
-                                    "model_type": model["id"],
-                                    "model_params": self.get_default_model_params(model["id"])
-                                }
-                                st.success(f"✅ {model['name']} sélectionné")
-                                st.rerun()
-                        else:
-                            st.button(
-                                "🔒 Labels requis",
-                                key=f"disabled_{model['id']}",
-                                use_container_width=True,
-                                disabled=True,
-                                help="Ce modèle nécessite des labels d'entraînement"
-                            )
+                        if st.button(
+                            "✅ Sélectionné" if is_selected else "📝 Sélectionner",
+                            key=f"select_{model['id']}",
+                            use_container_width=True,
+                            type="primary" if is_selected else "secondary"
+                        ):
+                            STATE.selected_model_type = model["id"]
+                            STATE.model_config = {
+                                "model_type": model["id"],
+                                "model_params": self.get_default_model_params(model["id"])
+                            }
+                            st.success(f"✅ {model['name']} sélectionné")
+                            st.rerun()
         
-        # Configuration avancée si modèle sélectionné
+        # Config avancée si modèle sélectionné
         if STATE.selected_model_type:
             st.markdown("---")
-            st.subheader(f"⚙️ Configuration Avancée - {STATE.selected_model_type.upper()}")
-            
+            st.subheader(f"⚙️ Configuration - {STATE.selected_model_type.upper()}")
             self.render_model_specific_parameters()
         
         # Navigation
@@ -1066,450 +578,184 @@ class MLTrainingWorkflowPro:
         col_nav1, col_nav2 = st.columns(2)
         
         with col_nav1:
-            if st.button("⬅️ Retour", use_container_width=True):
+            if st.button("⬅️ Retour"):
                 STATE.current_step = 2
                 st.rerun()
         
         with col_nav2:
-            if st.button("💾 Continuer vers l'Entraînement ➡️", type="primary", use_container_width=True):
+            if st.button("💾 Continuer ➡️", type="primary"):
                 if STATE.selected_model_type:
                     STATE.current_step = 4
                     st.rerun()
                 else:
-                    st.error("❌ Veuillez sélectionner un modèle")
+                    st.error("❌ Sélectionnez un modèle")
         
         st.markdown('</div>', unsafe_allow_html=True)
     
-    def get_default_model_params(self, model_type):
-        """
-        Retourne les paramètres par défaut optimisés pour chaque modèle.
-        
-        Args:
-            model_type (str): Type de modèle (ex: "simple_cnn", "patch_core")
-            
-        Returns:
-            dict: Dictionnaire des paramètres par défaut
-        """
+    def get_model_categories(self):
+        """Catalogue complet des modèles"""
+        return {
+            "🎯 Classification Supervisée": {
+                "color": "#28a745",
+                "description": "Modèles pour classification avec labels",
+                "models": [
+                    {
+                        "id": "simple_cnn",
+                        "name": "CNN Simple",
+                        "description": "Réseau basique - Idéal prototypage",
+                        "icon": "🖼️",
+                        "complexity": "Débutant"
+                    },
+                    {
+                        "id": "custom_resnet",
+                        "name": "ResNet Personnalisé",
+                        "description": "Architecture résiduelle profonde",
+                        "icon": "🏗️",
+                        "complexity": "Intermédiaire"
+                    },
+                    {
+                        "id": "transfer_learning",
+                        "name": "Transfer Learning",
+                        "description": "Modèles pré-entraînés ImageNet",
+                        "icon": "🔄",
+                        "complexity": "Avancé"
+                    }
+                ]
+            },
+            "🔍 Détection d'Anomalies": {
+                "color": "#dc3545",
+                "description": "Modèles pour anomalies sans/avec peu labels",
+                "models": [
+                    {
+                        "id": "conv_autoencoder",
+                        "name": "AutoEncodeur Convolutif",
+                        "description": "Reconstruit images normales",
+                        "icon": "🎭",
+                        "complexity": "Intermédiaire"
+                    },
+                    {
+                        "id": "variational_autoencoder",
+                        "name": "VAE (Variational)",
+                        "description": "Modèle génératif probabiliste",
+                        "icon": "🌌",
+                        "complexity": "Avancé"
+                    },
+                    {
+                        "id": "denoising_autoencoder",
+                        "name": "AutoEncodeur Denoiseur",
+                        "description": "Robuste au bruit",
+                        "icon": "🧹",
+                        "complexity": "Intermédiaire"
+                    },
+                    {
+                        "id": "patch_core",
+                        "name": "PatchCore",
+                        "description": "State-of-the-art défauts locaux",
+                        "icon": "🧩",
+                        "complexity": "Expert"
+                    }
+                ]
+            }
+        }
+    
+    def get_default_model_params(self, model_type: str):
+        """Paramètres par défaut"""
         defaults = {
-            # ===== CLASSIFICATION SUPERVISÉE =====
             "simple_cnn": {
                 "input_channels": 3,
                 "num_classes": 2,
                 "base_filters": 32,
-                "dropout_rate": 0.5,
-                "use_batch_norm": True
+                "dropout_rate": 0.5
             },
-            
             "custom_resnet": {
                 "input_channels": 3,
                 "num_classes": 2,
                 "base_filters": 64,
-                "num_blocks": [2, 2, 2, 2],
-                "dropout_rate": 0.3,
-                "use_batch_norm": True
+                "dropout_rate": 0.3
             },
-            
             "transfer_learning": {
                 "input_channels": 3,
                 "num_classes": 2,
                 "backbone_name": "resnet50",
                 "pretrained": True,
-                "freeze_layers": 0,
-                "dropout_rate": 0.5,
-                "use_custom_classifier": True
+                "dropout_rate": 0.5
             },
-            
-            # ===== DÉTECTION D'ANOMALIES =====
             "conv_autoencoder": {
                 "input_channels": 3,
                 "latent_dim": 256,
                 "base_filters": 32,
-                "num_stages": 4,
-                "dropout_rate": 0.2,
-                "use_skip_connections": False,
-                "use_vae": False
+                "num_stages": 4
             },
-            
             "variational_autoencoder": {
                 "input_channels": 3,
                 "latent_dim": 128,
                 "base_filters": 32,
-                "num_stages": 4,
-                "dropout_rate": 0.2,
-                "use_skip_connections": False,
-                "beta": 1.0  # Poids KL divergence
+                "beta": 1.0
             },
-            
             "denoising_autoencoder": {
                 "input_channels": 3,
                 "latent_dim": 256,
-                "base_filters": 32,
-                "num_stages": 4,
-                "dropout_rate": 0.2,
-                "noise_factor": 0.1,
-                "use_skip_connections": False
+                "noise_factor": 0.1
             },
-            
             "patch_core": {
                 "backbone_name": "wide_resnet50_2",
                 "patchcore_layers": ["layer2", "layer3"],
-                "faiss_index_type": "Flat",
-                "coreset_ratio": 0.01,
-                "num_neighbors": 1,
-                "patch_size": 3,
-                "stride": 1
-            },
-            
-            # ===== SIMILARITÉ & MÉTRIQUE =====
-            "siamese_network": {
-                "input_channels": 3,
-                "backbone_name": "resnet18",
-                "embedding_dim": 128,
-                "margin": 1.0,
-                "distance_metric": "euclidean",
-                "dropout_rate": 0.3
+                "coreset_ratio": 0.01
             }
         }
         
-        # Retour sécurisé avec fallback
-        if model_type not in defaults:
-            logger.warning(f"Paramètres par défaut non trouvés pour {model_type}, utilisation config minimale")
-            return {
-                "input_channels": 3,
-                "num_classes": 2
-            }
-        
-        return defaults[model_type]
+        return defaults.get(model_type, {"input_channels": 3})
     
     def render_model_specific_parameters(self):
-        """
-        Affiche les paramètres spécifiques au modèle sélectionné avec interface moderne.      
-        Gère les configurations pour tous les modèles avec validation et aide contextuelle.
-        """
+        """Paramètres spécifiques au modèle"""
         model_type = STATE.selected_model_type
         model_params = STATE.model_config.get("model_params", {})
         
-        st.markdown("#### 🔧 Paramètres du Modèle")
-        
-        # ========================================================================
-        # CLASSIFICATION: SIMPLE CNN & CUSTOM RESNET
-        # ========================================================================
         if model_type in ["simple_cnn", "custom_resnet"]:
             col1, col2 = st.columns(2)
             
             with col1:
                 base_filters = st.slider(
                     "Filtres de base",
-                    min_value=16,
-                    max_value=128,
-                    value=model_params.get("base_filters", 32 if model_type == "simple_cnn" else 64),
-                    step=16,
-                    help="🎯 Nombre de filtres dans la première couche. Plus = plus de capacité mais plus lent."
+                    16, 128,
+                    model_params.get("base_filters", 32),
+                    16
                 )
             
             with col2:
                 dropout_rate = st.slider(
-                    "Taux de dropout",
-                    min_value=0.0,
-                    max_value=0.7,
-                    value=model_params.get("dropout_rate", 0.5),
-                    step=0.1,
-                    help="🛡️ Régularisation contre l'overfitting. 0.3-0.5 recommandé."
+                    "Dropout",
+                    0.0, 0.7,
+                    model_params.get("dropout_rate", 0.5),
+                    0.1
                 )
             
             STATE.model_config["model_params"].update({
                 "base_filters": base_filters,
                 "dropout_rate": dropout_rate
             })
-            
-            st.info(f"💡 **{model_type.replace('_', ' ').title()}** : {base_filters * 4} filtres max | Dropout {dropout_rate:.1%}")
         
-        # ========================================================================
-        # CLASSIFICATION: TRANSFER LEARNING
-        # ========================================================================
         elif model_type == "transfer_learning":
             col1, col2 = st.columns(2)
             
             with col1:
-                backbone_name = st.selectbox(
-                    "Architecture de base",
-                    ["resnet18", "resnet50", "resnet101", "efficientnet_b0", "wide_resnet50_2"],
-                    index=1,
-                    help="🏗️ Backbone pré-entraîné. ResNet50 = bon compromis. EfficientNet = plus léger."
-                )
-                
-                pretrained = st.checkbox(
-                    "✅ Utiliser poids ImageNet",
-                    value=model_params.get("pretrained", True),
-                    help="⚡ FORTEMENT RECOMMANDÉ pour de meilleures performances"
-                )
-            
-            with col2:
-                freeze_layers = st.select_slider(
-                    "Stratégie de fine-tuning",
-                    options=[-1, 0, 50, 100, 150],
-                    value=model_params.get("freeze_layers", 0),
-                    format_func=lambda x: {
-                        -1: "🔒 Feature Extraction (gel complet)",
-                        0: "🔄 Fine-tuning complet",
-                        50: "⚡ Partiel (50 couches gelées)",
-                        100: "🎯 Léger (100 couches gelées)",
-                        150: "🔧 Feature extraction avancé"
-                    }[x],
-                    help="🎚️ Contrôle l'adaptation du modèle. 0 = apprentissage complet."
-                )
-            
-            dropout_rate = st.slider(
-                "Dropout du classifieur",
-                min_value=0.0,
-                max_value=0.7,
-                value=model_params.get("dropout_rate", 0.5),
-                step=0.1,
-                help="🛡️ Dropout des couches fully-connected finales"
-            )
-            
-            STATE.model_config["model_params"].update({
-                "backbone_name": backbone_name,
-                "pretrained": pretrained,
-                "freeze_layers": freeze_layers,
-                "dropout_rate": dropout_rate
-            })
-            
-            # Estimation paramètres
-            params_estimate = {
-                "resnet18": "11.7M",
-                "resnet50": "25.6M",
-                "resnet101": "44.5M",
-                "efficientnet_b0": "5.3M",
-                "wide_resnet50_2": "68.9M"
-            }
-            
-            st.success(f"✅ **{backbone_name}** sélectionné (~{params_estimate.get(backbone_name, 'N/A')} paramètres)")
-        
-        # ========================================================================
-        # ANOMALIES: AUTOENCODERS (Conv / VAE / Denoising)
-        # ========================================================================
-        elif model_type in ["conv_autoencoder", "variational_autoencoder", "denoising_autoencoder"]:
-            col1, col2, col3 = st.columns(3)
-            
-            with col1:
-                latent_dim = st.slider(
-                    "Dimension latente",
-                    min_value=32,
-                    max_value=512,
-                    value=model_params.get("latent_dim", 256 if model_type != "variational_autoencoder" else 128),
-                    step=32,
-                    help="🧠 Taille de l'espace compressé. Plus grand = plus de détails conservés."
-                )
-            
-            with col2:
-                base_filters = st.slider(
-                    "Filtres de base",
-                    min_value=16,
-                    max_value=128,
-                    value=model_params.get("base_filters", 32),
-                    step=16,
-                    help="🎯 Filtres du premier bloc. Affecte la capacité du modèle."
-                )
-            
-            with col3:
-                num_stages = st.slider(
-                    "Profondeur (stages)",
-                    min_value=2,
-                    max_value=6,
-                    value=model_params.get("num_stages", 4),
-                    help="🏗️ Nombre de blocs encodeur/décodeur. 4 = bon compromis."
-                )
-            
-            # Paramètres spécifiques
-            if model_type == "denoising_autoencoder":
-                noise_factor = st.slider(
-                    "🌫️ Facteur de bruit",
-                    min_value=0.0,
-                    max_value=0.5,
-                    value=model_params.get("noise_factor", 0.1),
-                    step=0.05,
-                    help="Intensité du bruit gaussien ajouté pendant l'entraînement"
-                )
-                STATE.model_config["model_params"]["noise_factor"] = noise_factor
-            
-            elif model_type == "variational_autoencoder":
-                beta = st.slider(
-                    "β (Beta) - Poids KL",
-                    min_value=0.1,
-                    max_value=10.0,
-                    value=model_params.get("beta", 1.0),
-                    step=0.1,
-                    help="🎚️ Balance reconstruction vs régularisation. 1.0 = β-VAE standard."
-                )
-                STATE.model_config["model_params"]["beta"] = beta
-            
-            dropout_rate = st.slider(
-                "Dropout",
-                min_value=0.0,
-                max_value=0.5,
-                value=model_params.get("dropout_rate", 0.2),
-                step=0.1,
-                help="🛡️ Régularisation (généralement plus faible pour autoencoders)"
-            )
-            
-            STATE.model_config["model_params"].update({
-                "latent_dim": latent_dim,
-                "base_filters": base_filters,
-                "num_stages": num_stages,
-                "dropout_rate": dropout_rate
-            })
-            
-            # Info compression ratio
-            compression_ratio = latent_dim / (64 * 64 * 3)  # Estimation pour 64x64 RGB
-            st.info(f"📊 **Taux de compression estimé** : ~{compression_ratio:.2%} | Latent: {latent_dim}D")
-        
-        # ========================================================================
-        # ANOMALIES: PATCHCORE
-        # ========================================================================
-        elif model_type == "patch_core":
-            st.warning("⚠️ **PatchCore nécessite FAISS installé** : `pip install faiss-cpu` ou `faiss-gpu`")
-            
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                backbone_name = st.selectbox(
-                    "Backbone d'extraction",
-                    ["resnet18", "resnet50", "wide_resnet50_2"],
-                    index=2,
-                    help="🏗️ WideResNet50 recommandé pour précision maximale"
-                )
-                
-                layers = st.multiselect(
-                    "Couches d'extraction",
-                    ["layer1", "layer2", "layer3"],
-                    default=model_params.get("patchcore_layers", ["layer2", "layer3"]),
-                    help="🎯 Couches du backbone pour extraire les features"
-                )
-            
-            with col2:
-                coreset_ratio = st.slider(
-                    "Ratio Coreset",
-                    min_value=0.001,
-                    max_value=0.1,
-                    value=model_params.get("coreset_ratio", 0.01),
-                    step=0.001,
-                    format="%.3f",
-                    help="💾 % de patchs conservés. Plus petit = plus rapide mais moins précis."
-                )
-                
-                num_neighbors = st.slider(
-                    "k-NN (voisins)",
-                    min_value=1,
-                    max_value=9,
-                    value=model_params.get("num_neighbors", 1),
-                    help="🔍 Nombre de plus proches voisins. 1 = distance minimale."
-                )
-            
-            # Options avancées
-            with st.expander("⚙️ Configuration Avancée"):
-                faiss_index_type = st.selectbox(
-                    "Type d'index FAISS",
-                    ["Flat", "IVFFlat"],
-                    help="Flat = exact (lent) | IVFFlat = approximatif (rapide)"
-                )
-                
-                patch_size = st.slider("Taille des patchs", 1, 5, 3)
-                stride = st.slider("Stride d'extraction", 1, 4, 1)
-            
-            STATE.model_config["model_params"].update({
-                "backbone_name": backbone_name,
-                "patchcore_layers": layers,
-                "coreset_ratio": coreset_ratio,
-                "num_neighbors": num_neighbors,
-                "faiss_index_type": faiss_index_type,
-                "patch_size": patch_size,
-                "stride": stride
-            })
-            
-            # Estimation mémoire
-            n_patches_estimate = int(1000 / coreset_ratio)
-            st.info(f"💾 **Mémoire bank estimée** : ~{n_patches_estimate:,} patchs | Backbone: {backbone_name}")
-        
-        # ========================================================================
-        # SIMILARITÉ: SIAMESE NETWORK
-        # ========================================================================
-        elif model_type == "siamese_network":
-            st.error("""
-            ⚠️ **ATTENTION : Format de Données Spécial Requis**
-            
-            Le réseau Siamois nécessite des **paires d'images** :
-            - Paires **positives** : Images similaires (même classe/personne)
-            - Paires **négatives** : Images dissimilaires (classes différentes)
-            
-            📊 Votre dataset actuel n'est probablement **PAS compatible**.
-            """)
-            
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                backbone_name = st.selectbox(
-                    "Architecture Backbone",
+                backbone = st.selectbox(
+                    "Backbone",
                     ["resnet18", "resnet50", "efficientnet_b0"],
-                    index=0,
-                    help="🏗️ ResNet18 recommandé pour démarrer"
-                )
-                
-                embedding_dim = st.slider(
-                    "Dimension embeddings",
-                    min_value=64,
-                    max_value=512,
-                    value=model_params.get("embedding_dim", 128),
-                    step=32,
-                    help="🧠 Taille de l'espace de représentation. 128 = bon compromis."
+                    index=1
                 )
             
             with col2:
-                margin = st.slider(
-                    "Marge (Contrastive Loss)",
-                    min_value=0.5,
-                    max_value=2.0,
-                    value=model_params.get("margin", 1.0),
-                    step=0.1,
-                    help="🎚️ Distance minimale entre paires négatives. 1.0 = standard."
-                )
-                
-                distance_metric = st.selectbox(
-                    "Métrique de distance",
-                    ["euclidean", "cosine"],
-                    help="📐 Euclidean = L2 | Cosine = angle entre vecteurs"
-                )
-            
-            dropout_rate = st.slider(
-                "Dropout",
-                min_value=0.0,
-                max_value=0.5,
-                value=model_params.get("dropout_rate", 0.3),
-                step=0.1
-            )
+                dropout_rate = st.slider("Dropout", 0.0, 0.7, 0.5, 0.1)
             
             STATE.model_config["model_params"].update({
-                "backbone_name": backbone_name,
-                "embedding_dim": embedding_dim,
-                "margin": margin,
-                "distance_metric": distance_metric,
+                "backbone_name": backbone,
                 "dropout_rate": dropout_rate
             })
-            
-            st.warning("""
-            💡 **Pour utiliser ce modèle** :
-            1. Organisez vos données en paires (anchor, positive, negative)
-            2. Implémentez un DataLoader spécialisé
-            3. Utilisez une Contrastive Loss ou Triplet Loss
-            
-            📚 Référez-vous à la documentation pour plus de détails.
-            """)
-            
-            st.info(f"📊 **Embedding** : {embedding_dim}D | Marge: {margin} | Distance: {distance_metric}")
     
-    # ============================================================================
-    # ÉTAPE 5: CONFIGURATION DE L'ENTRAÎNEMENT
-    # ============================================================================
+    # ========================================================================
+    # ÉTAPE 5: CONFIGURATION ENTRAÎNEMENT
+    # ========================================================================
     
     def render_training_config_step(self):
         """Étape 5: Configuration des hyperparamètres d'entraînement"""
@@ -1524,11 +770,8 @@ class MLTrainingWorkflowPro:
         with col_hyper1:
             epochs = st.slider(
                 "Nombre d'Époques",
-                min_value=5,
-                max_value=200,
-                value=50,
-                step=5,
-                help="Nombre de passages complets sur le dataset. 50-100 recommandé pour la plupart des cas."
+                5, 200, 50, 5,
+                help="Nombre de passages complets sur le dataset"
             )
         
         with col_hyper2:
@@ -1537,7 +780,7 @@ class MLTrainingWorkflowPro:
                 options=[1e-5, 5e-5, 1e-4, 5e-4, 1e-3, 5e-3],
                 value=1e-4,
                 format_func=lambda x: f"{x:.0e}",
-                help="Taux d'apprentissage. 1e-4 recommandé pour le fine-tuning, 1e-3 pour l'entraînement from scratch."
+                help="Taux d'apprentissage"
             )
         
         with col_hyper3:
@@ -1545,7 +788,7 @@ class MLTrainingWorkflowPro:
                 "Batch Size",
                 options=[8, 16, 32, 64, 128],
                 index=2,
-                help="Nombre d'images par batch. 32 recommandé pour la plupart des GPUs."
+                help="Nombre d'images par batch"
             )
         
         st.markdown("---")
@@ -1556,34 +799,20 @@ class MLTrainingWorkflowPro:
         col_opt1, col_opt2 = st.columns(2)
         
         with col_opt1:
-            if LOGIC_METIER_AVAILABLE:
-                optimizer = st.selectbox(
-                    "Optimiseur",
-                    options=[opt.value for opt in OptimizerType],
-                    index=0,
-                    help="AdamW recommandé pour la plupart des cas (meilleure généralisation que Adam)"
-                )
-            else:
-                optimizer = st.selectbox(
-                    "Optimiseur",
-                    options=["adamw", "adam", "sgd", "rmsprop"],
-                    index=0
-                )
+            optimizer = st.selectbox(
+                "Optimiseur",
+                options=["adamw", "adam", "sgd", "rmsprop"],
+                index=0,
+                help="AdamW recommandé pour la plupart des cas"
+            )
         
         with col_opt2:
-            if LOGIC_METIER_AVAILABLE:
-                scheduler = st.selectbox(
-                    "Learning Rate Scheduler",
-                    options=[sched.value for sched in SchedulerType],
-                    index=0,
-                    help="ReduceLROnPlateau réduit automatiquement le LR quand la loss stagne"
-                )
-            else:
-                scheduler = st.selectbox(
-                    "Scheduler",
-                    options=["reduce_on_plateau", "cosine", "step", "none"],
-                    index=0
-                )
+            scheduler = st.selectbox(
+                "Scheduler",
+                options=["reduce_on_plateau", "cosine", "step", "none"],
+                index=0,
+                help="ReduceLROnPlateau réduit automatiquement le LR"
+            )
         
         st.markdown("---")
         
@@ -1595,19 +824,15 @@ class MLTrainingWorkflowPro:
         with col_callback1:
             early_stopping_patience = st.slider(
                 "Early Stopping Patience",
-                min_value=3,
-                max_value=30,
-                value=10,
-                help="Arrête l'entraînement si pas d'amélioration pendant N époques. 10-15 recommandé."
+                3, 30, 10,
+                help="Arrête l'entraînement si pas d'amélioration"
             )
         
         with col_callback2:
             reduce_lr_patience = st.slider(
                 "Reduce LR Patience",
-                min_value=2,
-                max_value=15,
-                value=5,
-                help="Réduit le LR si pas d'amélioration pendant N époques. 5-8 recommandé."
+                2, 15, 5,
+                help="Réduit le LR si pas d'amélioration"
             )
         
         with col_callback3:
@@ -1615,7 +840,7 @@ class MLTrainingWorkflowPro:
                 "Weight Decay",
                 options=[0.0, 0.001, 0.01, 0.1],
                 value=0.01,
-                help="Régularisation L2 pour éviter l'overfitting. 0.01 recommandé."
+                help="Régularisation L2"
             )
         
         # Options avancées
@@ -1625,17 +850,14 @@ class MLTrainingWorkflowPro:
             with col_adv1:
                 gradient_clip = st.slider(
                     "Gradient Clipping",
-                    min_value=0.0,
-                    max_value=5.0,
-                    value=1.0,
-                    step=0.5,
-                    help="Limite l'amplitude des gradients pour stabiliser l'entraînement"
+                    0.0, 5.0, 1.0, 0.5,
+                    help="Limite l'amplitude des gradients"
                 )
                 
                 deterministic = st.checkbox(
                     "Mode Déterministe",
                     value=True,
-                    help="Rend les résultats reproductibles (seed fixé)"
+                    help="Rend les résultats reproductibles"
                 )
             
             with col_adv2:
@@ -1643,15 +865,13 @@ class MLTrainingWorkflowPro:
                     "Mixed Precision (FP16)",
                     value=torch.cuda.is_available(),
                     disabled=not torch.cuda.is_available(),
-                    help="Accélère l'entraînement sur GPU récents (Volta+). Requiert CUDA."
+                    help="Accélère l'entraînement sur GPU"
                 )
                 
                 num_workers = st.slider(
                     "DataLoader Workers",
-                    min_value=0,
-                    max_value=8,
-                    value=4,
-                    help="Nombre de processus pour charger les données en parallèle"
+                    0, 8, 4,
+                    help="Processus pour charger les données"
                 )
         
         # Navigation
@@ -1659,48 +879,29 @@ class MLTrainingWorkflowPro:
         col_nav1, col_nav2 = st.columns(2)
         
         with col_nav1:
-            if st.button("⬅️ Retour", use_container_width=True):
+            if st.button("⬅️ Retour"):
                 STATE.current_step = 3
                 st.rerun()
         
         with col_nav2:
-            if st.button("💾 Sauvegarder et Continuer ➡️", type="primary", use_container_width=True):
+            if st.button("💾 Sauvegarder et Continuer ➡️", type="primary"):
                 # Création de la configuration d'entraînement
-                if LOGIC_METIER_AVAILABLE:
-                    STATE.training_config = TrainingConfig(
-                        epochs=epochs,
-                        batch_size=batch_size,
-                        learning_rate=learning_rate,
-                        weight_decay=weight_decay,
-                        gradient_clip=gradient_clip,
-                        optimizer=OptimizerType(optimizer),
-                        scheduler=SchedulerType(scheduler),
-                        early_stopping_patience=early_stopping_patience,
-                        reduce_lr_patience=reduce_lr_patience,
-                        use_class_weights=STATE.imbalance_config.get('use_class_weights', False),
-                        deterministic=deterministic,
-                        use_mixed_precision=use_mixed_precision,
-                        num_workers=num_workers,
-                        seed=42
-                    )
-                else:
-                    # Fallback si la logique métier n'est pas disponible
-                    STATE.training_config = {
-                        "epochs": epochs,
-                        "batch_size": batch_size,
-                        "learning_rate": learning_rate,
-                        "weight_decay": weight_decay,
-                        "gradient_clip": gradient_clip,
-                        "optimizer": optimizer,
-                        "scheduler": scheduler,
-                        "early_stopping_patience": early_stopping_patience,
-                        "reduce_lr_patience": reduce_lr_patience,
-                        "use_class_weights": STATE.imbalance_config.get('use_class_weights', False),
-                        "deterministic": deterministic,
-                        "use_mixed_precision": use_mixed_precision,
-                        "num_workers": num_workers,
-                        "seed": 42
-                    }
+                STATE.training_config = {
+                    "epochs": epochs,
+                    "batch_size": batch_size,
+                    "learning_rate": learning_rate,
+                    "weight_decay": weight_decay,
+                    "gradient_clip": gradient_clip,
+                    "optimizer": optimizer,
+                    "scheduler": scheduler,
+                    "early_stopping_patience": early_stopping_patience,
+                    "reduce_lr_patience": reduce_lr_patience,
+                    "use_class_weights": STATE.imbalance_config.get('use_class_weights', False),
+                    "deterministic": deterministic,
+                    "use_mixed_precision": use_mixed_precision,
+                    "num_workers": num_workers,
+                    "seed": 42
+                }
                 
                 st.success("✅ Configuration d'entraînement sauvegardée")
                 STATE.current_step = 5
@@ -1708,12 +909,12 @@ class MLTrainingWorkflowPro:
         
         st.markdown('</div>', unsafe_allow_html=True)
     
-    # ============================================================================
+    # ========================================================================
     # ÉTAPE 6: LANCEMENT ET MONITORING
-    # ============================================================================
-
+    # ========================================================================
+    
     def render_training_launch_step(self):
-        
+        """Étape 6: Lancement de l'entraînement"""
         st.markdown('<div class="workflow-step-card">', unsafe_allow_html=True)
         st.header("🚀 Étape 6: Lancement de l'Entraînement")
         
@@ -1752,39 +953,18 @@ class MLTrainingWorkflowPro:
             
             st.subheader("⚙️ Entraînement")
             if hasattr(STATE, 'training_config') and STATE.training_config:
-                # Conversion safe pour l'affichage
-                if isinstance(STATE.training_config, dict):
-                    st.json(STATE.training_config)
-                elif LOGIC_METIER_AVAILABLE and hasattr(STATE.training_config, '__dict__'):
-                    # Conversion objet TrainingConfig en dict
-                    config_dict = {
-                        'epochs': getattr(STATE.training_config, 'epochs', 50),
-                        'batch_size': getattr(STATE.training_config, 'batch_size', 32),
-                        'learning_rate': getattr(STATE.training_config, 'learning_rate', 1e-4),
-                        'weight_decay': getattr(STATE.training_config, 'weight_decay', 0.01),
-                        'optimizer': getattr(STATE.training_config, 'optimizer', 'adamw'),
-                        'scheduler': getattr(STATE.training_config, 'scheduler', 'reduce_on_plateau'),
-                        'early_stopping_patience': getattr(STATE.training_config, 'early_stopping_patience', 10),
-                        'reduce_lr_patience': getattr(STATE.training_config, 'reduce_lr_patience', 5),
-                        'use_class_weights': getattr(STATE.training_config, 'use_class_weights', False)
-                    }
-                    st.json(config_dict)
-                else:
-                    st.json({"error": "Format de configuration invalide"})
+                st.json(STATE.training_config)
             else:
                 st.info("Aucune configuration d'entraînement disponible")
-            
+        
         st.markdown("---")
         st.subheader("🔍 Validation de la Configuration")
         
         errors, warnings = self.validate_training_configuration()
         
-        # Définition de launch_disabled AVANT son utilisation
-        launch_disabled = len(errors) > 0
-        
         if errors:
             for error in errors:
-                st.markdown(f'<div class="config-error">{error}</div>', unsafe_allow_html=True)
+                st.error(error)
         else:
             if warnings:
                 for warning in warnings:
@@ -1798,12 +978,10 @@ class MLTrainingWorkflowPro:
         col_launch1, col_launch2, col_launch3 = st.columns(3)
 
         with col_launch1:
-            # Calcul du nombre total d'images d'entraînement avec augmentation
             total_train_images = 0
             if STATE.loaded and hasattr(STATE.data, 'X_train') and STATE.data.X_train is not None:
                 total_train_images = len(STATE.data.X_train)
                 
-                # Application du facteur d'augmentation
                 if (hasattr(STATE, 'preprocessing_config') and 
                     STATE.preprocessing_config and 
                     STATE.preprocessing_config.get("augmentation_enabled", False)):
@@ -1813,31 +991,18 @@ class MLTrainingWorkflowPro:
             st.metric("📷 Images Train", f"{total_train_images:,}")
 
         with col_launch2:
-            # Extraction des epochs et batch_size avec valeurs par défaut
-            epochs = 50  # Valeur par défaut
-            batch_size = 32
+            epochs = STATE.training_config.get('epochs', 50) if isinstance(STATE.training_config, dict) else getattr(STATE.training_config, 'epochs', 50)
+            batch_size = STATE.training_config.get('batch_size', 32) if isinstance(STATE.training_config, dict) else getattr(STATE.training_config, 'batch_size', 32)
             
-            if hasattr(STATE, 'training_config') and STATE.training_config:
-                if isinstance(STATE.training_config, dict):
-                    epochs = STATE.training_config.get('epochs', 50)
-                    batch_size = STATE.training_config.get('batch_size', 32)
-                elif hasattr(STATE.training_config, 'epochs'):
-                    epochs = STATE.training_config.epochs
-                    batch_size = STATE.training_config.batch_size
-            
-            # Estimation du temps avec protection division par zéro
             estimated_minutes = 1
             if batch_size > 0 and total_train_images > 0:
-                training_time_estimate = (total_train_images * epochs) / (batch_size * 100)
-                estimated_minutes = max(1, int(training_time_estimate))
+                images_per_minute = 1200 if torch.cuda.is_available() else 200
+                estimated_minutes = max(1, int((total_train_images * epochs) / (batch_size * images_per_minute)))
                 
             st.metric("⏱️ Temps estimé", f"{estimated_minutes} min")
 
         with col_launch3:
-            # Affichage de l'utilisation des poids de classe
-            use_weights = False
-            if hasattr(STATE, 'imbalance_config') and STATE.imbalance_config:
-                use_weights = STATE.imbalance_config.get("use_class_weights", False)
+            use_weights = STATE.imbalance_config.get("use_class_weights", False) if hasattr(STATE, 'imbalance_config') and STATE.imbalance_config else False
             st.metric("⚖️ Poids de classe", "Activés" if use_weights else "Désactivés")
 
         # Informations système
@@ -1858,33 +1023,23 @@ class MLTrainingWorkflowPro:
                     st.warning("**GPU:** Informations non disponibles")
 
         with col_sys2:
-            # Accès robuste à use_mixed_precision
-            mixed_precision = False
-            if hasattr(STATE, 'training_config') and STATE.training_config:
-                if isinstance(STATE.training_config, dict):
-                    mixed_precision = STATE.training_config.get('use_mixed_precision', False)
-                elif hasattr(STATE.training_config, 'use_mixed_precision'):
-                    mixed_precision = STATE.training_config.use_mixed_precision
+            mixed_precision = STATE.training_config.get('use_mixed_precision', False) if isinstance(STATE.training_config, dict) else getattr(STATE.training_config, 'use_mixed_precision', False)
             st.info(f"**Mixed Precision:** {'Activée 🚀' if mixed_precision else 'Désactivée'}")
 
         with col_sys3:
-            # Accès robuste à deterministic
-            deterministic = True
-            if hasattr(STATE, 'training_config') and STATE.training_config:
-                if isinstance(STATE.training_config, dict):
-                    deterministic = STATE.training_config.get('deterministic', True)
-                elif hasattr(STATE.training_config, 'deterministic'):
-                    deterministic = STATE.training_config.deterministic
+            deterministic = STATE.training_config.get('deterministic', True) if isinstance(STATE.training_config, dict) else getattr(STATE.training_config, 'deterministic', True)
             st.info(f"**Mode Déterministe:** {'Activé ✅' if deterministic else 'Désactivé'}")
 
         st.markdown("---")
 
-        # BOUTON AVEC launch_disabled DÉFINI PLUS HAUT
+        # Bouton de lancement
+        launch_disabled = len(errors) > 0 if 'errors' in locals() else True
+        
         if st.button(
             "🚀 Démarrer l'Entraînement", 
             type="primary", 
             use_container_width=True, 
-            disabled=launch_disabled  #SAFE : Variable définie au début
+            disabled=launch_disabled
         ):
             self.launch_training()
 
@@ -1919,47 +1074,20 @@ class MLTrainingWorkflowPro:
         if not hasattr(STATE, 'training_config') or not STATE.training_config:
             errors.append("❌ Configuration d'entraînement manquante ou vide")
         
-        # Vérification des données via DataValidator si disponible
-        if LOGIC_METIER_AVAILABLE:
-            try:
-                for dataset_key, name in [('X_train', 'train'), ('X_val', 'val'), ('X_test', 'test')]:
-                    if hasattr(STATE.data, dataset_key):
-                        dataset = getattr(STATE.data, dataset_key)
-                        labels = getattr(STATE.data, f'y_{name}', None)
-                        
-                        if dataset is not None and labels is not None:
-                            val_result = DataValidator.validate_input_data(dataset, labels, name)
-                            if not val_result.success:
-                                errors.append(f"❌ Validation {name}: {val_result.error}")
-            except Exception as e:
-                warnings.append(f"⚠️ Erreur validation DataValidator: {e}")
-        
-        # Examen des hyperparamètres d'entraînement
+        # Vérifications des hyperparamètres
         if hasattr(STATE, 'training_config') and STATE.training_config:
-            try:
-                if isinstance(STATE.training_config, dict):
-                    epochs = STATE.training_config.get('epochs', 50)
-                    batch_size = STATE.training_config.get('batch_size', 32)
-                elif hasattr(STATE.training_config, 'epochs'):
-                    epochs = STATE.training_config.epochs
-                    batch_size = STATE.training_config.batch_size
-                else:
-                    epochs = 50
-                    batch_size = 32
-                    warnings.append("⚠️ Paramètres par défaut utilisés (epochs=50, batch_size=32)")
-                
-                # Vérifications de cohérence
-                if epochs > 100:
-                    warnings.append("⚠️ Nombre d'époques élevé (>100)")
-                
-                if batch_size > 64 and not torch.cuda.is_available():
-                    warnings.append("⚠️ Batch size élevé (>64) sans GPU")
-                
-                if batch_size < 8:
-                    warnings.append("⚠️ Batch size très faible (<8)")
+            if isinstance(STATE.training_config, dict):
+                epochs = STATE.training_config.get('epochs', 50)
+                batch_size = STATE.training_config.get('batch_size', 32)
+            else:
+                epochs = getattr(STATE.training_config, 'epochs', 50)
+                batch_size = getattr(STATE.training_config, 'batch_size', 32)
             
-            except Exception as e:
-                errors.append(f"❌ Erreur validation paramètres: {e}")
+            if epochs > 100:
+                warnings.append("⚠️ Nombre d'époques élevé (>100)")
+            
+            if batch_size > 64 and not torch.cuda.is_available():
+                warnings.append("⚠️ Batch size élevé (>64) sans GPU")
         
         return errors, warnings
     
@@ -1989,17 +1117,11 @@ class MLTrainingWorkflowPro:
                 if model_type in ["conv_autoencoder", "variational_autoencoder", "denoising_autoencoder", "patch_core"]:
                     anomaly_type = "structural"
                 
-                # Lancement de l'entraînement avec la logique métier
-                if LOGIC_METIER_AVAILABLE:
-                    model, history = self.train_with_metier_logic(
-                        streamlit_components, 
-                        anomaly_type
-                    )
-                else:
-                    # Fallback simulation si la logique métier n'est pas disponible
-                    model, history = self.train_simulation(
-                        streamlit_components
-                    )
+                # Lancement de l'entraînement
+                model, history = self.train_with_metier_logic(
+                    streamlit_components, 
+                    anomaly_type
+                )
                 
                 # Traitement des résultats
                 if model is not None and history.get("success", False):
@@ -2012,14 +1134,8 @@ class MLTrainingWorkflowPro:
 
     def train_with_metier_logic(self, streamlit_components, anomaly_type):
         """
-        Interface simplifiée vers l'orchestrateur d'entraînement.
-        Cette méthode ne fait que le pont entre Streamlit et la logique métier.
+        Interface vers l'orchestrateur d'entraînement
         """
-        from orchestrators.visio_training_orchestrator import (
-            training_orchestrator,
-            TrainingContext
-        )
-        
         try:
             # Création du contexte d'entraînement
             context = TrainingContext(
@@ -2033,12 +1149,12 @@ class MLTrainingWorkflowPro:
                 callbacks=self._create_callbacks(streamlit_components),
                 anomaly_type=anomaly_type,
                 metadata={
-                    "dataset_name": getattr(STATE.data, 'name', 'unknown'),  # ✅ Correct
+                    "dataset_name": getattr(STATE.data, 'name', 'unknown'),
                     "user_id": "anonymous" 
                 }
             )
             
-            # Délégation complète à l'orchestrateur
+            # Délégation à l'orchestrateur
             result = training_orchestrator.train(context)
             
             if result.success:
@@ -2061,7 +1177,7 @@ class MLTrainingWorkflowPro:
             callbacks.append(StreamlitCallback(
                 progress_bar=streamlit_components.get('progress_bar'),
                 status_text=streamlit_components.get('status_text'),
-                total_epochs=STATE.training_config.epochs
+                total_epochs=STATE.training_config.get('epochs', 50) if isinstance(STATE.training_config, dict) else getattr(STATE.training_config, 'epochs', 50)
             ))
         
         callbacks.append(LoggingCallback(log_every_n_epochs=5))
@@ -2069,13 +1185,11 @@ class MLTrainingWorkflowPro:
         return callbacks
     
     def handle_training_success(self, model, history, results_placeholder):
-        """Gère le succès de l'entraînement avec sauvegarde exhaustive"""
-        
+        """Gère le succès de l'entraînement"""
         # Sauvegarde dans STATE
         STATE.trained_model = model
         STATE.training_history = history
         
-        # Récupération du préprocesseur si disponible
         preprocessor = getattr(STATE, 'preprocessor', None)
         
         STATE.training_results = {
@@ -2089,24 +1203,15 @@ class MLTrainingWorkflowPro:
             "trained_at": time.strftime("%Y-%m-%d %H:%M:%S")
         }
         
-        # Logs de succès
         logger.info("✅ Training completed successfully")
-        logger.info(f"   - Preprocessor saved: {preprocessor is not None}")
-        logger.info(f"   - Model type: {type(model).__name__}")
-        logger.info(f"   - History keys: {list(history.keys()) if history else 'None'}")
         
         with results_placeholder.container():
             st.success("✅ Entraînement terminé avec succès!")
             
-            # Debug optionnel (désactivable en prod)
+            # Debug optionnel
             if st.checkbox("🔍 Afficher debug", value=False, key="show_debug"):
                 with st.expander("📋 Informations Techniques"):
                     st.write("**Preprocessor:**", preprocessor is not None)
-                    if preprocessor and hasattr(preprocessor, 'get_config'):
-                        try:
-                            st.json(preprocessor.get_config())
-                        except Exception as e:
-                            st.warning(f"Config non disponible: {e}")
                     st.write("**Input Shape:**", history.get('input_shape', 'N/A'))
             
             self.display_training_results(history)
@@ -2118,7 +1223,6 @@ class MLTrainingWorkflowPro:
             if "error" in history:
                 st.error(f"Erreur: {history['error']}")
             
-            # Logs de débogage
             with st.expander("🔍 Détails de l'erreur"):
                 st.json(history)
             
@@ -2132,9 +1236,7 @@ class MLTrainingWorkflowPro:
             st.error(f"❌ Erreur lors de l'entraînement: {str(error)}")
             self.logger.error(f"Training error: {error}", exc_info=True)
             
-            # Affichage de l'erreur complète pour débogage
             with st.expander("🔍 Stack trace complète"):
-                st.code(str(error))
                 import traceback
                 st.code(traceback.format_exc())
     
@@ -2182,43 +1284,6 @@ class MLTrainingWorkflowPro:
             )
             st.plotly_chart(fig, use_container_width=True)
         
-        # Métriques supplémentaires si disponibles
-        if history.get('val_accuracy'):
-            col_met1, col_met2 = st.columns(2)
-            
-            with col_met1:
-                fig_acc = go.Figure()
-                fig_acc.add_trace(go.Scatter(
-                    y=history['val_accuracy'],
-                    mode='lines+markers',
-                    name='Accuracy',
-                    line=dict(color='#2ecc71', width=2)
-                ))
-                fig_acc.update_layout(
-                    title="Accuracy Validation",
-                    xaxis_title="Époque",
-                    yaxis_title="Accuracy",
-                    template="plotly_white"
-                )
-                st.plotly_chart(fig_acc, use_container_width=True)
-            
-            with col_met2:
-                if history.get('val_f1'):
-                    fig_f1 = go.Figure()
-                    fig_f1.add_trace(go.Scatter(
-                        y=history['val_f1'],
-                        mode='lines+markers',
-                        name='F1 Score',
-                        line=dict(color='#e74c3c', width=2)
-                    ))
-                    fig_f1.update_layout(
-                        title="F1 Score Validation",
-                        xaxis_title="Époque",
-                        yaxis_title="F1 Score",
-                        template="plotly_white"
-                    )
-                    st.plotly_chart(fig_f1, use_container_width=True)
-        
         # Actions post-entraînement
         st.markdown("---")
         col_action1, col_action2 = st.columns(2)
@@ -2229,7 +1294,7 @@ class MLTrainingWorkflowPro:
         
         with col_action2:
             if st.button("🔄 Nouvel Entraînement", use_container_width=True):
-                # Réinitialisation partielle pour un nouvel entraînement
+                # Réinitialisation partielle
                 STATE.current_step = 0
                 STATE.workflow_complete = False
                 STATE.trained_model = None
@@ -2237,7 +1302,7 @@ class MLTrainingWorkflowPro:
                 st.rerun()
     
     def main(self):
-        """Point d'entrée principal de l'application"""
+        """Point d'entrée principal"""
         self.render_header()
         self.render_workflow_progress()
         
@@ -2255,7 +1320,7 @@ class MLTrainingWorkflowPro:
         elif STATE.current_step == 5:
             self.render_training_launch_step()
         
-        # Footer avec informations supplémentaires
+        # Footer
         self.render_footer()
     
     def render_footer(self):
@@ -2285,9 +1350,13 @@ class MLTrainingWorkflowPro:
                 if STATE.selected_model_type:
                     st.write(f"- Modèle: {STATE.selected_model_type}")
                 
-                if STATE.training_config:
-                    epochs = STATE.training_config.epochs if hasattr(STATE.training_config, 'epochs') else STATE.training_config.get('epochs', 'N/A')
-                    batch_size = STATE.training_config.batch_size if hasattr(STATE.training_config, 'batch_size') else STATE.training_config.get('batch_size', 'N/A')
+                if hasattr(STATE, 'training_config') and STATE.training_config:
+                    if isinstance(STATE.training_config, dict):
+                        epochs = STATE.training_config.get('epochs', 'N/A')
+                        batch_size = STATE.training_config.get('batch_size', 'N/A')
+                    else:
+                        epochs = getattr(STATE.training_config, 'epochs', 'N/A')
+                        batch_size = getattr(STATE.training_config, 'batch_size', 'N/A')
                     st.write(f"- Époques: {epochs}")
                     st.write(f"- Batch size: {batch_size}")
         
@@ -2302,16 +1371,17 @@ class MLTrainingWorkflowPro:
         with col_nav2:
             if st.button("🔄 Réinitialiser le Workflow", use_container_width=True):
                 # Réinitialisation complète
-                for key in ['current_step', 'selected_model_type', 'model_config', 'training_config']:
-                    if key in STATE:
-                        STATE[key] = self.STATE.__defaults__[0].get(key, None)
                 STATE.current_step = 0
+                STATE.selected_model_type = None
+                STATE.model_config = None
+                STATE.training_config = None
                 st.rerun()
         
         with col_nav3:
-            if STATE.trained_model is not None:
+            if hasattr(STATE, 'trained_model') and STATE.trained_model is not None:
                 if st.button("📊 Évaluation des Résultats", type="primary", use_container_width=True):
                     st.switch_page("pages/5_anomaly_evaluation.py")
+
 
 # Lancement de l'application
 if __name__ == "__main__":
