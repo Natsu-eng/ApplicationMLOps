@@ -3,7 +3,7 @@ Système d'évaluation de production pour la détection d'anomalies et classific
 Robuste, flexible et optimisé pour l'environnement de production avec gestion complète des erreurs.
 """
 import numpy as np
-from sklearn.metrics import (
+from sklearn.metrics import ( # type: ignore
     roc_auc_score, f1_score, accuracy_score, precision_score, recall_score,
     average_precision_score, confusion_matrix, classification_report,
     roc_curve, precision_recall_curve
@@ -12,7 +12,7 @@ from typing import Dict, Any, Union, Optional, Tuple, List
 from dataclasses import dataclass
 from enum import Enum
 import traceback
-import mlflow
+import mlflow # type: ignore
 from src.shared.logging import get_logger
 from src.config.constants import ANOMALY_CONFIG
 
@@ -197,16 +197,34 @@ class RobustMetricsCalculator:
         # Métriques basées sur les scores
         if len(np.unique(y_true)) > 1:
             try:
+                # ✅ CORRECTION #9: Gestion robuste format y_scores
                 if y_scores.ndim > 1 and y_scores.shape[1] > 1:
-                    metrics["auc_roc"] = roc_auc_score(y_true, y_scores, multi_class='ovr')
-                    metrics["average_precision"] = average_precision_score(
-                        y_true, y_scores, average='weighted'
-                    )
+                    # Multi-classes: extraire proba classe positive si binaire
+                    if y_scores.shape[1] == 2 and len(np.unique(y_true)) == 2:
+                        # Classification binaire: utiliser proba classe 1
+                        y_scores_binary = y_scores[:, 1]
+                        metrics["auc_roc"] = roc_auc_score(y_true, y_scores_binary)
+                        metrics["average_precision"] = average_precision_score(y_true, y_scores_binary)
+                    else:
+                        # Multi-classes: utiliser toutes les classes
+                        metrics["auc_roc"] = roc_auc_score(y_true, y_scores, multi_class='ovr')
+                        metrics["average_precision"] = average_precision_score(
+                            y_true, y_scores, average='weighted'
+                        )
                 else:
+                    # Scores 1D (reconstruction errors pour autoencoder)
+                    # Validation: scores doivent être cohérents avec y_true
+                    if len(y_scores) != len(y_true):
+                        raise ValueError(
+                            f"Incohérence longueurs: y_scores={len(y_scores)}, y_true={len(y_true)}"
+                        )
+                    
+                    # Pour autoencoder: y_scores = erreurs de reconstruction
+                    # Plus élevé = plus anormal (classe 1)
                     metrics["auc_roc"] = roc_auc_score(y_true, y_scores)
                     metrics["average_precision"] = average_precision_score(y_true, y_scores)
             except Exception as e:
-                logger.warning(f"Métriques scores échouées: {e}")
+                logger.warning(f"Métriques scores échouées: {e}", exc_info=True)
                 metrics["auc_roc"] = 0.5
                 metrics["average_precision"] = 0.0
         

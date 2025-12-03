@@ -120,26 +120,65 @@ class DataPreprocessor:
         """
         Détecte automatiquement le format des données.
         
+        ✅ CORRECTION #5: Amélioration robustesse détection format
+        
         Returns:
             'channels_first' ou 'channels_last'
+        
+        Raises:
+            ValueError: Si le format est ambigu ou invalide
         """
         if X.ndim != 4:
-            return 'channels_last'  # Par défaut pour les autres cas
+            logger.warning(f"⚠️ Dimensions invalides pour détection format: {X.ndim}D, fallback channels_last")
+            return 'channels_last'
             
-        # Règles de détection
+        # Règles de détection robustes
         n_samples, dim1, dim2, dim3 = X.shape
         
-        # Cas channels_last: (N, H, W, C) où C est petit (1,3,4)
-        if dim3 in [1, 3, 4]:
+        # ✅ Validation: dimensions doivent être cohérentes (pas toutes identiques)
+        if dim1 == dim2 == dim3:
+            logger.warning(
+                f"⚠️ Format ambigu: toutes dimensions identiques ({dim1}). "
+                f"Impossible de déterminer channels_first/last. Fallback channels_last."
+            )
             return 'channels_last'
+        
+        # Cas channels_last: (N, H, W, C) où C est petit (1,3,4)
+        # Validation: C doit être significativement plus petit que H et W
+        if dim3 in [1, 3, 4] and dim3 < dim1 and dim3 < dim2:
+            # Double validation: vérifier que dim1 et dim2 sont similaires (hauteur/largeur)
+            if abs(dim1 - dim2) / max(dim1, dim2) < 0.5:  # Ratio H/W acceptable
+                logger.debug(f"✅ Format détecté: channels_last (shape={X.shape})")
+                return 'channels_last'
+        
         # Cas channels_first: (N, C, H, W) où C est petit (1,3,4)
-        elif dim1 in [1, 3, 4]:
+        # Validation: C doit être significativement plus petit que H et W
+        if dim1 in [1, 3, 4] and dim1 < dim2 and dim1 < dim3:
+            # Double validation: vérifier que dim2 et dim3 sont similaires (hauteur/largeur)
+            if abs(dim2 - dim3) / max(dim2, dim3) < 0.5:  # Ratio H/W acceptable
+                logger.debug(f"✅ Format détecté: channels_first (shape={X.shape})")
+                return 'channels_first'
+        
+        # Heuristique finale: si la première dimension est significativement plus petite
+        if dim1 < min(dim2, dim3) * 0.1:  # dim1 < 10% de min(dim2, dim3)
+            logger.debug(f"✅ Format détecté (heuristique): channels_first (dim1={dim1} << {min(dim2, dim3)})")
             return 'channels_first'
+        elif dim3 < min(dim1, dim2) * 0.1:  # dim3 < 10% de min(dim1, dim2)
+            logger.debug(f"✅ Format détecté (heuristique): channels_last (dim3={dim3} << {min(dim1, dim2)})")
+            return 'channels_last'
         else:
-            # Heuristique: si la première dimension est plus petite, c'est probablement channels
-            if dim1 < dim2 and dim1 < dim3:
+            # Format ambigu: utiliser la dimension la plus petite
+            if dim1 < dim3:
+                logger.warning(
+                    f"⚠️ Format ambigu (shape={X.shape}), utilisation heuristique: channels_first "
+                    f"(dim1={dim1} < dim3={dim3})"
+                )
                 return 'channels_first'
             else:
+                logger.warning(
+                    f"⚠️ Format ambigu (shape={X.shape}), utilisation heuristique: channels_last "
+                    f"(dim3={dim3} < dim1={dim1})"
+                )
                 return 'channels_last'
     
     def _ensure_channels_first(self, X: np.ndarray) -> np.ndarray:

@@ -3,7 +3,7 @@
 Fix MVTec AD → y_train correctement transmis pour détection unsupervised
 """
 
-import streamlit as st
+import streamlit as st # type: ignore
 import sys
 import os
 import numpy as np
@@ -142,48 +142,69 @@ class ModernHomePage:
     
     def _render_image_upload(self):
         """
-        ✅ CORRECTION CRITIQUE : Upload images avec y_train
+        ✅ PRODUCTION READY : Upload images avec support complet
+        - Upload de dossier via chemin
+        - Upload multiple de fichiers images
+        - Support MVTec AD et datasets personnalisés
         """
         st.markdown("""
         <div class="upload-zone">
             <div style="font-size: 3rem;">📁</div>
-            <h3>Sélectionnez un dossier d'images</h3>
-            <p>MVTec AD, dossiers par classe ou dossier plat</p>
+            <h3>Chargement d'Images</h3>
+            <p>MVTec AD, dossiers par classe, dossier plat ou fichiers multiples</p>
         </div>
         """, unsafe_allow_html=True)
         
+        # Onglets pour différentes méthodes d'upload
+        upload_tab1, upload_tab2 = st.tabs(["📁 Dossier (Chemin)", "📤 Fichiers Multiples"])
+        
+        with upload_tab1:
+            self._render_folder_upload()
+        
+        with upload_tab2:
+            self._render_multiple_files_upload()
+    
+    def _render_folder_upload(self):
+        """Upload via chemin de dossier"""
         col1, col2 = st.columns([4, 1])
         
         with col1:
             data_dir = st.text_input(
                 "Chemin du dossier", 
-                placeholder="/chemin/vers/votre/dataset", 
+                placeholder="/chemin/vers/votre/dataset ou C:\\chemin\\dataset", 
                 key="image_dir_input"
             )
+            st.caption("💡 Formats supportés: MVTec AD, dossiers par classe, dossier plat avec images")
         
         with col2:
             st.write("<br>", unsafe_allow_html=True)
-            load_btn = st.button("📁 Charger", type="primary", use_container_width=True)
+            load_btn = st.button("📁 Charger Dossier", type="primary", use_container_width=True)
         
         if load_btn and data_dir:
             if not os.path.exists(data_dir):
-                st.error("❌ Dossier introuvable")
+                st.error("❌ Dossier introuvable. Vérifiez le chemin.")
                 return
             
-            perf_logger.start_operation("image_loading")
+            if not os.path.isdir(data_dir):
+                st.error("❌ Le chemin spécifié n'est pas un dossier.")
+                return
+            
+            perf_logger.start_operation("image_loading_folder")
             with st.spinner("Analyse et chargement des images..."):
                 try:
                     structure = detect_dataset_structure(data_dir)
                     
                     if structure["type"] == "invalid":
                         st.error(f"❌ Structure invalide : {structure.get('error')}")
+                        st.info("💡 Formats attendus:\n- MVTec AD: train/good, test/good, test/defect\n- Par classe: dossier1/, dossier2/, etc.\n- Plat: toutes images dans un seul dossier")
                         return
                     
                     # ✅ LIGNE CRITIQUE : Récupération de y_train
                     X, X_norm, y, y_train = load_images_flexible(data_dir, target_size=(256, 256))
                     
                     if len(X) == 0:
-                        st.error("❌ Aucune image trouvée")
+                        st.error("❌ Aucune image trouvée dans le dossier")
+                        st.info("💡 Vérifiez que le dossier contient des images (jpg, png, bmp, etc.)")
                         return
                     
                     info = get_dataset_info(data_dir)
@@ -197,7 +218,7 @@ class ModernHomePage:
                         
                         st.success(f"✅ {len(X):,} images chargées | Mode: {mode_icon} {mode_label}")
                         st.balloons()
-                        perf_logger.end_operation("image_loading", f"{len(X)} images")
+                        perf_logger.end_operation("image_loading_folder", f"{len(X)} images")
                         
                         if self.state.switch(AppPage.DASHBOARD):
                             st.rerun()
@@ -207,6 +228,75 @@ class ModernHomePage:
                 except Exception as e:
                     logger.error(f"❌ Erreur chargement images: {e}", exc_info=True)
                     st.error(f"❌ Erreur : {str(e)}")
+                    st.info("💡 Consultez les logs pour plus de détails")
+    
+    def _render_multiple_files_upload(self):
+        """Upload multiple de fichiers images"""
+        uploaded_files = st.file_uploader(
+            "Choisissez des fichiers images",
+            type=['png', 'jpg', 'jpeg', 'bmp', 'tiff', 'tif'],
+            accept_multiple_files=True,
+            key="image_files_upload"
+        )
+        
+        if uploaded_files and len(uploaded_files) > 0:
+            st.info(f"📤 {len(uploaded_files)} fichier(s) sélectionné(s)")
+            
+            if st.button("🚀 Charger et Analyser", type="primary", use_container_width=True):
+                perf_logger.start_operation("image_loading_files")
+                with st.spinner(f"Chargement de {len(uploaded_files)} images..."):
+                    try:
+                        from PIL import Image
+                        import tempfile
+                        from pathlib import Path
+                        
+                        # Créer un dossier temporaire pour stocker les images
+                        with tempfile.TemporaryDirectory() as temp_dir:
+                            temp_path = Path(temp_dir)
+                            
+                            # Sauvegarder toutes les images dans le dossier temporaire
+                            for idx, uploaded_file in enumerate(uploaded_files):
+                                file_path = temp_path / uploaded_file.name
+                                with open(file_path, "wb") as f:
+                                    f.write(uploaded_file.getbuffer())
+                            
+                            # Charger depuis le dossier temporaire comme un dossier plat
+                            data_dir = str(temp_path)
+                            structure = detect_dataset_structure(data_dir)
+                            
+                            if structure["type"] == "invalid":
+                                # Forcer structure FLAT pour fichiers uploadés
+                                structure = {"type": "flat"}
+                            
+                            # Charger les images
+                            X, X_norm, y, y_train = load_images_flexible(data_dir, target_size=(256, 256))
+                            
+                            if len(X) == 0:
+                                st.error("❌ Aucune image valide chargée")
+                                return
+                            
+                            # Créer info basique
+                            info = {
+                                "total_images": len(X),
+                                "structure_type": structure["type"],
+                                "upload_method": "multiple_files"
+                            }
+                            
+                            # ✅ TRANSMISSION au state manager
+                            if self.state.set_images(X, X_norm, y, data_dir, structure, info, y_train=y_train):
+                                st.success(f"✅ {len(X):,} images chargées depuis {len(uploaded_files)} fichier(s)")
+                                st.balloons()
+                                perf_logger.end_operation("image_loading_files", f"{len(X)} images")
+                                
+                                if self.state.switch(AppPage.DASHBOARD):
+                                    st.rerun()
+                            else:
+                                st.error("❌ Échec du chargement dans l'état")
+                    
+                    except Exception as e:
+                        logger.error(f"❌ Erreur chargement fichiers: {e}", exc_info=True)
+                        st.error(f"❌ Erreur : {str(e)}")
+                        st.info("💡 Vérifiez que les fichiers sont des images valides")
     
     def _render_mvtec_examples(self):
         """

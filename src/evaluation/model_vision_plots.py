@@ -3,10 +3,10 @@ Fonctions de visualisation pour l'évaluation des modèles de détection d'anoma
 Utilise Plotly pour des graphiques interactifs, optimisés pour la production avec intégration MLflow.
 """
 import numpy as np
-import plotly.graph_objects as go
-import plotly.express as px
-from sklearn.metrics import roc_curve, precision_recall_curve, confusion_matrix
-from typing import Optional, Dict, List
+import plotly.graph_objects as go # type: ignore
+import plotly.express as px # type: ignore
+from sklearn.metrics import roc_curve, precision_recall_curve, confusion_matrix # type: ignore
+from typing import Optional, Dict, List, Tuple
 from src.shared.logging import get_logger
 from src.config.constants import ANOMALY_CONFIG
 import mlflow # type: ignore
@@ -227,14 +227,23 @@ def plot_confusion_matrix(conf_matrix: np.ndarray, labels: Optional[List[str]] =
         logger.error(f"Erreur dans plot_confusion_matrix: {e}")
         return None
 
-def plot_anomaly_heatmap(image: np.ndarray, anomaly_score: np.ndarray, mlflow_run_id: Optional[str] = None) -> Optional[go.Figure]:
+def plot_anomaly_heatmap(
+    image: np.ndarray, 
+    anomaly_score: np.ndarray, 
+    mlflow_run_id: Optional[str] = None,
+    original_size: Optional[Tuple[int, int]] = None
+) -> Optional[go.Figure]:
     """
     Génère une heatmap des anomalies superposée à l'image d'entrée avec Plotly.
+    
+    ✅ CORRECTION #10, #17: Alignement automatique des dimensions heatmap/image
 
     Args:
         image (np.ndarray): Image originale (H, W, C).
-        anomaly_score (np.ndarray): Carte de scores d'anomalie (H, W).
+        anomaly_score (np.ndarray): Carte de scores d'anomalie (H, W) ou (B, H, W).
         mlflow_run_id (Optional[str]): ID du run MLflow pour logger la figure.
+        original_size (Optional[Tuple[int, int]]): Taille originale de l'image (H_orig, W_orig)
+            pour aligner la heatmap si nécessaire.
 
     Returns:
         Optional[go.Figure]: Figure Plotly avec heatmap superposée, ou None si erreur.
@@ -242,9 +251,55 @@ def plot_anomaly_heatmap(image: np.ndarray, anomaly_score: np.ndarray, mlflow_ru
     try:
         if not isinstance(image, np.ndarray) or not isinstance(anomaly_score, np.ndarray):
             raise ValueError("image et anomaly_score doivent être des numpy arrays")
-        if image.shape[:2] != anomaly_score.shape[:2]:
-            raise ValueError(f"Incohérence de formes: image={image.shape[:2]}, anomaly_score={anomaly_score.shape[:2]}")
-        if np.any(np.isnan(image)) or np.any(np.isnan(anomaly_score)):
+        
+        # ✅ CORRECTION #18: Gestion format channels
+        # Extraire la heatmap si batch
+        if anomaly_score.ndim == 3:
+            # (B, H, W) → prendre la première
+            heatmap_raw = anomaly_score[0]
+        elif anomaly_score.ndim == 4:
+            # (B, 1, H, W) → prendre la première
+            heatmap_raw = anomaly_score[0, 0]
+        else:
+            heatmap_raw = anomaly_score
+        
+        # ✅ CORRECTION #10, #17: Alignement dimensions si nécessaire
+        if original_size is not None:
+            from src.evaluation.localization_utils import align_heatmap_to_image
+            
+            current_size = heatmap_raw.shape[:2]
+            if current_size != original_size:
+                logger.info(
+                    f"🔧 Alignement heatmap: {current_size} → {original_size}"
+                )
+                heatmap_raw = align_heatmap_to_image(
+                    heatmap_raw,
+                    original_size,
+                    current_size
+                )
+        
+        # Validation shapes après alignement
+        if image.shape[:2] != heatmap_raw.shape[:2]:
+            logger.warning(
+                f"⚠️ Shapes non alignées après correction: "
+                f"image={image.shape[:2]}, anomaly_score={heatmap_raw.shape[:2]}. "
+                f"Tentative resize automatique."
+            )
+            # Tentative resize automatique
+            from src.evaluation.localization_utils import resize_error_map
+            heatmap_raw = resize_error_map(
+                heatmap_raw,
+                image.shape[:2],
+                method="bilinear"
+            )
+        
+        if image.shape[:2] != heatmap_raw.shape[:2]:
+            raise ValueError(
+                f"❌ Impossible d'aligner les dimensions: "
+                f"image={image.shape[:2]}, anomaly_score={heatmap_raw.shape[:2]}"
+            )
+        
+        if np.any(np.isnan(image)) or np.any(np.isnan(heatmap_raw)):
             raise ValueError("NaN détecté dans image ou anomaly_score")
 
         # Normaliser l'image
@@ -253,11 +308,14 @@ def plot_anomaly_heatmap(image: np.ndarray, anomaly_score: np.ndarray, mlflow_ru
             img = img / 255.0
 
         # Normaliser la heatmap
-        heatmap = (anomaly_score - anomaly_score.min()) / (anomaly_score.max() - anomaly_score.min() + 1e-8)
+        heatmap = (heatmap_raw - heatmap_raw.min()) / (heatmap_raw.max() - heatmap_raw.min() + 1e-8)
 
         # Convertir l'image en RGB si nécessaire
         if img.shape[-1] == 1:
             img = np.repeat(img, 3, axis=-1)
+        elif len(img.shape) == 2:
+            # Grayscale 2D → RGB
+            img = np.stack([img, img, img], axis=-1)
 
         # Créer la figure Plotly
         fig = go.Figure()
@@ -287,10 +345,10 @@ def plot_anomaly_heatmap(image: np.ndarray, anomaly_score: np.ndarray, mlflow_ru
             except Exception as e:
                 logger.error(f"MLflow logging failed pour heatmap: {e}")
 
-        logger.info("Heatmap d'anomalie générée avec succès")
+        logger.info("✅ Heatmap d'anomalie générée avec succès")
         return fig
     except Exception as e:
-        logger.error(f"Erreur dans plot_anomaly_heatmap: {e}")
+        logger.error(f"Erreur dans plot_anomaly_heatmap: {e}", exc_info=True)
         return None
 
 def plot_reconstruction_error_histogram(errors: np.ndarray, threshold: Optional[float] = None, mlflow_run_id: Optional[str] = None) -> Optional[go.Figure]:

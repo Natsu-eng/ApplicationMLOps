@@ -419,14 +419,18 @@ class ConvAutoEncoder(nn.Module):
     
     def get_reconstruction_error_map(
         self,
-        x: torch.Tensor
+        x: torch.Tensor,
+        method: str = "mse"
     ) -> torch.Tensor:
         """
         Génère une carte spatiale des erreurs de reconstruction.
         Utile pour visualiser les zones anormales.
         
+        ✅ AMÉLIORATION: Support de plusieurs méthodes de calcul d'erreur
+        
         Args:
             x: Images originales (B, C, H, W)
+            method: Méthode de calcul ("mse", "mae", "l1_l2")
             
         Returns:
             Carte d'erreur (B, 1, H, W)
@@ -436,8 +440,25 @@ class ConvAutoEncoder(nn.Module):
         with torch.no_grad():
             reconstructed = self.forward(x)
             
-            # Erreur par pixel, moyennée sur les canaux
-            error_map = torch.mean((x - reconstructed) ** 2, dim=1, keepdim=True)
+            if method == "mse":
+                # Mean Squared Error par pixel, moyennée sur les canaux
+                error_map = torch.mean((x - reconstructed) ** 2, dim=1, keepdim=True)
+            elif method == "mae":
+                # Mean Absolute Error
+                error_map = torch.mean(torch.abs(x - reconstructed), dim=1, keepdim=True)
+            elif method == "l1_l2":
+                # Combinaison L1 + L2 pour meilleure localisation
+                l2 = torch.mean((x - reconstructed) ** 2, dim=1, keepdim=True)
+                l1 = torch.mean(torch.abs(x - reconstructed), dim=1, keepdim=True)
+                error_map = 0.7 * l2 + 0.3 * l1
+            else:
+                logger.warning(f"⚠️ Méthode '{method}' non reconnue, utilisation MSE")
+                error_map = torch.mean((x - reconstructed) ** 2, dim=1, keepdim=True)
+            
+            # Validation: éviter NaN/Inf
+            if torch.isnan(error_map).any() or torch.isinf(error_map).any():
+                logger.warning("⚠️ NaN/Inf détectés dans error_map, remplacement par zéros")
+                error_map = torch.nan_to_num(error_map, nan=0.0, posinf=0.0, neginf=0.0)
             
             return error_map
     

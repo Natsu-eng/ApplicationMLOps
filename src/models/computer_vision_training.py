@@ -26,11 +26,11 @@ import torch # type: ignore
 import torch.nn as nn # type: ignore
 import torch.optim as optim # type: ignore
 from torch.utils.data import DataLoader # type: ignore
-from sklearn.metrics import (
+from sklearn.metrics import ( # type: ignore
     accuracy_score, precision_score, recall_score, f1_score,
     roc_auc_score, confusion_matrix, classification_report
 )
-from sklearn.utils.class_weight import compute_class_weight
+from sklearn.utils.class_weight import compute_class_weight # type: ignore
 
 from src.config.model_config import ModelConfig, ModelType
 from src.data.computer_vision_preprocessing import DataLoaderFactory, DataPreprocessor, DataValidator, Result
@@ -1071,9 +1071,14 @@ class ComputerVisionTrainer:
         X_processed: np.ndarray,
         return_reconstructed: bool
     ) -> Result:
-        """Prédictions pour autoencoder"""
+        """
+        Prédictions pour autoencoder avec génération automatique des heatmaps.
+        
+        ✅ CORRECTION #8, #16: Génération automatique des error_maps et heatmaps
+        """
         reconstruction_errors = []
         reconstructed_images = [] if return_reconstructed else None
+        error_maps_list = []
         
         with torch.no_grad():
             for data, _ in test_loader:
@@ -1087,6 +1092,18 @@ class ComputerVisionTrainer:
                 ).cpu().numpy()
                 
                 reconstruction_errors.extend(errors)
+                
+                # ✅ CORRECTION #8, #16: Génération error maps spatiales
+                if hasattr(self.model, 'get_reconstruction_error_map'):
+                    batch_error_maps = self.model.get_reconstruction_error_map(data)
+                    # Conversion (B, 1, H, W) → (B, H, W)
+                    batch_error_maps_np = batch_error_maps[:, 0, :, :].cpu().numpy()
+                    error_maps_list.append(batch_error_maps_np)
+                else:
+                    # Fallback: calcul manuel
+                    batch_error_maps = torch.mean((data - reconstructed) ** 2, dim=1, keepdim=True)
+                    batch_error_maps_np = batch_error_maps[:, 0, :, :].cpu().numpy()
+                    error_maps_list.append(batch_error_maps_np)
                 
                 if return_reconstructed:
                     reconstructed_images.append(reconstructed.cpu().numpy())
@@ -1105,6 +1122,27 @@ class ComputerVisionTrainer:
         
         if return_reconstructed:
             result_data['reconstructed'] = np.concatenate(reconstructed_images, axis=0)
+        
+        # ✅ Ajout des error maps et heatmaps
+        if error_maps_list:
+            error_maps = np.concatenate(error_maps_list, axis=0)
+            result_data['error_maps'] = error_maps
+            
+            # Génération heatmaps normalisées
+            heatmaps = []
+            for error_map in error_maps:
+                if error_map.max() > error_map.min():
+                    normalized = (error_map - error_map.min()) / (error_map.max() - error_map.min() + 1e-8)
+                else:
+                    normalized = np.zeros_like(error_map)
+                heatmaps.append(normalized)
+            
+            result_data['heatmaps'] = np.array(heatmaps)
+            
+            logger.info(
+                f"✅ Error maps générées: shape={error_maps.shape}, "
+                f"heatmaps shape={result_data['heatmaps'].shape}"
+            )
         
         return Result.ok(result_data)
     
@@ -1287,8 +1325,29 @@ class ComputerVisionTrainer:
             reconstruction_errors = np.array(reconstruction_errors)
             all_targets = np.array(all_targets)
             
-            # Seuil automatique (95ème percentile)
-            threshold = np.percentile(reconstruction_errors, 95)
+            # ✅ CORRECTION #7, #12: Seuil adaptatif amélioré
+            # Utiliser percentile 95 par défaut mais avec validation
+            if len(reconstruction_errors) < 10:
+                # Dataset trop petit: utiliser médiane + 1 std
+                threshold = np.median(reconstruction_errors) + np.std(reconstruction_errors)
+                logger.warning(
+                    f"⚠️ Dataset petit ({len(reconstruction_errors)} samples), "
+                    f"utilisation seuil médiane+std au lieu de percentile 95"
+                )
+            else:
+                # Dataset normal: percentile 95
+                threshold = np.percentile(reconstruction_errors, 95)
+            
+            # Validation: seuil doit être raisonnable
+            min_error = np.min(reconstruction_errors)
+            max_error = np.max(reconstruction_errors)
+            if threshold <= min_error:
+                threshold = min_error + (max_error - min_error) * 0.9
+                logger.warning(f"⚠️ Seuil trop bas, ajusté à {threshold:.4f}")
+            elif threshold >= max_error:
+                threshold = max_error - (max_error - min_error) * 0.05
+                logger.warning(f"⚠️ Seuil trop haut, ajusté à {threshold:.4f}")
+            
             y_pred = (reconstruction_errors > threshold).astype(int)
             
             # Métriques

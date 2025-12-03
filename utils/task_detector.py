@@ -16,9 +16,33 @@ class TaskType(Enum):
 def detect_cv_task(y: np.ndarray) -> Tuple[TaskType, Dict[str, Any]]:
     """
     Détecte la tâche À PARTIR DES LABELS DU TRAIN UNIQUEMENT !
+    
+    ✅ CORRECTION #3: Validation robuste de la shape et du contenu de y
     """
     if y is None or len(y) == 0:
         return TaskType.UNSUPERVISED, {"n_classes": 0, "task": "empty"}
+
+    # ✅ Validation shape: y doit être 1D
+    if y.ndim != 1:
+        raise ValueError(
+            f"❌ ERREUR CRITIQUE: y a une shape incorrecte {y.shape}, "
+            f"attendu 1D array (n_samples,). "
+            f"Utilisez np.ravel() ou np.flatten() si nécessaire."
+        )
+    
+    # ✅ Validation NaN/Inf
+    if np.isnan(y).any() or np.isinf(y).any():
+        raise ValueError(
+            f"❌ ERREUR CRITIQUE: y contient des valeurs NaN ou Inf. "
+            f"Veuillez nettoyer les labels avant de détecter la tâche."
+        )
+    
+    # Conversion en int si nécessaire
+    if not np.issubdtype(y.dtype, np.integer):
+        from src.shared.logging import get_logger
+        logger = get_logger(__name__)
+        logger.warning(f"⚠️ y n'est pas de type entier ({y.dtype}), conversion en int")
+        y = y.astype(int)
 
     unique_labels = np.unique(y)
     n_classes = len(unique_labels)

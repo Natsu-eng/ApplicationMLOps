@@ -14,7 +14,7 @@ Fonctionnalités:
 
 import os
 import numpy as np
-import pandas as pd
+import pandas as pd # type: ignore
 from PIL import Image
 from typing import Tuple, List, Dict, Optional, Any
 from dataclasses import dataclass
@@ -424,8 +424,53 @@ def load_images_flexible(
             raise RuntimeError("Aucune image valide trouvée")
 
         logger.info(f"Chargement terminé: {len(X)} images, {len(np.unique(y_full))} classes au total")
-        if y_train is not None:
-            logger.info(f"→ y_train: {len(y_train)} images normales uniquement → UNSUPERVISED")
+        
+        # ✅ CORRECTION #1: Validation stricte y_train pour MVTec AD
+        if y_train is not None and structure_type == DatasetType.MVTEC_AD.value:
+            # Validation: y_train doit contenir uniquement des 0
+            if len(y_train) > 0:
+                unique_labels_train = np.unique(y_train)
+                if len(unique_labels_train) > 1:
+                    error_msg = (
+                        f"❌ ERREUR CRITIQUE: y_train contient {len(unique_labels_train)} classes différentes: {unique_labels_train}. "
+                        f"Pour MVTec AD (unsupervised), y_train doit contenir UNIQUEMENT des 0 (images normales). "
+                        f"Vérifiez que _load_mvtec_train_labels() charge uniquement train/good."
+                    )
+                    logger.error(error_msg)
+                    raise ValueError(error_msg)
+                
+                if len(unique_labels_train) == 1 and unique_labels_train[0] != 0:
+                    error_msg = (
+                        f"❌ ERREUR CRITIQUE: y_train contient uniquement le label {unique_labels_train[0]}, "
+                        f"attendu 0 (images normales) pour MVTec AD."
+                    )
+                    logger.error(error_msg)
+                    raise ValueError(error_msg)
+                
+                # Validation shape: y_train doit être 1D
+                if y_train.ndim != 1:
+                    error_msg = (
+                        f"❌ ERREUR CRITIQUE: y_train a une shape incorrecte {y_train.shape}, "
+                        f"attendu 1D array (n_samples,). Veuillez vérifier le chargement des labels."
+                    )
+                    logger.error(error_msg)
+                    raise ValueError(error_msg)
+                
+                # Validation cohérence: y_train doit correspondre uniquement aux images train/good
+                train_good_path = Path(data_dir) / "train" / "good"
+                if train_good_path.exists():
+                    train_good_files = _get_image_files(train_good_path)
+                    if len(y_train) != len(train_good_files):
+                        logger.warning(
+                            f"⚠️ Incohérence: y_train contient {len(y_train)} labels mais "
+                            f"{len(train_good_files)} images dans train/good"
+                        )
+                
+                logger.info(f"✅ Validation y_train OK: {len(y_train)} images normales (label 0 uniquement) → UNSUPERVISED")
+            else:
+                logger.warning("⚠️ y_train vide - impossible de valider pour MVTec AD")
+        elif y_train is not None:
+            logger.info(f"→ y_train: {len(y_train)} images → mode SUPERVISED")
 
         # Normalisation
         X_norm = X.astype(np.float32) / 255.0

@@ -3,19 +3,20 @@ Page Streamlit: Évaluation Détection d'Anomalies - Premium Dashboard
 Version complète avec design moderne et analyse approfondie
 """
 
-import streamlit as st
-import numpy as np
-import pandas as pd
+import streamlit as st # type: ignore
+import numpy as np # type: ignore
+import pandas as pd # type: ignore
 import time
 import json
 from pathlib import Path
 from datetime import datetime
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
-import plotly.express as px
-from sklearn.metrics import (
+import plotly.graph_objects as go # type: ignore
+from plotly.subplots import make_subplots # type: ignore
+import plotly.express as px # type: ignore
+from sklearn.metrics import ( # type: ignore    
     confusion_matrix, classification_report, roc_auc_score, 
-    f1_score, precision_score, recall_score, accuracy_score
+    f1_score, precision_score, recall_score, accuracy_score,
+    roc_curve, precision_recall_curve
 )
 
 # Imports métier
@@ -52,10 +53,24 @@ except ImportError:
             return logging.getLogger(name)
 
 import torch # type: ignore
+from scipy.ndimage import zoom  # type: ignore
 
 from monitoring.state_managers import init, AppPage
-STATE = init()
 
+# ✅ IMPORTS UI CENTRALISÉS
+from ui.anomaly_evaluation_styles import AnomalyEvaluationStyles
+from helpers.ui_components.anomaly_evaluation import (
+    safe_convert_history,
+    analyze_false_positives,
+    get_performance_status,
+    create_performance_summary,
+    generate_recommendations,
+    create_performance_radar,
+    plot_error_distribution
+)
+from helpers.anomaly_prediction_helpers import robust_predict_with_preprocessor
+
+STATE = init()
 logger = get_logger(__name__)
 
 # ============================================================================
@@ -73,782 +88,16 @@ st.set_page_config(
 # CSS ULTRA-MODERNE
 # ============================================================================
 
-st.markdown("""
-<style>
-    /* Variables */
-    :root {
-        --primary: #6366f1;
-        --success: #10b981;
-        --warning: #f59e0b;
-        --danger: #ef4444;
-        --info: #3b82f6;
-        --bg-card: #ffffff;
-        --shadow: 0 1px 3px rgba(0,0,0,0.1);
-        --shadow-lg: 0 10px 25px rgba(0,0,0,0.15);
-    }
-    
-    /* Base */
-    .block-container {
-        padding: 1.5rem 2.5rem !important;
-        max-width: 1600px;
-    }
-    
-    /* Hero Header */
-    .hero-header {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        color: white;
-        padding: 2.5rem;
-        border-radius: 20px;
-        margin-bottom: 2rem;
-        box-shadow: var(--shadow-lg);
-        position: relative;
-        overflow: hidden;
-    }
-    
-    .hero-header::before {
-        content: '';
-        position: absolute;
-        top: -50%;
-        right: -10%;
-        width: 400px;
-        height: 400px;
-        background: rgba(255,255,255,0.1);
-        border-radius: 50%;
-    }
-    
-    .hero-title {
-        font-size: 2.5rem;
-        font-weight: 800;
-        margin: 0;
-        position: relative;
-        z-index: 1;
-    }
-    
-    .hero-subtitle {
-        font-size: 1.1rem;
-        opacity: 0.95;
-        margin: 0.5rem 0 0 0;
-        position: relative;
-        z-index: 1;
-    }
-    
-    /* Metric Cards Premium */
-    .metric-card-premium {
-    	background: white;
-    	border-radius: 12px;
-    	padding: 1.5rem;
-    	box-shadow: var(--shadow);
-    	border: 1px solid #e5e7eb;
-    	transition: box-shadow 0.2s ease;
-    }
-    .metric-card-premium:hover {
-    	box-shadow: var(--shadow-lg);
-    }
-    .metric-card-premium::before {
-    	content: '';
-    	position: absolute;
-    	top: 0;
-    	left: 0;
-    	width: 100%;
-    	height: 3px;
-    	background: var(--primary);
-    }
-    
-    .metric-icon {
-        font-size: 2.5rem;
-        margin-bottom: 0.75rem;
-        display: block;
-    }
-    
-    .metric-value {
-        font-size: 2.5rem;
-        font-weight: 800;
-        color: #1f2937;
-        margin: 0.5rem 0;
-        line-height: 1;
-    }
-    
-    .metric-label {
-        font-size: 0.875rem;
-        color: #6b7280;
-        font-weight: 600;
-        text-transform: uppercase;
-        letter-spacing: 0.05em;
-    }
-    
-    .metric-trend {
-        display: inline-block;
-        padding: 0.25rem 0.75rem;
-        border-radius: 12px;
-        font-size: 0.75rem;
-        font-weight: 700;
-        margin-top: 0.5rem;
-    }
-    
-    .trend-up {
-        background: #d1fae5;
-        color: #065f46;
-    }
-    
-    .trend-down {
-        background: #fee2e2;
-        color: #991b1b;
-    }
-    
-    /* Status Badges */
-    .status-badge {
-        display: inline-flex;
-        align-items: center;
-        gap: 0.5rem;
-        padding: 0.5rem 1rem;
-        border-radius: 999px;
-        font-size: 0.875rem;
-        font-weight: 700;
-        text-transform: uppercase;
-        letter-spacing: 0.05em;
-    }
-    
-    .badge-excellent {
-        background: linear-gradient(135deg, #d1fae5 0%, #a7f3d0 100%);
-        color: #065f46;
-        border: 2px solid #10b981;
-    }
-    
-    .badge-good {
-        background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%);
-        color: #1e40af;
-        border: 2px solid #3b82f6;
-    }
-    
-    .badge-warning {
-        background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
-        color: #92400e;
-        border: 2px solid #f59e0b;
-    }
-    
-    .badge-critical {
-        background: linear-gradient(135deg, #fee2e2 0%, #fecaca 100%);
-        color: #991b1b;
-        border: 2px solid #ef4444;
-    }
-    
-    /* Panel Cards */
-    .panel-card {
-        background: white;
-        border-radius: 16px;
-        padding: 2rem;
-        box-shadow: var(--shadow);
-        border: 1px solid #e5e7eb;
-        margin-bottom: 1.5rem;
-    }
-    
-    .panel-header {
-        display: flex;
-        align-items: center;
-        gap: 0.75rem;
-        padding-bottom: 1rem;
-        margin-bottom: 1.5rem;
-        border-bottom: 2px solid #f3f4f6;
-    }
-    
-    .panel-icon {
-        font-size: 1.75rem;
-    }
-    
-    .panel-title {
-        font-size: 1.5rem;
-        font-weight: 700;
-        color: #1f2937;
-        margin: 0;
-    }
-    
-    /* Recommendation Cards */
-    .recommendation-card {
-        background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
-        border-left: 4px solid #3b82f6;
-        padding: 1.5rem;
-        border-radius: 12px;
-        margin: 1rem 0;
-        transition: all 0.3s ease;
-    }
-    
-    .recommendation-card:hover {
-        transform: translateX(4px);
-        box-shadow: var(--shadow);
-    }
-    
-    .rec-priority-high {
-        background: linear-gradient(135deg, #fef2f2 0%, #fee2e2 100%);
-        border-left-color: #ef4444;
-    }
-    
-    .rec-priority-medium {
-        background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
-        border-left-color: #f59e0b;
-    }
-    
-    .rec-title {
-        font-weight: 700;
-        font-size: 1.1rem;
-        margin-bottom: 0.5rem;
-        display: flex;
-        align-items: center;
-        gap: 0.5rem;
-    }
-    
-    /* Error Analysis */
-    .error-box {
-        padding: 1.5rem;
-        border-radius: 12px;
-        margin: 1rem 0;
-        border: 2px solid;
-    }
-    
-    .error-fp {
-        background: #fef2f2;
-        border-color: #fca5a5;
-    }
-    
-    .error-fn {
-        background: #fef3c7;
-        border-color: #fcd34d;
-    }
-    
-    .error-tp {
-        background: #d1fae5;
-        border-color: #6ee7b7;
-    }
-    
-    /* Progress Indicator */
-    .progress-wrapper {
-        background: #f3f4f6;
-        border-radius: 999px;
-        height: 12px;
-        overflow: hidden;
-        margin: 1rem 0;
-    }
-    
-    .progress-bar {
-        height: 100%;
-        border-radius: 999px;
-        transition: width 0.5s ease;
-    }
-    
-    .progress-excellent {
-        background: linear-gradient(90deg, #10b981, #059669);
-    }
-    
-    .progress-good {
-        background: linear-gradient(90deg, #3b82f6, #2563eb);
-    }
-    
-    .progress-warning {
-        background: linear-gradient(90deg, #f59e0b, #d97706);
-    }
-    
-    .progress-critical {
-        background: linear-gradient(90deg, #ef4444, #dc2626);
-    }
-    
-    /* Tabs Moderne */
-    .stTabs [data-baseweb="tab-list"] {
-        gap: 0.5rem;
-        background: #f9fafb;
-        padding: 0.5rem;
-        border-radius: 12px;
-    }
-    
-    .stTabs [data-baseweb="tab"] {
-        border-radius: 8px;
-        padding: 0.75rem 1.5rem;
-        font-weight: 600;
-    }
-    
-    .stTabs [aria-selected="true"] {
-        background: white;
-        box-shadow: var(--shadow);
-    }
-    
-    /* Images Gallery */
-    .image-gallery {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-        gap: 1rem;
-        margin: 1rem 0;
-    }
-    
-    .image-item {
-        border-radius: 12px;
-        overflow: hidden;
-        box-shadow: var(--shadow);
-        transition: transform 0.3s ease;
-    }
-    
-    .image-item:hover {
-        transform: scale(1.05);
-    }
-    
-    /* Stats Grid */
-    .stats-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-        gap: 1rem;
-        margin: 1.5rem 0;
-    }
-    
-    .stat-item {
-        text-align: center;
-        padding: 1rem;
-        background: #f9fafb;
-        border-radius: 12px;
-    }
-    
-    .stat-value {
-        font-size: 1.75rem;
-        font-weight: 800;
-        color: #1f2937;
-    }
-    
-    .stat-label {
-        font-size: 0.75rem;
-        color: #6b7280;
-        margin-top: 0.25rem;
-    }
-    
-    /* Animations */
-    @keyframes slideIn {
-        from {
-            opacity: 0;
-            transform: translateY(20px);
-        }
-        to {
-            opacity: 1;
-            transform: translateY(0);
-        }
-    }
-    
-    .animate-in {
-        animation: slideIn 0.5s ease-out;
-    }
-    
-    /* Buttons */
-    .stButton > button {
-        border-radius: 10px;
-        font-weight: 600;
-        transition: all 0.3s ease;
-        border: none;
-    }
-    
-    .stButton > button:hover {
-        transform: translateY(-2px);
-        box-shadow: var(--shadow-lg);
-    }
-    
-    /* Responsive */
-    @media (max-width: 768px) {
-        .block-container {
-            padding: 1rem !important;
-        }
-        .hero-title {
-            font-size: 1.75rem;
-        }
-        .metric-value {
-            font-size: 1.75rem;
-        }
-    }
-</style>
-""", unsafe_allow_html=True)
-
-
-# ============================================================================
-# FONCTIONS MÉTIER
-# ============================================================================
-
-def safe_convert_history(history):
-    """Corrige l'historique d'entraînement."""
-    if not history:
-        return {}
-    
-    fixed_history = {}
-    for key, value in history.items():
-        if isinstance(value, bool):
-            fixed_history[key] = [1.0 if value else 0.0]
-        elif isinstance(value, (list, np.ndarray)) and len(value) > 0:
-            cleaned = []
-            for item in value:
-                if isinstance(item, bool):
-                    cleaned.append(1.0 if item else 0.0)
-                elif isinstance(item, (int, float)):
-                    cleaned.append(float(item))
-                else:
-                    cleaned.append(0.0)
-            fixed_history[key] = cleaned
-        else:
-            fixed_history[key] = value
-    
-    return fixed_history
-
-
-def robust_predict_with_preprocessor(model, X_test, preprocessor, model_type):
-    """
-    Prédictions robustes avec gestion complète des cas edge.
-    - Gestion preprocessor None
-    - Validation des shapes
-    - Try-except sur chaque transformation
-    - Logs détaillés des échecs
-    """
-    try:
-        # Preprocessing avec gestion None
-        if preprocessor is not None:
-            try:
-                # Tenter transformation avec preprocessor
-                X_processed = preprocessor.transform(X_test, output_format="channels_first")
-                logger.info(f"✅ Preprocessing réussi: {X_processed.shape}")
-            except AttributeError as e:
-                # Preprocessor sans méthode transform
-                logger.warning(f"⚠️ Preprocessor sans transform(): {e}")
-                X_processed = X_test.copy()
-            except Exception as e:
-                # Erreur transformation
-                logger.warning(f"⚠️ Erreur preprocessing, utilisation données brutes: {e}")
-                X_processed = X_test.copy()
-        else:
-            logger.info("ℹ️ Pas de preprocessor, utilisation données brutes")
-            X_processed = X_test.copy()
-        
-        # Validation shape
-        if len(X_processed.shape) != 4:
-            logger.error(f"❌ Shape invalide: {X_processed.shape}, attendu: (N, C, H, W)")
-            # Tentative de correction
-            if len(X_processed.shape) == 3:
-                # Ajouter dimension channel
-                X_processed = np.expand_dims(X_processed, axis=1)
-                logger.info(f"✅ Shape corrigée: {X_processed.shape}")
-        
-        # Device avec gestion CUDA
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        model.to(device)
-        model.eval()
-        
-        logger.info(f"🖥️ Device: {device}, Shape entrée: {X_processed.shape}")
-        
-        # Conversion tensor avec dtype explicite
-        try:
-            X_tensor = torch.tensor(X_processed, dtype=torch.float32).to(device)
-        except Exception as e:
-            logger.error(f"❌ Erreur conversion tensor: {e}")
-            # Tentative de correction dtype
-            X_processed = X_processed.astype(np.float32)
-            X_tensor = torch.tensor(X_processed, dtype=torch.float32).to(device)
-        
-        with torch.no_grad():
-            if model_type in ["autoencoder", "conv_autoencoder", "variational_autoencoder", "denoising_autoencoder"]:
-                # AUTOENCODER BRANCH
-                try:
-                    reconstructed = model(X_tensor)
-                    reconstructed_np = reconstructed.cpu().numpy()
-                    
-                    # Calcul erreur de reconstruction safe
-                    reconstruction_errors = np.mean(
-                        (X_processed - reconstructed_np) ** 2,
-                        axis=(1, 2, 3) if len(X_processed.shape) == 4 else (1,)
-                    )
-                    
-                    # Normalisation avec protection division par zéro
-                    max_error = np.max(reconstruction_errors)
-                    if max_error > 0:
-                        y_pred_proba = reconstruction_errors / max_error
-                    else:
-                        logger.warning("⚠️ Erreur reconstruction nulle, utilisation valeurs uniformes")
-                        y_pred_proba = np.ones(len(reconstruction_errors)) * 0.5
-                    
-                    # Seuil adaptatif basé sur distribution
-                    threshold = np.median(y_pred_proba) + np.std(y_pred_proba)
-                    threshold = np.clip(threshold, 0.3, 0.7)  # Entre 0.3 et 0.7
-                    
-                    y_pred_binary = (y_pred_proba > threshold).astype(int)
-                    
-                    logger.info(
-                        f"✅ Prédictions autoencoder: {len(y_pred_binary)} samples, "
-                        f"seuil: {threshold:.3f}, anomalies: {y_pred_binary.sum()}"
-                    )
-                    
-                    return {
-                        "y_pred_proba": y_pred_proba,
-                        "y_pred_binary": y_pred_binary,
-                        "reconstruction_errors": reconstruction_errors,
-                        "reconstructed": reconstructed_np,
-                        "adaptive_threshold": threshold,
-                        "success": True
-                    }
-                
-                except Exception as e:
-                    logger.error(f"❌ Erreur prédiction autoencoder: {e}", exc_info=True)
-                    raise
-            
-            else:
-                # CLASSIFICATION BRANCH
-                try:
-                    output = model(X_tensor)
-                    
-                    # Gestion multiple formats output
-                    if hasattr(output, 'logits'):
-                        y_proba = torch.softmax(output.logits, dim=1).cpu().numpy()
-                    elif isinstance(output, tuple):
-                        # Certains modèles retournent (logits, features)
-                        y_proba = torch.softmax(output[0], dim=1).cpu().numpy()
-                    else:
-                        y_proba = torch.softmax(output, dim=1).cpu().numpy()
-                    
-                    # Extraction probabilité classe positive
-                    if y_proba.shape[1] == 2:
-                        y_pred_proba = y_proba[:, 1]
-                    elif y_proba.shape[1] == 1:
-                        y_pred_proba = y_proba[:, 0]
-                    else:
-                        # Multi-classes: prendre max
-                        y_pred_proba = np.max(y_proba, axis=1)
-                    
-                    y_pred_binary = (y_pred_proba > 0.5).astype(int)
-                    
-                    logger.info(
-                        f"✅ Prédictions classification: {len(y_pred_binary)} samples, "
-                        f"anomalies: {y_pred_binary.sum()}"
-                    )
-                    
-                    return {
-                        "y_pred_proba": y_pred_proba,
-                        "y_pred_binary": y_pred_binary,
-                        "class_probabilities": y_proba,
-                        "success": True
-                    }
-                
-                except Exception as e:
-                    logger.error(f"❌ Erreur prédiction classification: {e}", exc_info=True)
-                    raise
-        
-    except Exception as e:
-        logger.error(f"❌ Erreur critique prédiction: {e}", exc_info=True)
-        
-        # Génération prédictions aléatoires réalistes
-        logger.warning("⚠️ Utilisation fallback: prédictions aléatoires")
-        
-        if model_type in ["autoencoder", "conv_autoencoder"]:
-            # Pour autoencoder: distribution normale autour de 0.3
-            reconstruction_errors = np.random.normal(0.3, 0.15, len(X_test))
-            reconstruction_errors = np.clip(reconstruction_errors, 0, 1)
-            
-            threshold = 0.5
-            
-            return {
-                "y_pred_proba": reconstruction_errors,
-                "y_pred_binary": (reconstruction_errors > threshold).astype(int),
-                "reconstruction_errors": reconstruction_errors,
-                "reconstructed": X_test.copy(),
-                "adaptive_threshold": threshold,
-                "success": False,
-                "fallback": True
-            }
-        else:
-            # Pour classification: distribution uniforme biaisée
-            y_pred_proba = np.random.beta(2, 5, len(X_test))  # Biais vers valeurs basses
-            
-            return {
-                "y_pred_proba": y_pred_proba,
-                "y_pred_binary": (y_pred_proba > 0.5).astype(int),
-                "success": False,
-                "fallback": True
-            }
-
-
-def analyze_false_positives(X_test, y_test, y_pred_binary):
-    """Analyse des erreurs."""
-    false_positives = np.where((y_test == 0) & (y_pred_binary == 1))[0]
-    false_negatives = np.where((y_test == 1) & (y_pred_binary == 0))[0]
-    true_positives = np.where((y_test == 1) & (y_pred_binary == 1))[0]
-    true_negatives = np.where((y_test == 0) & (y_pred_binary == 0))[0]
-    
-    return {
-        "false_positives": false_positives,
-        "false_negatives": false_negatives,
-        "true_positives": true_positives,
-        "true_negatives": true_negatives,
-        "fp_count": len(false_positives),
-        "fn_count": len(false_negatives),
-        "tp_count": len(true_positives),
-        "tn_count": len(true_negatives),
-        "fp_rate": len(false_positives) / max(len(y_test[y_test == 0]), 1),
-        "fn_rate": len(false_negatives) / max(len(y_test[y_test == 1]), 1),
-        "total_errors": len(false_positives) + len(false_negatives)
-    }
-
-
-def get_performance_status(metric_value, metric_type):
-    """Retourne le statut de performance."""
-    if metric_type == "auc_roc":
-        if metric_value >= 0.9: return "excellent", "🎯 Excellent"
-        elif metric_value >= 0.8: return "good", "✅ Bon"
-        elif metric_value >= 0.7: return "warning", "⚠️ Moyen"
-        else: return "critical", "❌ Critique"
-    elif metric_type in ["f1_score", "precision", "recall"]:
-        if metric_value >= 0.85: return "excellent", "🎯 Excellent"
-        elif metric_value >= 0.75: return "good", "✅ Bon"
-        elif metric_value >= 0.6: return "warning", "⚠️ Moyen"
-        else: return "critical", "❌ Critique"
-    else:
-        if metric_value >= 0.8: return "good", "✅ Bon"
-        elif metric_value >= 0.6: return "warning", "⚠️ Moyen"
-        else: return "critical", "❌ Critique"
-
-
-def create_performance_summary(metrics, error_analysis):
-    """Crée un résumé des performances."""
-    weights = {
-        'auc_roc': 0.25,
-        'f1_score': 0.25,
-        'precision': 0.20,
-        'recall': 0.20,
-        'specificity': 0.10
-    }
-    
-    total_score = sum(metrics.get(k, 0) * v for k, v in weights.items() if k in metrics)
-    valid_weight = sum(v for k, v in weights.items() if k in metrics)
-    overall_score = total_score / valid_weight if valid_weight > 0 else 0
-    
-    summary = {
-        "overall_score": overall_score,
-        "production_ready": overall_score >= 0.75,
-        "risk_level": "low" if overall_score >= 0.85 else "medium" if overall_score >= 0.75 else "high",
-        "strengths": [],
-        "weaknesses": []
-    }
-    
-    if overall_score >= 0.85:
-        summary["status"] = "excellent"
-        summary["strengths"] = ["Performances exceptionnelles", "Prêt production"]
-    elif overall_score >= 0.75:
-        summary["status"] = "good"
-        summary["strengths"] = ["Bonnes performances"]
-        summary["weaknesses"] = ["Optimisations possibles"]
-    elif overall_score >= 0.6:
-        summary["status"] = "warning"
-        summary["weaknesses"] = ["Optimisations nécessaires"]
-    else:
-        summary["status"] = "critical"
-        summary["weaknesses"] = ["Re-entraînement recommandé"]
-    
-    return summary
-
-
-def generate_recommendations(metrics, model_type, error_analysis, performance_summary):
-    """Génère des recommandations."""
-    recommendations = []
-    
-    if performance_summary["overall_score"] < 0.6:
-        recommendations.append({
-            "priority": "high",
-            "icon": "🔴",
-            "action": "Re-entraînement complet",
-            "message": "Performances insuffisantes. Re-entraîner avec plus de données."
-        })
-    
-    if metrics.get('recall', 1) < 0.7:
-        recommendations.append({
-            "priority": "high",
-            "icon": "🔍",
-            "action": "Améliorer détection",
-            "message": "Rappel faible. Anomalies manquées. Ajuster le seuil."
-        })
-    
-    if metrics.get('precision', 1) < 0.7:
-        recommendations.append({
-            "priority": "medium",
-            "icon": "⚖️",
-            "action": "Réduire faux positifs",
-            "message": "Trop de faux positifs. Augmenter seuil ou améliorer données."
-        })
-    
-    if error_analysis.get('fp_rate', 0) > 0.1:
-        recommendations.append({
-            "priority": "medium",
-            "icon": "📊",
-            "action": "Analyser faux positifs",
-            "message": f"Taux FP élevé ({error_analysis['fp_rate']:.1%}). Examiner images."
-        })
-    
-    if performance_summary["production_ready"]:
-        recommendations.append({
-            "priority": "low",
-            "icon": "🚀",
-            "action": "Déploiement production",
-            "message": "Modèle prêt. Configurer monitoring."
-        })
-    
-    return recommendations
-
-
-def create_performance_radar(metrics):
-    """Crée un radar chart."""
-    categories = ['AUC-ROC', 'F1-Score', 'Precision', 'Recall', 'Specificity']
-    values = [
-        metrics.get('auc_roc', 0),
-        metrics.get('f1_score', 0),
-        metrics.get('precision', 0),
-        metrics.get('recall', 0),
-        metrics.get('specificity', 0)
-    ]
-    
-    fig = go.Figure()
-    
-    fig.add_trace(go.Scatterpolar(
-        r=values + [values[0]],
-        theta=categories + [categories[0]],
-        fill='toself',
-        fillcolor='rgba(99, 102, 241, 0.3)',
-        line=dict(color='#6366f1', width=3),
-        name='Performance'
-    ))
-    
-    fig.update_layout(
-        polar=dict(radialaxis=dict(visible=True, range=[0, 1])),
-        showlegend=False,
-        height=400,
-        title="Analyse Multidimensionnelle"
-    )
-    
-    return fig
-
-
-def plot_error_distribution(error_analysis):
-    """Graphique distribution erreurs."""
-    labels = ['Vrais Positifs', 'Faux Positifs', 'Vrais Négatifs', 'Faux Négatifs']
-    values = [
-        error_analysis['tp_count'],
-        error_analysis['fp_count'],
-        error_analysis['tn_count'],
-        error_analysis['fn_count']
-    ]
-    
-    colors = ['#10b981', '#ef4444', '#3b82f6', '#f59e0b']
-    
-    fig = go.Figure(data=[go.Pie(
-        labels=labels,
-        values=values,
-        hole=.4,
-        marker_colors=colors,
-        textinfo='label+percent+value'
-    )])
-    
-    fig.update_layout(
-        title="Distribution des Prédictions",
-        height=400
-    )
-    
-    return fig
+# ✅ Injection CSS centralisé
+st.markdown(AnomalyEvaluationStyles.get_css(), unsafe_allow_html=True)
 
 
 # ============================================================================
 # VÉRIFICATIONS INITIALES
+# ============================================================================
+# Note: Toutes les fonctions métier sont importées depuis les helpers:
+# - helpers/ui_components/anomaly_evaluation.py
+# - helpers/anomaly_prediction_helpers.py
 # ============================================================================
 
 if not hasattr(STATE, 'training_results') or STATE.training_results is None:
@@ -873,12 +122,18 @@ try:
     model = STATE.training_results["model"]
     history = safe_convert_history(STATE.training_results.get("history", {}))
     
-    # Accès safe à model_config
+    # Accès safe à model_config (avec fallback depuis training_results)
     if not hasattr(STATE, 'model_config') or STATE.model_config is None:
-        st.error("❌ Configuration du modèle manquante")
-        st.stop()
+        # Fallback: récupérer depuis training_results
+        if isinstance(STATE.training_results, dict) and "model_config" in STATE.training_results:
+            STATE.model_config = STATE.training_results["model_config"]
+            logger.info("✅ model_config récupéré depuis training_results")
+        else:
+            st.error("❌ Configuration du modèle manquante")
+            st.info("💡 Veuillez relancer l'entraînement pour générer la configuration")
+            st.stop()
     
-    model_type = STATE.model_config.get("model_type", "autoencoder")
+    model_type = STATE.model_config.get("model_type", "autoencoder") if isinstance(STATE.model_config, dict) else getattr(STATE.model_config, "model_type", "autoencoder")
     
     # Récupération safe du preprocessor
     preprocessor = STATE.training_results.get("preprocessor")
@@ -954,14 +209,18 @@ with st.sidebar:
 # Hero Header
 st.markdown(f'''
 <div class="hero-header">
-    <h1 class="hero-title">📊 Dashboard d'Évaluation Premium</h1>
+    <h1 class="hero-title">📊 Dashboard d'Évaluation</h1>
     <p class="hero-subtitle">Analyse approfondie des performances en détection d'anomalies</p>
 </div>
 ''', unsafe_allow_html=True)
 
 # Prédictions
 with st.spinner("🔮 Calcul des prédictions..."):
-    prediction_results = robust_predict_with_preprocessor(model, X_test, preprocessor, model_type)
+    # ✅ Utilisation du helper centralisé avec STATE pour récupération shapes originales
+    prediction_results = robust_predict_with_preprocessor(
+        model, X_test, preprocessor, model_type,
+        return_localization=True, STATE=STATE
+    )
     y_pred_proba = prediction_results["y_pred_proba"]
     y_pred_binary = prediction_results["y_pred_binary"]
 
@@ -1217,7 +476,8 @@ with col_radar2:
 
 tabs = st.tabs([
     "📊 Métriques Détaillées",
-    "🔍 Analyse des Erreurs", 
+    "🔍 Analyse des Erreurs",
+    "🎯 Modèle vs Réalité",  # ✅ NOUVEAU: Visualisation comparée
     "💡 Recommandations",
     "🎨 Visualisations",
     "📋 Rapport"
@@ -1383,7 +643,219 @@ with tabs[1]:
                     st.caption(f"Confiance: {y_pred_proba[idx]:.3f}")
 
 
-# TAB 3: RECOMMANDATIONS
+# TAB 3: MODÈLE VS RÉALITÉ
+with tabs[2]:
+    st.markdown("### 🎯 Visualisation Modèle vs Réalité")
+    st.markdown("""
+    <div style="background: #f0f9ff; padding: 1rem; border-radius: 8px; margin-bottom: 1rem;">
+        <p style="margin: 0; color: #0369a1;">
+            <strong>🔍 Cette section compare ce que le modèle voit avec la réalité:</strong><br>
+            • <strong>Prédiction du modèle:</strong> Ce que le modèle a détecté<br>
+            • <strong>Label réel:</strong> La vérité terrain<br>
+            • <strong>Heatmaps:</strong> Où le modèle localise les anomalies<br>
+            • <strong>Type d'erreur:</strong> Classification des types de défauts (si disponible)
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Récupération des heatmaps depuis prediction_results
+    heatmaps = prediction_results.get("heatmaps")
+    error_maps = prediction_results.get("error_maps")
+    binary_masks = prediction_results.get("binary_masks")
+    
+    has_localization = heatmaps is not None and error_maps is not None
+    
+    if has_localization:
+        st.success(f"✅ Localisation disponible: {len(heatmaps)} images avec heatmaps")
+    else:
+        st.warning("⚠️ Heatmaps non disponibles pour ce modèle")
+    
+    # Sélection d'échantillons à visualiser
+    st.markdown("---")
+    st.markdown("#### 🖼️ Échantillons Détaillés")
+    
+    # Créer des catégories d'échantillons
+    tp_indices = error_analysis["true_positives"]
+    tn_indices = error_analysis["true_negatives"]
+    fp_indices = error_analysis["false_positives"]
+    fn_indices = error_analysis["false_negatives"]
+    
+    sample_categories = {
+        "✅ Vrais Positifs (Anomalies détectées correctement)": tp_indices,
+        "✅ Vrais Négatifs (Normales détectées correctement)": tn_indices,
+        "❌ Faux Positifs (Normales classées comme anomalies)": fp_indices,
+        "⚠️ Faux Négatifs (Anomalies manquées)": fn_indices
+    }
+    
+    for category_name, indices in sample_categories.items():
+        if len(indices) == 0:
+            continue
+        
+        st.markdown(f"##### {category_name} ({len(indices)} échantillons)")
+        
+        # Sélectionner jusqu'à n_samples_viz échantillons
+        sample_indices = indices[:n_samples_viz]
+        
+        # Créer une grille de visualisations
+        for idx in sample_indices:
+            col_viz1, col_viz2 = st.columns([1, 1])
+            
+            with col_viz1:
+                st.markdown("**📷 Image Originale**")
+                
+                # Affichage image originale
+                img = X_test[idx]
+                
+                # Normalisation pour affichage
+                if img.dtype != np.uint8:
+                    if img.max() > 1:
+                        img_display = img / 255.0
+                    else:
+                        img_display = img
+                    img_display = np.clip(img_display, 0, 1)
+                else:
+                    img_display = img / 255.0 if img.max() > 1 else img
+                
+                # Gestion format (channels_first vs channels_last)
+                if len(img_display.shape) == 3 and img_display.shape[0] in [1, 3]:
+                    # channels_first -> channels_last
+                    img_display = np.transpose(img_display, (1, 2, 0))
+                elif len(img_display.shape) == 2:
+                    img_display = np.stack([img_display, img_display, img_display], axis=-1)
+                
+                # Conversion grayscale -> RGB si nécessaire
+                if img_display.shape[-1] == 1:
+                    img_display = np.repeat(img_display, 3, axis=-1)
+                
+                st.image(img_display, use_container_width=True)
+                
+                # Informations labels
+                label_real = y_test[idx]
+                pred_real = y_pred_binary[idx]
+                proba = y_pred_proba[idx]
+                
+                st.markdown(f"""
+                <div style="background: #f9fafb; padding: 0.75rem; border-radius: 6px; margin-top: 0.5rem;">
+                    <div style="font-size: 0.9rem;">
+                        <strong>Label réel:</strong> 
+                        <span style="color: {'#10b981' if label_real == 0 else '#ef4444'}; font-weight: 700;">
+                            {'✅ Normal' if label_real == 0 else '❌ Anomalie'}
+                        </span><br>
+                        <strong>Prédiction modèle:</strong> 
+                        <span style="color: {'#10b981' if pred_real == 0 else '#ef4444'}; font-weight: 700;">
+                            {'✅ Normal' if pred_real == 0 else '❌ Anomalie'}
+                        </span><br>
+                        <strong>Confiance:</strong> {proba:.3f}
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+            
+            with col_viz2:
+                st.markdown("**🔥 Heatmap de Localisation**")
+                
+                if has_localization and idx < len(heatmaps):
+                    try:
+                        # Récupérer heatmap pour cet index
+                        heatmap = heatmaps[idx]
+                        error_map = error_maps[idx]
+                        
+                        # S'assurer que la heatmap a les bonnes dimensions
+                        if len(heatmap.shape) == 2:
+                            # Aligner heatmap à l'image si nécessaire
+                            img_h, img_w = img_display.shape[:2]
+                            if heatmap.shape != (img_h, img_w):
+                                zoom_factors = (img_h / heatmap.shape[0], img_w / heatmap.shape[1])
+                                heatmap = zoom(heatmap, zoom_factors, order=1)
+                                error_map = zoom(error_map, zoom_factors, order=1)
+                            
+                            # Créer visualisation avec Plotly
+                            fig_heatmap = go.Figure()
+                            
+                            # Image de base
+                            img_for_plot = (img_display * 255).astype(np.uint8)
+                            fig_heatmap.add_trace(go.Image(z=img_for_plot))
+                            
+                            # Heatmap superposée
+                            fig_heatmap.add_trace(go.Heatmap(
+                                z=heatmap,
+                                colorscale="Jet",
+                                opacity=0.6,
+                                showscale=True,
+                                colorbar=dict(title="Score anomalie")
+                            ))
+                            
+                            fig_heatmap.update_layout(
+                                title=f"Localisation Anomalie (Index {idx})",
+                                xaxis=dict(visible=False),
+                                yaxis=dict(visible=False),
+                                height=400,
+                                margin=dict(l=0, r=0, t=40, b=0)
+                            )
+                            
+                            st.plotly_chart(fig_heatmap, use_container_width=True)
+                            
+                            # Informations heatmap
+                            max_error = float(error_map.max())
+                            mean_error = float(error_map.mean())
+                            
+                            st.markdown(f"""
+                            <div style="background: #f9fafb; padding: 0.75rem; border-radius: 6px; margin-top: 0.5rem;">
+                                <div style="font-size: 0.9rem;">
+                                    <strong>Erreur max:</strong> {max_error:.4f}<br>
+                                    <strong>Erreur moyenne:</strong> {mean_error:.4f}
+                                </div>
+                            </div>
+                            """, unsafe_allow_html=True)
+                            
+                            # Mask binaire si disponible
+                            if binary_masks is not None and idx < len(binary_masks):
+                                binary_mask = binary_masks[idx]
+                                
+                                # Aligner mask si nécessaire
+                                if binary_mask.shape != (img_h, img_w):
+                                    zoom_factors = (img_h / binary_mask.shape[0], img_w / binary_mask.shape[1])
+                                    binary_mask = zoom(binary_mask, zoom_factors, order=0)
+                                
+                                # Afficher le mask binaire
+                                st.markdown("**🎯 Masque Binaire (Région détectée)**")
+                                mask_for_display = (binary_mask * 255).astype(np.uint8)
+                                st.image(mask_for_display, use_container_width=True, clamp=True)
+                        
+                        else:
+                            st.warning("Format de heatmap non supporté")
+                    
+                    except Exception as e:
+                        logger.error(f"Erreur génération heatmap pour index {idx}: {e}", exc_info=True)
+                        st.warning(f"Impossible de générer heatmap: {str(e)}")
+                else:
+                    st.info("Heatmap non disponible pour cet échantillon")
+            
+            st.markdown("---")
+    
+    # Résumé statistique
+    st.markdown("---")
+    st.markdown("#### 📊 Résumé Statistique")
+    
+    col_stat1, col_stat2, col_stat3, col_stat4 = st.columns(4)
+    
+    with col_stat1:
+        st.metric("Vrais Positifs", len(tp_indices), 
+                 f"{len(tp_indices)/max(len(y_test), 1)*100:.1f}%")
+    
+    with col_stat2:
+        st.metric("Vrais Négatifs", len(tn_indices),
+                 f"{len(tn_indices)/max(len(y_test), 1)*100:.1f}%")
+    
+    with col_stat3:
+        st.metric("Faux Positifs", len(fp_indices),
+                 f"{len(fp_indices)/max(len(y_test), 1)*100:.1f}%")
+    
+    with col_stat4:
+        st.metric("Faux Négatifs", len(fn_indices),
+                 f"{len(fn_indices)/max(len(y_test), 1)*100:.1f}%")
+
+
+# TAB 4: RECOMMANDATIONS
 with tabs[2]:
     st.markdown("### 💡 Recommandations Intelligentes")
     
@@ -1457,8 +929,8 @@ with tabs[2]:
             st.success("Aucun point faible détecté!")
 
 
-# TAB 4: VISUALISATIONS
-with tabs[3]:
+# TAB 5: VISUALISATIONS
+with tabs[4]:
     st.markdown("### 🎨 Visualisations Avancées")
     
     # Courbes ROC et PR
@@ -1467,8 +939,7 @@ with tabs[3]:
     col_viz1, col_viz2 = st.columns(2)
     
     with col_viz1:
-        # Simulation courbe ROC
-        from sklearn.metrics import roc_curve
+        # Courbe ROC
         try:
             fpr, tpr, _ = roc_curve(y_test, y_pred_proba)
             
@@ -1498,8 +969,7 @@ with tabs[3]:
             st.warning(f"Impossible de générer courbe ROC: {e}")
     
     with col_viz2:
-        # Simulation courbe Precision-Recall
-        from sklearn.metrics import precision_recall_curve
+        # Courbe Precision-Recall
         try:
             precision_curve, recall_curve, _ = precision_recall_curve(y_test, y_pred_proba)
             
@@ -1564,8 +1034,8 @@ with tabs[3]:
     st.plotly_chart(fig_hist, use_container_width=True)
 
 
-# TAB 5: RAPPORT
-with tabs[4]:
+# TAB 6: RAPPORT
+with tabs[5]:
     st.markdown("### 📋 Rapport d'Évaluation")
     
     # Résumé exécutif
