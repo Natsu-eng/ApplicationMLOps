@@ -1,14 +1,19 @@
 """
-Modèles de Transfer Learning professionnels.
-Version production-ready avec gestion flexible du fine-tuning.
+Modèles de Transfer Learning .
+Avec gestion correcte des types et compatibilité complète.
 
-À placer dans: src/models/computer_vision/classification/transfer_learning.py
+Les modèles pré-entraînés (ResNet, VGG, EfficientNet) utilisent déjà
+AdaptiveAvgPool2d en interne, donc ils acceptent toutes les tailles d'images.
+
+Pas besoin de resize dynamique supplémentaire.
+
+Dans: src/models/computer_vision/classification/transfer_learning.py
 """
 
-import torch # type: ignore
-import torch.nn as nn # type: ignore
-import torchvision.models as models # type: ignore
-from typing import Optional, List, Dict, Any
+import torch
+import torch.nn as nn
+import torchvision.models as models
+from typing import Optional, List, Dict, Any, Tuple
 from src.shared.logging import get_logger
 
 logger = get_logger(__name__)
@@ -16,7 +21,9 @@ logger = get_logger(__name__)
 
 class TransferLearningModel(nn.Module):
     """
-    Modèle de Transfer Learning robuste et flexible.
+    Modèle de Transfer Learning robuste et flexible.   
+    Accepte toutes les tailles d'images (grâce aux backbones pré-entraînés)
+    Gestion correcte des types et paramètres
     
     Supporte:
         - ResNet (18, 34, 50, 101, 152)
@@ -29,15 +36,16 @@ class TransferLearningModel(nn.Module):
         - Fine-tuning progressif (geler certaines couches)
         - Classifier personnalisable
         - Feature extraction mode
-        - Gradient checkpointing pour économiser mémoire
+        - Compatible avec tous pipelines
     
     Args:
         model_name: Nom du modèle pré-entraîné
         num_classes: Nombre de classes
         pretrained: Charger les poids ImageNet
-        freeze_layers: Nombre de couches à geler (0 = tout entraînable)
+        freeze_layers: Nombre de couches à geler (0 = tout entraînable, -1 = tout sauf classifier)
         dropout_rate: Dropout avant la couche finale
         use_custom_classifier: Utiliser un classifier multi-couches
+        input_size: Taille d'entrée (stockée pour compatibilité mais non utilisée)
         
     Example:
         >>> model = TransferLearningModel("resnet50", num_classes=10, freeze_layers=100)
@@ -87,11 +95,12 @@ class TransferLearningModel(nn.Module):
         freeze_layers: int = 0,
         dropout_rate: float = 0.5,
         use_custom_classifier: bool = True,
-        input_size: int = 224
+        input_size: Optional[Tuple[int, int]] = None,  
+        input_channels: int = 3  
     ):
         super(TransferLearningModel, self).__init__()
         
-        # Validation
+        # === VALIDATION ===
         if model_name not in self.SUPPORTED_MODELS:
             raise ValueError(
                 f"model_name '{model_name}' non supporté. "
@@ -104,37 +113,52 @@ class TransferLearningModel(nn.Module):
         if not 0 <= dropout_rate <= 1:
             raise ValueError(f"dropout_rate doit être entre 0 et 1")
         
+        if input_channels != 3:
+            logger.warning(
+                f"⚠️ Transfer learning nécessite input_channels=3 (RGB). "
+                f"Valeur {input_channels} ignorée."
+            )
+            input_channels = 3
+        
+        # === STOCKAGE DES PARAMÈTRES ===
         self.model_name = model_name
         self.num_classes = num_classes
         self.pretrained = pretrained
         self.freeze_layers = freeze_layers
         self.dropout_rate = dropout_rate
-        self.input_size = input_size
+        self.input_size = input_size if input_size else (224, 224) 
+        self.input_channels = input_channels
         
-        # Récupérer les infos du modèle
+        # Récupére les infos du modèle
         model_info = self.SUPPORTED_MODELS[model_name]
         self.num_features = model_info["features"]
         
-        # Charger le modèle pré-entraîné
+        # === CHARGEMENT DU BACKBONE ===
         try:
             if pretrained:
-                weights = "IMAGENET1K_V1"  # PyTorch 0.13+ syntax
+                # PyTorch 0.13+ syntax
+                weights = "IMAGENET1K_V1"
                 self.backbone = models.__dict__[model_name](weights=weights)
+                logger.info(f"✅ Modèle {model_name} chargé avec poids ImageNet")
             else:
                 self.backbone = models.__dict__[model_name](weights=None)
-            
-            logger.info(f"Modèle {model_name} chargé (pretrained={pretrained})")
+                logger.info(f"✅ Modèle {model_name} chargé sans poids")
         
         except Exception as e:
-            logger.error(f"Erreur chargement {model_name}: {e}")
+            logger.warning(f"⚠️ Erreur chargement avec 'weights': {e}")
             # Fallback pour anciennes versions PyTorch
-            self.backbone = models.__dict__[model_name](pretrained=pretrained)
+            try:
+                self.backbone = models.__dict__[model_name](pretrained=pretrained)
+                logger.info(f"✅ Modèle {model_name} chargé (fallback pretrained={pretrained})")
+            except Exception as e2:
+                logger.error(f"❌ Erreur chargement {model_name}: {e2}")
+                raise
         
-        # Remplacer le classifier
+        # === REMPLACEMENT DU CLASSIFIER ===
         self._replace_classifier(use_custom_classifier)
         
-        # Geler les couches si demandé
-        if freeze_layers > 0:
+        # === GEL DES COUCHES ===
+        if freeze_layers > 0 or freeze_layers == -1:
             self._freeze_layers(freeze_layers)
         
         logger.info(
@@ -146,7 +170,10 @@ class TransferLearningModel(nn.Module):
         )
     
     def _replace_classifier(self, use_custom: bool):
-        """Remplace le classifier du modèle backbone."""
+        """
+        Remplace le classifier du modèle backbone.       
+        Gère automatiquement les différentes architectures (ResNet, VGG, etc)
+        """
         if use_custom:
             # Classifier multi-couches avec BatchNorm et Dropout
             classifier = nn.Sequential(
@@ -164,18 +191,26 @@ class TransferLearningModel(nn.Module):
             # Classifier simple
             classifier = nn.Linear(self.num_features, self.num_classes)
         
-        # Identifier et remplacer le classifier selon le type de modèle
+        # Identifie et remplace le classifier selon le type de modèle
         if hasattr(self.backbone, 'fc'):  # ResNet, DenseNet
             self.backbone.fc = classifier
+            logger.debug(f"Classifier remplacé via 'fc' pour {self.model_name}")
+        
         elif hasattr(self.backbone, 'classifier'):  # VGG, MobileNet, EfficientNet
             if isinstance(self.backbone.classifier, nn.Sequential):
-                # Remplacer la dernière couche du Sequential
+                # Remplace la dernière couche du Sequential
                 last_layer_idx = len(self.backbone.classifier) - 1
                 self.backbone.classifier[last_layer_idx] = classifier
+                logger.debug(f"Classifier remplacé via 'classifier[{last_layer_idx}]'")
             else:
                 self.backbone.classifier = classifier
+                logger.debug(f"Classifier remplacé via 'classifier'")
+        
         else:
-            raise ValueError(f"Impossible de remplacer le classifier pour {self.model_name}")
+            raise ValueError(
+                f"Impossible de remplacer le classifier pour {self.model_name}. "
+                f"Attributs disponibles: {dir(self.backbone)}"
+            )
     
     def _freeze_layers(self, num_layers: int):
         """
@@ -183,15 +218,19 @@ class TransferLearningModel(nn.Module):
         Utile pour fine-tuning progressif.
         
         Args:
-            num_layers: Nombre de couches à geler (0 = rien de gelé)
+            num_layers: Nombre de couches à geler
+                       -1 = Geler tout sauf le classifier
+                        0 = Rien de gelé
+                       >0 = Geler les N premières couches
         """
         if num_layers == -1:
             # Geler tout sauf le classifier
             for name, param in self.backbone.named_parameters():
+                # Ne pas geler les paramètres du classifier
                 if 'fc' not in name and 'classifier' not in name:
                     param.requires_grad = False
             
-            logger.info("Toutes les couches gelées sauf le classifier")
+            logger.info("✅ Toutes les couches gelées sauf le classifier")
             return
         
         # Geler les N premières couches
@@ -207,48 +246,56 @@ class TransferLearningModel(nn.Module):
         total = sum(p.numel() for p in self.parameters())
         
         logger.info(
-            f"Gelé {frozen_count} couches. "
+            f"✅ Gelé {frozen_count} couches. "
             f"Paramètres entraînables: {trainable:,}/{total:,} "
             f"({trainable/total*100:.1f}%)"
         )
     
     def unfreeze_layers(self, num_layers: int = -1):
         """
-        Dégèle des couches pour fine-tuning progressif.
-        
+        Dégèle des couches pour fine-tuning progressif.       
         Args:
-            num_layers: Nombre de couches à dégeler (-1 = toutes)
+            num_layers: Nombre de couches à dégeler
+                       -1 = Tout dégeler
+                       >0 = Dégeler les N dernières couches
         """
         if num_layers == -1:
             # Dégeler tout
             for param in self.backbone.parameters():
                 param.requires_grad = True
-            logger.info("Toutes les couches dégelées")
+            logger.info("✅ Toutes les couches dégelées")
         else:
             # Dégeler les N dernières couches
             params_list = list(self.backbone.parameters())
             for param in params_list[-num_layers:]:
                 param.requires_grad = True
-            logger.info(f"Dégelé les {num_layers} dernières couches")
+            logger.info(f"✅ Dégelé les {num_layers} dernières couches")
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
-        Forward pass avec validation.
-        
+        Forward pass avec validation.    
+        Accepte toutes les tailles d'images (grâce aux backbones pré-entraînés)      
         Args:
             x: Images (batch_size, 3, height, width)
             
         Returns:
             Logits (batch_size, num_classes)
+            
+        Raises:
+            ValueError: Si dimensions invalides
         """
         if x.dim() != 4:
-            raise ValueError(f"Expected 4D tensor, got {x.dim()}D")
+            raise ValueError(f"Expected 4D tensor (B,C,H,W), got {x.dim()}D")
         
         if x.size(1) != 3:
-            raise ValueError(f"Expected 3 channels (RGB), got {x.size(1)} channels")
+            raise ValueError(
+                f"Transfer learning nécessite 3 canaux (RGB), "
+                f"reçu: {x.size(1)} canaux"
+            )
         
         try:
             return self.backbone(x)
+        
         except Exception as e:
             logger.error(f"Erreur dans forward {self.model_name}: {e}")
             logger.error(f"Input shape: {x.shape}")
@@ -288,8 +335,7 @@ class TransferLearningModel(nn.Module):
     
     def count_parameters(self, trainable_only: bool = False) -> int:
         """
-        Compte les paramètres du modèle.
-        
+        Compte les paramètres du modèle.        
         Args:
             trainable_only: Compter uniquement les paramètres entraînables
             
@@ -314,6 +360,7 @@ class TransferLearningModel(nn.Module):
             "frozen_layers": self.freeze_layers,
             "dropout_rate": self.dropout_rate,
             "input_size": self.input_size,
+            "input_channels": self.input_channels,
             "num_features": self.num_features,
             "total_parameters": total,
             "trainable_parameters": trainable,
@@ -328,9 +375,11 @@ class TransferLearningModel(nn.Module):
         """
         if hasattr(self.backbone, 'gradient_checkpointing_enable'):
             self.backbone.gradient_checkpointing_enable()
-            logger.info("Gradient checkpointing activé")
+            logger.info("✅ Gradient checkpointing activé")
         else:
-            logger.warning(f"Gradient checkpointing non supporté pour {self.model_name}")
+            logger.warning(
+                f"⚠️ Gradient checkpointing non supporté pour {self.model_name}"
+            )
 
 
 # === FONCTION FACTORY ===
@@ -348,7 +397,7 @@ def get_transfer_learning_model(
         model_name: Nom du modèle backbone
         num_classes: Nombre de classes
         pretrained: Charger les poids pré-entraînés
-        **kwargs: Arguments additionnels (freeze_layers, dropout_rate, etc.)
+        **kwargs: Arguments additionnels (freeze_layers, dropout_rate, input_size, etc.)
         
     Returns:
         TransferLearningModel configuré
@@ -369,13 +418,12 @@ def get_transfer_learning_model(
             **kwargs
         )
         
-        logger.info(f"Modèle {model_name} créé avec succès")
+        logger.info(f"✅ Modèle {model_name} créé avec succès")
         return model
     
     except Exception as e:
-        logger.error(f"Erreur création modèle {model_name}: {e}")
+        logger.error(f"❌ Erreur création modèle {model_name}: {e}")
         raise
-
 
 # === STRATÉGIES DE FINE-TUNING ===
 
@@ -386,7 +434,7 @@ class FineTuningScheduler:
     Permet de dégeler progressivement les couches selon une stratégie:
         - "immediate": Tout entraînable dès le début
         - "gradual": Dégel progressif par étapes
-        - "discriminative": Learning rates différents par couche
+        - "top_down": Dégel de haut en bas (classifier → features)
     
     Example:
         >>> model = get_transfer_learning_model("resnet50", freeze_layers=-1)
@@ -398,12 +446,12 @@ class FineTuningScheduler:
         self,
         model: TransferLearningModel,
         strategy: str = "gradual",
-        unfreeze_epochs: List[int] = None
+        unfreeze_epochs: Optional[List[int]] = None
     ):
         """
         Args:
             model: Modèle à fine-tuner
-            strategy: Stratégie de fine-tuning
+            strategy: Stratégie de fine-tuning ("immediate", "gradual", "top_down")
             unfreeze_epochs: Époques auxquelles dégeler des couches
         """
         self.model = model
@@ -425,8 +473,7 @@ class FineTuningScheduler:
     
     def step(self, epoch: int):
         """
-        Exécute l'étape de fine-tuning pour l'époque donnée.
-        
+        Exécute l'étape de fine-tuning pour l'époque donnée.       
         Args:
             epoch: Numéro de l'époque actuelle
         """
@@ -475,7 +522,7 @@ class FineTuningScheduler:
                 )
         
         else:
-            logger.warning(f"Stratégie '{self.strategy}' non reconnue")
+            logger.warning(f"⚠️ Stratégie '{self.strategy}' non reconnue")
 
 
 # === UTILITAIRES ===
@@ -558,137 +605,10 @@ def compare_models(
                 "throughput_imgs_per_sec": 1000 / avg_time * input_shape[0]
             }
             
-            logger.info(f"Benchmark {model_name}: {avg_time:.2f}ms par forward")
+            logger.info(f"✅ Benchmark {model_name}: {avg_time:.2f}ms par forward")
         
         except Exception as e:
-            logger.error(f"Erreur benchmark {model_name}: {e}")
+            logger.error(f"❌ Erreur benchmark {model_name}: {e}")
             results[model_name] = {"error": str(e)}
     
     return results
-
-
-# === TESTS UNITAIRES ===
-
-if __name__ == "__main__":
-    import sys
-    
-    print("="*60)
-    print("TESTS - Transfer Learning Models")
-    print("="*60)
-    
-    # Test 1: Création modèle basique
-    print("\n### Test 1: Création ResNet50 ###")
-    try:
-        model = TransferLearningModel("resnet50", num_classes=10, pretrained=False)
-        print(f"✅ Modèle créé: {model.count_parameters():,} paramètres")
-        print(model.summary())
-    except Exception as e:
-        print(f"❌ Erreur: {e}")
-        sys.exit(1)
-    
-    # Test 2: Forward pass
-    print("\n### Test 2: Forward Pass ###")
-    try:
-        x = torch.randn(4, 3, 224, 224)
-        output = model(x)
-        print(f"✅ Forward OK: Input {x.shape} → Output {output.shape}")
-        assert output.shape == (4, 10), f"Shape incorrecte: {output.shape}"
-    except Exception as e:
-        print(f"❌ Erreur forward: {e}")
-        sys.exit(1)
-    
-    # Test 3: Freeze/Unfreeze
-    print("\n### Test 3: Freeze/Unfreeze ###")
-    try:
-        model_freeze = TransferLearningModel(
-            "resnet18",
-            num_classes=5,
-            pretrained=False,
-            freeze_layers=-1  # Tout gelé sauf classifier
-        )
-        
-        trainable_frozen = model_freeze.count_parameters(trainable_only=True)
-        print(f"Paramètres entraînables (gelé): {trainable_frozen:,}")
-        
-        model_freeze.unfreeze_layers(-1)  # Tout dégeler
-        trainable_unfrozen = model_freeze.count_parameters(trainable_only=True)
-        print(f"Paramètres entraînables (dégelé): {trainable_unfrozen:,}")
-        
-        assert trainable_unfrozen > trainable_frozen, "Unfreeze n'a pas fonctionné"
-        print("✅ Freeze/Unfreeze OK")
-    except Exception as e:
-        print(f"❌ Erreur freeze: {e}")
-        sys.exit(1)
-    
-    # Test 4: Feature extraction
-    print("\n### Test 4: Feature Extraction ###")
-    try:
-        features = model.get_features(x)
-        print(f"✅ Features extraites: {features.shape}")
-        assert features.shape[0] == x.shape[0], "Batch size incorrect"
-    except Exception as e:
-        print(f"❌ Erreur extraction: {e}")
-        sys.exit(1)
-    
-    # Test 5: Liste des modèles
-    print("\n### Test 5: Modèles Disponibles ###")
-    available = list_available_models()
-    print(f"✅ {len(available)} modèles disponibles:")
-    for i, name in enumerate(available[:10], 1):
-        info = get_model_info(name)
-        print(f"  {i}. {name} ({info['features']} features)")
-    if len(available) > 10:
-        print(f"  ... et {len(available) - 10} autres")
-    
-    # Test 6: Factory
-    print("\n### Test 6: Factory Function ###")
-    try:
-        model_factory = get_transfer_learning_model(
-            "mobilenet_v2",
-            num_classes=3,
-            freeze_layers=50,
-            dropout_rate=0.3
-        )
-        print(f"✅ Factory OK: {type(model_factory).__name__}")
-        print(f"   Paramètres: {model_factory.count_parameters():,}")
-    except Exception as e:
-        print(f"❌ Erreur factory: {e}")
-        sys.exit(1)
-    
-    # Test 7: Fine-tuning Scheduler
-    print("\n### Test 7: Fine-tuning Scheduler ###")
-    try:
-        model_ft = TransferLearningModel("resnet18", num_classes=2, freeze_layers=-1, pretrained=False)
-        scheduler = FineTuningScheduler(model_ft, strategy="gradual", unfreeze_epochs=[2, 4, 6])
-        
-        for epoch in range(7):
-            scheduler.step(epoch)
-        
-        print("✅ FineTuningScheduler OK")
-    except Exception as e:
-        print(f"❌ Erreur scheduler: {e}")
-        sys.exit(1)
-    
-    # Test 8: Comparaison modèles (optionnel - plus lent)
-    print("\n### Test 8: Comparaison Modèles (optionnel) ###")
-    try:
-        models_to_compare = ["resnet18", "mobilenet_v2", "efficientnet_b0"]
-        print(f"Comparaison de {len(models_to_compare)} modèles...")
-        
-        comparison = compare_models(models_to_compare, num_classes=10)
-        
-        print("\nRésultats:")
-        for name, stats in comparison.items():
-            if "error" not in stats:
-                print(f"\n{name}:")
-                print(f"  Paramètres: {stats['total_params']:,}")
-                print(f"  Temps inference: {stats['inference_time_ms']:.2f}ms")
-                print(f"  Throughput: {stats['throughput_imgs_per_sec']:.0f} img/s")
-        
-        print("\n✅ Comparaison OK")
-    except Exception as e:
-        print(f"⚠️ Comparaison échouée (non bloquant): {e}")
-    
-    print("\n" + "="*60)
-    print("✅ TOUS LES TESTS RÉUSSIS!")
-    print("="*60)

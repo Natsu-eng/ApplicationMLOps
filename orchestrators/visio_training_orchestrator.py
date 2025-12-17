@@ -360,33 +360,261 @@ class ComputerVisionTrainingOrchestrator:
             })
     
     def _create_trainer(self, context: TrainingContext):
-        """Crée le trainer approprié selon le type de modèle"""
-        model_config = ModelConfig(
-            model_type=ModelType(context.model_config["model_type"]),
-            num_classes=context.model_config["model_params"].get("num_classes", 2),
-            input_channels=context.model_config["model_params"].get("input_channels", 3),
-            dropout_rate=context.model_config["model_params"].get("dropout_rate", 0.5),
-            base_filters=context.model_config["model_params"].get("base_filters", 32),
-            latent_dim=context.model_config["model_params"].get("latent_dim", 256),
-            num_stages=context.model_config["model_params"].get("num_stages", 4)
-        )
-        
-        callbacks = context.callbacks or []
-        
-        if context.anomaly_type:
-            return AnomalyAwareTrainer(
-                anomaly_type=context.anomaly_type,
-                model_config=model_config,
-                training_config=context.training_config,
-                taxonomy_config=None,
-                callbacks=callbacks
+        """
+        Crée le trainer approprié selon le type de modèle.     
+        Propagation de preprocessing_config au trainer    
+        Args:
+            context: Contexte d'entraînement contenant les configurations et données.    
+        Returns:
+            Instance de ComputerVisionTrainer ou AnomalyAwareTrainer.
+        """
+        try:
+            # === ÉTAPE 0: CALCUL input_size DEPUIS le contexte ===
+            input_size = self._compute_input_size_from_context(context)
+            
+            logger.info(f"✅ input_size calculée depuis le contexte: {input_size}")
+            
+            # === ÉTAPE 1: RÉCUPÉRATION MODE ===
+            split_config = getattr(context, 'split_config', None)
+            detected_mode = None
+            
+            if split_config and isinstance(split_config, dict):
+                detected_mode = split_config.get('mode')
+                logger.info(f"🔍 Mode depuis split_config: {detected_mode}")
+            else:
+                logger.warning("⚠️ split_config absent ou invalide")
+            
+            # === ÉTAPE 2: RÉCONCILIATION AVEC anomaly_type ===
+            is_unsupervised = False
+            final_anomaly_type = context.anomaly_type
+            
+            if context.anomaly_type:
+                is_unsupervised = True
+                logger.info(f"✅ Mode NON-SUPERVISÉ confirmé via anomaly_type: {context.anomaly_type}")
+                
+                if detected_mode and detected_mode != "unsupervised":
+                    logger.warning(
+                        f"⚠️ INCOHÉRENCE: anomaly_type={context.anomaly_type} "
+                        f"mais split_config.mode={detected_mode}. "
+                        f"Priorité donnée à anomaly_type."
+                    )
+            
+            elif detected_mode == "unsupervised":
+                is_unsupervised = True
+                final_anomaly_type = "structural"
+                logger.info(
+                    f"✅ Mode NON-SUPERVISÉ détecté via split_config. "
+                    f"Anomaly type par défaut: {final_anomaly_type}"
+                )
+            
+            else:
+                is_unsupervised = False
+                logger.info("✅ Mode SUPERVISÉ confirmé (classification)")
+                
+                num_classes = context.model_config.get("model_params", {}).get("num_classes", 2)
+                if num_classes < 2:
+                    raise ValueError(
+                        f"❌ Classification supervisée nécessite num_classes >= 2, "
+                        f"reçu: {num_classes}"
+                    )
+            
+            # === ÉTAPE 3: CRÉATION ModelConfig AVEC input_size ===
+            model_params = context.model_config.get("model_params", {})
+            
+            model_config = ModelConfig(
+                model_type=ModelType(context.model_config["model_type"]),
+                num_classes=model_params.get("num_classes", 2),
+                input_channels=model_params.get("input_channels", 3),
+                dropout_rate=model_params.get("dropout_rate", 0.5),
+                base_filters=model_params.get("base_filters", 32),
+                latent_dim=model_params.get("latent_dim", 128),
+                num_stages=model_params.get("num_stages", 4),
+                input_size=input_size
             )
-        else:
-            return ComputerVisionTrainer(
-                model_config=model_config,
-                training_config=context.training_config,
-                callbacks=callbacks
-            )
+            
+            callbacks = context.callbacks or []
+            
+            # === ÉTAPE 4: CRÉATION DU TRAINER ===
+            if is_unsupervised:
+                logger.info(f"🔍 Création AnomalyAwareTrainer: anomaly_type={final_anomaly_type}")
+                
+                trainer = AnomalyAwareTrainer(
+                    anomaly_type=final_anomaly_type,
+                    model_config=model_config,
+                    training_config=context.training_config,
+                    taxonomy_config=None,
+                    callbacks=callbacks
+                )
+            else:
+                logger.info(f"🎯 Création ComputerVisionTrainer: num_classes={model_config.num_classes}")
+                
+                trainer = ComputerVisionTrainer(
+                    model_config=model_config,
+                    training_config=context.training_config,
+                    callbacks=callbacks
+                )
+            
+            # Propagation preprocessing_config au trainer
+            if hasattr(context, 'preprocessing_config') and context.preprocessing_config:
+                trainer.preprocessing_config = context.preprocessing_config
+                logger.info(
+                    f"✅ preprocessing_config propagé au trainer: "
+                    f"target_size={context.preprocessing_config.get('target_size', None)}"
+                )
+            else:
+                logger.warning("⚠️ Aucun preprocessing_config dans le contexte")
+            
+            return trainer
+        
+        except Exception as e:
+            logger.error(f"❌ Erreur création trainer: {e}", exc_info=True)
+            raise ValueError(f"Impossible de créer le trainer: {str(e)}") from e
+        
+        
+    def _compute_input_size_from_context(self, context: TrainingContext) -> Tuple[int, int]:
+        """
+        Calcule input_size avec VALIDATION de cohérence.   
+        PRIORITÉ:
+        1. preprocessing_config.target_size (si resize activé)
+        2. X_train.shape (taille originale)   
+        Validation que target_size est raisonnable vs données réelles
+        """
+        # 1. Si resize activé → utiliser target_size
+        preprocessing_config = getattr(context, 'preprocessing_config', {})
+        target_size = preprocessing_config.get('target_size', None)
+        
+        if target_size:
+            # Vérifier que target_size est cohérent
+            X_train_size = self._get_data_size(context.X_train)
+            
+            if X_train_size is not None:
+                h_data, w_data = X_train_size
+                h_target, w_target = target_size
+                
+                # Warning si ratio aspect change dramatiquement
+                ratio_data = h_data / w_data
+                ratio_target = h_target / w_target
+                
+                if abs(ratio_data - ratio_target) > 0.3:
+                    logger.warning(
+                        f"⚠️ ATTENTION: Changement important de ratio aspect - "
+                        f"Data: {h_data}x{w_data} (ratio={ratio_data:.2f}), "
+                        f"Target: {h_target}x{w_target} (ratio={ratio_target:.2f}). "
+                        f"Cela peut causer des distorsions."
+                    )
+                
+                # Warning si resize extrême (> 4x upscale ou < 0.25x downscale)
+                scale_h = h_target / h_data
+                scale_w = w_target / w_data
+                
+                if scale_h > 4 or scale_w > 4:
+                    logger.warning(
+                        f"⚠️ Upscale extrême détecté: {h_data}x{w_data} → {h_target}x{w_target} "
+                        f"(scale_h={scale_h:.2f}x, scale_w={scale_w:.2f}x). "
+                        f"Perte de qualité possible."
+                    )
+                
+                if scale_h < 0.25 or scale_w < 0.25:
+                    logger.warning(
+                        f"⚠️ Downscale extrême détecté: {h_data}x{w_data} → {h_target}x{w_target} "
+                        f"(scale_h={scale_h:.2f}x, scale_w={scale_w:.2f}x). "
+                        f"Perte d'information possible."
+                    )
+            
+            logger.info(f"✅ input_size depuis resize config (VALIDÉ): {target_size}")
+            return target_size
+        
+        # 2. Sinon, calculer depuis X_train 
+        logger.info("ℹ️ Pas de resize, calcul depuis données originales")
+        return self._compute_input_size_from_data(context)
+   
+
+    def _get_data_size(self, X: np.ndarray) -> Optional[Tuple[int, int]]:
+        """
+        Extrait (height, width) depuis les données.
+        Gère automatiquement channels_first et channels_last.    
+        Returns:
+            (height, width) ou None si impossible
+        """
+        try:
+            if X is None or len(X) == 0:
+                return None            
+            shape = X.shape           
+            if len(shape) != 4:
+                return None
+            
+            # Format channels_last: (N, H, W, C) avec C petit (1, 3, 4)
+            if shape[-1] in [1, 3, 4]:
+                return (shape[1], shape[2])
+            
+            # Format channels_first: (N, C, H, W) avec C petit
+            elif shape[1] in [1, 3, 4]:
+                return (shape[2], shape[3])
+            
+            else:
+                # Ambiguïté: assumer channels_last par défaut
+                logger.warning(f"⚠️ Format ambigu {shape}, assume channels_last")
+                return (shape[1], shape[2])
+        
+        except Exception as e:
+            logger.debug(f"Impossible d'extraire size: {e}")
+            return None
+
+    def _compute_input_size_from_data(self, context: TrainingContext) -> Tuple[int, int]:
+        """
+        Calcule input_size depuis les données réelles. 
+        """
+        try:
+            X_train = context.X_train
+            
+            if X_train is None or len(X_train) == 0:
+                raise ValueError("X_train est None ou vide")
+            
+            # Détection du format: (N, H, W, C) ou (N, C, H, W)
+            shape = X_train.shape
+            
+            if len(shape) != 4:
+                raise ValueError(f"X_train doit être 4D, reçu: {shape}")
+            
+            # Format channels_last: (N, H, W, C) avec C petit (1, 3, 4)
+            if shape[-1] in [1, 3, 4]:
+                height, width = shape[1], shape[2]
+                logger.info(f"Format détecté: channels_last (N,H,W,C)")
+            
+            # Format channels_first: (N, C, H, W) avec C petit
+            elif shape[1] in [1, 3, 4]:
+                height, width = shape[2], shape[3]
+                logger.info(f"Format détecté: channels_first (N,C,H,W)")
+            
+            else:
+                # Ambiguïté: assumer channels_last par défaut
+                height, width = shape[1], shape[2]
+                logger.warning(
+                    f"⚠️ Format ambigu {shape}, assume channels_last. "
+                    f"Si incorrect, spécifiez input_size explicitement."
+                )
+            
+            # Validation
+            if height < 32 or width < 32:
+                raise ValueError(
+                    f"Dimensions trop petites: ({height}, {width}). Minimum: (32, 32)"
+                )
+            
+            if height > 1024 or width > 1024:
+                logger.warning(
+                    f"⚠️ Dimensions très grandes: ({height}, {width}). "
+                    f"Considérez de redimensionner pour économiser mémoire."
+                )
+            
+            logger.info(f"✅ input_size calculée: ({height}, {width}) depuis X_train.shape={shape}")
+            
+            return (height, width)
+        
+        except Exception as e:
+            logger.error(f"❌ Erreur calcul input_size: {e}", exc_info=True)
+            raise ValueError(
+                f"Impossible de calculer input_size depuis les données: {str(e)}"
+            ) from e
     
     def _execute_training(self, trainer, context: TrainingContext):
         """
@@ -521,7 +749,7 @@ class ComputerVisionTrainingOrchestrator:
                 result['success'] = False
                 result['error'] = "Historique d'entraînement manquant"
             
-            return result  # ✅ TOUJOURS un dict normalisé
+            return result  
             
         except Exception as e:
             self.logger.error(f"❌ Erreur exécution entraînement: {e}", exc_info=True)

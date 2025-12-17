@@ -16,13 +16,12 @@ class TaskType(Enum):
 def detect_cv_task(y: np.ndarray) -> Tuple[TaskType, Dict[str, Any]]:
     """
     Détecte la tâche À PARTIR DES LABELS DU TRAIN UNIQUEMENT !
-    
-    ✅ CORRECTION #3: Validation robuste de la shape et du contenu de y
+    Validation robuste de la shape et du contenu de y
     """
     if y is None or len(y) == 0:
         return TaskType.UNSUPERVISED, {"n_classes": 0, "task": "empty"}
 
-    # ✅ Validation shape: y doit être 1D
+    # Validation shape: y doit être 1D
     if y.ndim != 1:
         raise ValueError(
             f"❌ ERREUR CRITIQUE: y a une shape incorrecte {y.shape}, "

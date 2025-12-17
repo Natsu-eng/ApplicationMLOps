@@ -189,11 +189,13 @@ class ModelBuilder:
         else:
             logger.warning("TransferLearningModel non disponible, utilisation placeholder")
             return self._build_placeholder_cnn(config)
-    
+
+
     def _build_conv_autoencoder(self, config: ModelConfig) -> nn.Module:
-        """Builder pour ConvAutoEncoder - UTILISE LE VRAI MODÈLE"""
+        """Builder pour ConvAutoEncoder"""
         if ConvAutoEncoder is not None:
-            # Utilisation du VRAI modèle
+            input_size = self._get_input_size(config)  
+            
             return ConvAutoEncoder(
                 input_channels=config.input_channels,
                 latent_dim=config.latent_dim,
@@ -201,32 +203,36 @@ class ModelBuilder:
                 num_stages=config.num_stages,
                 dropout_rate=config.dropout_rate,
                 use_skip_connections=False,
-                use_vae=False
+                use_vae=False,
+                input_size=input_size  # Propagation
             )
         else:
             logger.warning("ConvAutoEncoder non disponible, utilisation placeholder")
             return self._build_placeholder_autoencoder(config)
-    
+
     def _build_variational_autoencoder(self, config: ModelConfig) -> nn.Module:
         """Builder pour VariationalAutoEncoder - UTILISE LE VRAI MODÈLE"""
         if VariationalAutoEncoder is not None:
-            # Utilisation du VRAI modèle
+            input_size = self._get_input_size(config)  
+            
             return VariationalAutoEncoder(
                 input_channels=config.input_channels,
                 latent_dim=config.latent_dim,
                 base_filters=config.base_filters,
                 num_stages=config.num_stages,
                 dropout_rate=config.dropout_rate,
-                use_skip_connections=False
+                use_skip_connections=False,
+                input_size=input_size  
             )
         else:
             logger.warning("VariationalAutoEncoder non disponible, utilisation placeholder")
             return self._build_placeholder_autoencoder(config)
-    
+
     def _build_denoising_autoencoder(self, config: ModelConfig) -> nn.Module:
         """Builder pour DenoisingAutoEncoder - UTILISE LE VRAI MODÈLE"""
         if DenoisingAutoEncoder is not None:
-            # Utilisation du VRAI modèle
+            input_size = self._get_input_size(config)  
+            
             return DenoisingAutoEncoder(
                 input_channels=config.input_channels,
                 latent_dim=config.latent_dim,
@@ -234,11 +240,31 @@ class ModelBuilder:
                 num_stages=config.num_stages,
                 dropout_rate=config.dropout_rate,
                 use_skip_connections=False,
-                noise_factor=0.2
-            )
+                noise_factor=0.2,
+                input_size=input_size)
         else:
             logger.warning("DenoisingAutoEncoder non disponible, utilisation placeholder")
             return self._build_placeholder_autoencoder(config)
+
+    # NOUVELLE MÉTHODE HELPER
+    def _get_input_size(self, config: ModelConfig) -> tuple:
+        """
+        SIMPLIFIÉ: Récupère input_size depuis config (déjà calculée par orchestrateur).   
+        Returns:
+            Tuple (hauteur, largeur)       
+        Raises:
+            ValueError: Si input_size manquante
+        """
+        # PRIORITÉ UNIQUE: Config (déjà calculée par orchestrateur)
+        if hasattr(config, 'input_size') and config.input_size:
+            logger.info(f"✅ input_size depuis config: {config.input_size}")
+            return config.input_size
+        
+        # Si absent → ERREUR (ne devrait jamais arriver après correction orchestrateur)
+        raise ValueError(
+            "input_size manquante dans ModelConfig. "
+            "L'orchestrateur doit la calculer depuis les données avant création du modèle."
+        )
     
     # JUSTE LES 2 NOUVELLES FONCTIONS AJOUTÉES
     def _build_patchcore(self, config: ModelConfig) -> nn.Module:
@@ -269,7 +295,7 @@ class ModelBuilder:
             logger.warning("ProfessionalSiameseNetwork non disponible, utilisation placeholder")
             return self._build_placeholder_siamese(config)
 
-    # VOS PLACEHOLDERS EXISTANTS (JE NE TOUCHE PAS)
+    # Les placeholders pour tests uniquement
     def _build_placeholder_cnn(self, config: ModelConfig) -> nn.Module:
         """Placeholder simple pour tests uniquement"""
         return nn.Sequential(

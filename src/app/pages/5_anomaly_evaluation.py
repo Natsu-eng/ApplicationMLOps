@@ -26,6 +26,7 @@ try:
     from src.evaluation.computer_vision_metrics import (
         compute_anomaly_metrics, compute_reconstruction_metrics
     )
+    from src.evaluation.localization_utils import resize_error_map
     from src.shared.logging import get_logger
     from src.config.constants import ANOMALY_CONFIG
 except ImportError:
@@ -763,12 +764,26 @@ with tabs[2]:
                         if len(heatmap.shape) == 2:
                             # Aligner heatmap à l'image si nécessaire
                             img_h, img_w = img_display.shape[:2]
-                            if heatmap.shape != (img_h, img_w):
-                                zoom_factors = (img_h / heatmap.shape[0], img_w / heatmap.shape[1])
-                                heatmap = zoom(heatmap, zoom_factors, order=1)
-                                error_map = zoom(error_map, zoom_factors, order=1)
                             
-                            # Créer visualisation avec Plotly
+                            if heatmap.shape != (img_h, img_w):
+                                logger.debug(
+                                    f"🔧 Resize heatmap: {heatmap.shape} → ({img_h}, {img_w})"
+                                )
+                                
+                                # Utilisation de la fonction centralisée
+                                heatmap = resize_error_map(
+                                    heatmap,
+                                    target_size=(img_h, img_w),
+                                    method="bilinear"
+                                )
+                                
+                                error_map = resize_error_map(
+                                    error_map,
+                                    target_size=(img_h, img_w),
+                                    method="bilinear"
+                                )
+                            
+                            # Crée la visualisation avec Plotly
                             fig_heatmap = go.Figure()
                             
                             # Image de base
@@ -811,16 +826,19 @@ with tabs[2]:
                             if binary_masks is not None and idx < len(binary_masks):
                                 binary_mask = binary_masks[idx]
                                 
-                                # Aligner mask si nécessaire
+                                # Resize mask avec fonction centralisée
                                 if binary_mask.shape != (img_h, img_w):
-                                    zoom_factors = (img_h / binary_mask.shape[0], img_w / binary_mask.shape[1])
-                                    binary_mask = zoom(binary_mask, zoom_factors, order=0)
+                                    binary_mask = resize_error_map(
+                                        binary_mask,
+                                        target_size=(img_h, img_w),
+                                        method="nearest"  # Nearest pour masks binaires
+                                    )
                                 
                                 # Afficher le mask binaire
                                 st.markdown("**🎯 Masque Binaire (Région détectée)**")
                                 mask_for_display = (binary_mask * 255).astype(np.uint8)
                                 st.image(mask_for_display, use_container_width=True, clamp=True)
-                        
+                                
                         else:
                             st.warning("Format de heatmap non supporté")
                     
@@ -829,7 +847,7 @@ with tabs[2]:
                         st.warning(f"Impossible de générer heatmap: {str(e)}")
                 else:
                     st.info("Heatmap non disponible pour cet échantillon")
-            
+
             st.markdown("---")
     
     # Résumé statistique

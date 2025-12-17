@@ -390,7 +390,6 @@ class MLTrainingWorkflowPro:
         st.markdown('<div class="workflow-step-card">', unsafe_allow_html=True)
         st.header("🎨 Étape 3: Prétraitement des Images")
         
-        # Récupération mode
         split_config = getattr(STATE.data, 'split_config', {})
         mode = split_config.get('mode', 'supervised')
         
@@ -410,14 +409,25 @@ class MLTrainingWorkflowPro:
             )
         
         with col2:
+            # AFFICHAGE taille actuelle
             if STATE.data.X is not None:
-                current_shape = STATE.data.X.shape[1:3]
-                st.info(f"Taille actuelle: {current_shape[0]}×{current_shape[1]}")
+                sample_shape = STATE.data.X.shape
+                
+                # Détection format
+                if sample_shape[-1] in [1, 3, 4]:  # channels_last
+                    current_h, current_w = sample_shape[1], sample_shape[2]
+                else:  # channels_first
+                    current_h, current_w = sample_shape[2], sample_shape[3]
+                
+                st.info(f"📏 Taille actuelle: {current_h}×{current_w}")
             
-            resize = st.selectbox(
+            # Parser correctement le resize
+            resize_options = ["Conserver", "128×128", "224×224", "256×256"]
+            resize_choice = st.selectbox(
                 "Redimensionnement",
-                ["Conserver", "128×128", "224×224", "256×256"],
-                index=0
+                resize_options,
+                index=0,
+                help="Redimensionner toutes les images à une taille fixe"
             )
         
         st.markdown("---")
@@ -472,12 +482,29 @@ class MLTrainingWorkflowPro:
         
         with col_nav2:
             if st.button("💾 Continuer ➡️", type="primary"):
+
+                # Sauvegarde config
+                target_size = None
+                if resize_choice != "Conserver":
+
+                    # Extraction "224×224" → (224, 224)
+                    size_str = resize_choice.replace("×", "x")  # Normalisation
+                    try:
+                        h_str, w_str = size_str.split("x")
+                        target_size = (int(h_str), int(w_str))
+                        logger.info(f"✅ Resize activé: target_size={target_size}")
+                    except Exception as e:
+                        logger.error(f"❌ Erreur parsing resize '{resize_choice}': {e}")
+                        st.error(f"Format resize invalide: {resize_choice}")
+                        return
+                
+                # SAUVEGARDE avec target_size
                 STATE.preprocessing_config = {
                     "strategy": normalization,
+                    "target_size": target_size,  
                     "augmentation_enabled": augmentation_enabled,
                     "augmentation_factor": augmentation_factor,
-                    "methods": methods,
-                    "resize": resize
+                    "methods": methods
                 }
                 
                 st.success("✅ Configuration sauvegardée")
@@ -706,12 +733,74 @@ class MLTrainingWorkflowPro:
         
         return defaults.get(model_type, {"input_channels": 3})
     
+
     def render_model_specific_parameters(self):
-        """Paramètres spécifiques au modèle"""
+        """Paramètres spécifiques au modèle avec UI complète"""
         model_type = STATE.selected_model_type
         model_params = STATE.model_config.get("model_params", {})
         
-        if model_type in ["simple_cnn", "custom_resnet"]:
+        # === AUTOENCODERS: latent_dim + base_filters ===
+        if model_type in ["conv_autoencoder", "variational_autoencoder", "denoising_autoencoder"]:
+            st.markdown("#### 🔧 Configuration AutoEncoder")
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                # SLIDER latent_dim
+                latent_dim = st.slider(
+                    "Dimension Espace Latent",
+                    min_value=32,
+                    max_value=1024,
+                    value=model_params.get("latent_dim", 128),
+                    step=32,
+                    help=(
+                        "Taille du bottleneck (compression maximale). "
+                        "Plus petit = compression forte (risque underfitting). "
+                        "Plus grand = moins de compression (risque overfitting)."
+                    )
+                )
+                
+                # Indicateur qualité
+                if latent_dim < 64:
+                    st.warning("⚠️ Très petit - Risque underfitting")
+                elif latent_dim > 512:
+                    st.info("ℹ️ Grande dimension - Moins de compression")
+            
+            with col2:
+                base_filters = st.slider(
+                    "Filtres de base",
+                    16, 128,
+                    model_params.get("base_filters", 32),
+                    16,
+                    help="Nombre de filtres du premier bloc (doublés à chaque stage)"
+                )
+            
+            # CALCUL taux compression (si données chargées)
+            if hasattr(STATE.data, 'X') and STATE.data.X is not None:
+                sample_shape = STATE.data.X.shape
+                
+                # Détection format
+                if sample_shape[-1] in [1, 3, 4]:  # channels_last
+                    h, w, c = sample_shape[1], sample_shape[2], sample_shape[3]
+                else:  # channels_first
+                    c, h, w = sample_shape[1], sample_shape[2], sample_shape[3]
+                
+                input_pixels = h * w * c
+                compression_ratio = input_pixels / latent_dim
+                
+                st.info(
+                    f"📊 Taux compression: **{compression_ratio:.1f}:1** "
+                    f"({input_pixels:,} pixels → {latent_dim} dimensions latentes)"
+                )
+            
+            # Mise à jour STATE
+            STATE.model_config["model_params"].update({
+                "latent_dim": latent_dim,
+                "base_filters": base_filters
+            })
+        
+        # === CLASSIFICATION CNN ===
+        elif model_type in ["simple_cnn", "custom_resnet"]:
             col1, col2 = st.columns(2)
             
             with col1:
@@ -735,13 +824,14 @@ class MLTrainingWorkflowPro:
                 "dropout_rate": dropout_rate
             })
         
+        # === TRANSFER LEARNING ===
         elif model_type == "transfer_learning":
             col1, col2 = st.columns(2)
             
             with col1:
                 backbone = st.selectbox(
                     "Backbone",
-                    ["resnet18", "resnet50", "efficientnet_b0"],
+                    ["resnet18", "resnet50", "efficientnet_b0", "mobilenet_v2"],
                     index=1
                 )
             
@@ -1090,7 +1180,7 @@ class MLTrainingWorkflowPro:
                 warnings.append("⚠️ Batch size élevé (>64) sans GPU")
         
         return errors, warnings
-    
+
     def launch_training(self):
         """Lance l'entraînement avec la configuration complète"""
         training_container = st.container()
@@ -1104,38 +1194,49 @@ class MLTrainingWorkflowPro:
             results_placeholder = st.empty()
             
             try:
-                # Configuration des callbacks pour l'interface
+                # Configuration des callbacks
                 streamlit_components = {
                     "progress_bar": progress_bar,
                     "status_text": status_text,
                     "metrics_placeholder": metrics_placeholder
                 }
                 
-                # Détermination du type d'anomalie pour les modèles non supervisés
+                # Détermination du type d'anomalie
                 model_type = STATE.model_config["model_type"]
                 anomaly_type = None
                 if model_type in ["conv_autoencoder", "variational_autoencoder", "denoising_autoencoder", "patch_core"]:
                     anomaly_type = "structural"
                 
+                # Passer split_config au contexte
+                context_metadata = {
+                    "dataset_name": getattr(STATE.data, 'name', 'unknown'),
+                    "user_id": "anonymous"
+                }
+                
+                # Ajout split_config si disponible
+                if hasattr(STATE.data, 'split_config') and STATE.data.split_config:
+                    context_metadata['split_config'] = STATE.data.split_config
+                    logger.info(f"✅ split_config ajouté au contexte: {STATE.data.split_config}")
+                else:
+                    logger.warning("⚠️ split_config absent, mode sera déduit d'anomaly_type")
+                
                 # Lancement de l'entraînement
                 model, history = self.train_with_metier_logic(
                     streamlit_components, 
-                    anomaly_type
+                    anomaly_type,
+                    context_metadata  # Passage metadata enrichi
                 )
-                
-                # Traitement des résultats
-                if model is not None and history.get("success", False):
+                # Gestion des résultats
+                if model is not None and history and history.get("success", True):
                     self.handle_training_success(model, history, results_placeholder)
                 else:
                     self.handle_training_failure(history, results_placeholder)
-                    
+                
             except Exception as e:
                 self.handle_training_error(e, results_placeholder)
 
-    def train_with_metier_logic(self, streamlit_components, anomaly_type):
-        """
-        Interface vers l'orchestrateur d'entraînement
-        """
+    def train_with_metier_logic(self, streamlit_components, anomaly_type, context_metadata):
+        """Interface vers l'orchestrateur d'entraînement"""
         try:
             # Création du contexte d'entraînement
             context = TrainingContext(
@@ -1148,19 +1249,19 @@ class MLTrainingWorkflowPro:
                 preprocessing_config=STATE.preprocessing_config,
                 callbacks=self._create_callbacks(streamlit_components),
                 anomaly_type=anomaly_type,
-                metadata={
-                    "dataset_name": getattr(STATE.data, 'name', 'unknown'),
-                    "user_id": "anonymous" 
-                }
+                metadata=context_metadata 
             )
+            
+            # Ajouter split_config directement au contexte
+            if 'split_config' in context_metadata:
+                context.split_config = context_metadata['split_config']
+                logger.info("✅ split_config propagé au TrainingContext")
             
             # Délégation à l'orchestrateur
             result = training_orchestrator.train(context)
             
             if result.success:
-                # Sauvegarde dans session_state
                 STATE.preprocessor = result.preprocessor
-                
                 return result.model, result.history
             else:
                 return None, {'success': False, 'error': result.error}

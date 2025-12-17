@@ -28,7 +28,6 @@ from src.config.constants import TRAINING_CONSTANTS, VALIDATION_CONSTANTS
 from helpers.data_validators import DataValidator
 from monitoring.state_managers import init, STATE  
 from helpers.task_detection import safe_get_task_type
-from utils.errors_handlers import safe_train_models
 from utils.system_utils import check_system_resources
 from monitoring.mlflow_collector import get_mlflow_collector
 

@@ -199,7 +199,7 @@ class ModernHomePage:
                         st.info("💡 Formats attendus:\n- MVTec AD: train/good, test/good, test/defect\n- Par classe: dossier1/, dossier2/, etc.\n- Plat: toutes images dans un seul dossier")
                         return
                     
-                    # ✅ LIGNE CRITIQUE : Récupération de y_train
+                    # Récupération de y_train
                     X, X_norm, y, y_train = load_images_flexible(data_dir, target_size=(256, 256))
                     
                     if len(X) == 0:
@@ -209,7 +209,7 @@ class ModernHomePage:
                     
                     info = get_dataset_info(data_dir)
                     
-                    # ✅ TRANSMISSION y_train au state manager
+                    # y_train au state manager
                     if self.state.set_images(X, X_norm, y, data_dir, structure, info, y_train=y_train):
                         
                         # Détection du mode
@@ -300,7 +300,7 @@ class ModernHomePage:
     
     def _render_mvtec_examples(self):
         """
-        ✅ CORRECTION : Exemples MVTec avec y_train
+        Exemples MVTec avec y_train
         """
         st.markdown("""
         <h3 style='text-align:center; padding:2rem'>
@@ -317,7 +317,8 @@ class ModernHomePage:
             "screw": "🔧 Vis",
             "toothbrush": "🪥 Brosses à dents",
             "transistor": "⚡ Transistors",
-            "zipper": "🔗 Fermetures éclair"
+            "zipper": "🔗 Fermetures éclair",
+            "bottle_supervised": "Bouteilles (Supervised)"
         }
         
         # Grille 3x3
@@ -397,7 +398,7 @@ class ModernHomePage:
     
     def render(self):
         """Rendu complet"""
-        logger.info("🎨 Rendu page d'accueil v2.0")
+        logger.info("🎨 Rendu page d'accueil v1")
         perf_logger.start_operation("home_render")
         
         try:

@@ -197,7 +197,7 @@ class RobustMetricsCalculator:
         # Métriques basées sur les scores
         if len(np.unique(y_true)) > 1:
             try:
-                # ✅ CORRECTION #9: Gestion robuste format y_scores
+                # Gestion robuste format y_scores
                 if y_scores.ndim > 1 and y_scores.shape[1] > 1:
                     # Multi-classes: extraire proba classe positive si binaire
                     if y_scores.shape[1] == 2 and len(np.unique(y_true)) == 2:

@@ -18,6 +18,7 @@ project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
+from typing import List, Dict, Any, Tuple
 from helpers.ui_components.cards import ModernComponents
 from helpers.ui_components.layaout import LayoutComponents, DataDisplayComponents
 from helpers.ui_components.sections import SectionComponents
@@ -758,8 +759,46 @@ class ModernDashboard:
         with tab5:
             self._render_image_details()
 
+    def _get_class_names(self) -> List[str]:
+        """
+        Retourne les noms de classes réels dans l'ordre exact des labels.
+        Gère tous les cas : ImageFolder, dossiers manuels, anomaly detection, etc.
+        """
+        d = self.state.data
+        
+        if not d.structure:
+            # Cas sans info de structure → fallback simple
+            if d.n_classes == 2 and "anomaly" in (d.task or "").lower():
+                return ["Normal", "Défectueuse"]
+            return [f"Classe {i}" for i in range(d.n_classes or 0)]
+        
+        # Cas 1 : ImageFolder standard → class_to_idx présent
+        if 'class_to_idx' in d.structure:
+            class_to_idx = d.structure['class_to_idx']
+            idx_to_class = {v: k for k, v in class_to_idx.items()}
+            names = [idx_to_class.get(i, f"Classe {i}") for i in range(d.n_classes)]
+            
+            # Exception spéciale : si c'est du anomaly detection, on force l'affichage clair
+            if d.n_classes == 2 and "anomaly" in (d.task or "").lower():
+                # On vérifie quel label correspond à "normal/good" vs "defect/anomaly"
+                normal_names = {names[0].lower(), names[1].lower()}
+                if "normal" in normal_names or "good" in normal_names:
+                    return ["Normal", "Défectueuse"]
+            
+            return names
+        
+        # Cas 2 : liste de classes fournie explicitement
+        if 'classes' in d.structure and len(d.structure['classes']) == d.n_classes:
+            return d.structure['classes']
+        
+        # Fallback final
+        if d.n_classes == 2 and "anomaly" in (d.task or "").lower():
+            return ["Normal", "Défectueuse"]
+        
+        return [f"Classe {i}" for i in range(d.n_classes or 0)]
+
     def _render_image_gallery(self):
-        """Galerie d'images - Design moderne"""
+        """Galerie d'images - Affichage intelligent des vrais noms de classes"""
         logger.debug("Rendu image gallery")
         st.markdown("""
         <div style='
@@ -774,31 +813,28 @@ class ModernDashboard:
         
         try:
             d = self.state.data
+            class_names = self._get_class_names()  
             
-            # Contrôles avec design moderne
+            # Contrôles
             col1, col2, col3 = st.columns([3, 1, 1])
             with col1:
-                n_samples = st.slider("Nombre d'images", 4, 12, 6, step=2, key="gallery_samples")
+                n_samples = st.slider("Nombre d'images", 4, 16, 8, step=2, key="gallery_samples")
             with col2:
-                grid_cols = st.selectbox("Colonnes", [2, 3, 4], index=1, key="gallery_cols")
+                grid_cols = st.selectbox("Colonnes", [2, 3, 4, 6], index=1, key="gallery_cols")
             with col3:
                 if st.button("🔄 Aléatoire", use_container_width=True, type="secondary"):
-                    logger.info("🔄 Regénération galerie")
                     st.rerun()
             
             # Sélection aléatoire
             indices = np.random.choice(len(d.X), min(n_samples, len(d.X)), replace=False)
             
-            # Grille responsive
             cols = st.columns(grid_cols)
-            
             for i, idx in enumerate(indices):
                 with cols[i % grid_cols]:
                     img = d.X[idx]
                     if img.max() > 1.0:
                         img = img / 255.0
                     
-                    # Carte d'image moderne
                     st.markdown("""
                     <div style='
                         background: white;
@@ -812,8 +848,8 @@ class ModernDashboard:
                     
                     st.image(img, use_column_width=True)
                     
-                    # Métriques de l'image
-                    label = "Normal" if d.y[idx] == 0 and d.n_classes == 2 else f"Classe {d.y[idx]}"
+                    # Label intelligent
+                    label = class_names[d.y[idx]] if d.y[idx] < len(class_names) else f"Classe {d.y[idx]}"
                     shape_str = f"{img.shape[0]}×{img.shape[1]}" if len(img.shape) >= 2 else "N/A"
                     
                     st.markdown(f"""
@@ -825,7 +861,7 @@ class ModernDashboard:
                     '>
                         <div style='font-weight: 600; color: #2c3e50;'>#{idx}</div>
                         <div style='font-size: 0.8rem; color: #666;'>
-                            <div>🏷️ {label}</div>
+                            <div>🏷️ <strong>{label}</strong></div>
                             <div>📐 {shape_str}</div>
                         </div>
                     </div>
@@ -833,14 +869,11 @@ class ModernDashboard:
                     
                     st.markdown("</div>", unsafe_allow_html=True)
             
-            logger.info(f"✅ Galerie affichée: {n_samples} images en {grid_cols} colonnes")
+            logger.info(f"✅ Galerie affichée: {n_samples} images avec noms de classes réels")
             
         except Exception as e:
             logger.error(f"❌ Erreur image gallery: {e}", exc_info=True)
-            self.layout.error_section(
-                "Erreur lors de l'affichage de la galerie",
-                str(e)
-            )
+            self.layout.error_section("Erreur lors de l'affichage de la galerie", str(e))
 
     def _render_image_distribution(self):
         """Distribution des classes - Design moderne"""

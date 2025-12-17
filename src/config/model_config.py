@@ -14,58 +14,68 @@ class ModelType(str, Enum):
     CONV_AUTOENCODER = "conv_autoencoder"
     VAE = "variational_autoencoder"
     DENOISING_AE = "denoising_autoencoder"
-    PATCH_CORE = "patch_core"  # NOUVEAU
-    SIAMESE_NETWORK = "siamese_network"  # NOUVEAU
+    PATCH_CORE = "patch_core"  
+    SIAMESE_NETWORK = "siamese_network" 
 
 
 @dataclass
 class ModelConfig:
-    """Configuration du modèle"""
+    """
+    Configuration d'un modèle Computer Vision.
+    Contient les hyperparamètres et options spécifiques au type de modèle.
+    """
     model_type: ModelType
-    input_channels: int = 3
     num_classes: int = 2
+    input_channels: int = 3
     dropout_rate: float = 0.5
-    base_filters: int = 32
-    latent_dim: int = 128
-    num_stages: int = 3
-    pretrained: bool = False
-    freeze_layers: int = 0  # Nombre de couches, pas boolean
-    anomaly_type: Optional[str] = None
     
-    # NOUVEAUX paramètres pour PatchCore et Siamese
-    backbone_name: str = "resnet18"
-    patchcore_layers: List[str] = None
-    faiss_index_type: str = "Flat"
+    # CNN/ResNet
+    base_filters: int = 32
+    
+    # AutoEncoders
+    latent_dim: int = 128
+    num_stages: int = 4
+    input_size: Optional[Tuple[int, int]] = None  
+    
+    # Transfer Learning
+    pretrained: bool = True
+    freeze_layers: int = 0
+    backbone_name: str = "resnet50"
+    
+    # PatchCore
+    patchcore_layers: list = None
     coreset_ratio: float = 0.01
-    num_neighbors: int = 1
+    
+    # Siamese
     embedding_dim: int = 128
     margin: float = 1.0
-    input_size: Tuple[int, int] = (224, 224)
     
     def __post_init__(self):
-        """Validation et conversion automatique"""
-        # Conversion automatique string -> ModelType
+        """Validation et conversions post-initialisation"""
+        # Conversion ModelType si string
         if isinstance(self.model_type, str):
             self.model_type = ModelType(self.model_type)
         
-        # Initialisation des valeurs par défaut pour les nouvelles listes
-        if self.patchcore_layers is None:
-            self.patchcore_layers = ['layer2', 'layer3']
-        
-        # Validation
-        assert isinstance(self.model_type, ModelType), "model_type doit être un ModelType"
-        assert self.input_channels > 0, "input_channels doit être > 0"
-        assert self.num_classes >= 2, "num_classes doit être >= 2"
-        assert 0 <= self.dropout_rate <= 1, "dropout_rate doit être entre 0 et 1"
-        assert self.base_filters > 0, "base_filters doit être > 0"
-        assert self.latent_dim >= 16, "latent_dim doit être >= 16"
-        assert self.num_stages >= 2, "num_stages doit être >= 2"
-        
-        # Validation des nouveaux paramètres
-        assert self.backbone_name in ["resnet18", "wide_resnet50_2"], "backbone_name non supporté"
-        assert 0 < self.coreset_ratio <= 1, "coreset_ratio doit être entre 0 et 1"
-        assert self.num_neighbors > 0, "num_neighbors doit être > 0"
-        assert self.embedding_dim > 0, "embedding_dim doit être > 0"
-        assert self.margin > 0, "margin doit être > 0"
-        assert len(self.input_size) == 2, "input_size doit être un tuple (H, W)"
-        assert self.input_size[0] >= 32 and self.input_size[1] >= 32, "input_size trop petit (min 32x32)"
+        # Validation input_size pour AutoEncoders
+        if self.model_type in [
+            ModelType.CONV_AUTOENCODER,
+            ModelType.VAE,
+            ModelType.DENOISING_AE
+        ]:
+            if self.input_size is None:
+                raise ValueError(
+                    f"input_size est OBLIGATOIRE pour {self.model_type.value}. "
+                    f"Spécifiez input_size=(hauteur, largeur) dans ModelConfig."
+                )
+            
+            # Validation dimensions
+            if not isinstance(self.input_size, (tuple, list)) or len(self.input_size) != 2:
+                raise ValueError(
+                    f"input_size doit être un tuple (H, W), reçu: {self.input_size}"
+                )
+            
+            h, w = self.input_size
+            if h < 32 or w < 32:
+                raise ValueError(
+                    f"input_size trop petit: {self.input_size}. Minimum: (32, 32)"
+                )

@@ -8,7 +8,7 @@ from sys import platform
 import numpy as np
 from PIL import Image
 import albumentations as A
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Tuple
 
 import torch
 from torch.utils.data import DataLoader, TensorDataset
@@ -98,33 +98,42 @@ class DataPreprocessor:
     - Logging complet
     """
     
-    def __init__(self, strategy: str = "standardize", auto_detect_format: bool = True):
+    def __init__(
+        self,
+        strategy: str = "standardize",
+        auto_detect_format: bool = True,
+        target_size: Optional[Tuple[int, int]] = None 
+    ):
         """
         Args:
-            strategy: 'standardize', 'normalize', 'none'
-            auto_detect_format: Détection automatique du format des données
+            strategy: Stratégie de normalisation
+            auto_detect_format: Détection automatique du format
+            target_size: Taille cible (H, W) pour resize. Si None, pas de resize.
         """
         self.strategy = strategy
         self.auto_detect_format = auto_detect_format
+        self.target_size = target_size  # 🆕 NOUVEAU
+        
+        # État après fit
         self.fitted = False
         self.mean_ = None
         self.std_ = None
-        self.min_ = None
-        self.max_ = None
-        self.data_format_ = None  # 'channels_first' ou 'channels_last'
+        self.data_format_ = None
         self.original_shape_ = None
+        self.resized_ = False 
         
-        logger.info(f"Initialisation DataPreprocessor - strategy: {strategy}, auto_detect_format: {auto_detect_format}")
-    
+        logger.info(
+            f"Initialisation DataPreprocessor - "
+            f"strategy: {strategy}, "
+            f"auto_detect_format: {auto_detect_format}, "
+            f"target_size: {target_size}"
+        )
     def _detect_data_format(self, X: np.ndarray) -> str:
         """
-        Détecte automatiquement le format des données.
-        
-        ✅ CORRECTION #5: Amélioration robustesse détection format
-        
+        Détecte automatiquement le format des données.     
+        Amélioration robustesse détection format    
         Returns:
-            'channels_first' ou 'channels_last'
-        
+            'channels_first' ou 'channels_last'      
         Raises:
             ValueError: Si le format est ambigu ou invalide
         """
@@ -135,7 +144,7 @@ class DataPreprocessor:
         # Règles de détection robustes
         n_samples, dim1, dim2, dim3 = X.shape
         
-        # ✅ Validation: dimensions doivent être cohérentes (pas toutes identiques)
+        # Validation: dimensions doivent être cohérentes (pas toutes identiques)
         if dim1 == dim2 == dim3:
             logger.warning(
                 f"⚠️ Format ambigu: toutes dimensions identiques ({dim1}). "
@@ -253,61 +262,260 @@ class DataPreprocessor:
         
         return self
     
-    def transform(self, X: np.ndarray, output_format: str = "channels_first") -> np.ndarray:
+    def transform(
+        self,
+        X: np.ndarray,
+        output_format: str = "channels_first"
+    ) -> np.ndarray:
         """
-        Applique la transformation avec gestion du format de sortie.
+        Transform cohérent avec fit_transform.    
+        IMPORTANT: Applique le MÊME pipeline que fit_transform
+        """
+        if not self.fitted:
+            raise ValueError("Preprocessor non fitted. Appelez fit() ou fit_transform() d'abord.")
         
+        if X is None or len(X) == 0:
+            raise ValueError("X est None ou vide")
+        
+        logger.debug(f"🔄 Transform: input_shape={X.shape}, target_size={self.target_size}")
+        
+        # 1. RESIZE (si appliqué pendant fit)
+        # _resize_images() détecte automatiquement le format de X
+        if self.target_size is not None:
+            X = self._resize_images(X)
+            logger.debug(f"✅ Après resize: {X.shape}")
+        
+        # 2. Normalisation
+        X_normalized = self._normalize(X, fit=False)
+        
+        # 3. Conversion format
+        # Détection format ACTUEL de X (peut différer de self.data_format_ si données différentes)
+        current_format = self._detect_data_format(X_normalized)
+        
+        if output_format == "channels_first" and current_format == "channels_last":
+            logger.debug("🔄 Conversion channels_last → channels_first")
+            X_normalized = np.transpose(X_normalized, (0, 3, 1, 2))
+        elif output_format == "channels_last" and current_format == "channels_first":
+            logger.debug("🔄 Conversion channels_first → channels_last")
+            X_normalized = np.transpose(X_normalized, (0, 2, 3, 1))
+        
+        logger.debug(f"✅ Transform terminé: output_shape={X_normalized.shape}")
+        
+        return X_normalized
+    
+    def _resize_images(self, X: np.ndarray) -> np.ndarray:
+        """
+        Resize images avec détection format LOCALE    
         Args:
-            X: Data à transformer
-            output_format: 'channels_first' (PyTorch) ou 'channels_last'
-            
+            X: Images (N, H, W, C) ou (N, C, H, W)     
         Returns:
-            Données transformées dans le format demandé
+            Images resized (même format que input)     
+        Raises:
+            ValueError: Si format invalide
         """
-        if not self.fitted and self.strategy != "none":
-            raise ValueError("DataPreprocessor doit être fitted avant transform()")
+        if self.target_size is None:
+            return X  # Pas de resize
         
-        # Validation cohérence format
-        current_format = self._detect_data_format(X) if self.auto_detect_format else self.data_format_
-        if current_format != self.data_format_:
+        if X.ndim != 4:
+            raise ValueError(f"_resize_images attend 4D, reçu: {X.shape}")
+        
+        target_h, target_w = self.target_size
+        
+        # Détection format local
+        n_samples, dim1, dim2, dim3 = X.shape
+        
+        # Détection robuste
+        if dim3 in [1, 3, 4] and dim3 < dim1 and dim3 < dim2:
+            # Format: (N, H, W, C) - channels_last
+            current_format = "channels_last"
+            current_h, current_w = dim1, dim2
+        elif dim1 in [1, 3, 4] and dim1 < dim2 and dim1 < dim3:
+            # Format: (N, C, H, W) - channels_first
+            current_format = "channels_first"
+            current_h, current_w = dim2, dim3
+        else:
+            # Format ambigu: utiliser heuristique (plus petite dimension = channels)
+            if dim1 < dim3:
+                current_format = "channels_first"
+                current_h, current_w = dim2, dim3
+            else:
+                current_format = "channels_last"
+                current_h, current_w = dim1, dim2
+            
             logger.warning(
-                f"Incohérence de format: attendu {self.data_format_}, reçu {current_format}"
+                f"⚠️ Format ambigu dans _resize_images: {X.shape}, "
+                f"assume {current_format}"
             )
         
-        # Conversion vers channels_last pour appliquer les stats
-        if self.data_format_ == 'channels_first':
-            X_conv = self._ensure_channels_last(X)
-        else:
-            X_conv = X
+        # Si déjà à la bonne taille, skip
+        if current_h == target_h and current_w == target_w:
+            logger.debug(f"Images déjà à la taille cible {self.target_size}, skip resize")
+            return X
         
-        # Application de la transformation
-        if self.strategy == "standardize":
-            X_norm = (X_conv - self.mean_) / self.std_
-        elif self.strategy == "normalize":
-            X_norm = (X_conv - self.min_) / (self.max_ - self.min_ + 1e-8)
-        else:
-            X_norm = X_conv
-        
-        # Conversion vers le format de sortie demandé
-        if output_format == "channels_first":
-            X_out = self._ensure_channels_first(X_norm)
-        elif output_format == "channels_last":
-            X_out = X_norm
-        else:
-            raise ValueError(f"Format de sortie non supporté: {output_format}")
-        
-        logger.debug(
-            f"Transformation appliquée - "
-            f"input_shape: {X.shape}, "
-            f"output_shape: {X_out.shape}, "
-            f"output_format: {output_format}"
+        logger.info(
+            f"🔄 Resize images: ({current_h}, {current_w}) → ({target_h}, {target_w}) "
+            f"[format détecté: {current_format}]"
         )
         
-        return X_out
+        try:
+            from skimage.transform import resize as sk_resize
+            
+            resized_images = []
+            
+            for i in range(len(X)):
+                img = X[i]
+                
+                # Conversion temporaire en channels_last pour skimage (attend H, W, C)
+                if current_format == "channels_first":
+                    # (C, H, W) → (H, W, C)
+                    img = np.transpose(img, (1, 2, 0))
+                
+                # Resize avec preservation du range
+                img_resized = sk_resize(
+                    img,
+                    (target_h, target_w),
+                    mode='reflect',
+                    anti_aliasing=True,
+                    preserve_range=True
+                )
+                
+                # Reconversion dans le format d'origine
+                if current_format == "channels_first":
+                    # (H, W, C) → (C, H, W)
+                    img_resized = np.transpose(img_resized, (2, 0, 1))
+                
+                resized_images.append(img_resized)
+            
+            X_resized = np.array(resized_images, dtype=X.dtype)
+            
+            logger.info(
+                f"✅ Resize complété: {X.shape} → {X_resized.shape}"
+            )
+            
+            self.resized_ = True
+            return X_resized
+        
+        except ImportError as e:
+            logger.error(f"❌ skimage non disponible: {e}")
+            raise ImportError(
+                "scikit-image requis pour resize. Installez avec: pip install scikit-image"
+            ) from e
+        
+        except Exception as e:
+            logger.error(f"❌ Erreur resize: {e}", exc_info=True)
+            raise ValueError(f"Resize échoué: {str(e)}") from e
+
+    def _normalize(self, X: np.ndarray, fit: bool = False) -> np.ndarray:
+        """
+        Normalise les données selon la stratégie.     
+        Args:
+            X: Données à normaliser
+            fit: Si True, calcule les statistiques     
+        Returns:
+            Données normalisées
+        """
+        if self.strategy == "standardize":
+            if fit:
+                # Calcule mean/std sur format channels_last pour cohérence
+                if self.data_format_ == 'channels_first':
+                    X_for_stats = self._ensure_channels_last(X)
+                else:
+                    X_for_stats = X
+                
+                if X_for_stats.ndim == 4:
+                    axes = (0, 1, 2)
+                    self.mean_ = X_for_stats.mean(axis=axes, keepdims=True)
+                    self.std_ = X_for_stats.std(axis=axes, keepdims=True) + 1e-8
+                else:
+                    self.mean_ = X_for_stats.mean()
+                    self.std_ = X_for_stats.std() + 1e-8
+            
+            # Application de la normalisation
+            if self.data_format_ == 'channels_first':
+                X_norm = self._ensure_channels_last(X)
+                X_norm = (X_norm - self.mean_) / self.std_
+                return self._ensure_channels_first(X_norm)
+            else:
+                return (X - self.mean_) / self.std_
+        
+        elif self.strategy == "normalize":
+            if fit:
+                if self.data_format_ == 'channels_first':
+                    X_for_stats = self._ensure_channels_last(X)
+                else:
+                    X_for_stats = X
+                
+                self.min_ = X_for_stats.min()
+                self.max_ = X_for_stats.max()
+            
+            # Application normalisation [0, 1]
+            if self.data_format_ == 'channels_first':
+                X_norm = self._ensure_channels_last(X)
+                X_norm = (X_norm - self.min_) / (self.max_ - self.min_ + 1e-8)
+                return self._ensure_channels_first(X_norm)
+            else:
+                return (X - self.min_) / (self.max_ - self.min_ + 1e-8)      
+        else:  # "none"
+            return X.copy()
     
-    def fit_transform(self, X: np.ndarray, output_format: str = "channels_first") -> np.ndarray:
-        """Fit puis transform (pour train uniquement)."""
-        return self.fit(X).transform(X, output_format)
+    def fit_transform(
+        self,
+        X: np.ndarray,
+        output_format: str = "channels_first"
+    ) -> np.ndarray:
+        """
+        Ordre des opérations clarifié.      
+        Pipeline:
+        1. Détection format d'origine
+        2. Resize (si target_size) AVANT normalisation
+        3. Calcul statistiques (mean/std) sur données resizées
+        4. Normalisation
+        5. Conversion vers output_format
+        """
+        if X is None or len(X) == 0:
+            raise ValueError("X est None ou vide")
+        
+        # 1. Détection format AVANT tout traitement
+        if self.auto_detect_format:
+            self.data_format_ = self._detect_data_format(X)
+            logger.info(f"✅ Format détecté: {self.data_format_} (shape={X.shape})")
+        else:
+            self.data_format_ = "channels_last"
+            logger.info(f"⚙️ Format forcé: {self.data_format_}")
+        
+        self.original_shape_ = X.shape
+        
+        # 2. RESIZE AVANT normalisation
+        # _resize_images() utilise maintenant détection LOCALE indépendante
+        if self.target_size is not None:
+            logger.info(f"🔧 Application resize: target_size={self.target_size}")
+            X = self._resize_images(X)
+            logger.info(f"✅ Après resize: {X.shape}")
+        
+        # 3-4. Normalisation (avec statistiques calculées sur données RESIZÉES)
+        X_normalized = self._normalize(X, fit=True)
+        
+        # 5. Conversion vers output_format
+        if output_format == "channels_first" and self.data_format_ == "channels_last":
+            logger.debug("🔄 Conversion channels_last → channels_first")
+            X_normalized = np.transpose(X_normalized, (0, 3, 1, 2))
+        elif output_format == "channels_last" and self.data_format_ == "channels_first":
+            logger.debug("🔄 Conversion channels_first → channels_last")
+            X_normalized = np.transpose(X_normalized, (0, 2, 3, 1))
+        
+        self.fitted = True
+        
+        logger.info(
+            f"✅ Preprocessing fitted - "
+            f"original_shape: {self.original_shape_}, "
+            f"resized: {self.resized_}, "
+            f"target_size: {self.target_size}, "
+            f"data_format_detected: {self.data_format_}, "
+            f"output_shape: {X_normalized.shape}, "
+            f"strategy: {self.strategy}"
+        )
+        
+        return X_normalized
     
     def inverse_transform(self, X: np.ndarray) -> np.ndarray:
         """Inverse transformation (pour visualisation)."""

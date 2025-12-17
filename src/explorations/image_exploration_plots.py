@@ -66,14 +66,11 @@ SUPPORTED_EXTENSIONS = ('.png', '.jpg', '.jpeg', '.bmp', '.tiff', '.webp')
 def detect_dataset_structure(data_dir: str) -> Dict[str, Any]:
     """
     Détecte automatiquement la structure du dataset d'images.
-    Version robuste avec validation complète.
-    
+    Version robuste avec validation complète.  
     Args:
-        data_dir: Chemin vers le dossier du dataset
-        
+        data_dir: Chemin vers le dossier du dataset      
     Returns:
-        Dictionnaire avec le type et les métadonnées
-        
+        Dictionnaire avec le type et les métadonnées      
     Raises:
         ValueError: Si le chemin est invalide
     """
@@ -177,7 +174,7 @@ def detect_dataset_structure(data_dir: str) -> Dict[str, Any]:
         else:
             return {
                 "type": DatasetType.UNKNOWN.value,
-                "items": items[:10],  # Limiter pour éviter trop de données
+                "items": items[:10],  
                 "description": "Structure non reconnue"
             }
     
@@ -191,11 +188,9 @@ def detect_dataset_structure(data_dir: str) -> Dict[str, Any]:
 def get_dataset_info(data_dir: str) -> Dict[str, Any]:
     """
     Retourne des informations détaillées sur le dataset.
-    Version optimisée avec calculs parallélisables.
-    
+    Version optimisée avec calculs parallélisables.   
     Args:
-        data_dir: Chemin vers le dossier du dataset
-        
+        data_dir: Chemin vers le dossier du dataset      
     Returns:
         Dictionnaire avec les statistiques complètes
     """
@@ -219,13 +214,13 @@ def get_dataset_info(data_dir: str) -> Dict[str, Any]:
             normal_count = 0
             anomaly_count = 0
             
-            # Compter images normales
+            # Compte les images normales
             for folder in ["train/good", "test/good"]:
                 folder_path = data_path / folder
                 if folder_path.exists():
                     normal_count += len(_get_image_files(folder_path))
             
-            # Compter images anormales
+            # Compte les images anormales
             test_path = data_path / "test"
             if test_path.exists():
                 for category in test_path.iterdir():
@@ -307,7 +302,7 @@ def get_dataset_stats(data_dir: str) -> pd.DataFrame:
                 ('test/good', 'Normal (Test)')
             ]
             
-            # Ajouter les catégories d'anomalies
+            # Ajoute les catégories d'anomalies
             test_path = data_path / 'test'
             if test_path.exists():
                 for item in test_path.iterdir():
@@ -425,7 +420,7 @@ def load_images_flexible(
 
         logger.info(f"Chargement terminé: {len(X)} images, {len(np.unique(y_full))} classes au total")
         
-        # ✅ CORRECTION #1: Validation stricte y_train pour MVTec AD
+        # Validation stricte y_train pour MVTec AD
         if y_train is not None and structure_type == DatasetType.MVTEC_AD.value:
             # Validation: y_train doit contenir uniquement des 0
             if len(y_train) > 0:

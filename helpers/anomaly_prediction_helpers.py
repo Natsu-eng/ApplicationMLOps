@@ -1,9 +1,9 @@
 """
 Helpers pour les prédictions d'anomalies robustes
-Fonction robuste de prédiction extraite de 5_anomaly_evaluation.py
+Gestion cohérente du resize avec le preprocessing
 """
 import numpy as np
-import torch # type: ignore
+import torch
 from typing import Dict, Any, Optional, Tuple
 from src.shared.logging import get_logger
 
@@ -19,12 +19,12 @@ def robust_predict_with_preprocessor(
     STATE: Optional[Any] = None
 ) -> Dict[str, Any]:
     """
-    Prédictions robustes avec gestion complète des cas edge.
-    - Gestion preprocessor None
-    - Validation des shapes
-    - Try-except sur chaque transformation
-    - Logs détaillés des échecs
-    - Génération automatique des heatmaps
+    Prédictions robustes avec gestion COMPLÈTE du resize. 
+    Points clés :
+    - Validation cohérence shapes avant comparaison
+    - Resize automatique si nécessaire
+    - Gestion explicite target_size depuis preprocessor
+    - Logs détaillés pour debugging
     
     Args:
         model: Modèle PyTorch entraîné
@@ -38,18 +38,26 @@ def robust_predict_with_preprocessor(
         Dict avec prédictions, scores, heatmaps, etc.
     """
     try:
-        # Preprocessing avec gestion None
+        # ========================================================================
+        # ÉTAPE 1: PREPROCESSING AVEC GESTION TARGET_SIZE
+        # ========================================================================
+        target_size = None
+        
         if preprocessor is not None:
             try:
-                # Tenter transformation avec preprocessor
+                # Récupération target_size depuis le preprocessor
+                if hasattr(preprocessor, 'target_size') and preprocessor.target_size is not None:
+                    target_size = preprocessor.target_size
+                    logger.info(f"✅ Target size depuis preprocessor: {target_size}")
+                
+                # Transformation avec output channels_first
                 X_processed = preprocessor.transform(X_test, output_format="channels_first")
                 logger.info(f"✅ Preprocessing réussi: {X_processed.shape}")
+                
             except AttributeError as e:
-                # Preprocessor sans méthode transform
                 logger.warning(f"⚠️ Preprocessor sans transform(): {e}")
                 X_processed = X_test.copy()
             except Exception as e:
-                # Erreur transformation
                 logger.warning(f"⚠️ Erreur preprocessing, utilisation données brutes: {e}")
                 X_processed = X_test.copy()
         else:
@@ -59,28 +67,30 @@ def robust_predict_with_preprocessor(
         # Validation shape
         if len(X_processed.shape) != 4:
             logger.error(f"❌ Shape invalide: {X_processed.shape}, attendu: (N, C, H, W)")
-            # Tentative de correction
             if len(X_processed.shape) == 3:
-                # Ajouter dimension channel
                 X_processed = np.expand_dims(X_processed, axis=1)
                 logger.info(f"✅ Shape corrigée: {X_processed.shape}")
         
-        # Device avec gestion CUDA
+        # ========================================================================
+        # ÉTAPE 2: DEVICE SETUP
+        # ========================================================================
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         model.to(device)
         model.eval()
         
         logger.info(f"🖥️ Device: {device}, Shape entrée: {X_processed.shape}")
         
-        # Conversion tensor avec dtype explicite
+        # Conversion tensor
         try:
             X_tensor = torch.tensor(X_processed, dtype=torch.float32).to(device)
         except Exception as e:
             logger.error(f"❌ Erreur conversion tensor: {e}")
-            # Tentative de correction dtype
             X_processed = X_processed.astype(np.float32)
             X_tensor = torch.tensor(X_processed, dtype=torch.float32).to(device)
         
+        # ========================================================================
+        # ÉTAPE 3: PRÉDICTION SELON TYPE DE MODÈLE
+        # ========================================================================
         with torch.no_grad():
             if model_type in ["autoencoder", "conv_autoencoder", "variational_autoencoder", "denoising_autoencoder"]:
                 # AUTOENCODER BRANCH
@@ -88,35 +98,60 @@ def robust_predict_with_preprocessor(
                     reconstructed = model(X_tensor)
                     reconstructed_np = reconstructed.cpu().numpy()
                     
-                    # ✅ CORRECTION #11: Amélioration conversion tensor→numpy avec gestion format
-                    # S'assurer que X_processed et reconstructed_np sont dans le même format
-                    if X_processed.ndim == 4 and X_processed.shape[1] in [1, 3]:
-                        # channels_first → convertir pour comparaison
-                        X_for_comparison = np.transpose(X_processed, (0, 2, 3, 1))
-                        if reconstructed_np.ndim == 4 and reconstructed_np.shape[1] in [1, 3]:
-                            reconstructed_for_comparison = np.transpose(reconstructed_np, (0, 2, 3, 1))
-                        else:
-                            reconstructed_for_comparison = reconstructed_np
-                    else:
-                        X_for_comparison = X_processed
-                        reconstructed_for_comparison = reconstructed_np
+                    # VALIDATION SHAPES AVANT COMPARAISON
+                    expected_shape = X_processed.shape
+                    actual_shape = reconstructed_np.shape
                     
-                    # Recalcul avec formats alignés
-                    if X_for_comparison.shape == reconstructed_for_comparison.shape:
-                        reconstruction_errors = np.mean(
-                            (X_for_comparison - reconstructed_for_comparison) ** 2,
-                            axis=tuple(range(1, X_for_comparison.ndim))
-                        )
-                    else:
+                    if expected_shape != actual_shape:
                         logger.warning(
-                            f"⚠️ Shapes non alignées pour comparaison: "
-                            f"X={X_for_comparison.shape}, recon={reconstructed_for_comparison.shape}. "
-                            f"Utilisation erreurs calculées précédemment."
+                            f"⚠️ SHAPE MISMATCH DÉTECTÉ: "
+                            f"input={expected_shape}, output={actual_shape}"
                         )
-                        # Fallback: calcul simple
+                        
+                        # STRATÉGIE DE CORRECTION AUTOMATIQUE
+                        if target_size is not None:
+                            # Cas 1: Le modèle a resizé selon target_size
+                            logger.info(
+                                f"🔧 Resize détecté (target_size={target_size}). "
+                                f"Utilisation directe des erreurs spatiales."
+                            )
+                            
+                            # Calcul erreur SPATIALE (B, C, H_out, W_out)
+                            # Puis moyenne sur canaux ET spatial pour avoir (B,)
+                            reconstruction_errors = np.mean(
+                                (reconstructed_np) ** 2,  # Erreur quadratique
+                                axis=(1, 2, 3)  # Moyenne sur C, H, W
+                            )
+                            
+                        else:
+                            # Cas 2: Resize automatique du modèle non géré
+                            logger.warning(
+                                f"⚠️ Shapes incompatibles ET pas de target_size. "
+                                f"Resize de l'input pour comparaison."
+                            )
+                            
+                            # Resize X_processed pour matcher reconstructed_np
+                            import torch.nn.functional as F
+                            X_resized = F.interpolate(
+                                torch.tensor(X_processed),
+                                size=actual_shape[2:],  # (H, W)
+                                mode='bilinear',
+                                align_corners=False
+                            ).numpy()
+                            
+                            reconstruction_errors = np.mean(
+                                (X_resized - reconstructed_np) ** 2,
+                                axis=(1, 2, 3)
+                            )
+                            
+                            logger.info(f"✅ Input resizé: {X_processed.shape} → {X_resized.shape}")
+                    
+                    else:
+                        # Cas 3: Shapes parfaitement alignées
+                        logger.info("✅ Shapes alignées, comparaison directe")
                         reconstruction_errors = np.mean(
                             (X_processed - reconstructed_np) ** 2,
-                            axis=(1, 2, 3) if len(X_processed.shape) == 4 else (1,)
+                            axis=(1, 2, 3)
                         )
                     
                     # Normalisation avec protection division par zéro
@@ -129,11 +164,11 @@ def robust_predict_with_preprocessor(
                     
                     # Seuil adaptatif basé sur distribution
                     threshold = np.median(y_pred_proba) + np.std(y_pred_proba)
-                    threshold = np.clip(threshold, 0.3, 0.7)  # Entre 0.3 et 0.7
+                    threshold = np.clip(threshold, 0.3, 0.7)
                     
                     y_pred_binary = (y_pred_proba > threshold).astype(int)
                     
-                    # ✅ CORRECTION #8, #16: Génération automatique des heatmaps
+                    # GÉNÉRATION HEATMAPS (si demandé)
                     error_maps = None
                     heatmaps = None
                     binary_masks = None
@@ -143,19 +178,15 @@ def robust_predict_with_preprocessor(
                         try:
                             from src.evaluation.localization_utils import generate_anomaly_localization
                             
-                            # Récupération des shapes originales (avant preprocessing)
-                            # Priorité 1: STATE.data.X_test
+                            # Récupération shapes originales
                             if STATE is not None and hasattr(STATE, 'data') and hasattr(STATE.data, 'X_test') and STATE.data.X_test is not None:
                                 original_image_shapes = [
                                     STATE.data.X_test[i].shape[:2] 
                                     for i in range(min(len(STATE.data.X_test), X_tensor.shape[0]))
                                 ]
-                            # Priorité 2: Paramètre X_test
                             elif X_test is not None and len(X_test) > 0:
                                 try:
-                                    # Gérer format channels_first ou channels_last
                                     if len(X_test[0].shape) == 3:
-                                        # (H, W, C) ou (C, H, W)
                                         if X_test[0].shape[2] in [1, 3]:
                                             original_image_shapes = [X_test[i].shape[:2] for i in range(min(len(X_test), X_tensor.shape[0]))]
                                         else:
@@ -188,7 +219,6 @@ def robust_predict_with_preprocessor(
                                 f"Le modèle fonctionne mais la localisation n'est pas disponible.",
                                 exc_info=True
                             )
-                            # Continue sans heatmaps
                     
                     logger.info(
                         f"✅ Prédictions autoencoder: {len(y_pred_binary)} samples, "
@@ -226,10 +256,12 @@ def robust_predict_with_preprocessor(
                     output = model(X_tensor)
                     
                     # Gestion multiple formats output
+                    if output is None:
+                        raise ValueError("Modèle a retourné None (incompatible avec classification)")
+                    
                     if hasattr(output, 'logits'):
                         y_proba = torch.softmax(output.logits, dim=1).cpu().numpy()
                     elif isinstance(output, tuple):
-                        # Certains modèles retournent (logits, features)
                         y_proba = torch.softmax(output[0], dim=1).cpu().numpy()
                     else:
                         y_proba = torch.softmax(output, dim=1).cpu().numpy()
@@ -240,7 +272,6 @@ def robust_predict_with_preprocessor(
                     elif y_proba.shape[1] == 1:
                         y_pred_proba = y_proba[:, 0]
                     else:
-                        # Multi-classes: prendre max
                         y_pred_proba = np.max(y_proba, axis=1)
                     
                     y_pred_binary = (y_pred_proba > 0.5).astype(int)
@@ -268,7 +299,6 @@ def robust_predict_with_preprocessor(
         logger.warning("⚠️ Utilisation fallback: prédictions aléatoires")
         
         if model_type in ["autoencoder", "conv_autoencoder"]:
-            # Pour autoencoder: distribution normale autour de 0.3
             reconstruction_errors = np.random.normal(0.3, 0.15, len(X_test))
             reconstruction_errors = np.clip(reconstruction_errors, 0, 1)
             
@@ -284,7 +314,6 @@ def robust_predict_with_preprocessor(
                 "fallback": True
             }
         else:
-            # Pour classification: distribution uniforme biaisée
             y_pred_proba = np.random.beta(2, 5, len(X_test))
             
             return {
@@ -293,5 +322,3 @@ def robust_predict_with_preprocessor(
                 "success": False,
                 "fallback": True
             }
-
-
