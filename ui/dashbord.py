@@ -477,7 +477,7 @@ class ModernDashboard:
                         paper_bgcolor="rgba(0,0,0,0)",
                     )
                     
-                    st.plotly_chart(fig, use_container_width=True)
+                    st.plotly_chart(fig, width="stretch")
                     
                     # Corrélation avec badge moderne
                     corr = df[[var1, var2]].corr().iloc[0, 1]
@@ -536,7 +536,7 @@ class ModernDashboard:
             
             missing_fig = plot_missing_values_overview(df)
             if missing_fig:
-                st.plotly_chart(missing_fig, use_container_width=True)
+                st.plotly_chart(missing_fig, width="stretch")
                 logger.info("✅ Graphique valeurs manquantes affiché")
             else:
                 self.layout.info_badge(
@@ -636,7 +636,7 @@ class ModernDashboard:
                         if result and isinstance(result, tuple):
                             fig, used_cols = result
                             if fig:
-                                st.plotly_chart(fig, use_container_width=True)
+                                st.plotly_chart(fig, width="stretch")
                                 self.layout.info_badge(
                                     f"{len(used_cols)} variables analysées dans la matrice de corrélation",
                                     badge_type="info",
@@ -649,7 +649,7 @@ class ModernDashboard:
                             # Fallback simple
                             fig, used_cols = create_simple_correlation_heatmap(df)
                             if fig:
-                                st.plotly_chart(fig, use_container_width=True)
+                                st.plotly_chart(fig, width="stretch")
                                 logger.info("✅ Matrice simple affichée (fallback)")
                             else:
                                 st.error("❌ Impossible de calculer les corrélations")
@@ -835,7 +835,7 @@ class ModernDashboard:
             with col2:
                 grid_cols = st.selectbox("Colonnes", [2, 3, 4, 6], index=1)
             with col3:
-                if st.button("🔄 Aléatoire", use_container_width=True):
+                if st.button("🔄 Aléatoire", width="stretch"):
                     st.rerun()
             
             # Sélection images
@@ -990,7 +990,7 @@ class ModernDashboard:
                 paper_bgcolor='rgba(0,0,0,0)',
             )
             
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
             
             # Tableau avec noms corrects
             st.markdown("#### 📋 Détail par Classe")
@@ -1090,7 +1090,7 @@ class ModernDashboard:
                                     plot_bgcolor='rgba(0,0,0,0)',
                                     paper_bgcolor='rgba(0,0,0,0)',
                                 )
-                                st.plotly_chart(fig, use_container_width=True)
+                                st.plotly_chart(fig, width="stretch")
                         
                         with col2:
                             if contrast_values:
@@ -1104,7 +1104,7 @@ class ModernDashboard:
                                     plot_bgcolor='rgba(0,0,0,0)',
                                     paper_bgcolor='rgba(0,0,0,0)',
                                 )
-                                st.plotly_chart(fig, use_container_width=True)
+                                st.plotly_chart(fig, width="stretch")
                         
                         # ✅ CORRECTION : Vérification sécurisée de problematic_count
                         problematic_summary = report.get('problematic_summary', {})
@@ -1212,7 +1212,7 @@ class ModernDashboard:
                 paper_bgcolor='rgba(0,0,0,0)',
             )
             
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
             
             logger.info("✅ Statistiques images affichées")
             
@@ -1390,11 +1390,11 @@ class ModernDashboard:
             
             col1, col2 = st.columns([1, 1])
             with col1:
-                if st.button("🏠 Retour à l'Accueil", type="primary", use_container_width=True):
+                if st.button("🏠 Retour à l'Accueil", type="primary", width="stretch"):
                     logger.info("🏠 Navigation vers accueil depuis dashboard vide")
                     self.state.switch(AppPage.HOME)
             with col2:
-                if st.button("🔄 Recharger", type="secondary", use_container_width=True):
+                if st.button("🔄 Recharger", type="secondary", width="stretch"):
                     logger.info("🔄 Tentative de rechargement")
                     st.rerun()
             

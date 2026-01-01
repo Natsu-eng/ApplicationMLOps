@@ -175,19 +175,89 @@ class ModelBuilder:
             return self._build_placeholder_cnn(config)
     
     def _build_transfer_learning(self, config: ModelConfig) -> nn.Module:
-        """Builder pour TransferLearning - UTILISE LE VRAI MODÈLE"""
+        """
+        Builder Transfer Learning CORRIGÉ avec lecture ROBUSTE des paramètres.
+        
+        GARANTIT:
+        - Extraction depuis config.model_params (stocké par orchestrateur)
+        - Fallback sur attributs directs de config
+        - Logs de confirmation à chaque étape
+        """
         if TransferLearningModel is not None:
-            # Utilisation du VRAI modèle
-            return TransferLearningModel(
-                model_name='resnet50',
+            # ====================================================================
+            # EXTRACTION PARAMÈTRES DEPUIS model_params (PRIORITAIRE)
+            # ====================================================================
+            model_params = {}
+            
+            # Source 1: Attribut model_params (ajouté par orchestrateur)
+            if hasattr(config, 'model_params') and isinstance(config.model_params, dict):
+                model_params = config.model_params.copy()
+                logger.info(f"✅ model_params trouvé dans config: {list(model_params.keys())}")
+            else:
+                logger.warning("⚠️ config.model_params absent, tentative extraction attributs directs")
+            
+            # ====================================================================
+            # EXTRACTION PARAMÈTRES FINE-TUNING
+            # ====================================================================
+            freeze_percentage = model_params.get('freeze_percentage')
+            freeze_layers = model_params.get('freeze_layers', 0)
+            
+            # Fallback: attributs directs de config
+            if freeze_percentage is None and hasattr(config, 'freeze_percentage'):
+                freeze_percentage = config.freeze_percentage
+                logger.info(f"✅ freeze_percentage depuis config.freeze_percentage: {freeze_percentage}")
+            
+            if freeze_layers == 0 and hasattr(config, 'freeze_layers'):
+                freeze_layers = config.freeze_layers
+                logger.info(f"✅ freeze_layers depuis config.freeze_layers: {freeze_layers}")
+            
+            # ====================================================================
+            # LOG STRATÉGIE DE GEL
+            # ====================================================================
+            if freeze_percentage is not None:
+                logger.info(
+                    f"🔧 Transfer Learning: GEL PARTIEL "
+                    f"freeze_percentage={freeze_percentage}%"
+                )
+            elif freeze_layers == -1:
+                logger.info("🔧 Transfer Learning: GEL COMPLET (sauf classifier)")
+            elif freeze_layers > 0:
+                logger.info(f"🔧 Transfer Learning: GEL {freeze_layers} premières couches")
+            else:
+                logger.info("🔧 Transfer Learning: FULL FINE-TUNING (aucun gel)")
+            
+            # ====================================================================
+            # CRÉATION DU MODÈLE
+            # ====================================================================
+            model = TransferLearningModel(
+                model_name=model_params.get('backbone_name', 'resnet50'),
                 num_classes=config.num_classes,
-                pretrained=config.pretrained,
-                freeze_layers=config.freeze_layers,
-                dropout_rate=config.dropout_rate,
-                use_custom_classifier=True
+                pretrained=model_params.get('pretrained', True),
+                freeze_layers=freeze_layers,
+                freeze_percentage=freeze_percentage,  # ✅ PROPAGÉ
+                dropout_rate=model_params.get('dropout_rate', 0.5),
+                use_custom_classifier=True,
+                input_size=config.input_size if hasattr(config, 'input_size') else None,
+                input_channels=config.input_channels
             )
+            
+            # ====================================================================
+            # VALIDATION POST-CRÉATION
+            # ====================================================================
+            trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
+            total = sum(p.numel() for p in model.parameters())
+            
+            logger.info(
+                f"✅ Transfer Learning créé:\n"
+                f"   • Backbone: {model_params.get('backbone_name', 'resnet50')}\n"
+                f"   • Gel appliqué: {freeze_percentage}% ou {freeze_layers} layers\n"
+                f"   • Trainable: {trainable:,}/{total:,} ({trainable/total*100:.1f}%)"
+            )
+            
+            return model
+        
         else:
-            logger.warning("TransferLearningModel non disponible, utilisation placeholder")
+            logger.warning("TransferLearningModel non disponible, placeholder")
             return self._build_placeholder_cnn(config)
 
 

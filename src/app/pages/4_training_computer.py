@@ -827,21 +827,81 @@ class MLTrainingWorkflowPro:
         # === TRANSFER LEARNING ===
         elif model_type == "transfer_learning":
             col1, col2 = st.columns(2)
-            
+
             with col1:
                 backbone = st.selectbox(
                     "Backbone",
                     ["resnet18", "resnet50", "efficientnet_b0", "mobilenet_v2"],
-                    index=1
+                    index=1,
+                    help="Choisir le backbone pré-entraîné pour le transfer learning"
                 )
-            
+
             with col2:
-                dropout_rate = st.slider("Dropout", 0.0, 0.7, 0.5, 0.1)
-            
-            STATE.model_config["model_params"].update({
-                "backbone_name": backbone,
-                "dropout_rate": dropout_rate
-            })
+                dropout_rate = st.slider(
+                    "Dropout",
+                    0.0, 0.7,
+                    model_params.get("dropout_rate", 0.5),
+                    0.1,
+                    help="Taux de dropout avant la couche finale"
+                )
+
+            # === FINE-TUNING ===
+            with st.expander("🔧 Configuration Fine-Tuning", expanded=True):
+                # Poids pré-entraînés
+                use_pretrained = st.checkbox(
+                    "Utiliser poids pré-entraînés (ImageNet)",
+                    value=model_params.get("pretrained", True),
+                    help="Recommandé: poids ImageNet comme point de départ"
+                )
+
+                # Stratégie de gel
+                freeze_strategy = st.selectbox(
+                    "Stratégie de gel",
+                    [
+                        "Feature Extractor (tout gelé sauf classifier)",
+                        "Fine-tuning léger (80% gelé)",
+                        "Fine-tuning modéré (50% gelé)",
+                        "Training complet (rien gelé)"
+                    ],
+                    index=1,
+                    help="Contrôle quelles couches sont entraînées"
+                )
+
+                # Gestion des stratégies
+                freeze_layers = 0
+                freeze_percentage = None
+
+                if freeze_strategy == "Feature Extractor (tout gelé sauf classifier)":
+                    freeze_layers = -1
+                    freeze_percentage = None
+                    strategy_description = "✅ Backbone ImageNet gelé, seul le classifier est entraîné"
+                elif freeze_strategy == "Fine-tuning léger (80% gelé)":
+                    freeze_layers = 0
+                    freeze_percentage = 80.0
+                    strategy_description = "⚙️ 80% des couches gelées, fine-tuning léger"
+                elif freeze_strategy == "Fine-tuning modéré (50% gelé)":
+                    freeze_layers = 0
+                    freeze_percentage = 50.0
+                    strategy_description = "⚙️ 50% des couches gelées, fine-tuning modéré"
+                else:  # "Training complet (rien gelé)"
+                    freeze_layers = 0
+                    freeze_percentage = 0.0
+                    strategy_description = "🚀 Training complet from scratch (plus lent mais adapté)"
+
+                # Mise à jour STATE avec les DEUX paramètres
+                STATE.model_config["model_params"].update({
+                    "backbone_name": backbone,
+                    "dropout_rate": dropout_rate,
+                    "pretrained": use_pretrained,
+                    "freeze_layers": freeze_layers,
+                    "freeze_percentage": freeze_percentage
+                })
+
+                st.info(
+                    f"**Configuration Fine-Tuning:** {freeze_strategy}\n\n"
+                    f"{strategy_description}"
+                )
+
     
     # ========================================================================
     # ÉTAPE 5: CONFIGURATION ENTRAÎNEMENT

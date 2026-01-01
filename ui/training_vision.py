@@ -473,7 +473,7 @@ def render_split_distribution_chart(split_data: Dict, mode: str):
         )]
     )
     
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
     
     # Distribution des classes par split
     if mode == "unsupervised":
@@ -519,7 +519,7 @@ def render_split_distribution_chart(split_data: Dict, mode: str):
             height=300
         )
         
-        st.plotly_chart(fig2, use_container_width=True)
+        st.plotly_chart(fig2, width="stretch")
 
 
 def render_split_stats_table(split_data: Dict, mode: str, metadata: Dict):
@@ -561,7 +561,7 @@ def render_split_stats_table(split_data: Dict, mode: str, metadata: Dict):
             })
     
     df_stats = pd.DataFrame(stats_data)
-    st.dataframe(df_stats, use_container_width=True, hide_index=True)
+    st.dataframe(df_stats, width="stretch", hide_index=True)
 
 
 def render_validation_warnings(warnings: List[str]):
@@ -751,7 +751,7 @@ def render_imbalance_analysis(imbalance_info: Dict, y_train: np.ndarray):
         height=400
     )
     
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
 
 # ============================================================================

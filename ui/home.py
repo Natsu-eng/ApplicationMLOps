@@ -130,7 +130,7 @@ class ModernHomePage:
             key="tabular_upload"
         )
         
-        if uploaded_file and st.button("🚀 Analyser", type="primary", use_container_width=True):
+        if uploaded_file and st.button("🚀 Analyser", type="primary", width="stretch"):
             with st.spinner("Chargement en cours..."):
                 df, report, df_raw = load_data(uploaded_file, sanitize_for_display=True)
                 if df is not None and not df.empty:
@@ -178,7 +178,7 @@ class ModernHomePage:
         
         with col2:
             st.write("<br>", unsafe_allow_html=True)
-            load_btn = st.button("📁 Charger Dossier", type="primary", use_container_width=True)
+            load_btn = st.button("📁 Charger Dossier", type="primary", width="stretch")
         
         if load_btn and data_dir:
             if not os.path.exists(data_dir):
@@ -242,7 +242,7 @@ class ModernHomePage:
         if uploaded_files and len(uploaded_files) > 0:
             st.info(f"📤 {len(uploaded_files)} fichier(s) sélectionné(s)")
             
-            if st.button("🚀 Charger et Analyser", type="primary", use_container_width=True):
+            if st.button("🚀 Charger et Analyser", type="primary", width="stretch"):
                 perf_logger.start_operation("image_loading_files")
                 with st.spinner(f"Chargement de {len(uploaded_files)} images..."):
                     try:
@@ -318,7 +318,9 @@ class ModernHomePage:
             "toothbrush": "🪥 Brosses à dents",
             "transistor": "⚡ Transistors",
             "zipper": "🔗 Fermetures éclair",
-            "bottle_supervised": "Bouteilles (Supervised)"
+            "bottle_supervised": "Bouteilles (Supervised)",
+            "cable_multiclass": "Câbles (Supervised)",
+            "leather_multiclass": "Cuir(Supervised)"
         }
         
         # Grille 3x3
@@ -328,7 +330,7 @@ class ModernHomePage:
             
             for col, (key, label) in zip(cols, items):
                 with col:
-                    if st.button(label, use_container_width=True, key=f"mvtec_{key}"):
+                    if st.button(label, width="stretch", key=f"mvtec_{key}"):
                         path = os.path.join(project_root, "src", "data", "mvtec_ad", key)
                         
                         if not os.path.exists(path):

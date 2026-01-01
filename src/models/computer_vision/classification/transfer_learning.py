@@ -93,20 +93,26 @@ class TransferLearningModel(nn.Module):
         num_classes: int = 2,
         pretrained: bool = True,
         freeze_layers: int = 0,
+        freeze_percentage: Optional[float] = None,
         dropout_rate: float = 0.5,
         use_custom_classifier: bool = True,
-        input_size: Optional[Tuple[int, int]] = None,  
-        input_channels: int = 3  
+        input_size: Optional[Tuple[int, int]] = None,
+        input_channels: int = 3
     ):
         super(TransferLearningModel, self).__init__()
         
-        # === VALIDATION ===
+        # === DÉFINIR num_features AVANT tout ===
         if model_name not in self.SUPPORTED_MODELS:
             raise ValueError(
                 f"model_name '{model_name}' non supporté. "
                 f"Options: {list(self.SUPPORTED_MODELS.keys())}"
             )
         
+        # Récupérer les infos du modèle DÈS LE DÉBUT
+        model_info = self.SUPPORTED_MODELS[model_name]
+        self.num_features = model_info["features"]  # ✅ Défini tôt
+        
+        # === VALIDATION ===
         if num_classes < 2:
             raise ValueError(f"num_classes doit être >= 2, reçu: {num_classes}")
         
@@ -126,17 +132,12 @@ class TransferLearningModel(nn.Module):
         self.pretrained = pretrained
         self.freeze_layers = freeze_layers
         self.dropout_rate = dropout_rate
-        self.input_size = input_size if input_size else (224, 224) 
+        self.input_size = input_size if input_size else (224, 224)
         self.input_channels = input_channels
-        
-        # Récupére les infos du modèle
-        model_info = self.SUPPORTED_MODELS[model_name]
-        self.num_features = model_info["features"]
         
         # === CHARGEMENT DU BACKBONE ===
         try:
             if pretrained:
-                # PyTorch 0.13+ syntax
                 weights = "IMAGENET1K_V1"
                 self.backbone = models.__dict__[model_name](weights=weights)
                 logger.info(f"✅ Modèle {model_name} chargé avec poids ImageNet")
@@ -158,22 +159,40 @@ class TransferLearningModel(nn.Module):
         self._replace_classifier(use_custom_classifier)
         
         # === GEL DES COUCHES ===
-        if freeze_layers > 0 or freeze_layers == -1:
+        if freeze_percentage is not None:
+            self._freeze_by_percentage(freeze_percentage)
+            self.freeze_layers = freeze_percentage
+        elif freeze_layers > 0 or freeze_layers == -1:
             self._freeze_layers(freeze_layers)
+            self.freeze_layers = freeze_layers
+        else:
+            logger.info("ℹ️ Aucun gel de couches (fine-tuning complet)")
+            self.freeze_layers = 0
         
         logger.info(
             f"TransferLearningModel initialisé: "
             f"model={model_name}, "
             f"classes={num_classes}, "
-            f"frozen_layers={freeze_layers}, "
+            f"frozen_config={self.freeze_layers}, "
+            f"num_features={self.num_features}, "
             f"params={self.count_parameters():,}"
         )
+
     
     def _replace_classifier(self, use_custom: bool):
         """
-        Remplace le classifier du modèle backbone.       
+        Remplace le classifier du modèle backbone.
         Gère automatiquement les différentes architectures (ResNet, VGG, etc)
         """
+        # VÉRIFICATION CRITIQUE
+        if not hasattr(self, 'num_features') or self.num_features is None:
+            raise AttributeError(
+                "❌ ERREUR CRITIQUE: num_features non défini avant _replace_classifier!\n"
+                "   Dans __init__, définir self.num_features AVANT d'appeler _replace_classifier"
+            )
+        
+        logger.info(f"🔧 Remplacement classifier - num_features={self.num_features}, use_custom={use_custom}")
+        
         if use_custom:
             # Classifier multi-couches avec BatchNorm et Dropout
             classifier = nn.Sequential(
@@ -209,8 +228,10 @@ class TransferLearningModel(nn.Module):
         else:
             raise ValueError(
                 f"Impossible de remplacer le classifier pour {self.model_name}. "
-                f"Attributs disponibles: {dir(self.backbone)}"
+                f"Attributs disponibles: {[attr for attr in dir(self.backbone) if not attr.startswith('_')]}"
             )
+        
+        logger.info(f"✅ Classifier remplacé avec succès - num_features={self.num_features}")
     
     def _freeze_layers(self, num_layers: int):
         """
@@ -224,12 +245,13 @@ class TransferLearningModel(nn.Module):
                        >0 = Geler les N premières couches
         """
         if num_layers == -1:
-            # Geler tout sauf le classifier
+            # Geler tout SAUF le classifier
             for name, param in self.backbone.named_parameters():
-                # Ne pas geler les paramètres du classifier
-                if 'fc' not in name and 'classifier' not in name:
-                    param.requires_grad = False
-            
+                # NE PAS geler si c'est le classifier
+                if 'fc' in name or 'classifier' in name:
+                    param.requires_grad = True   # Débloquer le classifier
+                else:
+                    param.requires_grad = False  # Geler tout le reste
             logger.info("✅ Toutes les couches gelées sauf le classifier")
             return
         
@@ -273,33 +295,220 @@ class TransferLearningModel(nn.Module):
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
-        Forward pass avec validation.    
-        Accepte toutes les tailles d'images (grâce aux backbones pré-entraînés)      
-        Args:
-            x: Images (batch_size, 3, height, width)
-            
-        Returns:
-            Logits (batch_size, num_classes)
-            
-        Raises:
-            ValueError: Si dimensions invalides
+        Forward pass avec conversion automatique des canaux.   
+        Gère dynamiquement:
+        - Grayscale (1 channel) → RGB (3 channels)
+        - RGBA (4 channels) → RGB (3 channels)
+        - Format detection (channels_first/last)
         """
-        if x.dim() != 4:
-            raise ValueError(f"Expected 4D tensor (B,C,H,W), got {x.dim()}D")
+        original_shape = x.shape
+        original_device = x.device
+        original_dtype = x.dtype
         
-        if x.size(1) != 3:
+        logger.debug(f"Forward - input: shape={original_shape}, dtype={original_dtype}, device={original_device}")
+        
+        # ===================================================================
+        # 1. VALIDATION DIMENSIONS
+        # ===================================================================
+        if x.dim() not in [3, 4]:
             raise ValueError(
-                f"Transfer learning nécessite 3 canaux (RGB), "
-                f"reçu: {x.size(1)} canaux"
+                f"Expected 3D (C,H,W) or 4D (B,C,H,W) tensor, "
+                f"got {x.dim()}D: {original_shape}"
             )
         
-        try:
-            return self.backbone(x)
+        # Ajouter batch dimension si nécessaire
+        if x.dim() == 3:
+            x = x.unsqueeze(0)
+            logger.debug(f"Added batch dimension: {x.shape}")
         
+        batch_size = x.size(0)
+        
+        # ===================================================================
+        # 2. DÉTECTION ET CONVERSION DE FORMAT
+        # ===================================================================
+        # Heuristique: channels_first si dim1 est petit (1,3,4) et < dim2,dim3
+        if x.size(1) in [1, 3, 4] and x.size(1) < x.size(2) and x.size(1) < x.size(3):
+            # Format channels_first: (B, C, H, W)
+            channels = x.size(1)
+            height, width = x.size(2), x.size(3)
+            current_format = "channels_first"
+        else:
+            # Assume channels_last: (B, H, W, C)
+            height, width = x.size(1), x.size(2)
+            channels = x.size(3)
+            current_format = "channels_last"
+            
+            # Convertir en channels_first pour PyTorch
+            x = x.permute(0, 3, 1, 2)
+            channels = x.size(1)  # Mettre à jour après permutation
+            logger.debug(f"Converted channels_last → channels_first: {original_shape} → {x.shape}")
+        
+        # ===================================================================
+        # 3. CONVERSION DES CANAUX POUR TRANSFER LEARNING
+        # ===================================================================
+        # Transfer learning requiert 3 canaux (RGB)
+        target_channels = 3
+        
+        if channels == 1:
+            # Grayscale → RGB: dupliquer les canaux
+            x = x.repeat(1, target_channels, 1, 1)
+            logger.info(f"🔧 Grayscale → RGB: {channels} → {target_channels} channels")
+            
+        elif channels == 4:
+            # RGBA → RGB: prendre les 3 premiers canaux
+            x = x[:, :3, :, :]
+            logger.info(f"🔧 RGBA → RGB: {channels} → {target_channels} channels")
+            
+        elif channels == 3:
+            # Déjà bon format
+            pass
+            
+        else:
+            raise ValueError(
+                f"❌ Nombre de canaux non supporté: {channels}\n"
+                f"   Shape d'entrée: {original_shape}\n"
+                f"   Format détecté: {current_format}\n"
+                f"   Transfer learning requiert 1, 3 ou 4 canaux."
+            )
+        
+        # ===================================================================
+        # 4. VALIDATION FINALE
+        # ===================================================================
+        if x.size(1) != target_channels:
+            raise ValueError(
+                f"❌ Échec conversion canaux: {channels} → {x.size(1)} (attendus: {target_channels})"
+            )
+        
+        # ===================================================================
+        # 5. EXÉCUTION DU MODÈLE
+        # ===================================================================
+        try:
+            output = self.backbone(x)
+            
+            # Restaurer la dimension batch si nécessaire
+            if original_shape[0] == 1 and batch_size == 1:
+                output = output.squeeze(0)
+                logger.debug(f"Removed batch dimension: {output.shape}")
+            
+            return output
+            
+        except RuntimeError as e:
+            # Détection d'erreur mémoire
+            if "CUDA out of memory" in str(e) or "out of memory" in str(e):
+                logger.error(
+                    f"❌ GPU OUT OF MEMORY:\n"
+                    f"   Input shape: {x.shape}\n"
+                    f"   Model: {self.model_name}\n"
+                    f"   Device: {x.device}"
+                )
+                raise RuntimeError(
+                    f"GPU out of memory avec batch_size={batch_size}. "
+                    f"Essayez de réduire le batch_size."
+                ) from e
+            else:
+                logger.error(
+                    f"❌ Erreur forward {self.model_name}:\n"
+                    f"   Input shape: {x.shape}\n"
+                    f"   Channels: {x.size(1)}\n"
+                    f"   Error: {e}"
+                )
+                raise
+
+    def _freeze_by_percentage(self, percentage: float):
+        """
+        Gèle un pourcentage des BLOCS du modèle (pas paramètres individuels).
+        Avantages:
+        - Compte les BLOCS/MODULES, pas les paramètres
+        - Ordre garanti (input → output)
+        - Gel par blocs cohérents (conv + bn + activation)
+        
+        Args:
+            percentage: Pourcentage à geler (0-100)
+        """
+        if not 0 <= percentage <= 100:
+            raise ValueError(f"Pourcentage doit être entre 0 et 100, reçu: {percentage}")
+        
+        # STEP 1: Identifier les BLOCS PRINCIPAUX (pas paramètres individuels)
+        # Pour ResNet: layer1, layer2, layer3, layer4 + classifier
+        
+        # Récupérer les modules ORDONNÉS (input → output)
+        named_modules = list(self.backbone.named_modules())
+        
+        # Filtrer uniquement les blocs principaux (ignorer sous-modules)
+        main_blocks = []
+        
+        for name, module in named_modules:
+            # Identifier les blocs principaux selon l'architecture
+            if any(block_name in name for block_name in ['layer1', 'layer2', 'layer3', 'layer4']):
+                # S'assurer qu'on prend les blocs complets, pas les sous-modules
+                if '.' not in name[name.find('layer'):]:  # Ex: "layer1" OK, "layer1.0.conv1" NON
+                    main_blocks.append((name, module))
+        
+        # Ajouter le classifier en dernier
+        if hasattr(self.backbone, 'fc'):
+            main_blocks.append(('fc', self.backbone.fc))
+        elif hasattr(self.backbone, 'classifier'):
+            main_blocks.append(('classifier', self.backbone.classifier))
+        
+        total_blocks = len(main_blocks)
+        num_blocks_to_freeze = int(total_blocks * percentage / 100)
+        
+        logger.info(
+            f"🔧 Fine-tuning: {total_blocks} blocs principaux identifiés - "
+            f"Gel de {percentage}% → {num_blocks_to_freeze} blocs"
+        )
+        
+        # STEP 2: Geler les N premiers blocs (input → features)
+        frozen_blocks = []
+        unfrozen_blocks = []
+        
+        for idx, (block_name, block_module) in enumerate(main_blocks):
+            if idx < num_blocks_to_freeze:
+                # Geler TOUS les paramètres du bloc
+                for param in block_module.parameters():
+                    param.requires_grad = False
+                frozen_blocks.append(block_name)
+                logger.debug(f"  ❄️ Gelé: {block_name}")
+            else:
+                # Dégeler TOUS les paramètres du bloc
+                for param in block_module.parameters():
+                    param.requires_grad = True
+                unfrozen_blocks.append(block_name)
+                logger.debug(f"  🔥 Entraînable: {block_name}")
+        
+        # STEP 3: Validation et logs détaillés
+        trainable_params = sum(p.numel() for p in self.parameters() if p.requires_grad)
+        total_params = sum(p.numel() for p in self.parameters())
+        
+        # Vérifier que des paramètres sont entraînables
+        if trainable_params == 0:
+            logger.error("❌ ERREUR: AUCUN paramètre entraînable après gel!")
+            raise ValueError("Tous les paramètres sont gelés, impossible d'entraîner")
+        
+        logger.info(
+            f"✅ Fine-tuning configuré:\n"
+            f"   • Blocs gelés: {frozen_blocks}\n"
+            f"   • Blocs entraînables: {unfrozen_blocks}\n"
+            f"   • Paramètres entraînables: {trainable_params:,}/{total_params:,} "
+            f"({trainable_params/total_params*100:.1f}%)"
+        )
+        
+        # STEP 4: Vérification CRITIQUE des gradients
+        # Forcer un forward dummy pour s'assurer que les gradients sont bien bloqués
+        try:
+            dummy_input = torch.randn(1, 3, 224, 224, device=next(self.parameters()).device)
+            
+            self.eval()
+            with torch.no_grad():
+                _ = self.forward(dummy_input)
+            
+            self.train()
+            
+            logger.info("✅ Test forward réussi après gel")
+            
         except Exception as e:
-            logger.error(f"Erreur dans forward {self.model_name}: {e}")
-            logger.error(f"Input shape: {x.shape}")
-            raise
+            logger.warning(f"⚠️ Test forward échoué: {e}")
+
     
     def get_features(self, x: torch.Tensor) -> torch.Tensor:
         """

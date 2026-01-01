@@ -17,7 +17,7 @@ import time
 import warnings
 import copy
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple, Any, Union
+from typing import Counter, Dict, List, Optional, Tuple, Any, Union
 from enum import Enum
 from pathlib import Path
 
@@ -338,94 +338,403 @@ class ComputerVisionTrainer:
         X_train: np.ndarray,
         y_train: np.ndarray,
         X_val: np.ndarray,
-        y_val: np.ndarray
+        y_val: np.ndarray,
+        preprocessing_config: Optional[Dict[str, Any]] = None
     ) -> Result:
         """
-        Entraîne le modèle de manière robuste.
+        Entraîne le modèle sur les données fournies.
         
-        Pipeline:
-        1. Validation des données
-        2. Preprocessing (fit sur train, transform sur val)
-        3. Construction du modèle
-        4. Setup training (optimizer, criterion, scheduler)
-        5. Boucle d'entraînement avec early stopping
-        6. Retour des résultats structurés
-        
-        Args:
-            X_train: Données d'entraînement (N, H, W, C) ou (N, C, H, W)
-            y_train: Labels d'entraînement
-            X_val: Données de validation
-            y_val: Labels de validation
-            
-        Returns:
-            Result contenant model, history, preprocessor et métadonnées
+        GARANTIT:
+        - Augmentation sur données BRUTES (uint8 [0,255])
+        - Validation sur données NORMALISÉES
+        - Preprocessor utilisé DANS le dataset pour normalisation post-augmentation
         """
         try:
-            logger.info("=== Début de l'entraînement ===")
+            logger.info("=== DÉBUT ENTRAÎNEMENT ===")
             start_total = time.time()
             
-            # 1. Validation des données
+            self.preprocessing_config = preprocessing_config or {}
+            
+            # 1. VALIDATION DES DONNÉES
             val_result = self._validate_data(X_train, y_train, X_val, y_val)
             if not val_result.success:
                 return val_result
             
-            # 2. Preprocessing (FIT sur train, TRANSFORM sur val)
-            prep_result = self._setup_preprocessing(X_train, y_train, X_val, y_val)
+            # 2. DÉTERMINATION PARAMÈTRES DYNAMIQUES
+            if hasattr(self.model_config, 'input_channels'):
+                expected_channels = self.model_config.input_channels
+            else:
+                expected_channels = X_train.shape[-1] if X_train.shape[-1] in [1, 3, 4] else 3
+                logger.info(f"ℹ️ input_channels auto-détecté: {expected_channels}")
+            
+            target_size = self._determine_target_size(
+                X_train, 
+                preprocessing_config,
+                expected_channels
+            )
+            
+            # 3. PREPROCESSING AVEC STOCKAGE DES DONNÉES BRUTES
+            prep_result = self._setup_preprocessing(
+                X_train, y_train, X_val, y_val,
+                target_size=target_size,
+                expected_channels=expected_channels
+            )
             if not prep_result.success:
                 return prep_result
             
             X_train_norm, y_train, X_val_norm, y_val = prep_result.data
             
-            # 3. Construction du modèle
+            # 4. CONSTRUCTION DU MODÈLE
             model_result = self._build_model()
             if not model_result.success:
                 return model_result
             
-            # 4. Setup training
+            # 5. SETUP TRAINING
             setup_result = self._setup_training(y_train)
             if not setup_result.success:
                 return setup_result
             
-            # 5. Création des DataLoaders
-            train_loader = DataLoaderFactory.create(
-                X_train_norm, y_train,
-                batch_size=self.training_config.batch_size,
-                shuffle=True,
-                num_workers=0,
-                pin_memory=False
+            # ====================================================================
+            # 6. CRÉATION DATALOADERS AVEC GESTION CORRECTE DE L'AUGMENTATION
+            # ====================================================================
+            augmentation_enabled = self.preprocessing_config.get('augmentation_enabled', False)
+            
+            if augmentation_enabled:
+                # ✅ CORRECTION CRITIQUE: Utiliser données BRUTES pour augmentation
+                logger.info(
+                    f"🎨 Augmentation ACTIVÉE - Utilisation données BRUTES\n"
+                    f"   • X_train_brut: shape={X_train.shape}, dtype={X_train.dtype}, "
+                    f"range=[{X_train.min():.1f}, {X_train.max():.1f}]\n"
+                    f"   • Preprocessor sera appliqué APRÈS augmentation dans le dataset"
+                )
+                
+                # TRAIN: Données brutes + augmentation + preprocessor interne
+                train_loader = DataLoaderFactory.create(
+                    X_train,  # ✅ DONNÉES BRUTES (pas normalisées)
+                    y_train,
+                    batch_size=self.training_config.batch_size,
+                    shuffle=True,
+                    num_workers=self.training_config.num_workers,
+                    pin_memory=self.training_config.pin_memory,
+                    augmentation_config=self.preprocessing_config,
+                    is_training=True,
+                    target_size=target_size,
+                    output_format="channels_first",
+                    device_manager=self.device_manager,
+                    preprocessor=self.preprocessor  # ✅ Pour normalisation POST-augmentation
+                )
+                
+                # VALIDATION: Données normalisées SANS augmentation
+                val_loader = DataLoaderFactory.create(
+                    X_val_norm,  # Déjà normalisé
+                    y_val,
+                    batch_size=self.training_config.batch_size,
+                    shuffle=False,
+                    num_workers=self.training_config.num_workers,
+                    pin_memory=self.training_config.pin_memory,
+                    augmentation_config=None,
+                    is_training=False,
+                    target_size=target_size,
+                    output_format="channels_first",
+                    device_manager=self.device_manager
+                )
+            else:
+                # Pas d'augmentation: utiliser données normalisées directement
+                train_loader = DataLoaderFactory.create(
+                    X_train_norm,
+                    y_train,
+                    batch_size=self.training_config.batch_size,
+                    shuffle=True,
+                    num_workers=self.training_config.num_workers,
+                    pin_memory=self.training_config.pin_memory,
+                    augmentation_config=None,
+                    is_training=True,
+                    target_size=target_size,
+                    output_format="channels_first",
+                    device_manager=self.device_manager
+                )
+                
+                val_loader = DataLoaderFactory.create(
+                    X_val_norm,
+                    y_val,
+                    batch_size=self.training_config.batch_size,
+                    shuffle=False,
+                    num_workers=self.training_config.num_workers,
+                    pin_memory=self.training_config.pin_memory,
+                    augmentation_config=None,
+                    is_training=False,
+                    target_size=target_size,
+                    output_format="channels_first",
+                    device_manager=self.device_manager
+                )
+            
+            logger.info(
+                f"✅ DataLoaders créés:\n"
+                f"   • Train: {len(train_loader)} batches, augmentation={augmentation_enabled}\n"
+                f"   • Val: {len(val_loader)} batches\n"
+                f"   • Target size: {target_size}\n"
+                f"   • Format: channels_first"
             )
             
-            val_loader = DataLoaderFactory.create(
-                X_val_norm, y_val,
-                batch_size=self.training_config.batch_size,
-                shuffle=False,
-                num_workers=0,
-                pin_memory=False
+            # 7. VALIDATION PREMIER BATCH
+            validation_result = self._validate_first_batch(
+                train_loader,
+                expected_channels=expected_channels,
+                target_size=target_size
             )
             
-            # 6. Boucle d'entraînement
+            if not validation_result.success:
+                logger.error(f"❌ Validation premier batch échouée: {validation_result.error}")
+                return Result.err(
+                    f"Problème format détecté:\n{validation_result.error}"
+                )
+            
+            # 8. BOUCLE D'ENTRAÎNEMENT
             train_result = self._training_loop(train_loader, val_loader, y_val)
             if not train_result.success:
                 return train_result
             
-            # 7. Métadonnées finales
+            # 9. MÉTADONNÉES FINALES
             total_time = time.time() - start_total
             self._training_metadata.update({
                 'total_training_time': total_time,
-                'samples_per_second': len(X_train) / total_time,
+                'samples_per_second': len(X_train) / total_time if total_time > 0 else 0,
                 'final_model_params': sum(p.numel() for p in self.model.parameters()),
-                'device': str(self.device_manager.device)
+                'device': str(self.device_manager.device),
+                'augmentation_enabled': augmentation_enabled,
+                'target_size': target_size,
+                'input_channels': expected_channels,
+                'original_shapes': {
+                    'train': X_train.shape,
+                    'val': X_val.shape
+                }
             })
             
-            # 8. Retour structuré (GARANTIT PAS DE BOOLÉENS)
-            return Result.ok(
-                self._build_training_result(train_result),
-                training_time=total_time
+            # 10. RETOUR STRUCTURÉ
+            result_data = self._build_training_result(train_result)
+            
+            logger.info(
+                f"🎯 ENTRAÎNEMENT TERMINÉ AVEC SUCCÈS:\n"
+                f"   • Durée: {total_time:.1f}s\n"
+                f"   • Époques: {len(self.history['train_loss'])}\n"
+                f"   • Best epoch: {result_data['history']['best_epoch']}\n"
+                f"   • Best val loss: {result_data['history']['best_val_loss']:.4f}\n"
+                f"   • Augmentation: {augmentation_enabled}\n"
+                f"   • Canaux: {expected_channels}"
             )
             
+            return Result.ok(result_data, training_time=total_time)
+            
         except Exception as e:
-            logger.error(f"Erreur critique entraînement: {e}", exc_info=True)
+            logger.error(f"❌ Fit échoué: {e}", exc_info=True)
             return Result.err(f"Entraînement échoué: {str(e)}")
+
+
+    def _determine_target_size(
+        self,
+        X_train: np.ndarray,
+        preprocessing_config: Dict[str, Any],
+        expected_channels: int
+    ) -> Optional[Tuple[int, int]]:
+        """
+        Détermine dynamiquement la target_size à partir de multiples sources.
+        
+        Priorités:
+        1. preprocessing_config.target_size (explicite)
+        2. model_config.input_size (si différent des données)
+        3. Déduction depuis données
+        4. None (pas de resize)
+        """
+        target_size = None
+        
+        # Source 1: preprocessing_config explicite
+        if preprocessing_config and 'target_size' in preprocessing_config:
+            target_size = preprocessing_config['target_size']
+            if target_size and len(target_size) == 2:
+                logger.info(f"✅ Target_size depuis preprocessing_config: {target_size}")
+                return tuple(target_size)
+        
+        # Source 2: model_config.input_size
+        if hasattr(self.model_config, 'input_size') and self.model_config.input_size:
+            model_h, model_w = self.model_config.input_size
+            
+            # Détecter taille actuelle des données
+            data_format = self._detect_data_format_static(X_train)
+            
+            if data_format == "channels_last":
+                data_h, data_w = X_train.shape[1], X_train.shape[2]
+            else:  # channels_first
+                data_h, data_w = X_train.shape[2], X_train.shape[3]
+            
+            # Si taille différente, utiliser model_config
+            if (data_h, data_w) != (model_h, model_w):
+                target_size = (model_h, model_w)
+                logger.info(
+                    f"✅ Target_size depuis model_config: {target_size} "
+                    f"(data: {data_h}x{data_w} → model: {model_h}x{model_w})"
+                )
+                return target_size
+            else:
+                logger.info(
+                    f"ℹ️ Données déjà à la taille modèle ({data_h}x{data_w}), "
+                    f"pas de resize nécessaire"
+                )
+                return None
+        
+        # Source 3: Déduction depuis données (pour augmentation)
+        augmentation_enabled = preprocessing_config.get('augmentation_enabled', False)
+        
+        if augmentation_enabled:
+            # Pour augmentation, on DOIT avoir une target_size fixe
+            data_format = self._detect_data_format_static(X_train)
+            
+            if data_format == "channels_last":
+                data_h, data_w = X_train.shape[1], X_train.shape[2]
+            else:  # channels_first
+                data_h, data_w = X_train.shape[2], X_train.shape[3]
+            
+            # Utiliser la taille actuelle comme target (pas de resize)
+            target_size = (data_h, data_w)
+            logger.info(
+                f"⚠️ Target_size déduit pour augmentation: {target_size} "
+                f"(même que données originales)"
+            )
+            return target_size
+        
+        # Source 4: Pas de resize
+        logger.info("ℹ️ Pas de target_size spécifié, conservation taille originale")
+        return None
+
+
+    def _validate_first_batch(
+        self,
+        train_loader: DataLoader,
+        expected_channels: int,
+        target_size: Optional[Tuple[int, int]] = None
+    ) -> Result:
+        """
+        Validation complète du premier batch avec détails.       
+        Args:
+            expected_channels: Nombre de canaux attendus (1, 3, ou 4)
+            target_size: Taille attendue (H, W) ou None
+        """
+        try:
+            # Récupérer le premier batch
+            first_batch = next(iter(train_loader))
+            
+            if len(first_batch) != 2:
+                return Result.err(
+                    f"Batch invalide: {len(first_batch)} éléments au lieu de 2"
+                )
+            
+            data, labels = first_batch
+            
+            # ====================================================================
+            # VALIDATION #1 : Dimensions du tensor
+            # ====================================================================
+            if data.dim() != 4:
+                return Result.err(
+                    f"❌ DIMENSIONS INVALIDES:\n"
+                    f"   Attendu: 4D (B, C, H, W)\n"
+                    f"   Reçu: {data.dim()}D\n"
+                    f"   Shape: {data.shape}"
+                )
+            
+            batch_size, channels, height, width = data.shape
+            
+            # ====================================================================
+            # VALIDATION #2 : Nombre de canaux
+            # ====================================================================
+            if channels != expected_channels:
+                return Result.err(
+                    f"❌ CANAUX INCORRECTS:\n"
+                    f"   Attendu: {expected_channels}\n"
+                    f"   Reçu: {channels}\n"
+                    f"   Shape: {data.shape}\n"
+                    f"   \n"
+                    f"   CAUSE PROBABLE:\n"
+                    f"   - input_channels mal configuré dans model_config\n"
+                    f"   - Conversion channels_first/last échouée\n"
+                    f"   - Modèle incompatible avec ces données"
+                )
+            
+            # ====================================================================
+            # VALIDATION #3 : Taille d'image (si target_size spécifié)
+            # ====================================================================
+            if target_size:
+                expected_h, expected_w = target_size
+                if (height, width) != (expected_h, expected_w):
+                    return Result.err(
+                        f"❌ TAILLE D'IMAGE INCORRECTE:\n"
+                        f"   Attendu: {expected_h}x{expected_w}\n"
+                        f"   Reçu: {height}x{width}\n"
+                        f"   \n"
+                        f"   CAUSE PROBABLE:\n"
+                        f"   - Resize non appliqué correctement\n"
+                        f"   - Augmentation sans resize final\n"
+                        f"   - Incohérence dans target_size"
+                    )
+            
+            # ====================================================================
+            # VALIDATION #4 : Range des valeurs
+            # ====================================================================
+            data_min = float(data.min())
+            data_max = float(data.max())
+            
+            # Vérifier normalisation
+            if data_max > 10 or data_min < -10:
+                logger.warning(
+                    f"⚠️ Range de valeurs large: [{data_min:.3f}, {data_max:.3f}]\n"
+                    f"   Normalisation peut ne pas être appliquée."
+                )
+            
+            # ====================================================================
+            # VALIDATION #5 : Labels
+            # ====================================================================
+            if labels.dim() != 1:
+                return Result.err(f"Labels 1D attendus, reçu: {labels.dim()}D")
+            
+            if len(labels) != batch_size:
+                return Result.err(
+                    f"Incohérence batch/labels: {batch_size} vs {len(labels)}"
+                )
+            
+            # Vérifier valeurs labels
+            unique_labels = torch.unique(labels).cpu().numpy()
+            
+            # ====================================================================
+            # LOG SUCCÈS DÉTAILLÉ
+            # ====================================================================
+            logger.info(
+                f"✅ PREMIER BATCH VALIDÉ:\n"
+                f"   • Shape: {tuple(data.shape)}\n"
+                f"   • Canaux: {channels} (attendus: {expected_channels}) ✓\n"
+                f"   • Taille: {height}x{width} {'✓' if not target_size else f'(cible: {target_size})'}\n"
+                f"   • Range: [{data_min:.3f}, {data_max:.3f}]\n"
+                f"   • Labels: {labels.shape}\n"
+                f"   • Labels uniques: {unique_labels.tolist()}\n"
+                f"   • Dtype: {data.dtype}\n"
+                f"   • Device: {data.device}"
+            )
+            
+            return Result.ok({
+                "batch_shape": tuple(data.shape),
+                "channels": channels,
+                "height": height,
+                "width": width,
+                "range": (data_min, data_max),
+                "labels_shape": tuple(labels.shape),
+                "unique_labels": unique_labels.tolist(),
+                "dtype": str(data.dtype),
+                "device": str(data.device)
+            })
+            
+        except StopIteration:
+            return Result.err("DataLoader vide")
+        except Exception as e:
+            logger.error(f"❌ Erreur validation batch: {e}", exc_info=True)
+            return Result.err(f"Validation batch échouée: {str(e)}")
+
     
     def _build_training_result(self, train_result: Result) -> Dict[str, Any]:
         """
@@ -530,17 +839,30 @@ class ComputerVisionTrainer:
         X_train: np.ndarray,
         y_train: np.ndarray,
         X_val: np.ndarray,
-        y_val: np.ndarray
+        y_val: np.ndarray,
+        target_size: Optional[Tuple[int, int]] = None,
+        expected_channels: Optional[int] = None
     ) -> Result:
         """
-        Récupération target_size depuis le contexte correct.           
+        Setup preprocessing avec VALIDATION STRICTE du format de sortie.    
+        Pipeline:
+        1. Création DataPreprocessor avec target_size correct
+        2. fit_transform sur train → channels_first
+        3. transform sur val → channels_first
+        4. VALIDATION CRITIQUE des shapes finales
+        5. Vérification cohérence avec model_config.input_size
+        
         Args:
-            X_train: Données d'entraînement
-            y_train: Labels d'entraînement
-            X_val: Données de validation
-            y_val: Labels de validation       
+            X_train, y_train: Données d'entraînement
+            X_val, y_val: Données de validation
+            target_size: Taille cible pour resize (H, W) - optionnel
+            expected_channels: Nombre de canaux attendus - optionnel
+            
         Returns:
-            Result avec données preprocessées
+            Result avec données preprocessées VALIDÉES
+            
+        Raises:
+            ValueError: Si format incorrect ou incohérence détectée
         """
         try:
             if X_train is None or len(X_train) == 0:
@@ -549,120 +871,220 @@ class ComputerVisionTrainer:
                 return Result.err("Données de validation vides")
             
             logger.info(
-                f"Début setup preprocessing - "
+                f"🔧 Début setup preprocessing - "
                 f"train_shape: {X_train.shape}, "
                 f"val_shape: {X_val.shape}, "
                 f"train_dtype: {X_train.dtype}, "
                 f"val_dtype: {X_val.dtype}"
             )
             
-            # Récupération target_size depuis PLUSIEURS sources (priorité)
-            # Source 1: self.preprocessing_config (si défini par orchestrator)
-            # Source 2: self.model_config.input_size (fallback)
-            # Source 3: None (pas de resize)
+            # ====================================================================
+            # DÉTECTION DES CANAUX
+            # ====================================================================
+            if expected_channels is None:
+                # Auto-détection depuis les données
+                if X_train.shape[-1] in [1, 3, 4]:
+                    expected_channels = X_train.shape[-1]
+                else:
+                    expected_channels = 3  # Fallback RGB
+                logger.info(f"🔍 Canaux auto-détectés: {expected_channels}")
+            else:
+                logger.info(f"🔍 Canaux attendus: {expected_channels} (paramètre)")
             
-            target_size = None
+            # ====================================================================
+            # DÉTERMINATION TARGET_SIZE (si non fourni)
+            # ====================================================================
+            final_target_size = target_size
             
-            # Priorité 1: preprocessing_config explicite
-            if hasattr(self, 'preprocessing_config') and self.preprocessing_config:
-                target_size = self.preprocessing_config.get('target_size', None)
-                if target_size:
-                    logger.info(f"✅ target_size depuis preprocessing_config: {target_size}")
-            
-            # Priorité 2: Déduction depuis model_config.input_size
-            if target_size is None and hasattr(self, 'model_config'):
-                # Si input_size est défini dans model_config, on DOIT resize
-                if hasattr(self.model_config, 'input_size') and self.model_config.input_size:
-                    # Vérifier si input_size != data size
-                    data_h = X_train.shape[1] if X_train.shape[-1] in [1,3,4] else X_train.shape[2]
-                    data_w = X_train.shape[2] if X_train.shape[-1] in [1,3,4] else X_train.shape[3]
-                    
-                    model_h, model_w = self.model_config.input_size
-                    
-                    if (data_h, data_w) != (model_h, model_w):
-                        target_size = self.model_config.input_size
-                        logger.info(
-                            f"✅ target_size déduit depuis model_config.input_size: {target_size} "
-                            f"(data: {data_h}x{data_w} → model: {model_h}x{model_w})"
-                        )
-                    else:
-                        logger.info(
-                            f"ℹ️ Data déjà à la taille du modèle ({data_h}x{data_w}), "
-                            f"pas de resize nécessaire"
-                        )
+            if final_target_size is None:
+                logger.info("ℹ️ target_size non fourni, recherche automatique...")
+                
+                # Priorité 1: preprocessing_config explicite
+                if hasattr(self, 'preprocessing_config') and self.preprocessing_config:
+                    final_target_size = self.preprocessing_config.get('target_size', None)
+                    if final_target_size:
+                        logger.info(f"✅ Target_size depuis preprocessing_config: {final_target_size}")
+                
+                # Priorité 2: model_config.input_size (si différent des données)
+                if final_target_size is None and hasattr(self, 'model_config'):
+                    if hasattr(self.model_config, 'input_size') and self.model_config.input_size:
+                        # Détecter taille actuelle des données
+                        data_format = self._detect_data_format_static(X_train)
+                        
+                        if data_format == "channels_last":
+                            data_h, data_w = X_train.shape[1], X_train.shape[2]
+                        else:  # channels_first
+                            data_h, data_w = X_train.shape[2], X_train.shape[3]
+                        
+                        model_h, model_w = self.model_config.input_size
+                        
+                        if (data_h, data_w) != (model_h, model_w):
+                            final_target_size = self.model_config.input_size
+                            logger.info(
+                                f"✅ Target_size déduit depuis model_config: {final_target_size} "
+                                f"(data: {data_h}x{data_w} → model: {model_h}x{model_w})"
+                            )
+                        else:
+                            logger.info(
+                                f"ℹ️ Données déjà à la taille modèle ({data_h}x{data_w}), "
+                                f"pas de resize"
+                            )
+                            final_target_size = None
+            else:
+                logger.info(f"✅ Target_size fourni en paramètre: {final_target_size}")
             
             # Log final
-            if target_size:
-                logger.info(f"🔄 Resize activé: target_size={target_size}")
+            if final_target_size:
+                logger.info(f"🔄 Resize activé: target_size={final_target_size}")
             else:
-                logger.info("ℹ️ Pas de resize (images conservent taille originale)")
+                logger.info("ℹ️ Pas de resize (taille originale conservée)")
             
-            # Création DataPreprocessor avec target_size correct
+            # ====================================================================
+            # CRÉATION PREPROCESSOR
+            # ====================================================================
             self.preprocessor = DataPreprocessor(
                 strategy="standardize",
                 auto_detect_format=True,
-                target_size=target_size  
+                target_size=final_target_size
             )
             
-            # FIT SUR TRAIN (avec resize si target_size spécifié)
+            # ====================================================================
+            # FIT_TRANSFORM SUR TRAIN
+            # ====================================================================
             try:
                 X_train_norm = self.preprocessor.fit_transform(
                     X_train,
                     output_format="channels_first"
                 )
-            except AttributeError as e:
-                logger.error(f"❌ Erreur fit_transform: {e}")
-                return Result.err(f"Erreur preprocessing: {str(e)}")
+            except Exception as e:
+                logger.error(f"❌ Erreur fit_transform: {e}", exc_info=True)
+                return Result.err(f"Erreur preprocessing train: {str(e)}")
             
-            # TRANSFORM SUR VALIDATION (même resize appliqué)
-            X_val_norm = self.preprocessor.transform(
-                X_val,
-                output_format="channels_first"
-            )
-            
-            # Validation post-preprocessing
-            if X_train_norm is None or X_val_norm is None:
-                return Result.err("Preprocessing a retourné None")
-            
+            # VALIDATION CRITIQUE #1 : Format train
             if X_train_norm.ndim != 4:
                 return Result.err(
-                    f"Format invalide après preprocessing: {X_train_norm.ndim}D au lieu de 4D"
+                    f"Format train invalide après preprocessing: "
+                    f"{X_train_norm.ndim}D au lieu de 4D"
                 )
             
-            if np.any(np.isnan(X_train_norm)) or np.any(np.isinf(X_train_norm)):
-                return Result.err("Données normalisées contiennent NaN ou Inf")
+            # Validation canaux
+            actual_channels = X_train_norm.shape[1]
+            if actual_channels != expected_channels:
+                logger.warning(
+                    f"⚠️ Incohérence canaux: attendu={expected_channels}, reçu={actual_channels}. "
+                    f"Le modèle s'adaptera automatiquement."
+                )
             
-            # Vérifi la cohérence avec model_config.input_size
+            if actual_channels not in [1, 3, 4]:
+                return Result.err(
+                    f"❌ ERREUR FORMAT TRAIN:\n"
+                    f"   Shape: {X_train_norm.shape}\n"
+                    f"   Format attendu: (N, C, H, W) avec C ∈ [1, 3, 4]\n"
+                    f"   Reçu: C = {actual_channels} (INVALIDE)"
+                )
+            
+            logger.info(
+                f"✅ Train preprocessé - "
+                f"shape: {X_train_norm.shape}, "
+                f"format: channels_first, "
+                f"canaux: {actual_channels} (attendus: {expected_channels})"
+            )
+            
+            # ====================================================================
+            # TRANSFORM SUR VAL
+            # ====================================================================
+            try:
+                X_val_norm = self.preprocessor.transform(
+                    X_val,
+                    output_format="channels_first"
+                )
+            except Exception as e:
+                logger.error(f"❌ Erreur transform val: {e}", exc_info=True)
+                return Result.err(f"Erreur preprocessing val: {str(e)}")
+            
+            # VALIDATION CRITIQUE #2 : Format val
+            if X_val_norm.ndim != 4:
+                return Result.err(
+                    f"Format val invalide après preprocessing: "
+                    f"{X_val_norm.ndim}D au lieu de 4D"
+                )
+            
+            val_channels = X_val_norm.shape[1]
+            if val_channels != actual_channels:
+                return Result.err(
+                    f"❌ INCOHÉRENCE CANAUX TRAIN/VAL:\n"
+                    f"   Train canaux: {actual_channels}\n"
+                    f"   Val canaux: {val_channels}"
+                )
+            
+            logger.info(
+                f"✅ Val preprocessé - "
+                f"shape: {X_val_norm.shape}, "
+                f"format: channels_first, "
+                f"canaux: {val_channels}"
+            )
+            
+            # ====================================================================
+            # VALIDATION CRITIQUE #3 : Vérifications NaN/Inf
+            # ====================================================================
+            if np.any(np.isnan(X_train_norm)) or np.any(np.isinf(X_train_norm)):
+                return Result.err("Données train contiennent NaN ou Inf après preprocessing")
+            
+            if np.any(np.isnan(X_val_norm)) or np.any(np.isinf(X_val_norm)):
+                return Result.err("Données val contiennent NaN ou Inf après preprocessing")
+            
+            # ====================================================================
+            # VALIDATION CRITIQUE #4 : Cohérence avec model_config.input_size
+            # ====================================================================
             if hasattr(self, 'model_config') and hasattr(self.model_config, 'input_size'):
                 expected_h, expected_w = self.model_config.input_size
                 actual_h, actual_w = X_train_norm.shape[2], X_train_norm.shape[3]
                 
                 if (actual_h, actual_w) != (expected_h, expected_w):
                     logger.error(
-                        f"❌ INCOHÉRENCE DÉTECTÉE APRÈS PREPROCESSING: "
-                        f"Données: {actual_h}x{actual_w}, "
-                        f"Modèle attend: {expected_h}x{expected_w}"
+                        f"❌ INCOHÉRENCE TAILLE APRÈS PREPROCESSING:\n"
+                        f"   model_config.input_size: {expected_h}x{expected_w}\n"
+                        f"   Données preprocessées:   {actual_h}x{actual_w}\n"
+                        f"   Shape train: {X_train_norm.shape}\n"
+                        f"   target_size utilisé: {final_target_size}"
                     )
-                    return Result.err(
-                        f"Preprocessing n'a pas resizé correctement: "
-                        f"attendu {expected_h}x{expected_w}, obtenu {actual_h}x{actual_w}"
-                    )
+                    
+                    # Correction: Mettre à jour model_config.input_size
+                    if hasattr(self.model_config, 'input_size'):
+                        self.model_config.input_size = (actual_h, actual_w)
+                        logger.warning(
+                            f"⚠️ Correction automatique: model_config.input_size mis à jour "
+                            f"→ {self.model_config.input_size}"
+                        )
             
-            # LOGGING détaillé avec resize
+            # ====================================================================
+            # LOG RÉCAPITULATIF
+            # ====================================================================
             input_format = getattr(self.preprocessor, 'data_format_', 'unknown')
             resized = getattr(self.preprocessor, 'resized_', False)
             
             logger.info(
-                f"✅ Preprocessing configuré - "
-                f"strategy: standardize, "
-                f"input_format: {input_format}, "
-                f"output_format: channels_first, "
-                f"resized: {resized}, "
-                f"target_size: {target_size}, "
-                f"train_original: {X_train.shape}, "
-                f"train_processed: {X_train_norm.shape}, "
-                f"val_processed: {X_val_norm.shape}"
+                f"✅ Preprocessing configuré avec succès:\n"
+                f"   • Strategy: standardize\n"
+                f"   • Input format: {input_format}\n"
+                f"   • Output format: channels_first\n"
+                f"   • Resized: {resized}\n"
+                f"   • Target size: {final_target_size}\n"
+                f"   • Train original: {X_train.shape}\n"
+                f"   • Train processed: {X_train_norm.shape}\n"
+                f"   • Val processed: {X_val_norm.shape}\n"
+                f"   • Canaux train: {actual_channels} (attendus: {expected_channels})\n"
+                f"   • Canaux val: {val_channels}"
             )
+            
+            # Stocker les métadonnées pour usage ultérieur
+            self._preprocessing_metadata = {
+                'input_channels': actual_channels,
+                'target_size': final_target_size,
+                'original_shape': X_train.shape,
+                'processed_shape': X_train_norm.shape,
+                'resized': resized
+            }
             
             return Result.ok((X_train_norm, y_train, X_val_norm, y_val))
             
@@ -672,6 +1094,37 @@ class ComputerVisionTrainer:
         except Exception as e:
             logger.error(f"Erreur technique preprocessing: {str(e)}", exc_info=True)
             return Result.err(f"Erreur preprocessing: {str(e)}")
+
+
+    @staticmethod
+    def _detect_data_format_static(X: np.ndarray) -> str:
+        """
+        Méthode statique pour détection de format (sans self).
+        Utile dans _setup_preprocessing avant création du preprocessor.
+        """
+        if X.ndim != 4:
+            return 'channels_last'  # Fallback
+        
+        n, dim1, dim2, dim3 = X.shape
+        
+        # Format channels_last: (N, H, W, C)
+        if dim3 in [1, 3, 4] and dim3 < dim1 and dim3 < dim2:
+            if abs(dim1 - dim2) / max(dim1, dim2) < 0.5:
+                return 'channels_last'
+        
+        # Format channels_first: (N, C, H, W)
+        if dim1 in [1, 3, 4] and dim1 < dim2 and dim1 < dim3:
+            if abs(dim2 - dim3) / max(dim2, dim3) < 0.5:
+                return 'channels_first'
+        
+        # Heuristique finale
+        if dim1 < min(dim2, dim3) * 0.1:
+            return 'channels_first'
+        elif dim3 < min(dim1, dim2) * 0.1:
+            return 'channels_last'
+        else:
+            # Ambiguïté: fallback channels_last
+            return 'channels_last'
     
     def _build_model(self) -> Result:
         """Construit le modèle via ModelBuilder"""
@@ -692,102 +1145,149 @@ class ComputerVisionTrainer:
             )
         
         return result
-    
+
+
     def _setup_training(self, y_train: np.ndarray) -> Result:
         """
         Setup optimizer, scheduler, et criterion.
+
         GARANTIT:
         - Optimizer configuré
         - Scheduler configuré
-        - Criterion configuré selon type de modèle (autoencoder vs classification)
+        - Criterion configuré selon type de modèle
+        - Cohérence CRITIQUE entre données, labels et num_classes
         """
         try:
-            # Optimizer
+            # ============================================================
+            # 1. OPTIMIZER
+            # ============================================================
             self.optimizer = OptimizerFactory.create(self.model, self.training_config)
-            
-            # Scheduler
+
+            # ============================================================
+            # 2. SCHEDULER
+            # ============================================================
             self.scheduler = SchedulerFactory.create(self.optimizer, self.training_config)
-            
-            # === DÉTECTION TYPE MODÈLE ===
+
+            # ============================================================
+            # 3. DÉTECTION TYPE MODÈLE
+            # ============================================================
             is_autoencoder = self.model_config.model_type in [
-                ModelType.CONV_AUTOENCODER, 
-                ModelType.VAE, 
+                ModelType.CONV_AUTOENCODER,
+                ModelType.VAE,
                 ModelType.DENOISING_AE,
-                ModelType.PATCH_CORE  # Ajout PatchCore
+                ModelType.PATCH_CORE
             ]
-            
-            # === SETUP CRITERION SELON TYPE ===
+
+            # ============================================================
+            # 4. VALIDATION CRITIQUE DES LABELS
+            # ============================================================
+            if not is_autoencoder:
+                model_num_classes = self.model_config.num_classes
+                data_classes = np.unique(y_train)
+                data_num_classes = len(data_classes)
+                data_min_label = int(np.min(y_train))
+                data_max_label = int(np.max(y_train))
+
+                # ❌ Incohérence modèle / données
+                if model_num_classes != data_num_classes:
+                    raise ValueError(
+                        f"❌ INCOHÉRENCE MODEL / DATA:\n"
+                        f"   • model.num_classes = {model_num_classes}\n"
+                        f"   • classes réelles dans y_train = {data_num_classes}\n"
+                        f"   • labels présents = {data_classes}\n"
+                        f"   • BUG orchestrateur (ne devrait jamais arriver)"
+                    )
+
+                # ❌ Labels mal encodés
+                if data_min_label != 0:
+                    raise ValueError(
+                        f"❌ Labels invalides: min(y_train)={data_min_label}. "
+                        f"Les labels doivent commencer à 0."
+                    )
+
+                if data_max_label >= model_num_classes:
+                    raise ValueError(
+                        f"❌ LABEL HORS LIMITES:\n"
+                        f"   • max(y_train) = {data_max_label}\n"
+                        f"   • model.num_classes = {model_num_classes}\n"
+                        f"   • CrossEntropyLoss va crasher"
+                    )
+
+                logger.info(
+                    f"✅ Validation labels OK - "
+                    f"num_classes={model_num_classes}, "
+                    f"labels=[{data_min_label}..{data_max_label}], "
+                    f"distribution={dict(Counter(y_train))}"
+                )
+
+            # ============================================================
+            # 5. SETUP CRITERION
+            # ============================================================
             if is_autoencoder:
-                # Autoencoders: MSE Loss (reconstruction)
+                # --- Autoencoders ---
                 self.train_criterion = nn.MSELoss()
                 self.val_criterion = nn.MSELoss()
-                
-                # Désactivation explicite class_weights
+
                 if self.training_config.use_class_weights:
                     logger.warning(
-                        "⚠️ Class weights demandés mais DÉSACTIVÉS pour autoencoders. "
-                        "Raison: MSELoss ne supporte pas class_weights (loss de reconstruction, pas de classification). "
-                        "Cette option sera ignorée."
+                        "⚠️ class_weights ignorés pour autoencoders "
+                        "(MSELoss ≠ classification)"
                     )
-                    # Forcer désactivation dans la config pour cohérence
                     self.training_config.use_class_weights = False
-                
-                logger.info("✅ Criterion: MSELoss (reconstruction autoencoder)")
-            
+
+                logger.info("✅ Criterion: MSELoss (autoencoder)")
+
             else:
-                # Classification: CrossEntropyLoss
+                # --- Classification ---
                 if self.training_config.use_class_weights:
                     classes = np.unique(y_train)
-                    
-                    # Validation: au moins 2 classes
-                    if len(classes) < 2:
-                        logger.error(
-                            f"❌ use_class_weights activé mais seulement {len(classes)} classe(s) détectée(s). "
-                            f"Classification nécessite >= 2 classes."
-                        )
-                        return Result.err("Classification nécessite au moins 2 classes")
-                    
-                    # Calcul des poids
+
                     weights = compute_class_weight(
-                        class_weight='balanced',
+                        class_weight="balanced",
                         classes=classes,
                         y=y_train
                     )
+
                     weights_tensor = torch.tensor(
                         weights,
                         dtype=torch.float32,
                         device=self.device_manager.device
                     )
-                    
+
                     self.train_criterion = nn.CrossEntropyLoss(weight=weights_tensor)
-                    
+
                     logger.info(
-                        f"✅ Class weights appliqués sur TRAIN: "
+                        f"✅ CrossEntropyLoss avec class weights (train): "
                         f"{dict(zip(classes, weights.round(3)))}"
                     )
                 else:
                     self.train_criterion = nn.CrossEntropyLoss()
-                    logger.info("✅ CrossEntropyLoss standard (pas de class weights)")
-                
-                # Criterion validation SANS class weights (évaluation honnête)
+                    logger.info("✅ CrossEntropyLoss standard (train)")
+
+                # Validation TOUJOURS sans class weights
                 self.val_criterion = nn.CrossEntropyLoss()
-                logger.info("✅ Criterion validation: CrossEntropyLoss (sans class weights)")
-            
-            # === LOGGING RÉCAPITULATIF ===
+                logger.info("✅ CrossEntropyLoss validation (sans class weights)")
+
+            # ============================================================
+            # 6. LOG FINAL
+            # ============================================================
             scheduler_name = self.training_config.scheduler.value if self.scheduler else "none"
+
             logger.info(
-                f"🎯 Training setup complété - "
-                f"optimizer: {self.training_config.optimizer.value}, "
-                f"scheduler: {scheduler_name}, "
-                f"criterion: {'MSELoss' if is_autoencoder else 'CrossEntropyLoss'}, "
-                f"use_class_weights: {self.training_config.use_class_weights}"
+                f"🎯 Training setup OK - "
+                f"model_type={self.model_config.model_type}, "
+                f"criterion={'MSELoss' if is_autoencoder else 'CrossEntropyLoss'}, "
+                f"use_class_weights={self.training_config.use_class_weights}, "
+                f"optimizer={self.training_config.optimizer.value}, "
+                f"scheduler={scheduler_name}"
             )
-            
+
             return Result.ok(None)
-            
+
         except Exception as e:
-            logger.error(f"❌ Erreur setup training: {e}", exc_info=True)
-            return Result.err(f"Setup training échoué: {str(e)}")
+            logger.error(f"❌ Setup training échoué: {e}", exc_info=True)
+            return Result.err(str(e))
+
     
     def _training_loop(
         self,
@@ -958,79 +1458,108 @@ class ComputerVisionTrainer:
     def _train_epoch(self, train_loader: DataLoader, is_autoencoder: bool = False) -> float:
         """
         Entraîne une époque - unifié pour classification et autoencoders.
-        Le modèle est construit avec input_size=target_size.
-        DONC: data et target ont TOUJOURS la même shape.       
-        Args:
-            train_loader: DataLoader d'entraînement
-            is_autoencoder: Si True, target=input (reconstruction)     
-        Returns:
-            Loss moyenne de l'époque
         """
-        # Détection des modèles sans backward
+        # PatchCore: pas de training classique
         is_patchcore = self.model_config.model_type == ModelType.PATCH_CORE
-        
         if is_patchcore:
-            # PatchCore n'a pas de training epoch classique
-            logger.info("⚠️ PatchCore détecté - Skip training epoch (utilise fit() à la place)")
+            logger.info("⚠️ PatchCore détecté - Skip training epoch (fit() utilisé)")
             return 0.0
-        
+
         self.model.train()
         running_loss = 0.0
-        
+        first_batch = True  # assertions runtime une seule fois
+
         for batch_idx, (data, target_labels) in enumerate(train_loader):
-            # Déplacement sur device
             data = data.to(self.device_manager.device)
-            
-            # Le preprocessing a déjà tout resizé correctement
+
             if is_autoencoder:
-                target = data 
+                target = data
             else:
                 target = target_labels.to(self.device_manager.device)
-            
-            # Forward pass
+
+                # ============================================================
+                # ASSERTION CRITIQUE 4 : Validation labels (premier batch)
+                # ============================================================
+                if first_batch:
+                    batch_min = int(target.min().item())
+                    batch_max = int(target.max().item())
+                    model_output_size = self.model_config.num_classes
+
+                    if batch_min != 0:
+                        raise RuntimeError(
+                            f"❌ Labels invalides: min={batch_min}. "
+                            f"Les labels doivent commencer à 0."
+                        )
+
+                    if batch_max >= model_output_size:
+                        raise RuntimeError(
+                            f"❌ LABEL HORS LIMITES:\n"
+                            f"   • max(label)={batch_max}\n"
+                            f"   • model.num_classes={model_output_size}\n"
+                            f"   • CrossEntropyLoss va crasher"
+                        )
+
+                    logger.info(
+                        f"✅ Premier batch validé - "
+                        f"labels=[{batch_min}..{batch_max}], "
+                        f"num_classes={model_output_size}"
+                    )
+                    first_batch = False
+
+            # ============================================================
+            # Forward
+            # ============================================================
             self.optimizer.zero_grad()
             output = self.model(data)
-            
-            # Vérifier si output est None (models sans backward)
+
             if output is None:
-                logger.warning("⚠️ Modèle a retourné None - Skip backward")
+                logger.warning("⚠️ Modèle a retourné None - Skip batch")
                 continue
-            
-            # Vérifi la cohérence shapes (debug mode)
-            if is_autoencoder and output.shape != target.shape:
-                # Cette condition NE DEVRAIT JAMAIS arriver si preprocessing correct
-                logger.error(
-                    f"❌ INCOHÉRENCE SHAPES DÉTECTÉE: "
-                    f"output={output.shape} vs target={target.shape}. "
-                    f"Le preprocessing devrait avoir resizé correctement!"
-                )
-                raise ValueError(
-                    f"Shape mismatch: output={output.shape} vs target={target.shape}. "
-                    f"Vérifiez que le preprocessing utilise bien target_size."
-                )
-            
-            # Loss computation
-            if (self.model_config.model_type == ModelType.VAE and 
-                hasattr(self.model, 'compute_vae_loss')):
-                # VAE: loss spéciale avec KL divergence
+
+            # ============================================================
+            # ASSERTION CRITIQUE 5 : Shape output
+            # ============================================================
+            if not is_autoencoder:
+                expected_shape = (data.size(0), self.model_config.num_classes)
+                if output.shape != expected_shape:
+                    raise RuntimeError(
+                        f"❌ MODEL OUTPUT SHAPE INCORRECTE:\n"
+                        f"   • Attendue: {expected_shape}\n"
+                        f"   • Reçue: {output.shape}"
+                    )
+            else:
+                if output.shape != target.shape:
+                    raise RuntimeError(
+                        f"❌ SHAPE MISMATCH AUTOENCODER:\n"
+                        f"   • output={output.shape}\n"
+                        f"   • target={target.shape}"
+                    )
+
+            # ============================================================
+            # Loss
+            # ============================================================
+            if (
+                self.model_config.model_type == ModelType.VAE
+                and hasattr(self.model, "compute_vae_loss")
+            ):
                 loss, recon_loss, kl_loss = self.model.compute_vae_loss(target, output)
             else:
-                # Loss standard (reconstruction ou classification)
                 loss = self.train_criterion(output, target)
-            
-            # Backward pass
+
+            # ============================================================
+            # Backward
+            # ============================================================
             loss.backward()
-            
-            # Gradient clipping
+
             if self.training_config.gradient_clip > 0:
                 torch.nn.utils.clip_grad_norm_(
                     self.model.parameters(),
                     self.training_config.gradient_clip
                 )
-            
+
             self.optimizer.step()
             running_loss += loss.item()
-        
+
         return running_loss / len(train_loader)
 
     
@@ -1148,20 +1677,16 @@ class ComputerVisionTrainer:
         self,
         X: np.ndarray,
         return_reconstructed: bool = False,
-        batch_size: Optional[int] = None
+        batch_size: Optional[int] = None,
+        device_override: Optional[str] = None
     ) -> Result:
         """
-        Prédictions robustes avec preprocessing automatique.
+        Prédictions robustes avec gestion automatique de la mémoire.
         
-        Args:
-            X: Données à prédire (N, H, W, C) ou (N, C, H, W)
-            return_reconstructed: Si True, retourne les reconstructions (autoencoders)
-            batch_size: Taille des batchs (par défaut: config.batch_size)
-            
-        Returns:
-            Result avec prédictions structurées:
-            - Pour classificateurs: {'probabilities', 'predictions'}
-            - Pour autoencoders: {'reconstruction_errors', 'predictions', 'reconstructed'?}
+        Nouveautés:
+        - Auto-détection batch_size optimal
+        - Gestion mémoire GPU
+        - Validation format d'entrée
         """
         try:
             # Validation
@@ -1170,37 +1695,152 @@ class ComputerVisionTrainer:
             if self.preprocessor is None:
                 return Result.err("Preprocessor non disponible")
             
-            # Preprocessing
-            X_processed = self.preprocessor.transform(X, output_format="channels_first")
+            logger.info(f"🔮 Début prédictions sur {len(X)} échantillons")
             
-            # Détection du type de modèle
-            is_autoencoder = self.model_config.model_type in [
-                ModelType.CONV_AUTOENCODER, ModelType.VAE, ModelType.DENOISING_AE
-            ]
+            # ====================================================================
+            # 1. VALIDATION FORMAT D'ENTRÉE
+            # ====================================================================
+            if X.ndim not in [3, 4]:
+                return Result.err(
+                    f"Format d'entrée invalide: {X.ndim}D. "
+                    f"Attendu 3D (H,W,C) ou 4D (N,H,W,C)"
+                )
             
-            # Création DataLoader temporaire
-            batch_size = batch_size or self.training_config.batch_size
+            # Ajouter dimension batch si nécessaire
+            if X.ndim == 3:
+                X = np.expand_dims(X, axis=0)
+                logger.info(f"Ajout dimension batch: {X.shape}")
+            
+            # ====================================================================
+            # 2. PREPROCESSING
+            # ====================================================================
+            try:
+                X_processed = self.preprocessor.transform(
+                    X, 
+                    output_format="channels_first"
+                )
+            except Exception as e:
+                return Result.err(f"Échec preprocessing: {str(e)}")
+            
+            # ====================================================================
+            # 3. DÉTERMINATION BATCH_SIZE OPTIMAL
+            # ====================================================================
+            if batch_size is None:
+                batch_size = self._auto_detect_batch_size(
+                    X_processed, 
+                    self.training_config.batch_size
+                )
+                logger.info(f"⚙️ Batch_size auto-détecté: {batch_size}")
+            
+            # ====================================================================
+            # 4. CRÉATION DATALOADER
+            # ====================================================================
             dummy_labels = np.zeros(len(X_processed))
             
             test_loader = DataLoaderFactory.create(
-                X_processed, dummy_labels,
+                X_processed, 
+                dummy_labels,
                 batch_size=batch_size,
                 shuffle=False,
-                num_workers=0,
-                pin_memory=False
+                num_workers=0,  # Pas de multiprocessing pour prédiction
+                pin_memory=False,
+                augmentation_config=None,
+                is_training=False,
+                output_format="channels_first",
+                device_manager=self.device_manager
             )
             
-            # Prédiction
+            # ====================================================================
+            # 5. PRÉDICTION
+            # ====================================================================
+            is_autoencoder = self.model_config.model_type in [
+                ModelType.CONV_AUTOENCODER, 
+                ModelType.VAE, 
+                ModelType.DENOISING_AE,
+                ModelType.PATCH_CORE
+            ]
+            
             self.model.eval()
             
             if is_autoencoder:
-                return self._predict_autoencoder(test_loader, X_processed, return_reconstructed)
+                return self._predict_autoencoder(
+                    test_loader, 
+                    X_processed, 
+                    return_reconstructed
+                )
             else:
                 return self._predict_classifier(test_loader)
             
+        except torch.cuda.OutOfMemoryError:
+            return Result.err(
+                "❌ GPU OUT OF MEMORY\n"
+                "Solution: Réduire batch_size ou utiliser CPU"
+            )
         except Exception as e:
-            logger.error(f"Erreur prédiction: {e}", exc_info=True)
+            logger.error(f"❌ Erreur prédiction: {e}", exc_info=True)
             return Result.err(f"Prédiction échouée: {str(e)}")
+
+    def _auto_detect_batch_size(
+        self,
+        X: np.ndarray,
+        initial_batch_size: int
+    ) -> int:
+        """
+        Détecte automatiquement le batch_size optimal.
+        
+        Stratégie:
+        1. Commencer avec batch_size initial
+        2. Tester avec un batch factice
+        3. Réduire si out of memory
+        """
+        if not torch.cuda.is_available():
+            return min(initial_batch_size, 32)  # Limite CPU
+        
+        batch_size = initial_batch_size
+        max_iterations = 5  # Éviter boucle infinie
+        
+        for i in range(max_iterations):
+            try:
+                # Tester avec un batch factice
+                test_tensor = torch.randn(
+                    batch_size, 
+                    *X.shape[1:],
+                    device=self.device_manager.device
+                )
+                
+                # Tester forward pass
+                with torch.no_grad():
+                    _ = self.model(test_tensor)
+                
+                # Nettoyer
+                del test_tensor
+                torch.cuda.empty_cache() if torch.cuda.is_available() else None
+                
+                logger.info(f"✅ Batch_size {batch_size} validé")
+                return batch_size
+                
+            except RuntimeError as e:
+                if "out of memory" in str(e):
+                    old_batch_size = batch_size
+                    batch_size = max(1, batch_size // 2)
+                    
+                    logger.warning(
+                        f"⚠️ Batch_size réduit: {old_batch_size} → {batch_size} "
+                        f"(itération {i+1})"
+                    )
+                    
+                    # Nettoyer
+                    torch.cuda.empty_cache() if torch.cuda.is_available() else None
+                    
+                    if batch_size == 1:
+                        logger.warning("⚠️ Batch_size minimum atteint (1)")
+                        return 1
+                else:
+                    raise
+        
+        logger.warning(f"⚠️ Auto-détection échouée, fallback batch_size=8")
+        return 8
+    
     
     def _predict_autoencoder(
         self, 

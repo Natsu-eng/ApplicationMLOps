@@ -361,69 +361,134 @@ class ComputerVisionTrainingOrchestrator:
     
     def _create_trainer(self, context: TrainingContext):
         """
-        Crée le trainer approprié selon le type de modèle.     
-        Propagation de preprocessing_config au trainer    
-        Args:
-            context: Contexte d'entraînement contenant les configurations et données.    
-        Returns:
-            Instance de ComputerVisionTrainer ou AnomalyAwareTrainer.
+        Crée le trainer avec PROPAGATION COMPLÈTE des paramètres fine-tuning.
+        
+        GARANTIT:
+        - freeze_percentage extrait depuis training_config
+        - model_params enrichi avec tous les paramètres UI
+        - Validation cohérence num_classes
         """
         try:
-            # === ÉTAPE 0: CALCUL input_size DEPUIS le contexte ===
+            # ========================================================================
+            # ÉTAPE 0: CALCUL input_size
+            # ========================================================================
             input_size = self._compute_input_size_from_context(context)
+            logger.info(f"✅ input_size calculée: {input_size}")
             
-            logger.info(f"✅ input_size calculée depuis le contexte: {input_size}")
+            # ========================================================================
+            # ÉTAPE 1: EXTRACTION PARAMÈTRES FINE-TUNING DEPUIS training_config
+            # ========================================================================
+            freeze_percentage = None
+            freeze_layers = 0
             
-            # === ÉTAPE 1: RÉCUPÉRATION MODE ===
+            # Extraction depuis le dict training_config (pas encore converti)
+            if isinstance(context.training_config, dict):
+                freeze_percentage = context.training_config.get('freeze_percentage')
+                freeze_layers = context.training_config.get('freeze_layers', 0)
+                
+                if freeze_percentage is not None:
+                    logger.info(f"✅ freeze_percentage extrait depuis training_config: {freeze_percentage}%")
+                elif freeze_layers != 0:
+                    logger.info(f"✅ freeze_layers extrait depuis training_config: {freeze_layers}")
+            
+            # ========================================================================
+            # ÉTAPE 2: ENRICHISSEMENT model_params AVEC PARAMÈTRES UI
+            # ========================================================================
+            model_params = context.model_config.get("model_params", {}).copy()
+            
+            # Ajouter les paramètres de fine-tuning
+            if freeze_percentage is not None:
+                model_params['freeze_percentage'] = freeze_percentage
+                logger.info(f"✅ freeze_percentage propagé à model_params: {freeze_percentage}%")
+            
+            if freeze_layers != 0:
+                model_params['freeze_layers'] = freeze_layers
+                logger.info(f"✅ freeze_layers propagé à model_params: {freeze_layers}")
+            
+            # Ajouter autres paramètres Transfer Learning si présents
+            for key in ['backbone_name', 'pretrained', 'dropout_rate']:
+                if key in context.model_config.get("model_params", {}):
+                    model_params[key] = context.model_config["model_params"][key]
+            
+            # ========================================================================
+            # ÉTAPE 3: DÉTECTION MODE ET CALCUL num_classes
+            # ========================================================================
             split_config = getattr(context, 'split_config', None)
             detected_mode = None
             
             if split_config and isinstance(split_config, dict):
                 detected_mode = split_config.get('mode')
                 logger.info(f"🔍 Mode depuis split_config: {detected_mode}")
-            else:
-                logger.warning("⚠️ split_config absent ou invalide")
             
-            # === ÉTAPE 2: RÉCONCILIATION AVEC anomaly_type ===
             is_unsupervised = False
             final_anomaly_type = context.anomaly_type
             
             if context.anomaly_type:
                 is_unsupervised = True
-                logger.info(f"✅ Mode NON-SUPERVISÉ confirmé via anomaly_type: {context.anomaly_type}")
-                
-                if detected_mode and detected_mode != "unsupervised":
-                    logger.warning(
-                        f"⚠️ INCOHÉRENCE: anomaly_type={context.anomaly_type} "
-                        f"mais split_config.mode={detected_mode}. "
-                        f"Priorité donnée à anomaly_type."
-                    )
-            
+                logger.info(f"✅ Mode NON-SUPERVISÉ via anomaly_type: {context.anomaly_type}")
             elif detected_mode == "unsupervised":
                 is_unsupervised = True
                 final_anomaly_type = "structural"
+                logger.info("✅ Mode NON-SUPERVISÉ via split_config")
+            else:
+                logger.info("✅ Mode SUPERVISÉ confirmé")
+            
+            # Calcul num_classes
+            n_classes = 2  # Default
+            
+            if split_config and isinstance(split_config, dict):
+                metadata = split_config.get('metadata', {})
+                
+                if 'n_classes' in metadata:
+                    n_classes = int(metadata['n_classes'])
+                    logger.info(f"✅ n_classes depuis split_config.metadata: {n_classes}")
+                elif detected_mode == "unsupervised":
+                    n_classes = 2
+                else:
+                    if hasattr(context, 'y_train') and context.y_train is not None:
+                        unique_classes = len(np.unique(context.y_train))
+                        if unique_classes >= 2:
+                            n_classes = unique_classes
+                            logger.info(f"✅ n_classes depuis y_train: {n_classes}")
+            
+            # Validation labels si supervisé
+            if not is_unsupervised:
+                if not hasattr(context, 'y_train') or context.y_train is None:
+                    raise ValueError("❌ y_train manquant en mode supervisé")
+                
+                actual_unique_classes = len(np.unique(context.y_train))
+                
+                if n_classes != actual_unique_classes:
+                    raise ValueError(
+                        f"❌ MISMATCH num_classes:\n"
+                        f"   • Calculé: {n_classes}\n"
+                        f"   • Réel dans y_train: {actual_unique_classes}"
+                    )
+                
+                min_label = int(np.min(context.y_train))
+                max_label = int(np.max(context.y_train))
+                
+                if min_label != 0:
+                    raise ValueError(f"❌ Labels doivent commencer à 0, min={min_label}")
+                
+                if max_label != (n_classes - 1):
+                    raise ValueError(
+                        f"❌ Max label ({max_label}) != num_classes-1 ({n_classes - 1})"
+                    )
+                
                 logger.info(
-                    f"✅ Mode NON-SUPERVISÉ détecté via split_config. "
-                    f"Anomaly type par défaut: {final_anomaly_type}"
+                    f"✅ Validation labels OK | n_classes={n_classes} | "
+                    f"y_train range=[{min_label}, {max_label}]"
                 )
             
-            else:
-                is_unsupervised = False
-                logger.info("✅ Mode SUPERVISÉ confirmé (classification)")
-                
-                num_classes = context.model_config.get("model_params", {}).get("num_classes", 2)
-                if num_classes < 2:
-                    raise ValueError(
-                        f"❌ Classification supervisée nécessite num_classes >= 2, "
-                        f"reçu: {num_classes}"
-                    )
-            
-            # === ÉTAPE 3: CRÉATION ModelConfig AVEC input_size ===
-            model_params = context.model_config.get("model_params", {})
+            # ========================================================================
+            # ÉTAPE 4: CRÉATION ModelConfig AVEC model_params ENRICHI
+            # ========================================================================
+            model_params['num_classes'] = n_classes
             
             model_config = ModelConfig(
                 model_type=ModelType(context.model_config["model_type"]),
-                num_classes=model_params.get("num_classes", 2),
+                num_classes=n_classes,
                 input_channels=model_params.get("input_channels", 3),
                 dropout_rate=model_params.get("dropout_rate", 0.5),
                 base_filters=model_params.get("base_filters", 32),
@@ -432,9 +497,22 @@ class ComputerVisionTrainingOrchestrator:
                 input_size=input_size
             )
             
+            # ✅ CRITIQUE: Stocker model_params enrichi dans config
+            model_config.model_params = model_params
+            
+            logger.info(
+                f"✅ ModelConfig créé avec model_params enrichi:\n"
+                f"   • num_classes: {n_classes}\n"
+                f"   • freeze_percentage: {model_params.get('freeze_percentage')}\n"
+                f"   • freeze_layers: {model_params.get('freeze_layers')}\n"
+                f"   • backbone_name: {model_params.get('backbone_name')}"
+            )
+            
             callbacks = context.callbacks or []
             
-            # === ÉTAPE 4: CRÉATION DU TRAINER ===
+            # ========================================================================
+            # ÉTAPE 5: CRÉATION TRAINER
+            # ========================================================================
             if is_unsupervised:
                 logger.info(f"🔍 Création AnomalyAwareTrainer: anomaly_type={final_anomaly_type}")
                 
@@ -454,18 +532,18 @@ class ComputerVisionTrainingOrchestrator:
                     callbacks=callbacks
                 )
             
-            # Propagation preprocessing_config au trainer
+            # ========================================================================
+            # ÉTAPE 6: PROPAGATION preprocessing_config
+            # ========================================================================
             if hasattr(context, 'preprocessing_config') and context.preprocessing_config:
                 trainer.preprocessing_config = context.preprocessing_config
                 logger.info(
-                    f"✅ preprocessing_config propagé au trainer: "
-                    f"target_size={context.preprocessing_config.get('target_size', None)}"
+                    f"✅ preprocessing_config propagé: "
+                    f"target_size={context.preprocessing_config.get('target_size')}"
                 )
-            else:
-                logger.warning("⚠️ Aucun preprocessing_config dans le contexte")
             
             return trainer
-        
+            
         except Exception as e:
             logger.error(f"❌ Erreur création trainer: {e}", exc_info=True)
             raise ValueError(f"Impossible de créer le trainer: {str(e)}") from e

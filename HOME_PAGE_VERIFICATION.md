@@ -261,3 +261,4 @@ Fichiers uploadés → Dossier temporaire → Structure "flat"
 **Tout est conforme !** 🚀
 
 
+
