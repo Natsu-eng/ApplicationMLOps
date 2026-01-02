@@ -49,34 +49,91 @@ def analyze_false_positives(
     y_pred_binary: np.ndarray
 ) -> Dict[str, Any]:
     """
-    Analyse des erreurs de classification.
+    Analyse des erreurs de classification (binaire et multiclasse).
     
     Args:
         X_test: Images de test
         y_test: Labels réels
-        y_pred_binary: Prédictions binaires
+        y_pred_binary: Prédictions (binaires ou multiclasse)
     
     Returns:
         Dictionnaire avec analyse complète des erreurs
     """
-    false_positives = np.where((y_test == 0) & (y_pred_binary == 1))[0]
-    false_negatives = np.where((y_test == 1) & (y_pred_binary == 0))[0]
-    true_positives = np.where((y_test == 1) & (y_pred_binary == 1))[0]
-    true_negatives = np.where((y_test == 0) & (y_pred_binary == 0))[0]
+    n_classes = len(np.unique(y_test))
+    is_multiclass = n_classes > 2
     
-    return {
-        "false_positives": false_positives,
-        "false_negatives": false_negatives,
-        "true_positives": true_positives,
-        "true_negatives": true_negatives,
-        "fp_count": len(false_positives),
-        "fn_count": len(false_negatives),
-        "tp_count": len(true_positives),
-        "tn_count": len(true_negatives),
-        "fp_rate": len(false_positives) / max(len(y_test[y_test == 0]), 1),
-        "fn_rate": len(false_negatives) / max(len(y_test[y_test == 1]), 1),
-        "total_errors": len(false_positives) + len(false_negatives)
-    }
+    if is_multiclass:
+        # Mode multiclasse: calculer erreurs globales
+        correct_predictions = (y_test == y_pred_binary)
+        incorrect_predictions = ~correct_predictions
+        
+        # Indices des erreurs
+        error_indices = np.where(incorrect_predictions)[0]
+        
+        # Analyse par classe
+        class_errors = {}
+        for cls in np.unique(y_test):
+            class_mask = (y_test == cls)
+            pred_mask = (y_pred_binary == cls)
+            
+            # Vrais positifs pour cette classe
+            tp = np.sum(class_mask & pred_mask)
+            # Faux négatifs (classe réelle mais prédite autre)
+            fn = np.sum(class_mask & ~pred_mask)
+            # Faux positifs (prédite cette classe mais réelle autre)
+            fp = np.sum(~class_mask & pred_mask)
+            # Vrais négatifs (ni réelle ni prédite cette classe)
+            tn = np.sum(~class_mask & ~pred_mask)
+            
+            class_errors[cls] = {
+                'tp': tp, 'fn': fn, 'fp': fp, 'tn': tn,
+                'precision': tp / max(tp + fp, 1),
+                'recall': tp / max(tp + fn, 1)
+            }
+        
+        # Calcul global (macro)
+        total_tp = sum(e['tp'] for e in class_errors.values())
+        total_fn = sum(e['fn'] for e in class_errors.values())
+        total_fp = sum(e['fp'] for e in class_errors.values())
+        total_tn = sum(e['tn'] for e in class_errors.values())
+        
+        return {
+            "false_positives": error_indices,  # Toutes les erreurs
+            "false_negatives": error_indices,  # Toutes les erreurs (même liste pour multiclasse)
+            "true_positives": np.where(correct_predictions)[0],
+            "true_negatives": np.where(correct_predictions)[0],  # Pour multiclasse, même concept
+            "fp_count": total_fp,
+            "fn_count": total_fn,
+            "tp_count": total_tp,
+            "tn_count": total_tn,
+            "fp_rate": total_fp / max(len(y_test), 1),
+            "fn_rate": total_fn / max(len(y_test), 1),
+            "total_errors": len(error_indices),
+            "error_rate": len(error_indices) / len(y_test),
+            "class_errors": class_errors,  # Détails par classe
+            "is_multiclass": True
+        }
+    else:
+        # Mode binaire: calcul standard
+        false_positives = np.where((y_test == 0) & (y_pred_binary == 1))[0]
+        false_negatives = np.where((y_test == 1) & (y_pred_binary == 0))[0]
+        true_positives = np.where((y_test == 1) & (y_pred_binary == 1))[0]
+        true_negatives = np.where((y_test == 0) & (y_pred_binary == 0))[0]
+        
+        return {
+            "false_positives": false_positives,
+            "false_negatives": false_negatives,
+            "true_positives": true_positives,
+            "true_negatives": true_negatives,
+            "fp_count": len(false_positives),
+            "fn_count": len(false_negatives),
+            "tp_count": len(true_positives),
+            "tn_count": len(true_negatives),
+            "fp_rate": len(false_positives) / max(len(y_test[y_test == 0]), 1),
+            "fn_rate": len(false_negatives) / max(len(y_test[y_test == 1]), 1),
+            "total_errors": len(false_positives) + len(false_negatives),
+            "is_multiclass": False
+        }
 
 
 def get_performance_status(

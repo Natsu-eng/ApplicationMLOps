@@ -7,14 +7,12 @@ from typing import Optional, Tuple, Dict, Any
 import numpy as np
 from dataclasses import dataclass
 
+from src.config.training_config import TrainingConfig, OptimizerType, SchedulerType
+from src.models.trainer import ComputerVisionTrainer
 from src.models.computer_vision_training import (
-    ComputerVisionTrainer,
     AnomalyAwareTrainer,
     ModelConfig,
-    TrainingConfig,
-    ModelType,
-    OptimizerType,  
-    SchedulerType  
+    ModelType
 )
 from src.data.computer_vision_preprocessing import DataPreprocessor
 from monitoring.mlflow_vision_tracker import cv_mlflow_tracker
@@ -453,10 +451,13 @@ class ComputerVisionTrainingOrchestrator:
             
             # Validation labels si supervisé
             if not is_unsupervised:
-                if not hasattr(context, 'y_train') or context.y_train is None:
+                # ✅ CORRECTION: Vérifier y_train avant utilisation
+                y_train_to_check = getattr(context, 'y_train', None)
+                
+                if y_train_to_check is None:
                     raise ValueError("❌ y_train manquant en mode supervisé")
                 
-                actual_unique_classes = len(np.unique(context.y_train))
+                actual_unique_classes = len(np.unique(y_train_to_check))
                 
                 if n_classes != actual_unique_classes:
                     raise ValueError(
@@ -465,8 +466,8 @@ class ComputerVisionTrainingOrchestrator:
                         f"   • Réel dans y_train: {actual_unique_classes}"
                     )
                 
-                min_label = int(np.min(context.y_train))
-                max_label = int(np.max(context.y_train))
+                min_label = int(np.min(y_train_to_check))
+                max_label = int(np.max(y_train_to_check))
                 
                 if min_label != 0:
                     raise ValueError(f"❌ Labels doivent commencer à 0, min={min_label}")
@@ -479,6 +480,12 @@ class ComputerVisionTrainingOrchestrator:
                 logger.info(
                     f"✅ Validation labels OK | n_classes={n_classes} | "
                     f"y_train range=[{min_label}, {max_label}]"
+                )
+            else:
+                # ✅ CORRECTION: Log pour non supervisé
+                logger.info(
+                    f"✅ Mode non supervisé confirmé | "
+                    f"y_train={'présent' if hasattr(context, 'y_train') and context.y_train is not None else 'None'}"
                 )
             
             # ========================================================================
@@ -706,14 +713,16 @@ class ComputerVisionTrainingOrchestrator:
                     context.X_train,
                     context.y_train,
                     context.X_val,
-                    context.y_val
+                    context.y_val,
+                    preprocessing_config=context.preprocessing_config
                 )
             else:
                 raw_result = trainer.fit(
                     context.X_train,
                     context.y_train,
                     context.X_val,
-                    context.y_val
+                    context.y_val,
+                    preprocessing_config=context.preprocessing_config
                 )
             
             # ========================================================================

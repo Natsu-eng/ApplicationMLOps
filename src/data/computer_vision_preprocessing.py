@@ -919,14 +919,20 @@ from albumentations.pytorch import ToTensorV2
 
 class AugmentedImageDataset(Dataset):
     """
-    Dataset PyTorch avec augmentation RÉELLE + RESIZE GARANTI + NORMALISATION.
+    Dataset PyTorch avec augmentation RÉELLE + RESIZE GARANTI + NORMALISATION.  
+    Caractéristiques clés:
+    - Accepte UNIQUEMENT données uint8 [0,255] en entrée
+    - Applique augmentation Albumentations (avec resize forcé)
+    - Normalise APRÈS augmentation via preprocessor
+    - Garantit output channels_first normalisé
     
-    Pipeline CORRIGÉ:
+    Pipeline:
     1. Input: Données BRUTES uint8 [0, 255]
-    2. Augmentation (Albumentations)
-    3. Resize vers target_size
-    4. Normalisation (via preprocessor)
-    5. Conversion tensor channels_first
+    2. Augmentation (Albumentations) → uint8
+    3. Resize vers target_size → uint8
+    4. Conversion float32 [0, 1]
+    5. Normalisation via preprocessor → float32 normalisé
+    6. Output: tensor channels_first normalisé
     """
     
     def __init__(
@@ -940,8 +946,16 @@ class AugmentedImageDataset(Dataset):
     ):
         """
         Args:
+            X: Images BRUTES uint8 [0, 255] (N, H, W, C)
+            y: Labels
+            target_size: Taille cible (H, W) - OBLIGATOIRE
+            augmentation_config: Config augmentation
+            is_training: Si True, applique augmentation
             preprocessor: DataPreprocessor pour normalisation POST-augmentation
         """
+        # ====================================================================
+        # VALIDATION STRICTE DES INPUTS
+        # ====================================================================
         if X.ndim != 4:
             raise ValueError(f"X doit être 4D (N,H,W,C), reçu: {X.shape}")
         
@@ -951,11 +965,31 @@ class AugmentedImageDataset(Dataset):
         if not target_size or len(target_size) != 2:
             raise ValueError(f"target_size obligatoire (H,W), reçu: {target_size}")
         
+        # VALIDATION CRITIQUE: X doit être uint8 [0, 255]
+        if X.dtype != np.uint8:
+            logger.warning(
+                f"⚠️ X n'est pas uint8 (dtype={X.dtype}), conversion forcée. "
+                f"Cela peut causer des pertes de données!"
+            )
+            
+            # Conversion safe selon range
+            if X.max() <= 1.0:
+                X = (X * 255).clip(0, 255).astype(np.uint8)
+            elif X.min() < 0:
+                # Normalisation min-max si valeurs négatives
+                X = ((X - X.min()) / (X.max() - X.min() + 1e-8) * 255).astype(np.uint8)
+            else:
+                X = X.clip(0, 255).astype(np.uint8)
+        
+        # Vérification range
+        if X.min() < 0 or X.max() > 255:
+            logger.warning(f"⚠️ Range invalide après conversion: [{X.min()}, {X.max()}]")
+        
         self.X = X
         self.y = y
         self.target_size = target_size
         self.is_training = is_training
-        self.preprocessor = preprocessor  
+        self.preprocessor = preprocessor
         
         # Parse config
         self.augment = False
@@ -968,7 +1002,7 @@ class AugmentedImageDataset(Dataset):
             if self.augment:
                 self.transform = self._build_augmentation_pipeline(methods)
                 logger.info(
-                    f"✅ Augmentation activée - "
+                    f"Augmentation activée - "
                     f"target_size: {target_size}, methods: {methods}"
                 )
     
@@ -1002,7 +1036,7 @@ class AugmentedImageDataset(Dataset):
                 )
             )
         
-        # ✅ RESIZE GARANTI en dernière position
+        # RESIZE GARANTI en dernière position
         transforms.append(
             A.Resize(
                 height=self.target_size[0],
@@ -1018,95 +1052,58 @@ class AugmentedImageDataset(Dataset):
         return len(self.X)
     
     def __getitem__(self, idx):
-        img = self.X[idx]  # (H, W, C)
-        label = self.y[idx]
+        img = self.X[idx]  # Entrée uint8
+        label = self.y[idx] if self.y is not None else 0
         
-        # STEP 1: S'assurer uint8 [0, 255] pour Albumentations
+        # VALIDATION : Doit être uint8
         if img.dtype != np.uint8:
-            if img.max() <= 1.0:
-                img = (img * 255).astype(np.uint8)
-            else:
-                img = img.astype(np.uint8)
+            raise RuntimeError(
+                f"❌ AugmentedImageDataset REQUIERT uint8 [0,255], "
+                f"reçu dtype={img.dtype}. "
+                f"Le preprocessor ne doit PAS être appliqué avant Dataset !"
+            )
         
-        # STEP 2: Augmentation + Resize
+        # ÉTAPE 1 : Augmentation (sur uint8)
         if self.augment and self.transform:
-            try:
-                augmented = self.transform(image=img)
-                img = augmented['image']
-                
-                # Validation taille
-                if img.shape[:2] != self.target_size:
-                    logger.error(
-                        f"❌ Taille incorrecte après augmentation: "
-                        f"{img.shape[:2]} != {self.target_size}"
-                    )
-                    from skimage.transform import resize
-                    img = resize(
-                        img, self.target_size,
-                        mode='reflect', anti_aliasing=True,
-                        preserve_range=True
-                    ).astype(np.uint8)
-            
-            except Exception as e:
-                logger.error(f"❌ Erreur augmentation: {e}")
-                from skimage.transform import resize
-                img = resize(
-                    img, self.target_size,
-                    mode='reflect', anti_aliasing=True,
-                    preserve_range=True
-                ).astype(np.uint8)
+            augmented = self.transform(image=img)
+            img = augmented['image']  # Toujours uint8
+
+            """ logger.info(
+                f"🔄 Augmentation appliquée - index={idx} | "
+                f"shape={img.shape} | dtype={img.dtype} | "
+                f"range=[{img.min()}, {img.max()}] | "
+                f"transform={self.transform}"
+            ) """
         
-        else:
-            # Pas d'augmentation: resize direct si nécessaire
-            if img.shape[:2] != self.target_size:
-                from skimage.transform import resize
-                img = resize(
-                    img, self.target_size,
-                    mode='reflect', anti_aliasing=True,
-                    preserve_range=True
-                ).astype(np.uint8)
+        # ÉTAPE 2 : Resize (sur uint8)
+        if img.shape[:2] != self.target_size:
+            from skimage.transform import resize
+            img = resize(
+                img, self.target_size,
+                mode='reflect', anti_aliasing=True,
+                preserve_range=True
+            ).astype(np.uint8)
         
-        # STEP 3: NORMALISATION via preprocessor (POST-augmentation)
+        # ÉTAPE 3 : Conversion float32 [0,1]
+        img = img.astype(np.float32) / 255.0
+        
+        # ÉTAPE 4 : Normalisation via preprocessor (fitted sur brut)
         if self.preprocessor is not None:
-            # Reconversion float32 [0, 1] avant normalisation
-            img = img.astype(np.float32) / 255.0
-            
-            # Appliquer la normalisation du preprocessor
-            # (standardize: (x - mean) / std)
-            img_batch = np.expand_dims(img, axis=0)  # (1, H, W, C)
-            
-            # ⚠️ Le preprocessor attend channels_last, applique sa logique, retourne channels_first
-            try:
-                img_normalized = self.preprocessor.transform(
-                    img_batch,
-                    output_format="channels_first"
-                )
-                img = img_normalized[0]  # (C, H, W)
-            except Exception as e:
-                logger.warning(f"⚠️ Normalisation preprocessor échouée: {e}, fallback /255")
-                # Fallback: normalisation simple
-                img = torch.from_numpy(img).float()
-                if img.ndim == 3:
-                    img = img.permute(2, 0, 1)  # HWC → CHW
-        
+            img_batch = np.expand_dims(img, axis=0)
+            img_normalized = self.preprocessor.transform(
+                img_batch,
+                output_format="channels_first"
+            )
+            img = img_normalized[0]
+            img = torch.from_numpy(img).float()
         else:
-            # Pas de preprocessor: normalisation simple [0, 1]
-            img = img.astype(np.float32) / 255.0
             img = torch.from_numpy(img).float()
             if img.ndim == 3:
                 img = img.permute(2, 0, 1)  # HWC → CHW
         
         label = torch.tensor(label, dtype=torch.long)
         
-        # ASSERTION FINALE
-        expected_shape = (3, self.target_size[0], self.target_size[1])
-        if img.shape != expected_shape:
-            raise RuntimeError(
-                f"❌ Shape finale incorrecte: {img.shape} != {expected_shape}"
-            )
-        
         return img, label
-
 
 # ============================================================================
 #  DataLoaderFactory avec target_size 
@@ -1146,10 +1143,12 @@ class DataLoaderFactory:
             # Validation
             if X is None or len(X) == 0:
                 raise ValueError("X vide")
-            if y is None or len(y) == 0:
-                raise ValueError("y vide")
-            if len(X) != len(y):
-                raise ValueError(f"X et y incompatibles: {len(X)} vs {len(y)}")
+            # ✅ CORRECTION: y peut être None pour non supervisé
+            if y is not None:
+                if len(y) == 0:
+                    raise ValueError("y vide")
+                if len(X) != len(y):
+                    raise ValueError(f"X et y incompatibles: {len(X)} vs {len(y)}")
             
             logger.info(f"🔍 DataLoaderFactory - input_shape: {X.shape}, output_format: {output_format}")
             
@@ -1237,7 +1236,8 @@ class DataLoaderFactory:
                     X_aug, y,
                     target_size=target_size,
                     augmentation_config=augmentation_config,
-                    is_training=True
+                    is_training=True,
+                    preprocessor=preprocessor  # Pour normalisation POST-augmentation
                 )
                 
                 logger.info(

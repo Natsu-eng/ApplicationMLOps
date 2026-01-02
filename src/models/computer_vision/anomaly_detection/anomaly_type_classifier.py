@@ -16,7 +16,7 @@ class AnomalyTypeClassifier(nn.Module):
     Classificateur des types d'anomalies.
     Entraîné en plus de l'autoencoder pour identifier crack/scratch/hole/contamination/etc.
     
-    ✅ CORRECTION #14: Nouveau module pour classification multi-classes des types d'erreurs
+    Nouveau module pour classification multi-classes des types d'erreurs
     """
     
     # Mapping standard des types d'anomalies

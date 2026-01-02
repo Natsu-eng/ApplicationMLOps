@@ -5,7 +5,8 @@ import torch
 import torch.nn as nn
 
 from src.data.computer_vision_preprocessing import DataPreprocessor, Result
-from src.models.computer_vision_training import ModelConfig, TrainingConfig
+from src.config.model_config import ModelConfig  
+from src.config.training_config import TrainingConfig  
 
 from src.shared.logging import get_logger
 

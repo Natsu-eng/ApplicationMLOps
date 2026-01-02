@@ -57,6 +57,8 @@ import torch # type: ignore
 from scipy.ndimage import zoom  # type: ignore
 
 from monitoring.state_managers import init, AppPage
+from monitoring.mlflow_collector import get_mlflow_collector
+from monitoring.mlflow_collector import get_mlflow_collector
 
 # ✅ IMPORTS UI CENTRALISÉS
 from ui.anomaly_evaluation_styles import AnomalyEvaluationStyles
@@ -145,15 +147,27 @@ try:
         st.info("Veuillez relancer l'entraînement pour générer les données de test")
         st.stop()
     
+    # Récupération mode depuis model_config
+    model_type = STATE.model_config.get("model_type", "autoencoder") if isinstance(STATE.model_config, dict) else getattr(STATE.model_config, "model_type", "autoencoder")
+    is_autoencoder = model_type in ["autoencoder", "conv_autoencoder", "variational_autoencoder", "denoising_autoencoder", "patch_core"]
+    
+    # Vérification conditionnelle selon type de modèle
     if not hasattr(STATE.data, 'y_test') or STATE.data.y_test is None:
-        st.error("❌ Labels de test (y_test) manquants")
-        st.stop()
+        if is_autoencoder:
+            # Mode non supervisé: y_test peut être None, on utilisera reconstruction error
+            logger.info("⚠️ y_test manquant, évaluation basée sur reconstruction error uniquement")
+            y_test = None  # Évaluation sans labels pour autoencoders
+        else:
+            # Mode supervisé: y_test obligatoire
+            st.error("❌ Labels de test (y_test) manquants (mode supervisé)")
+            st.stop()
+    else:
+        y_test = STATE.data.y_test
     
     X_test = STATE.data.X_test
-    y_test = STATE.data.y_test
     
-    # VALIDATION : Cohérence des données
-    if len(X_test) != len(y_test):
+    # VALIDATION : Cohérence des données (seulement si y_test présent)
+    if y_test is not None and len(X_test) != len(y_test):
         st.error(f"❌ Incohérence: {len(X_test)} images mais {len(y_test)} labels")
         st.stop()
     
@@ -240,65 +254,147 @@ with st.spinner("📈 Calcul des métriques..."):
             st.error("❌ Prédictions manquantes")
             st.stop()
         
-        # Validation cohérence
-        if len(y_pred_binary) != len(y_test):
+        # Validation cohérence (seulement si y_test présent)
+        if y_test is not None and len(y_pred_binary) != len(y_test):
             st.error(f"❌ Incohérence: {len(y_pred_binary)} prédictions pour {len(y_test)} labels")
             st.stop()
         
         # Calcul métriques avec gestion erreurs individuelles
         metrics = {}
         
-        # AUC-ROC (nécessite au moins 2 classes dans y_test)
-        try:
-            if len(np.unique(y_test)) >= 2:
-                metrics['auc_roc'] = roc_auc_score(y_test, y_pred_proba)
+        # Métriques de classification (uniquement si y_test présent)
+        if y_test is not None:
+            # Détection du nombre de classes pour déterminer le mode (binaire vs multiclasse)
+            n_classes = len(np.unique(y_test))
+            is_multiclass = n_classes > 2
+            
+            # Détermination de l'average pour les métriques
+            if is_multiclass:
+                average_mode = 'weighted'  # ou 'macro', 'micro' selon préférence
+                logger.info(f"✅ Mode multiclasse détecté ({n_classes} classes) - utilisation average='{average_mode}'")
             else:
-                logger.warning("⚠️ AUC-ROC impossible: une seule classe dans y_test")
+                average_mode = 'binary'
+                logger.info(f"✅ Mode binaire détecté - utilisation average='{average_mode}'")
+            
+            # AUC-ROC (nécessite au moins 2 classes dans y_test)
+            try:
+                if n_classes >= 2:
+                    if is_multiclass:
+                        # Multiclasse: nécessite multi_class='ovr' ou 'ovo'
+                        if y_pred_proba.ndim > 1 and y_pred_proba.shape[1] == n_classes:
+                            # Probabilités pour toutes les classes
+                            metrics['auc_roc'] = roc_auc_score(
+                                y_test, y_pred_proba, 
+                                multi_class='ovr', 
+                                average='weighted'
+                            )
+                        else:
+                            # Fallback: utiliser les probabilités max
+                            metrics['auc_roc'] = roc_auc_score(
+                                y_test, y_pred_proba, 
+                                multi_class='ovr', 
+                                average='weighted'
+                            )
+                    else:
+                        # Binaire: format standard
+                        if y_pred_proba.ndim > 1 and y_pred_proba.shape[1] == 2:
+                            metrics['auc_roc'] = roc_auc_score(y_test, y_pred_proba[:, 1])
+                        else:
+                            metrics['auc_roc'] = roc_auc_score(y_test, y_pred_proba)
+                else:
+                    logger.warning("⚠️ AUC-ROC impossible: une seule classe dans y_test")
+                    metrics['auc_roc'] = 0.5
+            except Exception as e:
+                logger.warning(f"⚠️ Erreur calcul AUC-ROC: {e}")
                 metrics['auc_roc'] = 0.5
-        except Exception as e:
-            logger.warning(f"⚠️ Erreur calcul AUC-ROC: {e}")
-            metrics['auc_roc'] = 0.5
-        
-        # F1-Score
-        try:
-            metrics['f1_score'] = f1_score(y_test, y_pred_binary, zero_division=0)
-        except Exception as e:
-            logger.warning(f"⚠️ Erreur calcul F1: {e}")
-            metrics['f1_score'] = 0.0
-        
-        # Precision
-        try:
-            metrics['precision'] = precision_score(y_test, y_pred_binary, zero_division=0)
-        except Exception as e:
-            logger.warning(f"⚠️ Erreur calcul Precision: {e}")
-            metrics['precision'] = 0.0
-        
-        # Recall
-        try:
-            metrics['recall'] = recall_score(y_test, y_pred_binary, zero_division=0)
-        except Exception as e:
-            logger.warning(f"⚠️ Erreur calcul Recall: {e}")
-            metrics['recall'] = 0.0
-        
-        # Accuracy
-        try:
-            metrics['accuracy'] = accuracy_score(y_test, y_pred_binary)
-        except Exception as e:
-            logger.warning(f"⚠️ Erreur calcul Accuracy: {e}")
-            metrics['accuracy'] = 0.0
-        
-        # Specificity (nécessite au moins une classe 0)
-        try:
-            if np.any(y_test == 0):
-                metrics['specificity'] = recall_score(
-                    1 - y_test, 1 - y_pred_binary, zero_division=0
+            
+            # F1-Score
+            try:
+                metrics['f1_score'] = f1_score(
+                    y_test, y_pred_binary, 
+                    average=average_mode, 
+                    zero_division=0
                 )
-            else:
-                logger.warning("⚠️ Specificity impossible: aucune classe 0")
+            except Exception as e:
+                logger.warning(f"⚠️ Erreur calcul F1: {e}")
+                metrics['f1_score'] = 0.0
+            
+            # Precision
+            try:
+                metrics['precision'] = precision_score(
+                    y_test, y_pred_binary, 
+                    average=average_mode, 
+                    zero_division=0
+                )
+            except Exception as e:
+                logger.warning(f"⚠️ Erreur calcul Precision: {e}")
+                metrics['precision'] = 0.0
+            
+            # Recall
+            try:
+                metrics['recall'] = recall_score(
+                    y_test, y_pred_binary, 
+                    average=average_mode, 
+                    zero_division=0
+                )
+            except Exception as e:
+                logger.warning(f"⚠️ Erreur calcul Recall: {e}")
+                metrics['recall'] = 0.0
+            
+            # Accuracy
+            try:
+                metrics['accuracy'] = accuracy_score(y_test, y_pred_binary)
+            except Exception as e:
+                logger.warning(f"⚠️ Erreur calcul Accuracy: {e}")
+                metrics['accuracy'] = 0.0
+            
+            # Specificity (uniquement pour binaire, ou calcul par classe pour multiclasse)
+            try:
+                if is_multiclass:
+                    # Pour multiclasse: calculer recall par classe puis moyenne
+                    # Specificity = recall de la classe négative (classe 0)
+                    if np.any(y_test == 0):
+                        # Calculer recall pour classe 0 (vrais négatifs)
+                        y_test_binary = (y_test == 0).astype(int)
+                        y_pred_binary_neg = (y_pred_binary == 0).astype(int)
+                        metrics['specificity'] = recall_score(
+                            y_test_binary, y_pred_binary_neg, 
+                            zero_division=0
+                        )
+                    else:
+                        logger.warning("⚠️ Specificity impossible: aucune classe 0")
+                        metrics['specificity'] = 0.0
+                else:
+                    # Binaire: calcul standard
+                    if np.any(y_test == 0):
+                        metrics['specificity'] = recall_score(
+                            1 - y_test, 1 - y_pred_binary, zero_division=0
+                        )
+                    else:
+                        logger.warning("⚠️ Specificity impossible: aucune classe 0")
+                        metrics['specificity'] = 0.0
+            except Exception as e:
+                logger.warning(f"⚠️ Erreur calcul Specificity: {e}")
                 metrics['specificity'] = 0.0
-        except Exception as e:
-            logger.warning(f"⚠️ Erreur calcul Specificity: {e}")
-            metrics['specificity'] = 0.0
+            
+            # Matrice de confusion
+            try:
+                metrics['confusion_matrix'] = confusion_matrix(y_test, y_pred_binary).tolist()
+            except Exception as e:
+                logger.warning(f"⚠️ Erreur matrice confusion: {e}")
+                # Matrice par défaut selon nombre de classes
+                default_size = max(n_classes, 2)
+                metrics['confusion_matrix'] = [[0] * default_size for _ in range(default_size)]
+        else:
+            # Mode non supervisé: métriques de classification non disponibles
+            logger.info("ℹ️ Mode non supervisé: métriques de classification non calculées")
+            metrics['auc_roc'] = None
+            metrics['f1_score'] = None
+            metrics['precision'] = None
+            metrics['recall'] = None
+            metrics['accuracy'] = None
+            metrics['specificity'] = None
+            metrics['confusion_matrix'] = None
         
         # Métriques spécifiques autoencoder
         if model_type in ["autoencoder", "conv_autoencoder", "variational_autoencoder", "denoising_autoencoder"]:
@@ -309,13 +405,6 @@ with st.spinner("📈 Calcul des métriques..."):
                 metrics['reconstruction_error'] = float(np.mean(reconstruction_errors))
                 metrics['reconstruction_std'] = float(np.std(reconstruction_errors))
                 metrics['adaptive_threshold'] = prediction_results.get('adaptive_threshold', 0.5)
-        
-        # Matrice de confusion
-        try:
-            metrics['confusion_matrix'] = confusion_matrix(y_test, y_pred_binary).tolist()
-        except Exception as e:
-            logger.warning(f"⚠️ Erreur matrice confusion: {e}")
-            metrics['confusion_matrix'] = [[0, 0], [0, 0]]
         
         logger.info(f"✅ Métriques calculées: {list(metrics.keys())}")
         
@@ -338,8 +427,20 @@ with st.spinner("📈 Calcul des métriques..."):
             'confusion_matrix': [[0, 0], [0, 0]]
         }
 
-# Analyse
-error_analysis = analyze_false_positives(X_test, y_test, y_pred_binary)
+# Analyse (conditionnelle selon présence y_test)
+if y_test is not None:
+    error_analysis = analyze_false_positives(X_test, y_test, y_pred_binary)
+else:
+    # Mode non supervisé: analyse basée uniquement sur reconstruction errors
+    error_analysis = {
+        'total_errors': 0,
+        'false_positives': [],
+        'false_negatives': [],
+        'true_positives': [],
+        'true_negatives': []
+    }
+    logger.info("ℹ️ Mode non supervisé: analyse d'erreurs limitée (pas de labels)")
+
 performance_summary = create_performance_summary(metrics, error_analysis)
 recommendations = generate_recommendations(metrics, model_type, error_analysis, performance_summary)
 
@@ -481,6 +582,7 @@ tabs = st.tabs([
     "🎯 Modèle vs Réalité",  # ✅ NOUVEAU: Visualisation comparée
     "💡 Recommandations",
     "🎨 Visualisations",
+    "🔗 MLflow",  # ✅ NOUVEAU: Onglet MLflow
     "📋 Rapport"
 ])
 
@@ -607,7 +709,7 @@ with tabs[1]:
                     {error_analysis['tp_count'] + error_analysis['tn_count']}
                 </div>
                 <div style="opacity: 0.8;">
-                    {(1 - (error_analysis['total_errors'] / len(y_test))):.1%} de précision
+                    {(1 - (error_analysis['total_errors'] / max(len(y_test) if y_test is not None else len(X_test), 1))):.1%} de précision
                 </div>
             </div>
             ''', unsafe_allow_html=True)
@@ -731,7 +833,7 @@ with tabs[2]:
                 st.image(img_display, use_container_width=True)
                 
                 # Informations labels
-                label_real = y_test[idx]
+                label_real = y_test[idx] if y_test is not None else None
                 pred_real = y_pred_binary[idx]
                 proba = y_pred_proba[idx]
                 
@@ -856,25 +958,27 @@ with tabs[2]:
     
     col_stat1, col_stat2, col_stat3, col_stat4 = st.columns(4)
     
+    n_total = len(y_test) if y_test is not None else len(X_test)
+    
     with col_stat1:
         st.metric("Vrais Positifs", len(tp_indices), 
-                 f"{len(tp_indices)/max(len(y_test), 1)*100:.1f}%")
+                 f"{len(tp_indices)/max(n_total, 1)*100:.1f}%")
     
     with col_stat2:
         st.metric("Vrais Négatifs", len(tn_indices),
-                 f"{len(tn_indices)/max(len(y_test), 1)*100:.1f}%")
+                 f"{len(tn_indices)/max(n_total, 1)*100:.1f}%")
     
     with col_stat3:
         st.metric("Faux Positifs", len(fp_indices),
-                 f"{len(fp_indices)/max(len(y_test), 1)*100:.1f}%")
+                 f"{len(fp_indices)/max(n_total, 1)*100:.1f}%")
     
     with col_stat4:
         st.metric("Faux Négatifs", len(fn_indices),
-                 f"{len(fn_indices)/max(len(y_test), 1)*100:.1f}%")
+                 f"{len(fn_indices)/max(n_total, 1)*100:.1f}%")
 
 
 # TAB 4: RECOMMANDATIONS
-with tabs[2]:
+with tabs[3]:
     st.markdown("### 💡 Recommandations Intelligentes")
     
     if show_recommendations and recommendations:
@@ -957,59 +1061,65 @@ with tabs[4]:
     col_viz1, col_viz2 = st.columns(2)
     
     with col_viz1:
-        # Courbe ROC
-        try:
-            fpr, tpr, _ = roc_curve(y_test, y_pred_proba)
+        # Courbe ROC (uniquement si y_test présent)
+        if y_test is not None:
+            try:
+                fpr, tpr, _ = roc_curve(y_test, y_pred_proba)
             
-            fig_roc = go.Figure()
-            fig_roc.add_trace(go.Scatter(
-                x=fpr, y=tpr,
-                mode='lines',
-                name=f'ROC (AUC={metrics.get("auc_roc", 0):.3f})',
-                line=dict(color='#6366f1', width=3)
-            ))
-            fig_roc.add_trace(go.Scatter(
-                x=[0, 1], y=[0, 1],
-                mode='lines',
-                name='Aléatoire',
-                line=dict(color='gray', dash='dash')
-            ))
-            
-            fig_roc.update_layout(
-                title="Courbe ROC",
-                xaxis_title="Taux Faux Positifs",
-                yaxis_title="Taux Vrais Positifs",
-                height=400
-            )
-            
-            st.plotly_chart(fig_roc, use_container_width=True)
-        except Exception as e:
-            st.warning(f"Impossible de générer courbe ROC: {e}")
+                fig_roc = go.Figure()
+                fig_roc.add_trace(go.Scatter(
+                    x=fpr, y=tpr,
+                    mode='lines',
+                    name=f'ROC (AUC={metrics.get("auc_roc", 0):.3f})',
+                    line=dict(color='#6366f1', width=3)
+                ))
+                fig_roc.add_trace(go.Scatter(
+                    x=[0, 1], y=[0, 1],
+                    mode='lines',
+                    name='Aléatoire',
+                    line=dict(color='gray', dash='dash')
+                ))
+                
+                fig_roc.update_layout(
+                    title="Courbe ROC",
+                    xaxis_title="Taux Faux Positifs",
+                    yaxis_title="Taux Vrais Positifs",
+                    height=400
+                )
+                
+                st.plotly_chart(fig_roc, use_container_width=True)
+            except Exception as e:
+                st.warning(f"Impossible de générer courbe ROC: {e}")
+        else:
+            st.info("ℹ️ Courbe ROC non disponible en mode non supervisé (pas de labels)")
     
     with col_viz2:
-        # Courbe Precision-Recall
-        try:
-            precision_curve, recall_curve, _ = precision_recall_curve(y_test, y_pred_proba)
+        # Courbe Precision-Recall (uniquement si y_test présent)
+        if y_test is not None:
+            try:
+                precision_curve, recall_curve, _ = precision_recall_curve(y_test, y_pred_proba)
             
-            fig_pr = go.Figure()
-            fig_pr.add_trace(go.Scatter(
-                x=recall_curve, y=precision_curve,
-                mode='lines',
-                name='Precision-Recall',
-                line=dict(color='#10b981', width=3),
-                fill='tonexty'
-            ))
-            
-            fig_pr.update_layout(
-                title="Courbe Precision-Recall",
-                xaxis_title="Recall",
-                yaxis_title="Precision",
-                height=400
-            )
-            
-            st.plotly_chart(fig_pr, use_container_width=True)
-        except Exception as e:
-            st.warning(f"Impossible de générer courbe PR: {e}")
+                fig_pr = go.Figure()
+                fig_pr.add_trace(go.Scatter(
+                    x=recall_curve, y=precision_curve,
+                    mode='lines',
+                    name='Precision-Recall',
+                    line=dict(color='#10b981', width=3),
+                    fill='tonexty'
+                ))
+                
+                fig_pr.update_layout(
+                    title="Courbe Precision-Recall",
+                    xaxis_title="Recall",
+                    yaxis_title="Precision",
+                    height=400
+                )
+                
+                st.plotly_chart(fig_pr, use_container_width=True)
+            except Exception as e:
+                st.warning(f"Impossible de générer courbe PR: {e}")
+        else:
+            st.info("ℹ️ Courbe Precision-Recall non disponible en mode non supervisé (pas de labels)")
     
     # Distribution des scores
     st.markdown("---")
@@ -1017,21 +1127,31 @@ with tabs[4]:
     
     fig_hist = go.Figure()
     
-    fig_hist.add_trace(go.Histogram(
-        x=y_pred_proba[y_test == 0],
-        name='Normal',
-        marker_color='#3b82f6',
-        opacity=0.7,
-        nbinsx=30
-    ))
-    
-    fig_hist.add_trace(go.Histogram(
-        x=y_pred_proba[y_test == 1],
-        name='Anomalie',
-        marker_color='#ef4444',
-        opacity=0.7,
-        nbinsx=30
-    ))
+    if y_test is not None:
+        fig_hist.add_trace(go.Histogram(
+            x=y_pred_proba[y_test == 0],
+            name='Normal',
+            marker_color='#3b82f6',
+            opacity=0.7,
+            nbinsx=30
+        ))
+        
+        fig_hist.add_trace(go.Histogram(
+            x=y_pred_proba[y_test == 1],
+            name='Anomalie',
+            marker_color='#ef4444',
+            opacity=0.7,
+            nbinsx=30
+        ))
+    else:
+        # Mode non supervisé: distribution globale
+        fig_hist.add_trace(go.Histogram(
+            x=y_pred_proba,
+            name='Scores de Reconstruction',
+            marker_color='#6366f1',
+            opacity=0.7,
+            nbinsx=30
+        ))
     
     fig_hist.add_vline(
         x=threshold,
@@ -1052,8 +1172,299 @@ with tabs[4]:
     st.plotly_chart(fig_hist, use_container_width=True)
 
 
-# TAB 6: RAPPORT
+# TAB 6: MLFLOW
 with tabs[5]:
+    st.markdown("### 🔗 Exploration des Runs MLflow")
+    
+    # Récupération des runs depuis le collecteur
+    try:
+        collector = get_mlflow_collector()
+        mlflow_runs = collector.get_runs(limit=50, sort_by='collected_at', reverse=True)
+    except Exception as e:
+        logger.warning(f"Erreur récupération runs MLflow: {e}")
+        mlflow_runs = []
+    
+    if not mlflow_runs:
+        st.markdown("""
+        <div style="text-align: center; padding: 4rem 2rem; color: #6c757d;">
+            <div style="font-size: 4rem; margin-bottom: 1rem;">📭</div>
+            <h3 style="color: #495057;">Aucun Run MLflow Disponible</h3>
+            <p>Lancez un entraînement depuis la page <strong>Training Computer Vision</strong> pour générer des runs MLflow</p>
+            <p style="margin-top: 1rem; font-size: 0.9rem; color: #868e96;">
+                Les runs MLflow contiennent toutes les informations sur l'entraînement :<br>
+                métriques, paramètres, configuration, et historique complet
+            </p>
+        </div>
+        """, unsafe_allow_html=True)
+    else:
+        st.success(f"**📊 {len(mlflow_runs)} runs MLflow disponibles**")
+        
+        # Filtres
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            # Filtre par statut
+            status_options = sorted(list(set(run.get('status', 'UNKNOWN') for run in mlflow_runs)))
+            selected_status = st.multiselect(
+                "Filtrer par statut",
+                options=status_options,
+                default=status_options,
+                help="Sélectionnez les statuts à afficher"
+            )
+        
+        with col2:
+            # Filtre par modèle
+            model_options = sorted(list(set(run.get('model_name', 'Unknown') for run in mlflow_runs)))
+            selected_models = st.multiselect(
+                "Filtrer par modèle",
+                options=model_options,
+                default=model_options,
+                help="Sélectionnez les modèles à afficher"
+            )
+        
+        with col3:
+            # Filtre par type (Computer Vision spécifique)
+            cv_types = []
+            for run in mlflow_runs:
+                model_name = run.get('model_name', '').lower()
+                if any(x in model_name for x in ['autoencoder', 'vae', 'patch', 'siamese']):
+                    cv_types.append('Anomaly Detection')
+                elif any(x in model_name for x in ['cnn', 'resnet', 'vgg', 'efficientnet']):
+                    cv_types.append('Classification')
+                else:
+                    cv_types.append('Autre')
+            
+            type_options = sorted(list(set(cv_types)))
+            selected_types = st.multiselect(
+                "Filtrer par type",
+                options=type_options,
+                default=type_options,
+                help="Type de modèle Computer Vision"
+            )
+        
+        # Application des filtres
+        filtered_runs = []
+        for i, run in enumerate(mlflow_runs):
+            if not isinstance(run, dict):
+                continue
+            
+            status = run.get('status', 'UNKNOWN')
+            model_name = run.get('model_name', 'Unknown')
+            
+            # Filtre statut
+            if status not in selected_status:
+                continue
+            
+            # Filtre modèle
+            if model_name not in selected_models:
+                continue
+            
+            # Filtre type
+            model_name_lower = model_name.lower()
+            run_type = 'Autre'
+            if any(x in model_name_lower for x in ['autoencoder', 'vae', 'patch', 'siamese']):
+                run_type = 'Anomaly Detection'
+            elif any(x in model_name_lower for x in ['cnn', 'resnet', 'vgg', 'efficientnet']):
+                run_type = 'Classification'
+            
+            if run_type not in selected_types:
+                continue
+            
+            filtered_runs.append((i, run))
+        
+        st.info(f"**{len(filtered_runs)}** runs correspondant aux filtres")
+        
+        # Affichage des runs filtrés
+        if filtered_runs:
+            for idx, (original_idx, run) in enumerate(filtered_runs[:20]):  # Limiter à 20 runs
+                run_id = run.get('run_id', 'N/A')
+                model_name = run.get('model_name', 'Unknown')
+                status = run.get('status', 'UNKNOWN')
+                metrics = run.get('metrics', {})
+                params = run.get('params', {})
+                tags = run.get('tags', {})
+                
+                # Détermination du type
+                model_name_lower = model_name.lower()
+                if any(x in model_name_lower for x in ['autoencoder', 'vae', 'patch', 'siamese']):
+                    run_type_badge = "🔍 Anomaly Detection"
+                    run_type_color = "#f5576c"
+                elif any(x in model_name_lower for x in ['cnn', 'resnet', 'vgg', 'efficientnet']):
+                    run_type_badge = "🎯 Classification"
+                    run_type_color = "#4facfe"
+                else:
+                    run_type_badge = "🤖 Autre"
+                    run_type_color = "#6c757d"
+                
+                # Statut coloré
+                status_colors = {
+                    'FINISHED': '#10b981',
+                    'RUNNING': '#3b82f6',
+                    'FAILED': '#ef4444',
+                    'KILLED': '#f59e0b'
+                }
+                status_color = status_colors.get(status, '#6c757d')
+                
+                with st.expander(
+                    f"{run_type_badge} | {model_name} | {status}",
+                    expanded=(idx == 0)
+                ):
+                    # En-tête avec informations principales
+                    col_header1, col_header2, col_header3 = st.columns([2, 1, 1])
+                    
+                    with col_header1:
+                        st.markdown(f"""
+                        <div style="padding: 0.5rem; background: #f8f9fa; border-radius: 5px;">
+                            <strong>Run ID:</strong> <code>{run_id[:16]}...</code><br>
+                            <strong>Type:</strong> <span style="color: {run_type_color};">{run_type_badge}</span><br>
+                            <strong>Statut:</strong> <span style="color: {status_color};">{status}</span>
+                        </div>
+                        """, unsafe_allow_html=True)
+                    
+                    with col_header2:
+                        if 'collected_at' in run:
+                            collected_at = run['collected_at']
+                            if isinstance(collected_at, str):
+                                try:
+                                    dt = datetime.fromisoformat(collected_at.replace('Z', '+00:00'))
+                                    st.write(f"**Date:** {dt.strftime('%d/%m/%Y %H:%M')}")
+                                except:
+                                    st.write(f"**Date:** {collected_at[:10]}")
+                    
+                    with col_header3:
+                        if 'training_time' in metrics:
+                            st.write(f"**Durée:** {metrics['training_time']:.1f}s")
+                        elif 'training_time' in params:
+                            st.write(f"**Durée:** {params['training_time']}s")
+                    
+                    st.markdown("---")
+                    
+                    # Métriques principales
+                    col_metrics1, col_metrics2 = st.columns(2)
+                    
+                    with col_metrics1:
+                        st.markdown("#### 📈 Métriques d'Entraînement")
+                        
+                        # Métriques spécifiques Computer Vision
+                        cv_metrics = {}
+                        standard_metrics = {}
+                        
+                        for key, value in metrics.items():
+                            if any(x in key.lower() for x in ['loss', 'accuracy', 'f1', 'precision', 'recall', 'auc']):
+                                standard_metrics[key] = value
+                            elif any(x in key.lower() for x in ['reconstruction', 'error', 'threshold']):
+                                cv_metrics[key] = value
+                            else:
+                                standard_metrics[key] = value
+                        
+                        # Affichage métriques standard
+                        if standard_metrics:
+                            for metric, value in list(standard_metrics.items())[:5]:
+                                if isinstance(value, (int, float)):
+                                    st.metric(metric.replace('_', ' ').title(), f"{value:.4f}")
+                                else:
+                                    st.write(f"**{metric.replace('_', ' ').title()}:** {value}")
+                        
+                        # Métriques spécifiques CV
+                        if cv_metrics:
+                            st.markdown("**🔍 Métriques Anomaly Detection:**")
+                            for metric, value in list(cv_metrics.items())[:3]:
+                                if isinstance(value, (int, float)):
+                                    st.write(f"- {metric.replace('_', ' ').title()}: `{value:.4f}`")
+                    
+                    with col_metrics2:
+                        st.markdown("#### ⚙️ Paramètres d'Entraînement")
+                        
+                        # Paramètres importants
+                        important_params = [
+                            'epochs', 'batch_size', 'learning_rate', 'optimizer',
+                            'scheduler', 'model_type', 'num_classes'
+                        ]
+                        
+                        displayed_params = {}
+                        for param in important_params:
+                            if param in params:
+                                displayed_params[param] = params[param]
+                        
+                        # Afficher les paramètres importants
+                        for param, value in displayed_params.items():
+                            st.write(f"**{param.replace('_', ' ').title()}:** `{value}`")
+                        
+                        # Afficher autres paramètres (limité)
+                        other_params = {k: v for k, v in params.items() if k not in important_params}
+                        if other_params:
+                            with st.expander(f"Autres paramètres ({len(other_params)})"):
+                                for param, value in list(other_params.items())[:10]:
+                                    st.write(f"- **{param}:** `{value}`")
+                    
+                    st.markdown("---")
+                    
+                    # Tags et métadonnées
+                    if tags:
+                        st.markdown("#### 🏷️ Tags et Métadonnées")
+                        col_tags1, col_tags2 = st.columns(2)
+                        
+                        with col_tags1:
+                            for key, value in list(tags.items())[:5]:
+                                st.write(f"**{key}:** `{value}`")
+                        
+                        with col_tags2:
+                            if len(tags) > 5:
+                                with st.expander(f"Tous les tags ({len(tags)})"):
+                                    for key, value in tags.items():
+                                        st.write(f"- **{key}:** `{value}`")
+                    
+                    # Boutons d'action
+                    col_action1, col_action2, col_action3 = st.columns(3)
+                    
+                    with col_action1:
+                        if st.button("📖 Voir Détails Complets", key=f"details_{run_id}", use_container_width=True):
+                            st.json({
+                                "run_id": run_id,
+                                "model_name": model_name,
+                                "status": status,
+                                "metrics": metrics,
+                                "params": params,
+                                "tags": tags
+                            })
+                    
+                    with col_action2:
+                        # Lien vers MLflow UI si disponible
+                        try:
+                            import mlflow
+                            tracking_uri = mlflow.get_tracking_uri()
+                            if tracking_uri and tracking_uri != "file://":
+                                mlflow_url = f"{tracking_uri}/#/experiments/{run.get('experiment_id', '0')}/runs/{run_id}"
+                                st.markdown(f"[🔗 Ouvrir dans MLflow UI]({mlflow_url})")
+                        except:
+                            pass
+                    
+                    with col_action3:
+                        # Export JSON
+                        export_data = {
+                            "run_id": run_id,
+                            "model_name": model_name,
+                            "status": status,
+                            "metrics": metrics,
+                            "params": params,
+                            "tags": tags,
+                            "collected_at": run.get('collected_at', '')
+                        }
+                        json_str = json.dumps(export_data, indent=2, ensure_ascii=False, default=str)
+                        st.download_button(
+                            "💾 Export JSON",
+                            json_str,
+                            f"mlflow_run_{run_id[:8]}_{datetime.now().strftime('%Y%m%d')}.json",
+                            "application/json",
+                            key=f"export_{run_id}",
+                            use_container_width=True
+                        )
+        else:
+            st.warning("⚠️ Aucun run ne correspond aux filtres sélectionnés")
+
+
+# TAB 7: RAPPORT
+with tabs[6]:
     st.markdown("### 📋 Rapport d'Évaluation")
     
     # Résumé exécutif

@@ -266,20 +266,33 @@ def robust_predict_with_preprocessor(
                     else:
                         y_proba = torch.softmax(output, dim=1).cpu().numpy()
                     
-                    # Extraction probabilité classe positive
-                    if y_proba.shape[1] == 2:
+                    # Extraction probabilités selon nombre de classes
+                    n_classes = y_proba.shape[1]
+                    
+                    if n_classes == 2:
+                        # Binaire: probabilité classe positive
                         y_pred_proba = y_proba[:, 1]
-                    elif y_proba.shape[1] == 1:
+                        y_pred_binary = (y_pred_proba > 0.5).astype(int)
+                        logger.info(
+                            f"✅ Prédictions classification binaire: {len(y_pred_binary)} samples, "
+                            f"anomalies: {y_pred_binary.sum()}"
+                        )
+                    elif n_classes == 1:
+                        # Cas spécial: une seule classe
                         y_pred_proba = y_proba[:, 0]
+                        y_pred_binary = (y_pred_proba > 0.5).astype(int)
+                        logger.info(
+                            f"✅ Prédictions classification (1 classe): {len(y_pred_binary)} samples"
+                        )
                     else:
-                        y_pred_proba = np.max(y_proba, axis=1)
-                    
-                    y_pred_binary = (y_pred_proba > 0.5).astype(int)
-                    
-                    logger.info(
-                        f"✅ Prédictions classification: {len(y_pred_binary)} samples, "
-                        f"anomalies: {y_pred_binary.sum()}"
-                    )
+                        # Multiclasse: utiliser argmax pour prédictions et max pour proba
+                        y_pred_binary = np.argmax(y_proba, axis=1)
+                        y_pred_proba = np.max(y_proba, axis=1)  # Probabilité de la classe prédite
+                        logger.info(
+                            f"✅ Prédictions classification multiclasse ({n_classes} classes): "
+                            f"{len(y_pred_binary)} samples, "
+                            f"classes prédites: {np.unique(y_pred_binary).tolist()}"
+                        )
                     
                     return {
                         "y_pred_proba": y_pred_proba,

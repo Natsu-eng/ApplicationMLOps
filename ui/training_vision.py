@@ -109,7 +109,7 @@ def inject_training_vision_css():
 # DÉTECTION MODE & VALIDATION
 # ============================================================================
 
-def detect_training_mode(y: np.ndarray) -> Tuple[str, Dict]:
+def detect_training_mode(y: Optional[np.ndarray]) -> Tuple[str, Dict]:
     """
     Détection ROBUSTE du mode pour MVTec AD et datasets classiques.
 
@@ -119,9 +119,10 @@ def detect_training_mode(y: np.ndarray) -> Tuple[str, Dict]:
     - Gestion des cas limites (y vide, None, etc.)
     
     Priorité absolue : si y_train ne contient QUE des 0 → UNSUPERVISED
+    ✅ Support y=None pour non supervisé
     
     Args:
-        y: Labels complets (potentiellement train+val+test)
+        y: Labels complets (potentiellement train+val+test) ou None pour non supervisé
         
     Returns:
         Tuple (mode, metadata)
@@ -137,8 +138,17 @@ def detect_training_mode(y: np.ndarray) -> Tuple[str, Dict]:
     logger.debug("🔍 Début détection mode training")
     
     # === VALIDATION ENTRÉE ===
+    # ✅ CORRECTION: Gérer y=None explicitement pour non supervisé
     if y is None:
-        raise ValueError("Labels y=None fournis à detect_training_mode")
+        logger.info("✅ y=None détecté → Mode UNSUPERVISED (non supervisé)")
+        return "unsupervised", {
+            "n_classes": 0,
+            "task": "unsupervised",
+            "labels": [],
+            "description": "Unsupervised Learning - No labels provided",
+            "detection_source": "y_parameter_none",
+            "y_train_available": False
+        }
     
     if len(y) == 0:
         raise ValueError("Labels y vides fournis à detect_training_mode")
@@ -253,7 +263,7 @@ def validate_y_train_for_mvtec(y_train: Optional[np.ndarray]) -> Tuple[bool, str
 
 def perform_stratified_split(
     X: np.ndarray,
-    y: np.ndarray,
+    y: Optional[np.ndarray],
     test_size: float = 0.2,
     val_size: float = 0.2,
     mode: str = "supervised"
@@ -265,9 +275,12 @@ def perform_stratified_split(
     - Train : uniquement les images normales (y=0)
     - Validation : uniquement les images normales (y=0)
     - Test : toutes les anomalies (y=1) et le reste des normales (y=0)
+    
+    ✅ Support y=None pour non supervisé complet
 
     Args:
-        X, y: Données et labels
+        X: Données
+        y: Labels (peut être None pour non supervisé)
         test_size: Ratio test (par rapport à l'ensemble total)
         val_size: Ratio validation (par rapport à l'ensemble total)
         mode: "supervised" ou "unsupervised"
@@ -278,6 +291,40 @@ def perform_stratified_split(
     from sklearn.model_selection import train_test_split
 
     logger.info(f"🔄 Split {mode} - test:{test_size:.0%} val:{val_size:.0%}")
+
+    # ✅ CORRECTION: Gérer y=None pour non supervisé
+    if y is None:
+        if mode != "unsupervised":
+            logger.warning("⚠️ y=None mais mode='supervised', passage en 'unsupervised'")
+            mode = "unsupervised"
+        
+        # Split simple sans stratification
+        X_train_val, X_test = train_test_split(
+            X, test_size=test_size, random_state=42, shuffle=True
+        )
+        
+        val_ratio = val_size / (1 - test_size)
+        X_train, X_val = train_test_split(
+            X_train_val, test_size=val_ratio, random_state=42, shuffle=True
+        )
+        
+        return {
+            "X_train": X_train,
+            "X_val": X_val,
+            "X_test": X_test,
+            "y_train": None,
+            "y_val": None,
+            "y_test": None,
+            "split_info": {
+                "train_samples": len(X_train),
+                "val_samples": len(X_val),
+                "test_samples": len(X_test),
+                "mode": "unsupervised",
+                "test_size": test_size,
+                "val_size": val_size,
+                "y_provided": False
+            }
+        }
 
     if mode == "supervised":
         # Split stratifié standard

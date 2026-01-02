@@ -859,7 +859,7 @@ class ModernDashboard:
                     '>
                     """, unsafe_allow_html=True)
                     
-                    st.image(img, use_column_width=True)
+                    st.image(img, width='stretch')
                     
                     # AFFICHAGE CORRECT
                     label_idx = d.y[idx]

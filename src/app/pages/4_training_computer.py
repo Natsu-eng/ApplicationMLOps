@@ -31,13 +31,9 @@ from ui.training_vision import (
 )
 
 # === IMPORTS LOGIQUE MÉTIER ===
-from src.models.computer_vision_training import (
-    TrainingConfig,
-    ModelType,
-    OptimizerType,
-    SchedulerType,
-    DataAugmenter,
-)
+from src.config.training_config import TrainingConfig, OptimizerType, SchedulerType
+from src.config.model_config import ModelType
+from src.models.computer_vision_training import DataAugmenter
 from orchestrators.visio_training_orchestrator import (
     training_orchestrator,
     TrainingContext
@@ -84,9 +80,33 @@ class MLTrainingWorkflowPro:
             device = "CUDA 🚀" if torch.cuda.is_available() else "CPU ⚡"
             st.caption(f"Device: {device}")
             
-            # Affichage mode si détecté
-            if STATE.loaded and STATE.data.y is not None:
-                mode, _ = detect_training_mode(STATE.data.y)
+            # Affichage mode si détecté (avec fallbacks)
+            if STATE.loaded:
+                mode = None
+                
+                # Priorité 1: split_config (après split)
+                if hasattr(STATE.data, 'split_config') and STATE.data.split_config:
+                    mode = STATE.data.split_config.get('mode')
+                
+                # Priorité 2: y_train (si splitté)
+                if mode is None and hasattr(STATE.data, 'y_train') and STATE.data.y_train is not None:
+                    try:
+                        mode, _ = detect_training_mode(STATE.data.y_train)
+                    except ValueError:
+                        pass
+                
+                # Priorité 3: y global (avant split)
+                if mode is None and hasattr(STATE.data, 'y') and STATE.data.y is not None:
+                    try:
+                        mode, _ = detect_training_mode(STATE.data.y)
+                    except ValueError:
+                        mode = "unsupervised"  # Fallback si y=None
+                
+                # Fallback final
+                if mode is None:
+                    mode = "unsupervised"  # Par défaut si aucune info
+                
+                # Affichage badge
                 badge_color = "#4facfe" if mode == "supervised" else "#f5576c"
                 st.markdown(
                     f"<div style='background:{badge_color};color:white;padding:0.3rem;border-radius:5px;text-align:center;font-size:0.7rem;'>"
@@ -276,20 +296,39 @@ class MLTrainingWorkflowPro:
         st.markdown('<div class="workflow-step-card">', unsafe_allow_html=True)
         st.header("⚖️ Étape 2: Gestion du Déséquilibre")
         
-        if not STATE.loaded or STATE.data.y_train is None:
-            st.error("❌ Données d'entraînement manquantes")
+        # Vérification données chargées
+        if not STATE.loaded:
+            st.error("❌ Aucun dataset chargé")
             if st.button("⬅️ Retour Étape 1"):
                 STATE.current_step = 0
                 st.rerun()
             st.markdown('</div>', unsafe_allow_html=True)
             return
         
-        y_train = STATE.data.y_train
-        
-        # Récupération mode
+        # Récupération mode depuis split_config
         split_config = getattr(STATE.data, 'split_config', {})
         mode = split_config.get('mode', 'supervised')
         metadata = split_config.get('metadata', {})
+        
+        # Vérification conditionnelle selon mode
+        if mode == "supervised":
+            if not hasattr(STATE.data, 'y_train') or STATE.data.y_train is None:
+                st.error("❌ Données d'entraînement manquantes (mode supervisé)")
+                if st.button("⬅️ Retour Étape 1"):
+                    STATE.current_step = 0
+                    st.rerun()
+                st.markdown('</div>', unsafe_allow_html=True)
+                return
+            y_train = STATE.data.y_train
+        else:  # unsupervised
+            if not hasattr(STATE.data, 'X_train') or STATE.data.X_train is None:
+                st.error("❌ Données d'entraînement manquantes (mode non supervisé)")
+                if st.button("⬅️ Retour Étape 1"):
+                    STATE.current_step = 0
+                    st.rerun()
+                st.markdown('</div>', unsafe_allow_html=True)
+                return
+            y_train = None  # Pas de labels en mode non supervisé
         
         # Badge rappel mode
         render_mode_badge(mode, metadata)
@@ -316,16 +355,23 @@ class MLTrainingWorkflowPro:
                     help="Ajuste loss function selon déséquilibre"
                 )
                 
-                if use_weights:
-                    classes = np.unique(y_train)
-                    weights = compute_class_weight('balanced', classes=classes, y=y_train)
-                    weight_dict = {int(cls): float(weight) for cls, weight in zip(classes, weights)}
-                    
-                    st.info("**Poids calculés:**")
-                    for cls, weight in weight_dict.items():
-                        st.write(f"- Classe {cls}: `{weight:.3f}`")
-                    
-                    STATE.class_weights = weight_dict
+                if use_weights and y_train is not None:
+                    try:
+                        classes = np.unique(y_train)
+                        if len(classes) > 0:
+                            weights = compute_class_weight('balanced', classes=classes, y=y_train)
+                            weight_dict = {int(cls): float(weight) for cls, weight in zip(classes, weights)}
+                            
+                            st.info("**Poids calculés:**")
+                            for cls, weight in weight_dict.items():
+                                st.write(f"- Classe {cls}: `{weight:.3f}`")
+                            
+                            STATE.class_weights = weight_dict
+                        else:
+                            st.warning("⚠️ Aucune classe détectée dans y_train")
+                    except Exception as e:
+                        logger.warning(f"Erreur calcul class weights: {e}")
+                        st.warning("⚠️ Impossible de calculer les poids de classe")
             
             with col2:
                 st.markdown("#### 🎭 SMOTE")

@@ -51,7 +51,10 @@ SUPPORTED_EXTENSIONS = ('.png', '.jpg', '.jpeg', '.bmp', '.tiff', '.webp')
 
 def detect_dataset_structure(data_dir: str) -> Dict[str, Any]:
     """
-    Détection améliorée avec distinction MVTec AD vs Supervised
+    Détection améliorée avec prise en charge des structures :
+    - MVTec AD classique
+    - Catégorielle plate (classes à la racine)
+    - Split + catégorielle (train/val/test contenant des classes) ← NOUVEAU
     """
     try:
         if not data_dir or not isinstance(data_dir, str):
@@ -70,21 +73,6 @@ def detect_dataset_structure(data_dir: str) -> Dict[str, Any]:
         if not items:
             return {"type": DatasetType.INVALID.value, "error": "Dossier vide"}
         
-        # ✅ CORRECTION 1: Détection MVTec AD stricte
-        if "train" in items and "test" in items:
-            train_path = data_path / "train"
-            if train_path.exists() and train_path.is_dir():
-                train_items = [item.name for item in train_path.iterdir() if item.is_dir()]
-                if "good" in train_items:
-                    logger.info(f"✅ Structure MVTec AD détectée: {data_dir}")
-                    return {
-                        "type": DatasetType.MVTEC_AD.value,
-                        "categories": train_items,
-                        "description": "MVTec AD - Unsupervised Anomaly Detection",
-                        "is_mvtec": True  # Flag explicite
-                    }
-        
-        # Analyse des sous-dossiers
         subdirs = []
         image_files = []
         
@@ -97,44 +85,76 @@ def detect_dataset_structure(data_dir: str) -> Dict[str, Any]:
             except:
                 continue
         
-        # ✅ CORRECTION 2: Détection anomaly supervised vs classification
-        if subdirs and not image_files:
-            subdirs_lower = [s.lower() for s in subdirs]
-            
-            # Cas anomaly supervised: dossiers "normal" + "defect" ou similaires
-            if len(subdirs) == 2:
-                is_anomaly_supervised = (
-                    ("normal" in subdirs_lower and "defect" in subdirs_lower) or
-                    ("normal" in subdirs_lower and "anomaly" in subdirs_lower) or
-                    ("good" in subdirs_lower and "bad" in subdirs_lower)
-                )
-                
-                if is_anomaly_supervised:
-                    logger.info(f"✅ Anomaly Detection Supervised détectée: {subdirs}")
-                    # ✅ ORDRE GARANTI: normal = 0, defect = 1
-                    ordered_subdirs = sorted(subdirs, key=lambda x: 0 if 'normal' in x.lower() or 'good' in x.lower() else 1)
+        subdirs_lower = [s.lower() for s in subdirs]
+
+        # ✅ 1. Détection MVTec AD stricte
+        if "train" in items and "test" in items:
+            train_path = data_path / "train"
+            if train_path.exists() and train_path.is_dir():
+                train_items = [item.name for item in train_path.iterdir() if item.is_dir()]
+                if "good" in train_items:
+                    logger.info(f"✅ Structure MVTec AD détectée: {data_dir}")
                     return {
-                        "type": DatasetType.CATEGORICAL.value,
-                        "categories": ordered_subdirs,
-                        "n_categories": 2,
-                        "description": "Anomaly Detection - Supervised",
-                        "is_anomaly_supervised": True,
-                        "class_to_idx": {ordered_subdirs[0]: 0, ordered_subdirs[1]: 1}
+                        "type": DatasetType.MVTEC_AD.value,
+                        "categories": train_items,
+                        "description": "MVTec AD - Unsupervised Anomaly Detection",
+                        "is_mvtec": True
                     }
-            
-            # Classification classique multiclass ou binaire
-            logger.info(f"✅ Structure catégorielle classique: {len(subdirs)} classes")
-            # ✅ ORDRE ALPHABÉTIQUE pour cohérence
+
+        # ✅ 2. NOUVEAU : Détection structure split + catégorielle (train/val/test avec classes dedans)
+        splits_present = {"train", "val", "test"}
+        if len(set(subdirs_lower) & splits_present) >= 2:  # Au moins 2 splits parmi train/val/test
+            train_path = data_path / "train"
+            if train_path.exists() and train_path.is_dir():
+                potential_classes = [p.name for p in train_path.iterdir() if p.is_dir()]
+                if potential_classes:
+                    # Vérifie qu'il y a des images dans les sous-dossiers
+                    has_images = any(len(_get_image_files(train_path / cls)) > 0 for cls in potential_classes)
+                    if has_images:
+                        sorted_classes = sorted(potential_classes)
+                        logger.info(f"✅ Structure split + catégorielle détectée: {len(sorted_classes)} classes ({', '.join(sorted_classes)})")
+                        return {
+                            "type": DatasetType.CATEGORICAL.value,
+                            "categories": sorted_classes,
+                            "n_categories": len(sorted_classes),
+                            "description": f"Classification multiclasse avec splits ({len(sorted_classes)} classes)",
+                            "is_anomaly_supervised": False,
+                            "class_to_idx": {cls: idx for idx, cls in enumerate(sorted_classes)},
+                            "has_splits": True  # Flag important pour le chargement
+                        }
+
+        # ✅ 3. Cas anomaly supervisée binaire (normal/defect, good/bad, etc.)
+        if subdirs and not image_files and len(subdirs) == 2:
+            is_anomaly_supervised = (
+                ("normal" in subdirs_lower and "defect" in subdirs_lower) or
+                ("normal" in subdirs_lower and "anomaly" in subdirs_lower) or
+                ("good" in subdirs_lower and "bad" in subdirs_lower)
+            )
+            if is_anomaly_supervised:
+                ordered_subdirs = sorted(subdirs, key=lambda x: 0 if 'normal' in x.lower() or 'good' in x.lower() else 1)
+                logger.info(f"✅ Anomaly Detection Supervisée détectée: {subdirs}")
+                return {
+                    "type": DatasetType.CATEGORICAL.value,
+                    "categories": ordered_subdirs,
+                    "n_categories": 2,
+                    "description": "Anomaly Detection - Supervised",
+                    "is_anomaly_supervised": True,
+                    "class_to_idx": {ordered_subdirs[0]: 0, ordered_subdirs[1]: 1}
+                }
+
+        # ✅ 4. Classification classique multiclass (classes directement à la racine)
+        if subdirs and not image_files:
             sorted_subdirs = sorted(subdirs)
+            logger.info(f"✅ Structure catégorielle classique: {len(sorted_subdirs)} classes")
             return {
                 "type": DatasetType.CATEGORICAL.value,
                 "categories": sorted_subdirs,
-                "n_categories": len(subdirs),
-                "description": f"Classification ({len(subdirs)} classes)",
+                "n_categories": len(sorted_subdirs),
+                "description": f"Classification ({len(sorted_subdirs)} classes)",
                 "is_anomaly_supervised": False,
                 "class_to_idx": {cls: idx for idx, cls in enumerate(sorted_subdirs)}
             }
-        
+
         # Structure plate
         elif image_files and not subdirs:
             logger.info(f"✅ Structure plate: {len(image_files)} images")
@@ -143,8 +163,8 @@ def detect_dataset_structure(data_dir: str) -> Dict[str, Any]:
                 "image_count": len(image_files),
                 "description": f"Dataset plat ({len(image_files)} images)"
             }
-        
-        # Structure mixte
+
+        # Mixte
         elif subdirs and image_files:
             logger.warning(f"⚠️ Structure mixte: {len(subdirs)} dossiers + {len(image_files)} images")
             return {
@@ -153,7 +173,7 @@ def detect_dataset_structure(data_dir: str) -> Dict[str, Any]:
                 "root_images": len(image_files),
                 "description": "Structure mixte"
             }
-        
+
         return {"type": DatasetType.UNKNOWN.value, "items": items[:10]}
     
     except Exception as e:
@@ -366,10 +386,12 @@ def load_images_flexible(
     data_dir: str,
     target_size: Tuple[int, int] = (256, 256),
     config: Optional[ImageConfig] = None
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray, Optional[np.ndarray]]:
+) -> Tuple[np.ndarray, np.ndarray, Optional[np.ndarray], Optional[np.ndarray]]:
     """
     Chargement avec labels cohérents et y_train pour unsupervised
-    Retourne: X, X_norm, y (complet), y_train (train only pour MVTec)
+    Retourne: X, X_norm, y (complet ou None), y_train (train only pour MVTec ou None)
+    
+    ✅ Support complet non supervisé: y_full et y_train peuvent être None
     """
     try:
         if config is None:
@@ -397,7 +419,11 @@ def load_images_flexible(
         
         elif structure_type == DatasetType.FLAT.value:
             X, y_full = _load_flat_directory(data_dir, config)
-            logger.info(f"Flat: {len(X)} images")
+            # ✅ y_full peut être None pour non supervisé
+            if y_full is None:
+                logger.info(f"Flat (non supervisé): {len(X)} images | y=None")
+            else:
+                logger.info(f"Flat: {len(X)} images")
         
         else:
             raise ValueError(f"Structure non supportée: {structure_type}")
@@ -405,7 +431,7 @@ def load_images_flexible(
         if len(X) == 0:
             raise RuntimeError("Aucune image valide")
 
-        # ✅ VALIDATION y_train pour MVTec AD
+        # ✅ VALIDATION y_train pour MVTec AD (seulement si présent)
         if y_train is not None and len(y_train) > 0:
             unique_train = np.unique(y_train)
             if len(unique_train) > 1 or (len(unique_train) == 1 and unique_train[0] != 0):
@@ -418,7 +444,11 @@ def load_images_flexible(
         # Normalisation
         X_norm = X.astype(np.float32) / 255.0
 
-        logger.info(f"✅ Chargement terminé: {len(X)} images")
+        logger.info(
+            f"✅ Chargement terminé: {len(X)} images | "
+            f"y_full={'présent' if y_full is not None else 'None'} | "
+            f"y_train={'présent' if y_train is not None else 'None'}"
+        )
         return X.astype(np.uint8), X_norm, y_full, y_train
 
     except Exception as e:
@@ -490,53 +520,67 @@ def _load_categorical_folders(
     structure: Dict[str, Any]
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
-    ✅ CORRECTION CRITIQUE: Utilise class_to_idx pour ordre garanti
-    Fini les inversions de labels !
+    Chargement des images catégorielles avec support :
+    - Classes à la racine
+    - Classes dans train/val/test (has_splits=True)
+    Ordre des labels garanti via class_to_idx
     """
     images, labels = [], []
     data_path = Path(data_dir)
     
-    # ✅ ORDRE GARANTI par class_to_idx
+    # Récupération de l'ordre garanti des classes
     if 'class_to_idx' in structure:
         sorted_categories = sorted(structure['class_to_idx'].items(), key=lambda x: x[1])
         logger.info(f"📋 Ordre des classes (garanti): {[cat for cat, idx in sorted_categories]}")
-        
+    else:
+        # Fallback (ne devrait pas arriver)
+        sorted_categories = [(cls, idx) for idx, cls in enumerate(sorted(structure.get("categories", [])))]
+
+    # Déterminer les dossiers à explorer
+    if structure.get('has_splits', False):
+        split_dirs = ['train', 'val', 'test']
+        logger.info("🔄 Chargement multiclass avec splits (train/val/test)")
+    else:
+        split_dirs = ['']  # Racine uniquement
+        logger.info("🔄 Chargement multiclass classique (classes à la racine)")
+
+    for split in split_dirs:
+        base_path = data_path if not split else data_path / split
+        if not base_path.exists():
+            continue
+
         for category, label in sorted_categories:
-            cat_path = data_path / category
+            cat_path = base_path / category
             if not cat_path.is_dir():
                 continue
             
             image_files = _get_image_files(cat_path)
-            logger.debug(f"Chargement {len(image_files)} images pour '{category}' → label {label}")
-            
+            if not image_files:
+                continue
+
+            logger.debug(f"Chargement {len(image_files)} images depuis {cat_path} → label {label}")
+
             for img_file in image_files:
                 img = _load_single_image(cat_path / img_file, config)
                 if img is not None:
                     images.append(img)
-                    labels.append(label)  # ✅ Label cohérent avec class_to_idx
-                    
-                    if config.max_images and len(images) >= config.max_images:
-                        break
-    else:
-        # Fallback tri alphabétique (classification classique)
-        categories = sorted([item for item in data_path.iterdir() if item.is_dir()])
-        logger.warning("⚠️ class_to_idx absent, tri alphabétique")
-        
-        for label, category in enumerate(categories):
-            image_files = _get_image_files(category)
-            
-            for img_file in image_files:
-                img = _load_single_image(category / img_file, config)
-                if img is not None:
-                    images.append(img)
                     labels.append(label)
+
+                    # Limite optionnelle
+                    if config.max_images and len(images) >= config.max_images:
+                        logger.info(f"✅ Limite max_images atteinte ({config.max_images})")
+                        return np.array(images), np.array(labels)
+
+    if len(images) == 0:
+        logger.warning("Aucune image chargée dans les dossiers catégoriels")
     
-    logger.info(f"✅ {len(images)} images chargées avec labels cohérents")
+    logger.info(f"✅ {len(images)} images chargées avec labels cohérents (multiclass)")
     return np.array(images), np.array(labels)
 
-def _load_flat_directory(data_dir: str, config: ImageConfig) -> Tuple[np.ndarray, np.ndarray]:
+def _load_flat_directory(data_dir: str, config: ImageConfig) -> Tuple[np.ndarray, Optional[np.ndarray]]:
     """
-    Dossier plat: toutes images label 0
+    Dossier plat: images sans labels (non supervisé)
+    Retourne y=None pour support non supervisé
     """
     images = []
     data_path = Path(data_dir)
@@ -549,9 +593,9 @@ def _load_flat_directory(data_dir: str, config: ImageConfig) -> Tuple[np.ndarray
             if config.max_images and len(images) >= config.max_images:
                 break
     
-    labels = np.zeros(len(images), dtype=int)
-    logger.info(f"{len(images)} images chargées (label 0)")
-    return np.array(images), labels
+    # ✅ CORRECTION: Retourner None pour non supervisé
+    logger.info(f"{len(images)} images chargées (non supervisé, y=None)")
+    return np.array(images), None
 
 def _load_single_image(image_path: Path, config: ImageConfig) -> Optional[np.ndarray]:
     """

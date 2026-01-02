@@ -3,7 +3,8 @@ from typing import List
 import numpy as np
 from sklearn.model_selection import StratifiedKFold
 from src.data.computer_vision_preprocessing import Result
-from src.models.computer_vision_training import ComputerVisionTrainer, ModelConfig, TrainingConfig
+from src.models.computer_vision_training import ModelConfig, TrainingConfig
+from src.models.trainer import ComputerVisionTrainer
 from src.shared.logging import get_logger
 from utils.callbacks import TrainingCallback
 logger = get_logger(__name__)

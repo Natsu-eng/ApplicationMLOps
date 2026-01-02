@@ -91,22 +91,15 @@ class ProfessionalPatchCore(nn.Module):
         return model
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Forward pass pour compatibilité avec le training pipeline standard.       
-        Retourne None au lieu d'un dummy tensor avec requires_grad.
-        Le training loop détectera None et skip le backward.
-        
-        PatchCore n'utilise PAS de backpropagation !
-        Le vrai entraînement se fait via fit().     
-        Args:
-            x: Tensor d'entrée (B, C, H, W)         
-        Returns:
-            None (signale au training loop de skip le backward)
-        """
-        # PatchCore ne fait pas de forward pass classique
-        # Retourner None pour signaler qu'il n'y a pas de backward à faire
-        return None
-
+        """Forward pass compatible avec training pipeline standard."""
+        if self.training:
+            # Retourne un dummy tensor pour la compatibilité
+            return torch.zeros(x.size(0), 1, device=x.device, requires_grad=True)
+        else:
+            # En inference, extrait les features sans backward
+            with torch.no_grad():
+                features = self.feature_extractor(self._adapt_channels(x))
+                return features.mean(dim=(2, 3))  # ou autre opération simple
     
     def _adapt_channels(self, x: torch.Tensor) -> torch.Tensor:
         """Adapte le nombre de canaux si nécessaire."""
@@ -150,6 +143,22 @@ class ProfessionalPatchCore(nn.Module):
         
         return coreset_features
     
+    # Méthodes pour sauvegarder et charger l'état du modèle avec FAISS
+    def state_dict(self):
+        state = super().state_dict()
+        if self.faiss_index is not None:
+            # Convertir FAISS en bytes pour torch.save
+            import faiss
+            state['faiss_index_bytes'] = faiss.serialize_index(self.faiss_index)
+        return state
+
+    def load_state_dict(self, state_dict):
+        faiss_bytes = state_dict.pop('faiss_index_bytes', None)
+        if faiss_bytes is not None:
+            import faiss
+            self.faiss_index = faiss.deserialize_index(faiss_bytes)
+        super().load_state_dict(state_dict)
+        
     def fit(self, dataloader) -> None:
         """Construit la memory bank avec coreset subsampling."""
         logger.info("🔨 Début construction memory bank PatchCore")

@@ -110,7 +110,7 @@ class TransferLearningModel(nn.Module):
         
         # Récupérer les infos du modèle DÈS LE DÉBUT
         model_info = self.SUPPORTED_MODELS[model_name]
-        self.num_features = model_info["features"]  # ✅ Défini tôt
+        self.num_features = model_info["features"]  # Nombre de features avant le classifier
         
         # === VALIDATION ===
         if num_classes < 2:
@@ -414,100 +414,58 @@ class TransferLearningModel(nn.Module):
                 )
                 raise
 
+    # === NOUVELLE MÉTHODE DE GEL PAR POURCENTAGE ===
     def _freeze_by_percentage(self, percentage: float):
         """
-        Gèle un pourcentage des BLOCS du modèle (pas paramètres individuels).
-        Avantages:
-        - Compte les BLOCS/MODULES, pas les paramètres
-        - Ordre garanti (input → output)
-        - Gel par blocs cohérents (conv + bn + activation)
-        
+        Gèle un pourcentage donné des paramètres du modèle.       
         Args:
-            percentage: Pourcentage à geler (0-100)
+            percentage: Pourcentage de paramètres à geler (0-100)
         """
         if not 0 <= percentage <= 100:
-            raise ValueError(f"Pourcentage doit être entre 0 et 100, reçu: {percentage}")
+            raise ValueError(f"Pourcentage entre 0-100, reçu: {percentage}")
         
-        # STEP 1: Identifier les BLOCS PRINCIPAUX (pas paramètres individuels)
-        # Pour ResNet: layer1, layer2, layer3, layer4 + classifier
+        # ÉTAPE 1 : Lister TOUS les paramètres ordonnés
+        all_params = []
+        param_counts = []
         
-        # Récupérer les modules ORDONNÉS (input → output)
-        named_modules = list(self.backbone.named_modules())
+        for name, param in self.backbone.named_parameters():
+            all_params.append((name, param))
+            param_counts.append(param.numel())
         
-        # Filtrer uniquement les blocs principaux (ignorer sous-modules)
-        main_blocks = []
-        
-        for name, module in named_modules:
-            # Identifier les blocs principaux selon l'architecture
-            if any(block_name in name for block_name in ['layer1', 'layer2', 'layer3', 'layer4']):
-                # S'assurer qu'on prend les blocs complets, pas les sous-modules
-                if '.' not in name[name.find('layer'):]:  # Ex: "layer1" OK, "layer1.0.conv1" NON
-                    main_blocks.append((name, module))
-        
-        # Ajouter le classifier en dernier
-        if hasattr(self.backbone, 'fc'):
-            main_blocks.append(('fc', self.backbone.fc))
-        elif hasattr(self.backbone, 'classifier'):
-            main_blocks.append(('classifier', self.backbone.classifier))
-        
-        total_blocks = len(main_blocks)
-        num_blocks_to_freeze = int(total_blocks * percentage / 100)
+        total_params = sum(param_counts)
+        target_frozen_params = int(total_params * percentage / 100)
         
         logger.info(
-            f"🔧 Fine-tuning: {total_blocks} blocs principaux identifiés - "
-            f"Gel de {percentage}% → {num_blocks_to_freeze} blocs"
+            f"🔧 Gel {percentage}% des params = "
+            f"{target_frozen_params:,} / {total_params:,}"
         )
         
-        # STEP 2: Geler les N premiers blocs (input → features)
-        frozen_blocks = []
-        unfrozen_blocks = []
-        
-        for idx, (block_name, block_module) in enumerate(main_blocks):
-            if idx < num_blocks_to_freeze:
-                # Geler TOUS les paramètres du bloc
-                for param in block_module.parameters():
-                    param.requires_grad = False
-                frozen_blocks.append(block_name)
-                logger.debug(f"  ❄️ Gelé: {block_name}")
+        # ÉTAPE 2 : Geler jusqu'à atteindre le seuil
+        frozen_params = 0
+        for (name, param), count in zip(all_params, param_counts):
+            if frozen_params + count <= target_frozen_params:
+                param.requires_grad = False
+                frozen_params += count
+                logger.debug(f"  ❄️ Gelé: {name} ({count:,} params)")
             else:
-                # Dégeler TOUS les paramètres du bloc
-                for param in block_module.parameters():
-                    param.requires_grad = True
-                unfrozen_blocks.append(block_name)
-                logger.debug(f"  🔥 Entraînable: {block_name}")
+                param.requires_grad = True
+                logger.debug(f"  🔥 Entraînable: {name} ({count:,} params)")
         
-        # STEP 3: Validation et logs détaillés
-        trainable_params = sum(p.numel() for p in self.parameters() if p.requires_grad)
-        total_params = sum(p.numel() for p in self.parameters())
-        
-        # Vérifier que des paramètres sont entraînables
-        if trainable_params == 0:
-            logger.error("❌ ERREUR: AUCUN paramètre entraînable après gel!")
-            raise ValueError("Tous les paramètres sont gelés, impossible d'entraîner")
+        # ÉTAPE 3 : Validation
+        actual_frozen = sum(
+            p.numel() for p in self.parameters() if not p.requires_grad
+        )
+        actual_percentage = (actual_frozen / total_params) * 100
         
         logger.info(
-            f"✅ Fine-tuning configuré:\n"
-            f"   • Blocs gelés: {frozen_blocks}\n"
-            f"   • Blocs entraînables: {unfrozen_blocks}\n"
-            f"   • Paramètres entraînables: {trainable_params:,}/{total_params:,} "
-            f"({trainable_params/total_params*100:.1f}%)"
+            f"Gel configuré: {actual_frozen:,} params gelés "
+            f"({actual_percentage:.1f}% réel vs {percentage}% demandé)"
         )
         
-        # STEP 4: Vérification CRITIQUE des gradients
-        # Forcer un forward dummy pour s'assurer que les gradients sont bien bloqués
-        try:
-            dummy_input = torch.randn(1, 3, 224, 224, device=next(self.parameters()).device)
-            
-            self.eval()
-            with torch.no_grad():
-                _ = self.forward(dummy_input)
-            
-            self.train()
-            
-            logger.info("✅ Test forward réussi après gel")
-            
-        except Exception as e:
-            logger.warning(f"⚠️ Test forward échoué: {e}")
+        if abs(actual_percentage - percentage) > 5:
+            logger.warning(
+                f"⚠️ Écart gel: demandé {percentage}%, obtenu {actual_percentage:.1f}%"
+            )
 
     
     def get_features(self, x: torch.Tensor) -> torch.Tensor:
