@@ -320,7 +320,8 @@ class ModernHomePage:
             "zipper": "🔗 Fermetures éclair",
             "bottle_supervised": "Bouteilles (Supervised)",
             "cable_multiclass": "Câbles (Supervised)",
-            "leather_multiclass": "Cuir(Supervised)"
+            "leather_multiclass": "Cuir(Supervised)",
+            "screw_multiclass": "Vis (Supervised)"
         }
         
         # Grille 3x3

@@ -19,6 +19,9 @@ from sklearn.metrics import ( # type: ignore
     roc_curve, precision_recall_curve
 )
 
+from sklearn.preprocessing import label_binarize
+from sklearn.metrics import roc_curve, auc
+
 # Imports métier
 try:
     from src.evaluation.anomaly_typing import AnomalyTypeAnalyzer
@@ -57,7 +60,6 @@ import torch # type: ignore
 from scipy.ndimage import zoom  # type: ignore
 
 from monitoring.state_managers import init, AppPage
-from monitoring.mlflow_collector import get_mlflow_collector
 from monitoring.mlflow_collector import get_mlflow_collector
 
 # ✅ IMPORTS UI CENTRALISÉS
@@ -276,33 +278,47 @@ with st.spinner("📈 Calcul des métriques..."):
                 average_mode = 'binary'
                 logger.info(f"✅ Mode binaire détecté - utilisation average='{average_mode}'")
             
-            # AUC-ROC (nécessite au moins 2 classes dans y_test)
             try:
                 if n_classes >= 2:
                     if is_multiclass:
-                        # Multiclasse: nécessite multi_class='ovr' ou 'ovo'
-                        if y_pred_proba.ndim > 1 and y_pred_proba.shape[1] == n_classes:
-                            # Probabilités pour toutes les classes
-                            metrics['auc_roc'] = roc_auc_score(
-                                y_test, y_pred_proba, 
-                                multi_class='ovr', 
-                                average='weighted'
-                            )
+                        # Récupérer les probabilités par classe depuis prediction_results
+                        y_proba_multiclass = prediction_results.get("class_probabilities")
+                        
+                        if y_proba_multiclass is not None and y_proba_multiclass.shape[1] == n_classes:
+                            # Binariser y_test pour one-vs-rest
+                            y_test_bin = label_binarize(y_test, classes=range(n_classes))
+                            
+                            # Calcul AUC ROC one-vs-rest
+                            auc_scores = []
+                            for i in range(n_classes):
+                                if len(np.unique(y_test_bin[:, i])) >= 2:
+                                    try:
+                                        auc_i = roc_auc_score(y_test_bin[:, i], y_proba_multiclass[:, i])
+                                        auc_scores.append(auc_i)
+                                    except:
+                                        auc_scores.append(0.5)
+                                else:
+                                    auc_scores.append(0.5)
+                            
+                            # Moyenne pondérée
+                            metrics['auc_roc'] = np.mean(auc_scores)
+                            metrics['auc_roc_per_class'] = auc_scores
+                            
+                            logger.info(f"✅ AUC-ROC multiclasse calculé: {metrics['auc_roc']:.3f}")
                         else:
-                            # Fallback: utiliser les probabilités max
-                            metrics['auc_roc'] = roc_auc_score(
-                                y_test, y_pred_proba, 
-                                multi_class='ovr', 
-                                average='weighted'
-                            )
+                            # Fallback si pas de probabilités par classe
+                            logger.warning("⚠️ Probabilités multiclasse non disponibles")
+                            if len(np.unique(y_test)) >= 2:
+                                metrics['auc_roc'] = roc_auc_score(y_test, y_pred_proba)
+                            else:
+                                metrics['auc_roc'] = 0.5
                     else:
-                        # Binaire: format standard
+                        # Binaire
                         if y_pred_proba.ndim > 1 and y_pred_proba.shape[1] == 2:
                             metrics['auc_roc'] = roc_auc_score(y_test, y_pred_proba[:, 1])
                         else:
                             metrics['auc_roc'] = roc_auc_score(y_test, y_pred_proba)
                 else:
-                    logger.warning("⚠️ AUC-ROC impossible: une seule classe dans y_test")
                     metrics['auc_roc'] = 0.5
             except Exception as e:
                 logger.warning(f"⚠️ Erreur calcul AUC-ROC: {e}")
@@ -474,6 +490,70 @@ for label, metric_key, icon, col in main_metrics:
         </div>
         ''', unsafe_allow_html=True)
 
+# ============================================================================
+# SECTION: CLASSES DISPONIBLES (NOUVELLE SECTION)
+# ============================================================================
+
+# ✅ SECTION AJOUTÉE ICI - Juste après les métriques principales
+if 'class_names' in prediction_results:
+    st.markdown("### 🏷️ Classes Disponibles")
+    
+    class_names = prediction_results['class_names']
+    is_multiclass = prediction_results.get('is_multiclass', False)
+    
+    if is_multiclass:
+        st.info(f"🔀 **Mode Multiclasse** - {len(class_names)} classes disponibles")
+    
+    # Afficher les classes sous forme de badges
+    badges_html = ""
+    for i, class_name in enumerate(class_names):
+        # Attribution de couleurs:
+        # - Classe 0 (Normal): Vert
+        # - Classe 1 (Anomalie): Rouge
+        # - Classes 2+: Couleurs alternées du spectre
+        color = "#10b981" if i == 0 else ("#ef4444" if i == 1 else f"hsl({(i * 60) % 360}, 70%, 60%)")
+        badges_html += f'''
+        <span style="background: {color}; color: white; padding: 0.3rem 0.8rem; 
+                     border-radius: 20px; margin: 0.2rem; display: inline-block; 
+                     font-size: 0.9rem; font-weight: 600;">
+            {class_name}
+        </span>'''
+    
+    st.markdown(f'<div style="margin: 1rem 0;">{badges_html}</div>', unsafe_allow_html=True)
+    
+    # Statistiques par classe si multiclasse et labels disponibles
+    if is_multiclass and y_test is not None:
+        st.markdown("#### 📊 Distribution par Classe")
+        
+        col_dist1, col_dist2, col_dist3 = st.columns(3)
+        
+        with col_dist1:
+            # Distribution réelle
+            unique, counts = np.unique(y_test, return_counts=True)
+            dist_df = pd.DataFrame({
+                "Classe": [class_names[i] if i < len(class_names) else f"Classe {i}" for i in unique],
+                "Échantillons": counts,
+                "Pourcentage": [c/len(y_test)*100 for c in counts]
+            })
+            st.dataframe(dist_df, hide_index=True, width='stretch')
+        
+        with col_dist2:
+            # Distribution prédite
+            unique_pred, counts_pred = np.unique(y_pred_binary, return_counts=True)
+            dist_pred_df = pd.DataFrame({
+                "Classe": [class_names[i] if i < len(class_names) else f"Classe {i}" for i in unique_pred],
+                "Prédictions": counts_pred,
+                "Pourcentage": [c/len(y_pred_binary)*100 for c in counts_pred]
+            })
+            st.dataframe(dist_pred_df, hide_index=True, width='stretch')
+        
+        with col_dist3:
+            # Top 3 classes les plus prédites
+            if len(unique_pred) > 0:
+                most_common_idx = unique_pred[np.argmax(counts_pred)]
+                most_common_name = class_names[most_common_idx] if most_common_idx < len(class_names) else f"Classe {most_common_idx}"
+                st.metric("Classe la plus fréquente", most_common_name, f"{max(counts_pred)/len(y_pred_binary)*100:.1f}%")
+
 
 # ============================================================================
 # SECTION: RÉSUMÉ PERFORMANCE
@@ -554,7 +634,7 @@ col_radar1, col_radar2 = st.columns([2, 1])
 
 with col_radar1:
     fig_radar = create_performance_radar(metrics)
-    st.plotly_chart(fig_radar, use_container_width=True)
+    st.plotly_chart(fig_radar, width='stretch')
 
 with col_radar2:
     st.markdown("#### 📋 Détails")
@@ -579,11 +659,12 @@ with col_radar2:
 tabs = st.tabs([
     "📊 Métriques Détaillées",
     "🔍 Analyse des Erreurs",
-    "🎯 Modèle vs Réalité",  # ✅ NOUVEAU: Visualisation comparée
+    "🎯 Modèle vs Réalité",  
     "💡 Recommandations",
     "🎨 Visualisations",
-    "🔗 MLflow",  # ✅ NOUVEAU: Onglet MLflow
-    "📋 Rapport"
+    "🔗 MLflow",  
+    "📋 Rapport",
+    "🔥 Grad-CAM"
 ])
 
 
@@ -668,7 +749,7 @@ with tabs[0]:
             height=400
         )
         
-        st.plotly_chart(fig_cm, use_container_width=True)
+        st.plotly_chart(fig_cm, width='stretch')
 
 
 # TAB 2: ANALYSE DES ERREURS
@@ -681,7 +762,7 @@ with tabs[1]:
         
         with col_err1:
             fig_pie = plot_error_distribution(error_analysis)
-            st.plotly_chart(fig_pie, use_container_width=True)
+            st.plotly_chart(fig_pie, width='stretch')
         
         with col_err2:
             st.markdown("#### 📊 Statistiques")
@@ -729,8 +810,8 @@ with tabs[1]:
                         # Normaliser l'image pour affichage
                         img = X_test[idx]
                         img_display = (img - img.min()) / (img.max() - img.min()) if img.max() > img.min() else img
-                        st.image(img_display, caption=f"FP #{idx}", use_column_width=True)
-                    st.caption(f"Confiance: {y_pred_proba[idx]:.3f}")
+                        st.image(img_display, caption=f"FP #{idx}", width='stretch')
+                    st.caption(f"Confiance: {y_pred_proba[idx]:.3f}" if y_pred_proba[idx] is not None else "Confiance: N/A")
         
         if len(error_analysis["false_negatives"]) > 0:
             st.markdown("##### ⚠️ Faux Négatifs (Anomalies manquées)")
@@ -742,21 +823,27 @@ with tabs[1]:
                     if len(X_test.shape) > 3:
                         img = X_test[idx]
                         img_display = (img - img.min()) / (img.max() - img.min()) if img.max() > img.min() else img
-                        st.image(img_display, caption=f"FN #{idx}", use_column_width=True)
-                    st.caption(f"Confiance: {y_pred_proba[idx]:.3f}")
+                        st.image(img_display, caption=f"FN #{idx}", width='stretch')
+                    st.caption(f"Confiance: {y_pred_proba[idx]:.3f}" if y_pred_proba[idx] is not None else "Confiance: N/A")
 
 
 # TAB 3: MODÈLE VS RÉALITÉ
 with tabs[2]:
     st.markdown("### 🎯 Visualisation Modèle vs Réalité")
-    st.markdown("""
+    
+    # Récupération des noms de classes depuis les résultats
+    class_names = prediction_results.get("class_names", ["Normal", "Anomalie"])
+    is_multiclass = prediction_results.get("is_multiclass", False)
+    
+    st.markdown(f"""
     <div style="background: #f0f9ff; padding: 1rem; border-radius: 8px; margin-bottom: 1rem;">
         <p style="margin: 0; color: #0369a1;">
             <strong>🔍 Cette section compare ce que le modèle voit avec la réalité:</strong><br>
-            • <strong>Prédiction du modèle:</strong> Ce que le modèle a détecté<br>
-            • <strong>Label réel:</strong> La vérité terrain<br>
-            • <strong>Heatmaps:</strong> Où le modèle localise les anomalies<br>
-            • <strong>Type d'erreur:</strong> Classification des types de défauts (si disponible)
+            • <strong>Prédiction du modèle:</strong> {prediction_results.get('y_pred_class_names', ['N/A'])[0] if len(prediction_results.get('y_pred_class_names', [])) > 0 else 'N/A'}<br>
+            • <strong>Label réel:</strong> {"Disponible" if y_test is not None else "Non disponible"}<br>
+            • <strong>Heatmaps:</strong> {"✅ Disponibles" if prediction_results.get("heatmaps") is not None else "❌ Non disponibles"}<br>
+            • <strong>Mode:</strong> {"🔀 Multiclasse" if is_multiclass else "⚪ Binaire"}<br>
+            • <strong>Classes:</strong> {', '.join(class_names) if class_names else 'Non spécifié'}
         </p>
     </div>
     """, unsafe_allow_html=True)
@@ -777,18 +864,36 @@ with tabs[2]:
     st.markdown("---")
     st.markdown("#### 🖼️ Échantillons Détaillés")
     
-    # Créer des catégories d'échantillons
-    tp_indices = error_analysis["true_positives"]
-    tn_indices = error_analysis["true_negatives"]
-    fp_indices = error_analysis["false_positives"]
-    fn_indices = error_analysis["false_negatives"]
+    # Créer des catégories d'échantillons (si y_test disponible)
+    if y_test is not None:
+        tp_indices = error_analysis["true_positives"]
+        tn_indices = error_analysis["true_negatives"]
+        fp_indices = error_analysis["false_positives"]
+        fn_indices = error_analysis["false_negatives"]
+        
+        # Noms de classes réels si disponibles
+        y_test_class_names = None
+        if class_names is not None and y_test is not None:
+            # S'assurer que les indices sont dans les limites
+            valid_indices = [i for i in y_test if i < len(class_names)]
+            if len(valid_indices) == len(y_test):
+                y_test_class_names = [class_names[i] for i in y_test]
+        
+        sample_categories = {
+            "✅ Prédictions Correctes (Positives)": tp_indices,
+            "✅ Prédictions Correctes (Négatives)": tn_indices,
+            "❌ Faux Positifs": fp_indices,
+            "⚠️ Faux Négatifs": fn_indices
+        }
+    else:
+        # Mode non supervisé: afficher toutes les prédictions
+        all_indices = list(range(min(n_samples_viz * 2, len(X_test))))
+        sample_categories = {
+            "📊 Toutes les Prédictions": all_indices
+        }
     
-    sample_categories = {
-        "✅ Vrais Positifs (Anomalies détectées correctement)": tp_indices,
-        "✅ Vrais Négatifs (Normales détectées correctement)": tn_indices,
-        "❌ Faux Positifs (Normales classées comme anomalies)": fp_indices,
-        "⚠️ Faux Négatifs (Anomalies manquées)": fn_indices
-    }
+    # Récupération des noms de classes prédits
+    y_pred_class_names = prediction_results.get("y_pred_class_names", [])
     
     for category_name, indices in sample_categories.items():
         if len(indices) == 0:
@@ -830,25 +935,48 @@ with tabs[2]:
                 if img_display.shape[-1] == 1:
                     img_display = np.repeat(img_display, 3, axis=-1)
                 
-                st.image(img_display, use_container_width=True)
+                st.image(img_display, width='stretch')
                 
                 # Informations labels
-                label_real = y_test[idx] if y_test is not None else None
-                pred_real = y_pred_binary[idx]
-                proba = y_pred_proba[idx]
+                if y_test is not None:
+                    label_real = y_test[idx] if idx < len(y_test) else None
+                    if y_test_class_names and idx < len(y_test_class_names):
+                        label_real_name = y_test_class_names[idx]
+                    else:
+                        label_real_name = f"Classe {label_real}" if label_real is not None else "Inconnu"
+                else:
+                    label_real = None
+                    label_real_name = "Non disponible"
+                
+                pred_real = y_pred_binary[idx] if idx < len(y_pred_binary) else None
+                proba = y_pred_proba[idx] if idx < len(y_pred_proba) else None
+                
+                if idx < len(y_pred_class_names):
+                    pred_name = y_pred_class_names[idx]
+                else:
+                    pred_name = f"Classe {pred_real}" if pred_real is not None else "Inconnu"
+                
+                # Déterminer la couleur selon si la prédiction est correcte
+                if y_test is not None and label_real is not None and pred_real is not None:
+                    is_correct = (label_real == pred_real) if not is_multiclass else (label_real == pred_real)
+                    status_color = "#10b981" if is_correct else "#ef4444"
+                    status_icon = "✅" if is_correct else "❌"
+                else:
+                    status_color = "#6b7280"
+                    status_icon = "🔍"
                 
                 st.markdown(f"""
                 <div style="background: #f9fafb; padding: 0.75rem; border-radius: 6px; margin-top: 0.5rem;">
                     <div style="font-size: 0.9rem;">
+                        <strong>{status_icon} Statut:</strong> 
+                        <span style="color: {status_color}; font-weight: 700;">
+                            {"Correct" if y_test is not None and label_real is not None and pred_real is not None and label_real == pred_real else "Vérification requise"}
+                        </span><br>
                         <strong>Label réel:</strong> 
-                        <span style="color: {'#10b981' if label_real == 0 else '#ef4444'}; font-weight: 700;">
-                            {'✅ Normal' if label_real == 0 else '❌ Anomalie'}
-                        </span><br>
+                        <span style="color: #3b82f6; font-weight: 700;">{label_real_name}</span><br>
                         <strong>Prédiction modèle:</strong> 
-                        <span style="color: {'#10b981' if pred_real == 0 else '#ef4444'}; font-weight: 700;">
-                            {'✅ Normal' if pred_real == 0 else '❌ Anomalie'}
-                        </span><br>
-                        <strong>Confiance:</strong> {proba:.3f}
+                        <span style="color: #ef4444; font-weight: 700;">{pred_name}</span><br>
+                        <strong>Confiance:</strong> {f"{proba:.3f}" if proba is not None else "N/A"}
                     </div>
                 </div>
                 """, unsafe_allow_html=True)
@@ -873,6 +1001,7 @@ with tabs[2]:
                                 )
                                 
                                 # Utilisation de la fonction centralisée
+                                from src.evaluation.localization_utils import resize_error_map
                                 heatmap = resize_error_map(
                                     heatmap,
                                     target_size=(img_h, img_w),
@@ -901,25 +1030,31 @@ with tabs[2]:
                                 colorbar=dict(title="Score anomalie")
                             ))
                             
+                            # Titre avec information de classe
+                            title_text = f"Index {idx}"
+                            if idx < len(y_pred_class_names):
+                                title_text += f" | {y_pred_class_names[idx]}"
+                            
                             fig_heatmap.update_layout(
-                                title=f"Localisation Anomalie (Index {idx})",
+                                title=title_text,
                                 xaxis=dict(visible=False),
                                 yaxis=dict(visible=False),
                                 height=400,
                                 margin=dict(l=0, r=0, t=40, b=0)
                             )
                             
-                            st.plotly_chart(fig_heatmap, use_container_width=True)
+                            st.plotly_chart(fig_heatmap, width='stretch')
                             
                             # Informations heatmap
-                            max_error = float(error_map.max())
-                            mean_error = float(error_map.mean())
+                            max_error = float(error_map.max()) if error_map is not None else 0
+                            mean_error = float(error_map.mean()) if error_map is not None else 0
                             
                             st.markdown(f"""
                             <div style="background: #f9fafb; padding: 0.75rem; border-radius: 6px; margin-top: 0.5rem;">
                                 <div style="font-size: 0.9rem;">
                                     <strong>Erreur max:</strong> {max_error:.4f}<br>
-                                    <strong>Erreur moyenne:</strong> {mean_error:.4f}
+                                    <strong>Erreur moyenne:</strong> {mean_error:.4f}<br>
+                                    <strong>Type d'anomalie:</strong> {pred_name}
                                 </div>
                             </div>
                             """, unsafe_allow_html=True)
@@ -930,6 +1065,7 @@ with tabs[2]:
                                 
                                 # Resize mask avec fonction centralisée
                                 if binary_mask.shape != (img_h, img_w):
+                                    from src.evaluation.localization_utils import resize_error_map
                                     binary_mask = resize_error_map(
                                         binary_mask,
                                         target_size=(img_h, img_w),
@@ -939,7 +1075,7 @@ with tabs[2]:
                                 # Afficher le mask binaire
                                 st.markdown("**🎯 Masque Binaire (Région détectée)**")
                                 mask_for_display = (binary_mask * 255).astype(np.uint8)
-                                st.image(mask_for_display, use_container_width=True, clamp=True)
+                                st.image(mask_for_display, width='stretch', clamp=True)
                                 
                         else:
                             st.warning("Format de heatmap non supporté")
@@ -949,32 +1085,67 @@ with tabs[2]:
                         st.warning(f"Impossible de générer heatmap: {str(e)}")
                 else:
                     st.info("Heatmap non disponible pour cet échantillon")
-
+            
             st.markdown("---")
     
-    # Résumé statistique
-    st.markdown("---")
-    st.markdown("#### 📊 Résumé Statistique")
-    
-    col_stat1, col_stat2, col_stat3, col_stat4 = st.columns(4)
-    
-    n_total = len(y_test) if y_test is not None else len(X_test)
-    
-    with col_stat1:
-        st.metric("Vrais Positifs", len(tp_indices), 
-                 f"{len(tp_indices)/max(n_total, 1)*100:.1f}%")
-    
-    with col_stat2:
-        st.metric("Vrais Négatifs", len(tn_indices),
-                 f"{len(tn_indices)/max(n_total, 1)*100:.1f}%")
-    
-    with col_stat3:
-        st.metric("Faux Positifs", len(fp_indices),
-                 f"{len(fp_indices)/max(n_total, 1)*100:.1f}%")
-    
-    with col_stat4:
-        st.metric("Faux Négatifs", len(fn_indices),
-                 f"{len(fn_indices)/max(n_total, 1)*100:.1f}%")
+    # Résumé statistique (si y_test disponible)
+    if y_test is not None:
+        st.markdown("---")
+        st.markdown("#### 📊 Résumé Statistique")
+        
+        col_stat1, col_stat2, col_stat3, col_stat4 = st.columns(4)
+        
+        n_total = len(y_test)
+        
+        with col_stat1:
+            st.metric("Vrais Positifs", len(tp_indices), 
+                     f"{len(tp_indices)/max(n_total, 1)*100:.1f}%")
+        
+        with col_stat2:
+            st.metric("Vrais Négatifs", len(tn_indices),
+                     f"{len(tn_indices)/max(n_total, 1)*100:.1f}%")
+        
+        with col_stat3:
+            st.metric("Faux Positifs", len(fp_indices),
+                     f"{len(fp_indices)/max(n_total, 1)*100:.1f}%")
+        
+        with col_stat4:
+            st.metric("Faux Négatifs", len(fn_indices),
+                     f"{len(fn_indices)/max(n_total, 1)*100:.1f}%")
+        
+        # Matrice de confusion détaillée pour multiclasse
+        if is_multiclass and class_names:
+            st.markdown("---")
+            st.markdown("#### 🎯 Matrice de Confusion Détail par Classe")
+            
+            from sklearn.metrics import confusion_matrix
+            
+            try:
+                cm = confusion_matrix(y_test, y_pred_binary)
+                
+                # Créer une figure avec les noms de classes
+                fig_cm_detailed = go.Figure(data=go.Heatmap(
+                    z=cm,
+                    x=class_names,
+                    y=class_names,
+                    colorscale='Blues',
+                    text=cm,
+                    texttemplate='%{text}',
+                    textfont={"size": 12},
+                    showscale=True
+                ))
+                
+                fig_cm_detailed.update_layout(
+                    title="Matrice de Confusion Détail par Classe",
+                    xaxis_title="Prédiction",
+                    yaxis_title="Réalité",
+                    height=500
+                )
+                
+                st.plotly_chart(fig_cm_detailed, width='stretch')
+                
+            except Exception as e:
+                st.warning(f"Impossible d'afficher la matrice de confusion détaillée: {e}")
 
 
 # TAB 4: RECOMMANDATIONS
@@ -1060,34 +1231,84 @@ with tabs[4]:
     
     col_viz1, col_viz2 = st.columns(2)
     
+    # Dans TAB 5: VISUALISATIONS, modifier la section ROC pour multiclasse
     with col_viz1:
         # Courbe ROC (uniquement si y_test présent)
         if y_test is not None:
-            try:
-                fpr, tpr, _ = roc_curve(y_test, y_pred_proba)
-            
-                fig_roc = go.Figure()
-                fig_roc.add_trace(go.Scatter(
-                    x=fpr, y=tpr,
-                    mode='lines',
-                    name=f'ROC (AUC={metrics.get("auc_roc", 0):.3f})',
-                    line=dict(color='#6366f1', width=3)
-                ))
-                fig_roc.add_trace(go.Scatter(
-                    x=[0, 1], y=[0, 1],
-                    mode='lines',
-                    name='Aléatoire',
-                    line=dict(color='gray', dash='dash')
-                ))
+            try:              
+                n_classes = len(np.unique(y_test))
                 
-                fig_roc.update_layout(
-                    title="Courbe ROC",
-                    xaxis_title="Taux Faux Positifs",
-                    yaxis_title="Taux Vrais Positifs",
-                    height=400
-                )
+                if n_classes == 2:
+                    # Binaire
+                    fpr, tpr, _ = roc_curve(y_test, y_pred_proba)
+                    roc_auc = auc(fpr, tpr)
+                    
+                    fig_roc = go.Figure()
+                    fig_roc.add_trace(go.Scatter(
+                        x=fpr, y=tpr,
+                        mode='lines',
+                        name=f'ROC (AUC={roc_auc:.3f})',
+                        line=dict(color='#6366f1', width=3)
+                    ))
+                    fig_roc.add_trace(go.Scatter(
+                        x=[0, 1], y=[0, 1],
+                        mode='lines',
+                        name='Aléatoire',
+                        line=dict(color='gray', dash='dash')
+                    ))
+                    
+                    fig_roc.update_layout(
+                        title="Courbe ROC (Binaire)",
+                        xaxis_title="Taux Faux Positifs",
+                        yaxis_title="Taux Vrais Positifs",
+                        height=400
+                    )
+                    
+                else:
+                    # Multiclasse: courbes ROC one-vs-rest
+                    # Binariser les labels
+                    y_test_bin = label_binarize(y_test, classes=range(n_classes))
+                    
+                    # Récupérer les probabilités par classe
+                    y_proba = prediction_results.get("class_probabilities")
+                    
+                    if y_proba is not None and y_proba.shape[1] == n_classes:
+                        # Calculer ROC pour chaque classe
+                        fig_roc = go.Figure()
+                        
+                        for i in range(n_classes):
+                            fpr, tpr, _ = roc_curve(y_test_bin[:, i], y_proba[:, i])
+                            roc_auc = auc(fpr, tpr)
+                            
+                            class_name = class_names[i] if i < len(class_names) else f"Classe {i}"
+                            
+                            fig_roc.add_trace(go.Scatter(
+                                x=fpr, y=tpr,
+                                mode='lines',
+                                name=f'{class_name} (AUC={roc_auc:.3f})',
+                                line=dict(width=2)
+                            ))
+                        
+                        fig_roc.add_trace(go.Scatter(
+                            x=[0, 1], y=[0, 1],
+                            mode='lines',
+                            name='Aléatoire',
+                            line=dict(color='gray', dash='dash')
+                        ))
+                        
+                        fig_roc.update_layout(
+                            title="Courbes ROC Multiclasse (One-vs-Rest)",
+                            xaxis_title="Taux Faux Positifs",
+                            yaxis_title="Taux Vrais Positifs",
+                            height=400
+                        )
+                    else:
+                        st.warning("Probabilités par classe non disponibles pour multiclasse")
+                        fig_roc = go.Figure()
                 
-                st.plotly_chart(fig_roc, use_container_width=True)
+                if fig_roc.data:
+                    st.plotly_chart(fig_roc, width='stretch')
+                    
             except Exception as e:
                 st.warning(f"Impossible de générer courbe ROC: {e}")
         else:
@@ -1115,7 +1336,7 @@ with tabs[4]:
                     height=400
                 )
                 
-                st.plotly_chart(fig_pr, use_container_width=True)
+                st.plotly_chart(fig_pr, width='stretch')
             except Exception as e:
                 st.warning(f"Impossible de générer courbe PR: {e}")
         else:
@@ -1169,7 +1390,7 @@ with tabs[4]:
         height=400
     )
     
-    st.plotly_chart(fig_hist, use_container_width=True)
+    st.plotly_chart(fig_hist, width='stretch')
 
 
 # TAB 6: MLFLOW
@@ -1418,7 +1639,7 @@ with tabs[5]:
                     col_action1, col_action2, col_action3 = st.columns(3)
                     
                     with col_action1:
-                        if st.button("📖 Voir Détails Complets", key=f"details_{run_id}", use_container_width=True):
+                        if st.button("📖 Voir Détails Complets", key=f"details_{run_id}", width='stretch'):
                             st.json({
                                 "run_id": run_id,
                                 "model_name": model_name,
@@ -1457,7 +1678,7 @@ with tabs[5]:
                             f"mlflow_run_{run_id[:8]}_{datetime.now().strftime('%Y%m%d')}.json",
                             "application/json",
                             key=f"export_{run_id}",
-                            use_container_width=True
+                            width='stretch'
                         )
         else:
             st.warning("⚠️ Aucun run ne correspond aux filtres sélectionnés")
@@ -1490,7 +1711,7 @@ with tabs[6]:
     }
     
     summary_df = pd.DataFrame(summary_data)
-    st.dataframe(summary_df, use_container_width=True)
+    st.dataframe(summary_df, width='stretch')
     
     # Export
     st.markdown("---")
@@ -1499,7 +1720,7 @@ with tabs[6]:
     col_export1, col_export2, col_export3 = st.columns(3)
     
     with col_export1:
-        if st.button("📥 JSON", use_container_width=True):
+        if st.button("📥 JSON", width='stretch'):
             report_data = {
                 "timestamp": datetime.now().isoformat(),
                 "model_type": model_type,
@@ -1517,22 +1738,22 @@ with tabs[6]:
                 json_str,
                 "evaluation_report.json",
                 "application/json",
-                use_container_width=True
+                width='stretch'
             )
     
     with col_export2:
-        if st.button("📥 CSV", use_container_width=True):
+        if st.button("📥 CSV", width='stretch'):
             csv_data = summary_df.to_csv(index=False)
             st.download_button(
                 "⬇️ Télécharger CSV",
                 csv_data,
                 "evaluation_metrics.csv",
                 "text/csv",
-                use_container_width=True
+                width='stretch'
             )
     
     with col_export3:
-        if st.button("📥 Markdown", use_container_width=True):
+        if st.button("📥 Markdown", width='stretch'):
             md_content = f"""# Rapport d'Évaluation
             
 ## Résumé
@@ -1553,9 +1774,404 @@ with tabs[6]:
                 md_content,
                 "evaluation_report.md",
                 "text/markdown",
-                use_container_width=True
+                width='stretch'
             )
 
+# ============================================================================
+# TAB 7: GRAD-CAM (index 7 car c'est le 8ème onglet)
+# ============================================================================
+with tabs[7]:
+    st.markdown("### 🔥 Grad-CAM - Visualisation des Zones d'Attention")
+    
+    # Vérifier compatibilité
+    model_type_lower = model_type.lower()
+    compatible_models = [
+        'transfer_learning', 'resnet', 'vgg', 'efficientnet',
+        'mobilenet', 'densenet', 'simple_cnn', 'custom_resnet', 'cnn'
+    ]
+    
+    is_compatible = any(model in model_type_lower for model in compatible_models)
+    
+    if not is_compatible:
+        st.info(f"""
+        ℹ️ **Grad-CAM non disponible pour ce type de modèle**
+        
+        **Modèle actuel:** {model_type}
+        
+        Grad-CAM nécessite un modèle convolutionnel (CNN).
+        
+        **Modèles compatibles:**
+        - Transfer Learning (ResNet, VGG, EfficientNet, MobileNet, DenseNet)
+        - CNNs custom
+        - Classification multiclasse/binaire avec CNN
+        
+        **Pour utiliser Grad-CAM:**
+        1. Entraînez un modèle CNN
+        2. Revenez sur cette page
+        """)
+        
+        # Afficher quand même l'interface mais désactivée
+        st.markdown("---")
+        st.warning("⚠️ Interface Grad-CAM désactivée (modèle non compatible)")
+        
+        # Afficher un aperçu de ce que Grad-CAM fait
+        with st.expander("👀 Aperçu de ce que Grad-CAM ferait avec un modèle compatible"):
+            st.markdown("""
+            ### 🔬 Visualisation des zones d'attention
+            
+            Avec un modèle compatible, vous verriez:
+            
+            **🎨 Modes disponibles:**
+            - **Overlay**: Heatmap superposée à l'image
+            - **Side-by-side**: Image | Heatmap | Overlay
+            - **Heatmap**: Carte de chaleur seule
+            
+            **🖼️ Sélection d'images:**
+            - Aléatoire
+            - Premières N
+            - Erreurs uniquement (mal classées)
+            - Indices spécifiques
+            
+            **📊 Fonctionnalités:**
+            - Export PNG/NPZ
+            - Statistiques détaillées
+            - Visualisation batch
+            """)
+        
+        st.stop()
+    
+    # ====================================================================
+    # VOTRE CODE GRAD-CAM COMPLET ICI
+    # ====================================================================
+    
+    st.markdown("""
+    <div class="info-box">
+    <strong>🔬 Qu'est-ce que Grad-CAM ?</strong><br>
+    Grad-CAM (Gradient-weighted Class Activation Mapping) visualise les régions 
+    de l'image qui ont le plus influencé la prédiction du modèle.
+    
+    - 🔴 **Rouge/Jaune**: Régions importantes (forte activation)
+    - 🔵 **Bleu/Violet**: Régions peu importantes (faible activation)
+    </div>
+    """, unsafe_allow_html=True)
+    
+    st.markdown("---")
+    
+    # ====================================================================
+    # CONFIGURATION
+    # ====================================================================
+    st.markdown("#### ⚙️ Configuration")
+    
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        # Mode de visualisation
+        mode = st.selectbox(
+            "🎨 Mode de visualisation",
+            options=["overlay", "side_by_side", "heatmap"],
+            index=0,
+            help=(
+                "**overlay**: Superposition heatmap sur image\n\n"
+                "**side_by_side**: Image | Heatmap | Overlay\n\n"
+                "**heatmap**: Heatmap seule"
+            )
+        )
+    
+    with col2:
+        # Transparence
+        alpha = st.slider(
+            "🎚️ Transparence heatmap",
+            min_value=0.0,
+            max_value=1.0,
+            value=0.5,
+            step=0.1,
+            help="0 = image visible, 1 = heatmap visible"
+        )
+    
+    with col3:
+        # Nombre d'images
+        n_samples = st.number_input(
+            "📊 Nombre d'images",
+            min_value=1,
+            max_value=min(20, len(X_test)),
+            value=min(6, len(X_test)),
+            step=1
+        )
+    
+    # ====================================================================
+    # SÉLECTION D'IMAGES
+    # ====================================================================
+    st.markdown("---")
+    st.markdown("#### 🖼️ Sélection des images")
+    
+    col1, col2 = st.columns([2, 3])
+    
+    with col1:
+        selection_mode = st.radio(
+            "Mode de sélection",
+            options=["Aléatoire", "Premières N", "Erreurs uniquement", "Indices spécifiques"],
+            index=0,
+            help=(
+                "**Aléatoire**: Échantillon aléatoire\n\n"
+                "**Premières N**: Premières images du dataset\n\n"
+                "**Erreurs uniquement**: Images mal classées\n\n"
+                "**Indices spécifiques**: Choisir manuellement"
+            )
+        )
+    
+    with col2:
+        if selection_mode == "Indices spécifiques":
+            indices_str = st.text_input(
+                "Indices (séparés par des virgules)",
+                value="0,1,2,3,4,5",
+                help="Ex: 0,5,10,15,20"
+            )
+    
+    # ====================================================================
+    # GÉNÉRATION
+    # ====================================================================
+    st.markdown("---")
+    
+    if st.button("🔥 Générer Grad-CAM", type="primary", use_container_width=True):
+        with st.spinner("⏳ Génération des visualisations Grad-CAM..."):
+            try:
+                # Sélection des indices
+                if selection_mode == "Aléatoire":
+                    indices = np.random.choice(len(X_test), size=n_samples, replace=False)
+                
+                elif selection_mode == "Premières N":
+                    indices = np.arange(n_samples)
+                
+                elif selection_mode == "Erreurs uniquement":
+                    # Utiliser prediction_results au lieu de pred_result
+                    if prediction_results and prediction_results.get('y_pred_binary') is not None and y_test is not None:
+                        y_pred = prediction_results['y_pred_binary']
+                        error_indices = np.where(y_pred != y_test)[0]
+                        
+                        if len(error_indices) == 0:
+                            st.warning("⚠️ Aucune erreur de prédiction trouvée! Toutes les prédictions sont correctes.")
+                            st.stop()
+                        
+                        indices = error_indices[:n_samples]
+                        st.info(f"ℹ️ {len(error_indices)} erreurs trouvées, affichage de {len(indices)}")
+                    else:
+                        st.error("❌ Prédictions non disponibles pour filtrer les erreurs")
+                        st.stop()
+                
+                elif selection_mode == "Indices spécifiques":
+                    try:
+                        indices = [int(i.strip()) for i in indices_str.split(",")]
+                        indices = [i for i in indices if 0 <= i < len(X_test)]
+                        
+                        if len(indices) == 0:
+                            st.error("❌ Aucun indice valide trouvé")
+                            st.stop()
+                    except ValueError:
+                        st.error("❌ Format d'indices invalide. Utilisez des nombres séparés par des virgules.")
+                        st.stop()
+                
+                # Extraction des données
+                X_selected = X_test[indices]
+                y_selected = y_test[indices] if y_test is not None else None
+                
+                pred_selected = None
+                if prediction_results and prediction_results.get('y_pred_binary') is not None:
+                    pred_selected = prediction_results['y_pred_binary'][indices]
+                
+                # Récupération noms de classes
+                class_names = None
+                if prediction_results and prediction_results.get('class_names'):
+                    class_names = prediction_results['class_names']
+                elif hasattr(STATE, 'training_results') and STATE.training_results:
+                    if isinstance(STATE.training_results, dict):
+                        class_names = STATE.training_results.get('class_names')
+                
+                # Vérifier que STATE.trained_model existe
+                if not hasattr(STATE, 'trained_model') or STATE.trained_model is None:
+                    STATE.trained_model = model
+                
+                # Import Grad-CAM
+                from src.evaluation.grad_cam import generate_gradcam_visualization
+                
+                # Génération Grad-CAM
+                result = generate_gradcam_visualization(
+                    model=STATE.trained_model,
+                    images=X_selected,
+                    predictions=pred_selected,
+                    ground_truths=y_selected,
+                    class_names=class_names,
+                    target_layer=None,  # Auto-détection
+                    mode=mode,
+                    alpha=alpha,
+                    use_cuda=torch.cuda.is_available()
+                )
+                
+                if result['success']:
+                    st.success(f"✅ {len(indices)} visualisations Grad-CAM générées avec succès!")
+                    
+                    # Affichage de la figure
+                    st.pyplot(result['figure'])
+                    
+                    # Métriques de l'échantillon
+                    st.markdown("---")
+                    st.markdown("#### 📊 Statistiques de l'échantillon")
+                    
+                    col1, col2, col3, col4 = st.columns(4)
+                    
+                    with col1:
+                        st.metric("Images visualisées", len(indices))
+                    
+                    with col2:
+                        if pred_selected is not None and y_selected is not None:
+                            accuracy = (pred_selected == y_selected).mean()
+                            st.metric("Accuracy", f"{accuracy:.2%}")
+                    
+                    with col3:
+                        if pred_selected is not None and y_selected is not None:
+                            errors = (pred_selected != y_selected).sum()
+                            st.metric("Erreurs", errors)
+                    
+                    with col4:
+                        if pred_selected is not None and y_selected is not None:
+                            correct = (pred_selected == y_selected).sum()
+                            st.metric("Correctes", correct)
+                    
+                    # Distribution des prédictions
+                    if pred_selected is not None and class_names:
+                        st.markdown("---")
+                        st.markdown("#### 📈 Distribution des Prédictions")
+                        
+                        import matplotlib.pyplot as plt
+                        import pandas as pd
+                        
+                        pred_counts = pd.Series(pred_selected).value_counts().sort_index()
+                        pred_df = pd.DataFrame({
+                            'Classe': [class_names[i] if i < len(class_names) else f"Classe_{i}" for i in pred_counts.index],
+                            'Nombre': pred_counts.values
+                        })
+                        
+                        col1, col2 = st.columns(2)
+                        
+                        with col1:
+                            st.dataframe(pred_df, use_container_width=True)
+                        
+                        with col2:
+                            fig_dist = plt.figure(figsize=(8, 6))
+                            plt.bar(pred_df['Classe'], pred_df['Nombre'], color='steelblue', alpha=0.7)
+                            plt.xlabel('Classe Prédite')
+                            plt.ylabel('Nombre d\'images')
+                            plt.title('Distribution des Prédictions')
+                            plt.xticks(rotation=45, ha='right')
+                            plt.tight_layout()
+                            st.pyplot(fig_dist)
+                    
+                    # Export
+                    st.markdown("---")
+                    st.markdown("#### 💾 Export des Visualisations")
+                    
+                    col1, col2 = st.columns(2)
+                    
+                    with col1:
+                        # Export PNG
+                        import io
+                        buf = io.BytesIO()
+                        result['figure'].savefig(buf, format='png', dpi=150, bbox_inches='tight')
+                        buf.seek(0)
+                        
+                        st.download_button(
+                            label="📥 Télécharger Figure (PNG)",
+                            data=buf,
+                            file_name=f"gradcam_{mode}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png",
+                            mime="image/png",
+                            use_container_width=True
+                        )
+                    
+                    with col2:
+                        # Export NPZ (données brutes)
+                        buf_npz = io.BytesIO()
+                        np.savez_compressed(
+                            buf_npz,
+                            cams=np.array(result['cams']),
+                            indices=indices,
+                            predictions=pred_selected,
+                            ground_truths=y_selected
+                        )
+                        buf_npz.seek(0)
+                        
+                        st.download_button(
+                            label="📥 Télécharger Données (NPZ)",
+                            data=buf_npz,
+                            file_name=f"gradcam_data_{datetime.now().strftime('%Y%m%d_%H%M%S')}.npz",
+                            mime="application/x-npz",
+                            use_container_width=True
+                        )
+                    
+                    # Stockage dans STATE
+                    STATE.gradcam_results = result
+                    STATE.gradcam_indices = indices
+                    
+                else:
+                    st.error(f"❌ Erreur génération Grad-CAM: {result.get('error', 'Inconnue')}")
+                    st.info("💡 Vérifiez que le modèle est compatible et que les données sont correctement chargées.")
+            
+            except Exception as e:
+                st.error(f"❌ Erreur inattendue: {e}")
+                logger.error(f"Erreur Grad-CAM UI: {e}", exc_info=True)
+                
+                with st.expander("🔍 Détails de l'erreur (debug)"):
+                    st.code(f"{type(e).__name__}: {str(e)}")
+                    import traceback
+                    st.code(traceback.format_exc())
+    
+    # ====================================================================
+    # AIDE
+    # ====================================================================
+    st.markdown("---")
+    
+    with st.expander("ℹ️ À propos de Grad-CAM"):
+        st.markdown("""
+        ### 🔬 Comment ça marche ?
+        
+        1. **Forward Pass**: L'image passe dans le modèle
+        2. **Backward Pass**: Calcul des gradients par rapport à la classe prédite
+        3. **Pondération**: Les activations sont pondérées par les gradients
+        4. **Visualisation**: Génération d'une heatmap montrant les zones importantes
+        
+        ### 📊 Interprétation
+        
+        - **Rouge/Jaune**: Le modèle se concentre fortement sur ces zones
+        - **Vert**: Zones d'importance moyenne
+        - **Bleu/Violet**: Zones ignorées par le modèle
+        
+        ### ✅ Utilisations
+        
+        - **Debugging**: Comprendre pourquoi le modèle se trompe
+        - **Validation**: Vérifier que le modèle regarde les bonnes zones
+        - **Interprétabilité**: Expliquer les prédictions aux non-experts
+        - **Amélioration**: Identifier les biais du modèle
+        
+        ### 📚 Références
+        
+        - [Grad-CAM Paper (2017)](https://arxiv.org/abs/1610.02391)
+        - [Grad-CAM++ (2018)](https://arxiv.org/abs/1710.11063)
+        - [Interpretable ML Book](https://christophm.github.io/interpretable-ml-book/)
+        
+        ### ⚠️ Limitations
+        
+        - Fonctionne uniquement avec des CNNs (modèles convolutionnels)
+        - Ne montre pas toujours toutes les zones importantes
+        - Peut être trompeur pour des modèles mal entraînés
+        - La résolution de la heatmap dépend de la couche convolutionnelle
+        
+        ### 💡 Conseils
+        
+        - Comparez plusieurs images pour identifier des patterns
+        - Vérifiez si les zones importantes correspondent à l'intuition humaine
+        - Utilisez mode "Erreurs uniquement" pour comprendre les échecs
+        - Exportez les visualisations pour documentation/présentation
+        """)
+    
+    
 
 # ============================================================================
 # FOOTER & NAVIGATION
@@ -1566,19 +2182,19 @@ st.markdown("---")
 col_nav1, col_nav2, col_nav3, col_nav4 = st.columns(4)
 
 with col_nav1:
-    if st.button("🏠 Dashboard", use_container_width=True):
+    if st.button("🏠 Dashboard", width='stretch'):
         st.switch_page("pages/1_dashboard.py")
 
 with col_nav2:
-    if st.button("🔙 Entraînement", use_container_width=True):
+    if st.button("🔙 Entraînement", width='stretch'):
         st.switch_page("pages/4_training_computer.py")
 
 with col_nav3:
-    if st.button("🔄 Nouvelle Évaluation", use_container_width=True):
+    if st.button("🔄 Nouvelle Évaluation", width='stretch'):
         st.rerun()
 
 with col_nav4:
-    if st.button("💾 Sauvegarder Session", type="primary", use_container_width=True):
+    if st.button("💾 Sauvegarder Session", type="primary", width='stretch'):
         try:
             session_data = {
                 "metrics": metrics,

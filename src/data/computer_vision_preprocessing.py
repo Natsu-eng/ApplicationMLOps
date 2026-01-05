@@ -8,7 +8,7 @@ from sys import platform
 import numpy as np
 from PIL import Image
 import albumentations as A
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, Any, List, Literal, Optional, Tuple
 
 import torch
 from torch.utils.data import DataLoader, TensorDataset
@@ -87,436 +87,96 @@ def generate_preview(original: np.ndarray, config: Dict[str, Any]) -> list:
 # ===================================
 
 logger = get_logger(__name__)
+
 class DataPreprocessor:
     """
-    Pipeline de preprocessing production-ready avec gestion automatique des formats.
+    Preprocessor unifié avec support complet normalize/standardize/imagenet.
     
-    Features:
-    - Détection automatique du format (channels_first/last)
-    - Conversion transparente vers format PyTorch
-    - Gestion des edge cases
-    - Serialisation pour MLOps
-    - Logging complet
+    PRINCIPE CLÉ:
+    - strategy="normalize" : [0,255] → [0,1]
+    - strategy="standardize" : [0,255] → z-score (propres stats)
+    - strategy="imagenet" : [0,255] → [0,1] (ImageNet norm DANS le modèle)
+    
+    RÈGLE D'OR:
+    - Transfer Learning → strategy="imagenet" (pas de norm ici, sera dans forward())
+    - Autoencoders → strategy="normalize" (FORCÉ)
+    - CNN Custom → strategy="standardize" OU "normalize"
     """
     
     def __init__(
         self,
-        strategy: str = "standardize",
+        strategy: Literal["normalize", "standardize", "imagenet"] = "normalize",
         auto_detect_format: bool = True,
-        target_size: Optional[Tuple[int, int]] = None 
+        target_size: Optional[Tuple[int, int]] = None
     ):
         """
         Args:
             strategy: Stratégie de normalisation
-            auto_detect_format: Détection automatique du format
-            target_size: Taille cible (H, W) pour resize. Si None, pas de resize.
+                - "normalize": [0,1] simple
+                - "standardize": z-score avec stats propres
+                - "imagenet": [0,1] + flag pour ImageNet norm dans modèle
+            target_size: Taille cible pour resize
         """
+        # Validation strategy
+        valid_strategies = ["normalize", "standardize", "imagenet"]
+        if strategy not in valid_strategies:
+            raise ValueError(
+                f"strategy '{strategy}' invalide. "
+                f"Valeurs acceptées: {valid_strategies}"
+            )
+        
         self.strategy = strategy
         self.auto_detect_format = auto_detect_format
-        self.target_size = target_size  # 🆕 NOUVEAU
+        self.target_size = target_size
         
         # État après fit
         self.fitted = False
         self.mean_ = None
         self.std_ = None
+        self.min_ = None
+        self.max_ = None
         self.data_format_ = None
         self.original_shape_ = None
-        self.resized_ = False 
+        self.resized_ = False
         
         logger.info(
-            f"Initialisation DataPreprocessor - "
+            f"✅ DataPreprocessor initialisé - "
             f"strategy: {strategy}, "
-            f"auto_detect_format: {auto_detect_format}, "
             f"target_size: {target_size}"
         )
     
-    def _detect_data_format(self, X: np.ndarray) -> str:
-        """
-        Détection robuste du format avec heuristiques améliorées.     
-        Returns:
-            'channels_first' ou 'channels_last'
-        """
-        if X.ndim != 4:
-            return 'channels_last'  # Fallback pour 2D/3D
-        
-        n_samples, dim1, dim2, dim3 = X.shape
-        
-        # Règle 1: Dernière dimension < les deux autres → channels_last
-        if dim3 < dim1 and dim3 < dim2 and dim3 in [1, 3, 4]:
-            # Vérifier que dim1 et dim2 sont proches (hauteur/largeur)
-            if abs(dim1 - dim2) / max(dim1, dim2) < 0.3:  # Ratio H/W < 30%
-                logger.debug(f"✅ channels_last détecté: dim3={dim3} (C)")
-                return 'channels_last'
-        
-        # Règle 2: Première dimension < les deux autres → channels_first
-        if dim1 < dim2 and dim1 < dim3 and dim1 in [1, 3, 4]:
-            # Vérifier que dim2 et dim3 sont proches (hauteur/largeur)
-            if abs(dim2 - dim3) / max(dim2, dim3) < 0.3:  # Ratio H/W < 30%
-                logger.debug(f"✅ channels_first détecté: dim1={dim1} (C)")
-                return 'channels_first'
-        
-        # Règle 3: Heuristique par différence relative
-        ratio_dim1 = min(dim2, dim3) / max(dim2, dim3)
-        ratio_dim3 = min(dim1, dim2) / max(dim1, dim2)
-        
-        if ratio_dim1 > 0.9 and dim1 in [1, 3, 4]:  # dim1 est petit et dim2≈dim3
-            logger.debug(f"✅ channels_first (heuristique): dim1={dim1}, ratio={ratio_dim1:.2f}")
-            return 'channels_first'
-        
-        if ratio_dim3 > 0.9 and dim3 in [1, 3, 4]:  # dim3 est petit et dim1≈dim2
-            logger.debug(f"✅ channels_last (heuristique): dim3={dim3}, ratio={ratio_dim3:.2f}")
-            return 'channels_last'
-        
-        # Règle 4: Fallback basé sur convention commune
-        logger.warning(
-            f"⚠️ Format ambigu: shape={X.shape}. "
-            f"Fallback sur 'channels_last' (convention PIL/OpenCV)"
-        )
-        return 'channels_last'
-    
-    def _ensure_channels_first(self, X: np.ndarray) -> np.ndarray:
-        """Convertit vers le format PyTorch (N, C, H, W) si nécessaire."""
-        if self.data_format_ == 'channels_last' and X.ndim == 4:
-            return np.transpose(X, (0, 3, 1, 2))
-        return X
-    
-    def _ensure_channels_last(self, X: np.ndarray) -> np.ndarray:
-        """Convertit vers le format standard (N, H, W, C) si nécessaire."""
-        if self.data_format_ == 'channels_first' and X.ndim == 4:
-            return np.transpose(X, (0, 2, 3, 1))
-        return X
-    
-    def _calculate_statistics(self, X: np.ndarray):
-        """Calcule les statistiques sur le format approprié."""
-        # Pour le calcul des stats, on utilise channels_last qui est plus standard
-        if self.data_format_ == 'channels_first':
-            X_for_stats = self._ensure_channels_last(X)
-        else:
-            X_for_stats = X
-        
-        if self.strategy == "standardize":
-            if X_for_stats.ndim == 4:
-                # Moyenne/std par canal: axes (N, H, W)
-                axes = (0, 1, 2)
-                self.mean_ = X_for_stats.mean(axis=axes, keepdims=True)
-                self.std_ = X_for_stats.std(axis=axes, keepdims=True) + 1e-8
-            else:
-                self.mean_ = X_for_stats.mean()
-                self.std_ = X_for_stats.std() + 1e-8
-                
-        elif self.strategy == "normalize":
-            self.min_ = X_for_stats.min()
-            self.max_ = X_for_stats.max()
-    
-    def fit(self, X: np.ndarray) -> 'DataPreprocessor':
-        """
-        Calcule les statistiques sur le training set UNIQUEMENT.
-        
-        Args:
-            X: Training data (N, H, W, C) ou (N, C, H, W)
-        """
-        # Validation des données
-        if X.ndim not in [3, 4]:
-            raise ValueError(f"Dimensions invalides: {X.ndim}. Attendu 3D ou 4D.")
-        
-        if np.isnan(X).any() or np.isinf(X).any():
-            raise ValueError("Les données contiennent des valeurs NaN ou Inf.")
-        
-        self.original_shape_ = X.shape
-        
-        # Détection du format
-        if self.auto_detect_format:
-            self.data_format_ = self._detect_data_format(X)
-        else:
-            self.data_format_ = 'channels_last'  # Par défaut
-        
-        # Calcul des statistiques
-        self._calculate_statistics(X)
-        
-        self.fitted = True
-        
-        logger.info(
-            f"Preprocessing fitted - "
-            f"original_shape: {self.original_shape_}, "
-            f"data_format: {self.data_format_}, "
-            f"strategy: {self.strategy}, "
-            f"mean_shape: {getattr(self.mean_, 'shape', None)}, "
-            f"std_shape: {getattr(self.std_, 'shape', None)}"
-        )
-        
-        return self
-    
-    def transform(
-        self,
-        X: np.ndarray,
-        output_format: str = "channels_first"
-    ) -> np.ndarray:
-        """
-        Transform avec EXACTEMENT le même pipeline que fit_transform().
-        
-        Pipeline identique:
-        1. Détection format actuel
-        2. Resize (si activé pendant fit)
-        3. Recalcul format après resize
-        4. Normalisation (utilise stats de fit)
-        5. Conversion vers output_format
-        6. Validation finale
-        
-        Args:
-            X: Images à transformer
-            output_format: Format de sortie
-            
-        Returns:
-            Images transformées avec format GARANTI
-            
-        Raises:
-            ValueError: Si preprocessor non fitted ou conversion échoue
-        """
-        if not self.fitted:
-            raise ValueError(
-                "Preprocessor non fitted. "
-                "Appelez fit() ou fit_transform() d'abord."
-            )
-        
-        if X is None or len(X) == 0:
-            raise ValueError("X est None ou vide")
-        
-        logger.debug(f"🔄 Transform START - input_shape: {X.shape}, output_format: {output_format}")
-        
-        # ========================================================================
-        # ÉTAPE 1 : DÉTECTION FORMAT ACTUEL
-        # ========================================================================
-        current_format = self._detect_data_format(X)
-        logger.debug(f"🔍 Format INITIAL: {current_format} (shape={X.shape})")
-        
-        # ========================================================================
-        # ÉTAPE 2 : RESIZE (SI APPLIQUÉ PENDANT FIT)
-        # ========================================================================
-        if self.target_size is not None:
-            logger.debug(f"🔧 Application resize: {X.shape} → target_size={self.target_size}")
-            X_resized = self._resize_images(X)
-            
-            # ⚠️ RE-DÉTECTER le format après resize
-            format_after_resize = self._detect_data_format(X_resized)
-            
-            if format_after_resize != current_format:
-                logger.debug(
-                    f"⚠️ Format changé après resize: "
-                    f"{current_format} → {format_after_resize}"
-                )
-                current_format = format_after_resize
-            
-            X = X_resized
-            logger.debug(f"✅ Après resize: shape={X.shape}, format={current_format}")
-        
-        # ========================================================================
-        # ÉTAPE 3 : NORMALISATION (UTILISE STATS DE FIT)
-        # ========================================================================
-        X_normalized = self._normalize(X, fit=False)
-        logger.debug(f"✅ Après normalisation: shape={X_normalized.shape}")
-        
-        # ========================================================================
-        # ÉTAPE 4 : CONVERSION VERS output_format
-        # ========================================================================
-        current_format = self._detect_data_format(X_normalized)
-        logger.debug(f"🔍 Format AVANT conversion: {current_format}")
-        
-        if output_format == "channels_first" and current_format == "channels_last":
-            logger.debug("🔄 Conversion channels_last → channels_first")
-            X_converted = np.transpose(X_normalized, (0, 3, 1, 2))
-            
-            # VALIDATION
-            expected_shape = (X_normalized.shape[0], X_normalized.shape[3], 
-                            X_normalized.shape[1], X_normalized.shape[2])
-            
-            if X_converted.shape != expected_shape:
-                raise ValueError(
-                    f"❌ CONVERSION ÉCHOUÉE:\n"
-                    f"   Attendu: {expected_shape}\n"
-                    f"   Obtenu:  {X_converted.shape}"
-                )
-            
-            X_output = X_converted
-            
-        elif output_format == "channels_last" and current_format == "channels_first":
-            logger.debug("🔄 Conversion channels_first → channels_last")
-            X_converted = np.transpose(X_normalized, (0, 2, 3, 1))
-            
-            # VALIDATION
-            expected_shape = (X_normalized.shape[0], X_normalized.shape[2], 
-                            X_normalized.shape[3], X_normalized.shape[1])
-            
-            if X_converted.shape != expected_shape:
-                raise ValueError(
-                    f"❌ CONVERSION ÉCHOUÉE:\n"
-                    f"   Attendu: {expected_shape}\n"
-                    f"   Obtenu:  {X_converted.shape}"
-                )
-            
-            X_output = X_converted
-        
-        else:
-            logger.debug(f"✅ Pas de conversion nécessaire (format: {current_format})")
-            X_output = X_normalized
-        
-        # ========================================================================
-        # ÉTAPE 5 : VALIDATION FINALE
-        # ========================================================================
-        final_format = self._detect_data_format(X_output)
-        
-        if final_format != output_format:
-            raise ValueError(
-                f"❌ FORMAT FINAL INCORRECT:\n"
-                f"   Demandé:  {output_format}\n"
-                f"   Obtenu:   {final_format}\n"
-                f"   Shape:    {X_output.shape}"
-            )
-        
-        # ASSERTION FORMAT
-        if output_format == "channels_first":
-            if X_output.shape[1] not in [1, 3, 4]:
-                raise ValueError(
-                    f"❌ FORMAT channels_first INVALIDE: "
-                    f"shape={X_output.shape}, canaux={X_output.shape[1]}"
-                )
-            logger.debug(
-                f"✅ VALIDATION - channels_first: "
-                f"shape={X_output.shape}, canaux={X_output.shape[1]}"
-            )
-        
-        elif output_format == "channels_last":
-            if X_output.shape[3] not in [1, 3, 4]:
-                raise ValueError(
-                    f"❌ FORMAT channels_last INVALIDE: "
-                    f"shape={X_output.shape}, canaux={X_output.shape[3]}"
-                )
-            logger.debug(
-                f"✅ VALIDATION - channels_last: "
-                f"shape={X_output.shape}, canaux={X_output.shape[3]}"
-            )
-        
-        logger.debug(f"✅ transform TERMINÉ - output_shape: {X_output.shape}")
-        
-        return X_output
-    
-    def _resize_images(self, X: np.ndarray) -> np.ndarray:
-        """
-        Resize images avec détection format LOCALE    
-        Args:
-            X: Images (N, H, W, C) ou (N, C, H, W)     
-        Returns:
-            Images resized (même format que input)     
-        Raises:
-            ValueError: Si format invalide
-        """
-        if self.target_size is None:
-            return X  # Pas de resize
-        
-        if X.ndim != 4:
-            raise ValueError(f"_resize_images attend 4D, reçu: {X.shape}")
-        
-        target_h, target_w = self.target_size
-        
-        # Détection format local
-        n_samples, dim1, dim2, dim3 = X.shape
-        
-        # Détection robuste
-        if dim3 in [1, 3, 4] and dim3 < dim1 and dim3 < dim2:
-            # Format: (N, H, W, C) - channels_last
-            current_format = "channels_last"
-            current_h, current_w = dim1, dim2
-        elif dim1 in [1, 3, 4] and dim1 < dim2 and dim1 < dim3:
-            # Format: (N, C, H, W) - channels_first
-            current_format = "channels_first"
-            current_h, current_w = dim2, dim3
-        else:
-            # Format ambigu: utiliser heuristique (plus petite dimension = channels)
-            if dim1 < dim3:
-                current_format = "channels_first"
-                current_h, current_w = dim2, dim3
-            else:
-                current_format = "channels_last"
-                current_h, current_w = dim1, dim2
-            
-            logger.warning(
-                f"⚠️ Format ambigu dans _resize_images: {X.shape}, "
-                f"assume {current_format}"
-            )
-        
-        # Si déjà à la bonne taille, skip
-        if current_h == target_h and current_w == target_w:
-            logger.debug(f"Images déjà à la taille cible {self.target_size}, skip resize")
-            return X
-        
-        logger.info(
-            f"🔄 Resize images: ({current_h}, {current_w}) → ({target_h}, {target_w}) "
-            f"[format détecté: {current_format}]"
-        )
-        
-        try:
-            from skimage.transform import resize as sk_resize
-            
-            resized_images = []
-            
-            for i in range(len(X)):
-                img = X[i]
-                
-                # Conversion temporaire en channels_last pour skimage (attend H, W, C)
-                if current_format == "channels_first":
-                    # (C, H, W) → (H, W, C)
-                    img = np.transpose(img, (1, 2, 0))
-                
-                # Resize avec preservation du range
-                img_resized = sk_resize(
-                    img,
-                    (target_h, target_w),
-                    mode='reflect',
-                    anti_aliasing=True,
-                    preserve_range=True
-                )
-                
-                # Reconversion dans le format d'origine
-                if current_format == "channels_first":
-                    # (H, W, C) → (C, H, W)
-                    img_resized = np.transpose(img_resized, (2, 0, 1))
-                
-                resized_images.append(img_resized)
-            
-            X_resized = np.array(resized_images, dtype=X.dtype)
-            
-            logger.info(
-                f"✅ Resize complété: {X.shape} → {X_resized.shape}"
-            )
-            
-            self.resized_ = True
-            return X_resized
-        
-        except ImportError as e:
-            logger.error(f"❌ skimage non disponible: {e}")
-            raise ImportError(
-                "scikit-image requis pour resize. Installez avec: pip install scikit-image"
-            ) from e
-        
-        except Exception as e:
-            logger.error(f"❌ Erreur resize: {e}", exc_info=True)
-            raise ValueError(f"Resize échoué: {str(e)}") from e
-
     def _normalize(self, X: np.ndarray, fit: bool = False) -> np.ndarray:
         """
-        Normalise les données selon la stratégie.     
+        Normalise selon la stratégie.
         Args:
             X: Données à normaliser
-            fit: Si True, calcule les statistiques     
+            fit: Si True, calcule les stats (mean/std ou min/max)
         Returns:
-            Données normalisées
+            X normalisé
         """
-        if self.strategy == "standardize":
+        if self.strategy == "normalize":
+            # [0, 255] → [0, 1] avec min/max du dataset
             if fit:
-                # Calcule mean/std sur format channels_last pour cohérence
+                self.min_ = float(X.min())
+                self.max_ = float(X.max())
+            
+            denominator = self.max_ - self.min_
+            if denominator < 1e-8:
+                logger.warning("⚠️ Range trop petit, pas de normalisation")
+                return X.astype(np.float32)
+            
+            X_norm = (X - self.min_) / (denominator + 1e-8)
+            X_norm = np.clip(X_norm, 0, 1)
+            
+            logger.debug(f"✅ Normalize: [{X.min():.1f}, {X.max():.1f}] → [0, 1]")
+            return X_norm.astype(np.float32)
+        
+        elif self.strategy == "standardize":
+            # Z-score avec stats propres
+            if fit:
+                X_for_stats = X
                 if self.data_format_ == 'channels_first':
-                    X_for_stats = self._ensure_channels_last(X)
-                else:
-                    X_for_stats = X
+                    X_for_stats = np.transpose(X, (0, 2, 3, 1))
                 
                 if X_for_stats.ndim == 4:
                     axes = (0, 1, 2)
@@ -526,33 +186,42 @@ class DataPreprocessor:
                     self.mean_ = X_for_stats.mean()
                     self.std_ = X_for_stats.std() + 1e-8
             
-            # Application de la normalisation
+            X_for_norm = X
             if self.data_format_ == 'channels_first':
-                X_norm = self._ensure_channels_last(X)
-                X_norm = (X_norm - self.mean_) / self.std_
-                return self._ensure_channels_first(X_norm)
-            else:
-                return (X - self.mean_) / self.std_
-        
-        elif self.strategy == "normalize":
-            if fit:
-                if self.data_format_ == 'channels_first':
-                    X_for_stats = self._ensure_channels_last(X)
-                else:
-                    X_for_stats = X
-                
-                self.min_ = X_for_stats.min()
-                self.max_ = X_for_stats.max()
+                X_for_norm = np.transpose(X, (0, 2, 3, 1))
             
-            # Application normalisation [0, 1]
+            X_norm = (X_for_norm - self.mean_) / self.std_
+            
             if self.data_format_ == 'channels_first':
-                X_norm = self._ensure_channels_last(X)
-                X_norm = (X_norm - self.min_) / (self.max_ - self.min_ + 1e-8)
-                return self._ensure_channels_first(X_norm)
+                X_norm = np.transpose(X_norm, (0, 3, 1, 2))
+            
+            logger.debug(f"✅ Standardize: mean={self.mean_.mean():.3f}, std={self.std_.mean():.3f}")
+            return X_norm.astype(np.float32)
+        
+        elif self.strategy == "imagenet":
+            """
+            PRÉPARATION ImageNet: [0, 255] → [0, 1] UNIQUEMENT
+            La normalisation (mean=0.485/0.456/0.406, std=0.229/0.224/0.225)
+            est appliquée DANS le modèle (TransferLearningModel.forward())
+            """
+            # Conversion [0, 255] → [0, 1]
+            if X.max() > 1.0:
+                X_norm = X.astype(np.float32) / 255.0
             else:
-                return (X - self.min_) / (self.max_ - self.min_ + 1e-8)      
-        else:  # "none"
-            return X.copy()
+                X_norm = X.astype(np.float32)
+            
+            X_norm = np.clip(X_norm, 0, 1)
+            
+            logger.debug(
+                f"✅ ImageNet prep: [{X.min():.1f}, {X.max():.1f}] → "
+                f"[{X_norm.min():.3f}, {X_norm.max():.3f}] "
+                f"(normalisation ImageNet dans le modèle)"
+            )
+            return X_norm
+        
+        else:
+            # Fallback
+            return X.astype(np.float32)
     
     def fit_transform(
         self,
@@ -560,232 +229,308 @@ class DataPreprocessor:
         output_format: str = "channels_first"
     ) -> np.ndarray:
         """
-        Pipeline de preprocessing avec VALIDATION STRICTE du format.
+        Pipeline complet avec normalisation adaptée.
         
-        Pipeline garanti:
-        1. Détection format initial
-        2. Resize (si activé)
-        3. Recalcul format après resize (CRITIQUE)
-        4. Normalisation
-        5. Conversion vers output_format avec VALIDATION
-        6. Assertion finale shape
-        
-        Args:
-            X: Images (N, H, W, C) ou (N, C, H, W)
-            output_format: Format de sortie ("channels_first" ou "channels_last")
-            
-        Returns:
-            Images preprocessées avec format GARANTI
-            
-        Raises:
-            ValueError: Si conversion échoue
+        GARANTIT:
+        - Détection format initial
+        - Resize si activé
+        - Normalisation selon strategy
+        - Conversion vers output_format
+        - Validation finale
         """
         if X is None or len(X) == 0:
             raise ValueError("X est None ou vide")
         
-        logger.info(f"fit_transform START - input_shape: {X.shape}, output_format: {output_format}")
+        logger.info(
+            f"fit_transform START - "
+            f"input_shape: {X.shape}, "
+            f"strategy: {self.strategy}, "
+            f"output_format: {output_format}"
+        )
         
-        # ========================================================================
-        # ÉTAPE 1 : DÉTECTION FORMAT INITIAL
-        # ========================================================================
+        # 1. Détection format
         if self.auto_detect_format:
             self.data_format_ = self._detect_data_format(X)
-            logger.info(f"Format INITIAL détecté: {self.data_format_} (shape={X.shape})")
         else:
             self.data_format_ = "channels_last"
-            logger.info(f"⚙️ Format INITIAL forcé: {self.data_format_}")
         
         self.original_shape_ = X.shape
         
-        # ========================================================================
-        # ÉTAPE 2 : RESIZE (SI ACTIVÉ)
-        # ========================================================================
+        # 2. Resize si activé
         if self.target_size is not None:
-            logger.info(f"🔧 Application resize: {X.shape} → target_size={self.target_size}")
-            X_resized = self._resize_images(X)
-            
-            # ⚠️ CRITIQUE : RE-DÉTECTER le format APRÈS resize
-            # Car _resize_images() peut changer le format en interne
-            format_after_resize = self._detect_data_format(X_resized)
-            
-            if format_after_resize != self.data_format_:
-                logger.warning(
-                    f"⚠️ Format CHANGÉ après resize: "
-                    f"{self.data_format_} → {format_after_resize}"
-                )
-                self.data_format_ = format_after_resize
-            
-            X = X_resized
-            logger.info(f"Après resize: shape={X.shape}, format={self.data_format_}")
+            X = self._resize_images(X)
+            # Re-détecter format après resize
+            self.data_format_ = self._detect_data_format(X)
         
-        # ========================================================================
-        # ÉTAPE 3 : NORMALISATION
-        # ========================================================================
+        # 3. Normalisation selon strategy
         X_normalized = self._normalize(X, fit=True)
-        logger.debug(f"Après normalisation: shape={X_normalized.shape}")
         
-        # ========================================================================
-        # ÉTAPE 4 : CONVERSION VERS output_format AVEC VALIDATION
-        # ========================================================================
+        # 4. Conversion format
         current_format = self._detect_data_format(X_normalized)
-        logger.debug(f"🔍 Format AVANT conversion: {current_format}")
         
         if output_format == "channels_first" and current_format == "channels_last":
-            logger.info("🔄 Conversion channels_last → channels_first")
-            X_converted = np.transpose(X_normalized, (0, 3, 1, 2))
-            
-            # VALIDATION CRITIQUE
-            expected_shape = (X_normalized.shape[0], X_normalized.shape[3], 
-                            X_normalized.shape[1], X_normalized.shape[2])
-            
-            if X_converted.shape != expected_shape:
-                raise ValueError(
-                    f"❌ CONVERSION ÉCHOUÉE:\n"
-                    f"   Attendu: {expected_shape}\n"
-                    f"   Obtenu:  {X_converted.shape}"
-                )
-            
-            X_output = X_converted
-            
+            X_output = np.transpose(X_normalized, (0, 3, 1, 2))
         elif output_format == "channels_last" and current_format == "channels_first":
-            logger.info("🔄 Conversion channels_first → channels_last")
-            X_converted = np.transpose(X_normalized, (0, 2, 3, 1))
-            
-            # VALIDATION CRITIQUE
-            expected_shape = (X_normalized.shape[0], X_normalized.shape[2], 
-                            X_normalized.shape[3], X_normalized.shape[1])
-            
-            if X_converted.shape != expected_shape:
-                raise ValueError(
-                    f"❌ CONVERSION ÉCHOUÉE:\n"
-                    f"   Attendu: {expected_shape}\n"
-                    f"   Obtenu:  {X_converted.shape}"
-                )
-            
-            X_output = X_converted
-        
+            X_output = np.transpose(X_normalized, (0, 2, 3, 1))
         else:
-            # Pas de conversion nécessaire
-            logger.debug(f"Pas de conversion (déjà au bon format: {current_format})")
             X_output = X_normalized
         
-        # ========================================================================
-        # ÉTAPE 5 : VALIDATION FINALE DU FORMAT
-        # ========================================================================
+        # 5. Validation finale
         final_format = self._detect_data_format(X_output)
-        
         if final_format != output_format:
             raise ValueError(
-                f"❌ FORMAT FINAL INCORRECT:\n"
-                f"   Demandé:  {output_format}\n"
-                f"   Obtenu:   {final_format}\n"
-                f"   Shape:    {X_output.shape}"
+                f"❌ FORMAT FINAL INCORRECT: {final_format} != {output_format}"
             )
         
-        # ========================================================================
-        # ÉTAPE 6 : ASSERTIONS FINALES
-        # ========================================================================
-        if output_format == "channels_first":
-            # Format attendu: (N, C, H, W) avec C petit (1, 3, 4)
-            if X_output.shape[1] not in [1, 3, 4]:
-                raise ValueError(
-                    f"❌ FORMAT channels_first INVALIDE:\n"
-                    f"   Shape: {X_output.shape}\n"
-                    f"   Dim[1] (canaux) devrait être 1, 3 ou 4, reçu: {X_output.shape[1]}"
-                )
-            
-            logger.info(
-                f"VALIDATION RÉUSSIE - channels_first: "
-                f"shape={X_output.shape}, canaux={X_output.shape[1]}"
-            )
-        
-        elif output_format == "channels_last":
-            # Format attendu: (N, H, W, C) avec C petit (1, 3, 4)
-            if X_output.shape[3] not in [1, 3, 4]:
-                raise ValueError(
-                    f"❌ FORMAT channels_last INVALIDE:\n"
-                    f"   Shape: {X_output.shape}\n"
-                    f"   Dim[3] (canaux) devrait être 1, 3 ou 4, reçu: {X_output.shape[3]}"
-                )
-            
-            logger.info(
-                f"✅ VALIDATION RÉUSSIE - channels_last: "
-                f"shape={X_output.shape}, canaux={X_output.shape[3]}"
-            )
-        
-        # ========================================================================
-        # FINALISATION
-        # ========================================================================
         self.fitted = True
         
         logger.info(
             f"✅ fit_transform TERMINÉ - "
-            f"original_shape: {self.original_shape_}, "
             f"output_shape: {X_output.shape}, "
-            f"resized: {self.resized_}, "
-            f"target_size: {self.target_size}, "
-            f"format_initial: {self.data_format_}, "
-            f"format_final: {final_format}, "
-            f"strategy: {self.strategy}"
+            f"strategy: {self.strategy}, "
+            f"format: {final_format}, "
+            f"range: [{X_output.min():.3f}, {X_output.max():.3f}]"
         )
         
         return X_output
-        
-    def inverse_transform(self, X: np.ndarray) -> np.ndarray:
-        """Inverse transformation (pour visualisation)."""
-        if not self.fitted:
-            raise ValueError("Preprocessor must be fitted before inverse_transform")
-        
-        # Détection du format d'entrée
-        input_format = self._detect_data_format(X)
-        
-        # Conversion vers channels_last pour l'inverse
-        if input_format == 'channels_first':
-            X_conv = self._ensure_channels_last(X)
-        else:
-            X_conv = X
-        
-        # Application inverse
-        if self.strategy == "standardize":
-            X_orig = X_conv * self.std_ + self.mean_
-        elif self.strategy == "normalize":
-            X_orig = X_conv * (self.max_ - self.min_) + self.min_
-        else:
-            X_orig = X_conv
-        
-        # Remise dans le format d'origine
-        if input_format == 'channels_first':
-            return self._ensure_channels_first(X_orig)
-        else:
-            return X_orig
     
-    def get_config(self) -> Dict[str, Any]:
-        """Retourne la configuration pour la serialisation."""
+    def transform(
+        self,
+        X: np.ndarray,
+        output_format: str = "channels_first"
+    ) -> np.ndarray:
+        """Transform avec même pipeline que fit_transform"""
+        if not self.fitted:
+            raise ValueError("Preprocessor non fitted")
+        
+        # 1. Resize si activé
+        if self.target_size is not None:
+            X = self._resize_images(X)
+        
+        # 2. Normalisation (utilise stats de fit)
+        X_normalized = self._normalize(X, fit=False)
+        
+        # 3. Conversion format
+        current_format = self._detect_data_format(X_normalized)
+        
+        if output_format == "channels_first" and current_format == "channels_last":
+            X_output = np.transpose(X_normalized, (0, 3, 1, 2))
+        elif output_format == "channels_last" and current_format == "channels_first":
+            X_output = np.transpose(X_normalized, (0, 2, 3, 1))
+        else:
+            X_output = X_normalized
+        
+        return X_output
+    
+    def _detect_data_format(self, X: np.ndarray) -> str:
+        """Détection format robuste"""
+        if X.ndim != 4:
+            return 'channels_last'
+        
+        n, dim1, dim2, dim3 = X.shape
+        
+        # channels_last: (N, H, W, C)
+        if dim3 in [1, 3, 4] and dim3 < dim1 and dim3 < dim2:
+            return 'channels_last'
+        
+        # channels_first: (N, C, H, W)
+        if dim1 in [1, 3, 4] and dim1 < dim2 and dim1 < dim3:
+            return 'channels_first'
+        
+        # Heuristique
+        if dim1 < min(dim2, dim3) * 0.1:
+            return 'channels_first'
+        elif dim3 < min(dim1, dim2) * 0.1:
+            return 'channels_last'
+        else:
+            return 'channels_last'
+    
+    def _resize_images(self, X: np.ndarray) -> np.ndarray:
+        """Resize avec détection format locale"""
+        from skimage.transform import resize as sk_resize
+        
+        if self.target_size is None:
+            return X
+        
+        target_h, target_w = self.target_size
+        
+        # Détection format local
+        shape = X.shape
+        if shape[-1] in [1, 3, 4]:
+            current_format = "channels_last"
+            current_h, current_w = shape[1], shape[2]
+        else:
+            current_format = "channels_first"
+            current_h, current_w = shape[2], shape[3]
+        
+        if current_h == target_h and current_w == target_w:
+            return X
+        
+        logger.info(f"🔄 Resize: ({current_h}, {current_w}) → ({target_h}, {target_w})")
+        
+        resized = []
+        for img in X:
+            # Conversion temporaire channels_last
+            if current_format == "channels_first":
+                img = np.transpose(img, (1, 2, 0))
+            
+            img_resized = sk_resize(
+                img, (target_h, target_w),
+                mode='reflect',
+                anti_aliasing=True,
+                preserve_range=True
+            )
+            
+            # Reconversion format original
+            if current_format == "channels_first":
+                img_resized = np.transpose(img_resized, (2, 0, 1))
+            
+            resized.append(img_resized)
+        
+        self.resized_ = True
+        return np.array(resized, dtype=X.dtype)
+    
+    def get_config(self) -> dict:
+        """Config pour serialisation"""
         return {
             "strategy": self.strategy,
-            "auto_detect_format": self.auto_detect_format,
+            "target_size": self.target_size,
             "fitted": self.fitted,
             "data_format": self.data_format_,
-            "original_shape": self.original_shape_,
-            "mean_shape": getattr(self.mean_, 'shape', None),
-            "std_shape": getattr(self.std_, 'shape', None)
+            "resized": self.resized_
         }
     
-    def save(self, filepath: str):
-        """Sauvegarde le preprocessor."""
-        import pickle
-        with open(filepath, 'wb') as f:
-            pickle.dump(self, f)
-        logger.info(f"Preprocessor sauvegardé: {filepath}")
+# ===================================
+# AUTOENCODER PREPROCESSOR
+# ===================================
+class AutoencoderPreprocessor:
+    """
+    Preprocessing spécialisé pour autoencoders.
     
-    @classmethod
-    def load(cls, filepath: str) -> 'DataPreprocessor':
-        """Charge un preprocessor sauvegardé."""
-        import pickle
-        with open(filepath, 'rb') as f:
-            preprocessor = pickle.load(f)
-        logger.info(f"Preprocessor chargé: {filepath}")
-        return preprocessor
+    PRINCIPES CRITIQUES:
+    1. Normalisation [0,1] globale UNIQUEMENT
+    2. PAS de Z-score (évite compression anomalies)
+    3. PAS de normalisation ImageNet
+    4. Préserve distribution relative
+    """
+    
+    def __init__(self, target_size: Optional[Tuple[int, int]] = None):
+        self.target_size = target_size
+        self.fitted = False
+        self.global_min = None
+        self.global_max = None
+        self.data_format_ = None
+        self.original_shape_ = None
+        
+        logger.info(
+            f"AutoencoderPreprocessor initialisé - "
+            f"target_size: {target_size}"
+        )
+    
+    def fit(self, X: np.ndarray) -> 'AutoencoderPreprocessor':
+        """Calcule min/max globaux (pas par canal)"""
+        if X.ndim not in [3, 4]:
+            raise ValueError(f"Dimensions invalides: {X.ndim}")
+        
+        self.original_shape_ = X.shape
+        
+        # Détection format
+        self.data_format_ = self._detect_format(X)
+        
+        # Stats GLOBALES (préserve contrastes)
+        self.global_min = float(X.min())
+        self.global_max = float(X.max())
+        
+        self.fitted = True
+        
+        logger.info(
+            f"✅ AutoencoderPreprocessor fitted:\n"
+            f"   • Global min: {self.global_min}\n"
+            f"   • Global max: {self.global_max}\n"
+            f"   • Format: {self.data_format_}\n"
+            f"   • Shape: {self.original_shape_}"
+        )
+        
+        return self
+    
+    def transform(self, X: np.ndarray, output_format: str = "channels_first") -> np.ndarray:
+        """Normalisation [0,1] + resize"""
+        if not self.fitted:
+            raise ValueError("Preprocessor non fitted")
+        
+        # 1. Resize si nécessaire
+        if self.target_size:
+            X = self._resize(X)
+        
+        # 2. Normalisation [0,1] simple
+        X_norm = (X - self.global_min) / (self.global_max - self.global_min + 1e-8)
+        X_norm = np.clip(X_norm, 0, 1)
+        
+        # 3. Conversion format
+        if output_format == "channels_first":
+            current_format = self._detect_format(X_norm)
+            if current_format == "channels_last":
+                X_norm = np.transpose(X_norm, (0, 3, 1, 2))
+        
+        logger.debug(
+            f"✅ Transform AE: "
+            f"range=[{X_norm.min():.3f}, {X_norm.max():.3f}], "
+            f"shape={X_norm.shape}"
+        )
+        
+        return X_norm.astype(np.float32)
+    
+    def fit_transform(self, X: np.ndarray, output_format: str = "channels_first") -> np.ndarray:
+        return self.fit(X).transform(X, output_format)
+    
+    def _resize(self, X: np.ndarray) -> np.ndarray:
+        """Resize avec skimage"""
+        from skimage.transform import resize as sk_resize
+        
+        resized = []
+        for img in X:
+            # Conversion temporaire channels_last si nécessaire
+            if img.shape[0] in [1, 3, 4]:  # channels_first
+                img = np.transpose(img, (1, 2, 0))
+            
+            img_resized = sk_resize(
+                img, self.target_size,
+                mode='reflect',
+                anti_aliasing=True,
+                preserve_range=True
+            )
+            
+            # Reconversion si nécessaire
+            if self.data_format_ == "channels_first":
+                img_resized = np.transpose(img_resized, (2, 0, 1))
+            
+            resized.append(img_resized)
+        
+        return np.array(resized, dtype=X.dtype)
+    
+    def _detect_format(self, X: np.ndarray) -> str:
+        """Détection format (réutilise logique DataPreprocessor)"""
+        if X.ndim != 4:
+            return 'channels_last'
+        
+        _, dim1, dim2, dim3 = X.shape
+        
+        if dim3 in [1, 3, 4] and dim3 < dim1 and dim3 < dim2:
+            return 'channels_last'
+        elif dim1 in [1, 3, 4] and dim1 < dim2 and dim1 < dim3:
+            return 'channels_first'
+        else:
+            return 'channels_last'
+    
+    def get_config(self) -> Dict[str, Any]:
+        """Config pour serialisation"""
+        return {
+            "preprocessor_type": "AutoencoderPreprocessor",
+            "target_size": self.target_size,
+            "global_min": self.global_min,
+            "global_max": self.global_max,
+            "fitted": self.fitted
+        }
     
 @dataclass
 class Result:
@@ -810,106 +555,131 @@ class Result:
 # ======================
 
 class DataValidator:
-    """Validation robuste des données d'entrée"""
+    """
+    Validateur centralisé pour toutes les données.
+    
+    ✅ VALIDATION STRICTE:
+    - Shapes cohérentes
+    - Types corrects
+    - Labels [0, n_classes-1]
+    - Ranges valides
+    """
     
     @staticmethod
     def validate_input_data(
-        X: np.ndarray, 
-        y: np.ndarray, 
-        name: str = "data"
-    ) -> Result:
+        X: np.ndarray,
+        y: Optional[np.ndarray],
+        split_name: str
+    ) -> Dict[str, Any]:
         """
-        Validation complète d'un dataset.
+        Valide les données d'entrée.
         
         Returns:
-            Result avec success=True si OK, sinon error
+            Dict avec {'success': bool, 'error': Optional[str]}
         """
         try:
-            # Vérification dimensions
+            # Validation X
+            if X is None or len(X) == 0:
+                return {
+                    'success': False,
+                    'error': f"{split_name}: X est vide"
+                }
+            
             if X.ndim not in [3, 4]:
-                return Result.err(
-                    f"{name}: dimensions invalides {X.shape}, attendu 3D ou 4D"
+                return {
+                    'success': False,
+                    'error': f"{split_name}: X doit être 3D ou 4D, reçu: {X.ndim}D"
+                }
+            
+            # Validation y (si fourni)
+            if y is not None:
+                if len(y) != len(X):
+                    return {
+                        'success': False,
+                        'error': f"{split_name}: len(X)={len(X)} != len(y)={len(y)}"
+                    }
+                
+                # ✅ VALIDATION CRITIQUE: Labels commencent à 0
+                label_min = int(y.min())
+                label_max = int(y.max())
+                
+                if label_min != 0:
+                    return {
+                        'success': False,
+                        'error': (
+                            f"{split_name}: Labels invalides - min={label_min}\n"
+                            f"Les labels doivent commencer à 0.\n"
+                            f"Labels présents: {np.unique(y).tolist()}"
+                        )
+                    }
+                
+                n_classes = len(np.unique(y))
+                
+                if label_max != (n_classes - 1):
+                    return {
+                        'success': False,
+                        'error': (
+                            f"{split_name}: Labels non continus - "
+                            f"max={label_max}, n_classes={n_classes}"
+                        )
+                    }
+                
+                logger.info(
+                    f"✅ {split_name} validé: "
+                    f"n_samples={len(X)}, n_classes={n_classes}, "
+                    f"labels=[{label_min}, {label_max}]"
                 )
             
-            # Vérification cohérence tailles
-            if len(X) != len(y):
-                return Result.err(
-                    f"{name}: tailles incohérentes X={len(X)}, y={len(y)}"
-                )
-            
-            # Vérification valeurs
-            if np.isnan(X).any():
-                return Result.err(f"{name}: contient des NaN")
-            
-            if np.isinf(X).any():
-                return Result.err(f"{name}: contient des Inf")
-            
-            # Vérification labels
-            if np.isnan(y).any() or np.isinf(y).any():
-                return Result.err(f"{name}: labels contiennent NaN/Inf")
-            
-            # Vérification nombre d'échantillons minimum
-            min_samples = 20
-            if len(X) < min_samples:
-                return Result.err(
-                    f"{name}: échantillons insuffisants {len(X)} < {min_samples}"
-                )
-            
-            # Informations sur les classes
-            unique_classes = np.unique(y)
-            class_counts = Counter(y)
-            
-            logger.info(
-                f"Validation {name} OK - "
-                f"shape: {X.shape}, "
-                f"n_samples: {len(X)}, "
-                f"n_classes: {len(unique_classes)}, "
-                f"class_distribution: {dict(class_counts)}"
-            )
-            
-            return Result.ok(
-                {"shape": X.shape, "n_classes": len(unique_classes)},
-                class_counts=dict(class_counts)
-            )
+            return {'success': True, 'error': None}
             
         except Exception as e:
-            return Result.err(f"Erreur validation {name}: {str(e)}")
+            return {
+                'success': False,
+                'error': f"{split_name}: Erreur validation - {str(e)}"
+            }
     
     @staticmethod
     def check_class_imbalance(y: np.ndarray) -> Dict[str, Any]:
-        """Analyse le déséquilibre des classes"""
-        class_counts = Counter(y)
-        total = len(y)
+        """
+        Analyse le déséquilibre des classes.
         
-        if len(class_counts) < 2:
+        Returns:
+            Dict avec severity, ratio, distribution
+        """
+        try:
+            unique, counts = np.unique(y, return_counts=True)
+            distribution = dict(zip(unique.tolist(), counts.tolist()))
+            
+            max_count = counts.max()
+            min_count = counts.min()
+            ratio = max_count / min_count if min_count > 0 else float('inf')
+            
+            # Classification sévérité
+            if ratio < 1.5:
+                severity = "low"
+            elif ratio < 3:
+                severity = "medium"
+            elif ratio < 10:
+                severity = "high"
+            else:
+                severity = "critical"
+            
             return {
-                "imbalanced": False,
-                "ratio": 1.0,
-                "severity": "none",
-                "counts": class_counts
+                'severity': severity,
+                'ratio': float(ratio),
+                'distribution': distribution,
+                'min_count': int(min_count),
+                'max_count': int(max_count)
             }
-        
-        min_count = min(class_counts.values())
-        max_count = max(class_counts.values())
-        ratio = max_count / max_count if min_count > 0 else float('inf')
-        
-        # Classification du déséquilibre
-        if ratio >= 10:
-            severity = "critical"
-        elif ratio >= 5:
-            severity = "high"
-        elif ratio >= 2:
-            severity = "moderate"
-        else:
-            severity = "low"
-        
-        return {
-            "imbalanced": ratio >= 2,
-            "ratio": ratio,
-            "severity": severity,
-            "counts": dict(class_counts),
-            "percentages": {k: v/total*100 for k, v in class_counts.items()}
-        }
+            
+        except Exception as e:
+            logger.error(f"Erreur analyse déséquilibre: {e}")
+            return {
+                'severity': 'unknown',
+                'ratio': 1.0,
+                'distribution': {},
+                'error': str(e)
+            }
 
 
 import torch
@@ -919,191 +689,237 @@ from albumentations.pytorch import ToTensorV2
 
 class AugmentedImageDataset(Dataset):
     """
-    Dataset PyTorch avec augmentation RÉELLE + RESIZE GARANTI + NORMALISATION.  
-    Caractéristiques clés:
-    - Accepte UNIQUEMENT données uint8 [0,255] en entrée
-    - Applique augmentation Albumentations (avec resize forcé)
-    - Normalise APRÈS augmentation via preprocessor
-    - Garantit output channels_first normalisé
+    Dataset avec augmentation Albumentations ROBUSTE.
     
-    Pipeline:
-    1. Input: Données BRUTES uint8 [0, 255]
-    2. Augmentation (Albumentations) → uint8
-    3. Resize vers target_size → uint8
-    4. Conversion float32 [0, 1]
-    5. Normalisation via preprocessor → float32 normalisé
-    6. Output: tensor channels_first normalisé
+    ✅ CORRECTIONS APPLIQUÉES:
+    - Validation stricte des labels (min=0)
+    - Préservation dtype int64
+    - Logs détaillés pour debugging
+    - Gestion d'erreurs avec fallback
+    
+    🎯 GARANTIES:
+    - Labels JAMAIS modifiés (int64 préservé)
+    - Augmentation UNIQUEMENT sur images
+    - Synchronisation image/label parfaite
+    - Pas de biais introduit
     """
     
     def __init__(
         self,
-        X: np.ndarray,
-        y: np.ndarray,
-        target_size: tuple,
-        augmentation_config: Optional[Dict[str, Any]] = None,
-        is_training: bool = True,
-        preprocessor: Optional[Any] = None 
+        images: np.ndarray,
+        labels: Optional[np.ndarray],
+        transform: Optional[A.Compose] = None,
+        preprocessor: Optional['DataPreprocessor'] = None,
+        output_format: str = "channels_first"
     ):
         """
         Args:
-            X: Images BRUTES uint8 [0, 255] (N, H, W, C)
-            y: Labels
-            target_size: Taille cible (H, W) - OBLIGATOIRE
-            augmentation_config: Config augmentation
-            is_training: Si True, applique augmentation
-            preprocessor: DataPreprocessor pour normalisation POST-augmentation
+            images: Images BRUTES uint8 [0, 255] - shape (N, H, W, C)
+            labels: Labels (N,) - DOIT être np.ndarray avec dtype int64
+            transform: Pipeline Albumentations
+            preprocessor: Pour normalisation POST-augmentation
+            output_format: Format de sortie (channels_first / channels_last)
         """
-        # ====================================================================
-        # VALIDATION STRICTE DES INPUTS
-        # ====================================================================
-        if X.ndim != 4:
-            raise ValueError(f"X doit être 4D (N,H,W,C), reçu: {X.shape}")
-        
-        if X.shape[-1] not in [1, 3, 4]:
-            raise ValueError(f"Format channels_last attendu, reçu: {X.shape}")
-        
-        if not target_size or len(target_size) != 2:
-            raise ValueError(f"target_size obligatoire (H,W), reçu: {target_size}")
-        
-        # VALIDATION CRITIQUE: X doit être uint8 [0, 255]
-        if X.dtype != np.uint8:
-            logger.warning(
-                f"⚠️ X n'est pas uint8 (dtype={X.dtype}), conversion forcée. "
-                f"Cela peut causer des pertes de données!"
-            )
+        # ========================================================================
+        # VALIDATION CRITIQUE DES LABELS
+        # ========================================================================
+        if labels is not None:
+            # Type check
+            if not isinstance(labels, np.ndarray):
+                raise TypeError(
+                    f"❌ labels doit être np.ndarray, reçu: {type(labels)}"
+                )
             
-            # Conversion safe selon range
-            if X.max() <= 1.0:
-                X = (X * 255).clip(0, 255).astype(np.uint8)
-            elif X.min() < 0:
-                # Normalisation min-max si valeurs négatives
-                X = ((X - X.min()) / (X.max() - X.min() + 1e-8) * 255).astype(np.uint8)
-            else:
-                X = X.clip(0, 255).astype(np.uint8)
+            # Dtype check et conversion si nécessaire
+            if labels.dtype != np.int64:
+                logger.warning(
+                    f"⚠️ Labels dtype={labels.dtype} → conversion int64 "
+                    f"(requis pour PyTorch CrossEntropyLoss)"
+                )
+                labels = labels.astype(np.int64)
+            
+            # Range validation
+            label_min = int(labels.min())
+            label_max = int(labels.max())
+            unique_labels = np.unique(labels)
+            
+            # ❌ ERREUR CRITIQUE: Labels ne commencent pas à 0
+            if label_min != 0:
+                raise ValueError(
+                    f"❌ LABELS INVALIDES: min(labels)={label_min}\n"
+                    f"   Les labels DOIVENT commencer à 0 pour CrossEntropyLoss.\n"
+                    f"   Labels présents: {unique_labels}\n"
+                    f"   \n"
+                    f"   💡 SOLUTION:\n"
+                    f"   1. Vérifier l'encodage des labels en amont\n"
+                    f"   2. Utiliser LabelEncoder().fit_transform()\n"
+                    f"   3. Réencoder manuellement: labels = labels - labels.min()"
+                )
+            
+            # Log validation OK
+            logger.info(
+                f"✅ Labels validés dans AugmentedImageDataset:\n"
+                f"   • dtype: {labels.dtype}\n"
+                f"   • range: [{label_min}, {label_max}]\n"
+                f"   • unique: {unique_labels.tolist()}\n"
+                f"   • shape: {labels.shape}"
+            )
         
-        # Vérification range
-        if X.min() < 0 or X.max() > 255:
-            logger.warning(f"⚠️ Range invalide après conversion: [{X.min()}, {X.max()}]")
+        # ========================================================================
+        # VALIDATION DES IMAGES
+        # ========================================================================
+        if images.dtype != np.uint8:
+            raise TypeError(
+                f"❌ Images doivent être uint8 [0,255], reçu: {images.dtype}\n"
+                f"   Range actuel: [{images.min()}, {images.max()}]"
+            )
         
-        self.X = X
-        self.y = y
-        self.target_size = target_size
-        self.is_training = is_training
+        if images.ndim != 4:
+            raise ValueError(
+                f"❌ Images doivent être 4D (N,H,W,C), reçu: {images.shape}"
+            )
+        
+        # ========================================================================
+        # STOCKAGE
+        # ========================================================================
+        self.images = images
+        self.labels = labels  # ✅ Stockage DIRECT sans conversion
+        self.transform = transform
         self.preprocessor = preprocessor
+        self.output_format = output_format
         
-        # Parse config
-        self.augment = False
-        self.transform = None
+        # Stats pour logging
+        self.n_samples = len(images)
+        self.has_augmentation = transform is not None
+        self.has_preprocessor = preprocessor is not None
         
-        if augmentation_config and is_training:
-            self.augment = augmentation_config.get('augmentation_enabled', False)
-            methods = augmentation_config.get('methods', [])
-            
-            if self.augment:
-                self.transform = self._build_augmentation_pipeline(methods)
-                logger.info(
-                    f"Augmentation activée - "
-                    f"target_size: {target_size}, methods: {methods}"
-                )
-    
-    def _build_augmentation_pipeline(self, methods: List[str]) -> A.Compose:
-        """Pipeline Albumentations AVEC RESIZE FINAL FORCÉ."""
-        transforms = []
-        
-        if 'flip' in methods:
-            transforms.append(A.HorizontalFlip(p=0.5))
-        
-        if 'rotate' in methods:
-            transforms.append(A.Rotate(limit=15, p=0.5, border_mode=0))
-        
-        if 'zoom' in methods:
-            transforms.append(
-                A.ShiftScaleRotate(
-                    shift_limit=0.0625,
-                    scale_limit=0.1,
-                    rotate_limit=0,
-                    border_mode=0,
-                    p=0.5
-                )
-            )
-        
-        if 'brightness' in methods:
-            transforms.append(
-                A.RandomBrightnessContrast(
-                    brightness_limit=0.2,
-                    contrast_limit=0.2,
-                    p=0.5
-                )
-            )
-        
-        # RESIZE GARANTI en dernière position
-        transforms.append(
-            A.Resize(
-                height=self.target_size[0],
-                width=self.target_size[1],
-                interpolation=1,
-                always_apply=True
-            )
+        logger.info(
+            f"✅ AugmentedImageDataset créé:\n"
+            f"   • Samples: {self.n_samples}\n"
+            f"   • Image shape: {images.shape[1:]}\n"
+            f"   • Has labels: {labels is not None}\n"
+            f"   • Has augmentation: {self.has_augmentation}\n"
+            f"   • Has preprocessor: {self.has_preprocessor}\n"
+            f"   • Output format: {output_format}"
         )
-        
-        return A.Compose(transforms)
     
     def __len__(self):
-        return len(self.X)
+        return self.n_samples
     
-    def __getitem__(self, idx):
-        img = self.X[idx]  # Entrée uint8
-        label = self.y[idx] if self.y is not None else 0
+    def __getitem__(self, idx: int):
+        """
+        Récupère un échantillon avec augmentation.
         
-        # VALIDATION : Doit être uint8
-        if img.dtype != np.uint8:
-            raise RuntimeError(
-                f"❌ AugmentedImageDataset REQUIERT uint8 [0,255], "
-                f"reçu dtype={img.dtype}. "
-                f"Le preprocessor ne doit PAS être appliqué avant Dataset !"
-            )
+        ✅ GARANTIES:
+        - Labels JAMAIS modifiés
+        - dtype int64 préservé
+        - Augmentation UNIQUEMENT sur image
+        - Synchronisation parfaite
+        """
+        # ========================================================================
+        # 1. RÉCUPÉRATION IMAGE
+        # ========================================================================
+        image = self.images[idx]  # uint8 [0, 255]
         
-        # ÉTAPE 1 : Augmentation (sur uint8)
-        if self.augment and self.transform:
-            augmented = self.transform(image=img)
-            img = augmented['image']  # Toujours uint8
-
-            """ logger.info(
-                f"🔄 Augmentation appliquée - index={idx} | "
-                f"shape={img.shape} | dtype={img.dtype} | "
-                f"range=[{img.min()}, {img.max()}] | "
-                f"transform={self.transform}"
-            ) """
+        # ========================================================================
+        # 2. AUGMENTATION (si activée)
+        # ========================================================================
+        if self.transform is not None:
+            try:
+                # Albumentations applique les transformations
+                augmented = self.transform(image=image)
+                image = augmented['image']
+                
+                # Validation post-augmentation
+                if image.dtype != np.uint8:
+                    logger.warning(
+                        f"⚠️ Augmentation a changé dtype: {image.dtype}. "
+                        f"Reconversion uint8."
+                    )
+                    image = image.astype(np.uint8)
+                
+            except Exception as e:
+                logger.error(
+                    f"❌ Erreur augmentation idx={idx}: {e}\n"
+                    f"   Fallback: image originale utilisée"
+                )
+                # Fallback: image originale
+                image = self.images[idx]
         
-        # ÉTAPE 2 : Resize (sur uint8)
-        if img.shape[:2] != self.target_size:
-            from skimage.transform import resize
-            img = resize(
-                img, self.target_size,
-                mode='reflect', anti_aliasing=True,
-                preserve_range=True
-            ).astype(np.uint8)
+        # ========================================================================
+        # 3. CONVERSION FLOAT32 [0, 1]
+        # ========================================================================
+        if image.dtype == np.uint8:
+            image = image.astype(np.float32) / 255.0
         
-        # ÉTAPE 3 : Conversion float32 [0,1]
-        img = img.astype(np.float32) / 255.0
-        
-        # ÉTAPE 4 : Normalisation via preprocessor (fitted sur brut)
+        # ========================================================================
+        # 4. NORMALISATION (si preprocessor fourni)
+        # ========================================================================
         if self.preprocessor is not None:
-            img_batch = np.expand_dims(img, axis=0)
-            img_normalized = self.preprocessor.transform(
-                img_batch,
-                output_format="channels_first"
-            )
-            img = img_normalized[0]
-            img = torch.from_numpy(img).float()
+            try:
+                # Ajouter dimension batch temporaire
+                image_batch = np.expand_dims(image, axis=0)
+                
+                # Transform (normalisation)
+                image_normalized = self.preprocessor.transform(
+                    image_batch,
+                    output_format=self.output_format
+                )
+                
+                # Retirer dimension batch
+                image = image_normalized[0]
+                
+            except Exception as e:
+                logger.error(
+                    f"❌ Erreur normalisation idx={idx}: {e}\n"
+                    f"   Fallback: conversion manuelle"
+                )
+                # Fallback: conversion manuelle
+                if self.output_format == "channels_first":
+                    image = np.transpose(image, (2, 0, 1))
         else:
-            img = torch.from_numpy(img).float()
-            if img.ndim == 3:
-                img = img.permute(2, 0, 1)  # HWC → CHW
+            # Pas de preprocessor: conversion manuelle
+            if self.output_format == "channels_first":
+                image = np.transpose(image, (2, 0, 1))
         
-        label = torch.tensor(label, dtype=torch.long)
+        # ========================================================================
+        # 5. CONVERSION TENSOR
+        # ========================================================================
+        image_tensor = torch.from_numpy(image).float()
         
-        return img, label
+        # ========================================================================
+        # 6. RÉCUPÉRATION LABEL (CRITIQUE)
+        # ========================================================================
+        if self.labels is not None:
+            label = self.labels[idx]
+            
+            # ✅ VALIDATION RUNTIME (debug mode)
+            if not isinstance(label, (int, np.integer)):
+                logger.error(
+                    f"❌ Label idx={idx} type invalide: {type(label)}\n"
+                    f"   Valeur: {label}\n"
+                    f"   Labels dtype: {self.labels.dtype}"
+                )
+                raise TypeError(
+                    f"Label doit être int/np.integer, reçu: {type(label)}"
+                )
+            
+            # Vérification range (debug)
+            label_value = int(label)
+            if label_value < 0:
+                raise ValueError(
+                    f"❌ Label négatif détecté: idx={idx}, label={label_value}"
+                )
+            
+            # ✅ CONVERSION TORCH.LONG (int64) SANS MODIFICATION
+            label_tensor = torch.tensor(label_value, dtype=torch.long)
+            
+            return image_tensor, label_tensor
+        
+        else:
+            # Mode non supervisé: dummy label
+            return image_tensor, torch.tensor(0, dtype=torch.long)
+
 
 # ============================================================================
 #  DataLoaderFactory avec target_size 
@@ -1111,202 +927,204 @@ class AugmentedImageDataset(Dataset):
 
 class DataLoaderFactory:
     """
-    Version CORRIGÉE avec target_size obligatoire pour augmentation
+    Factory pour créer des DataLoaders robustes.
+    
+    ✅ CORRECTIONS APPLIQUÉES:
+    - Validation labels AVANT création dataset
+    - Forçage dtype int64
+    - Logs détaillés
+    - Gestion erreurs
     """
     
     @staticmethod
     def create(
         X: np.ndarray,
-        y: np.ndarray,
-        batch_size: int,
+        y: Optional[np.ndarray] = None,
+        batch_size: int = 32,
         shuffle: bool = True,
-        num_workers: Optional[int] = None,
-        pin_memory: bool = False,
+        num_workers: int = 4,
+        pin_memory: bool = True,
         augmentation_config: Optional[Dict[str, Any]] = None,
         is_training: bool = True,
-        preprocessor: Optional[Any] = None,
-        target_size: Optional[tuple] = None,
+        target_size: Optional[Tuple[int, int]] = None,
         output_format: str = "channels_first",
-        device_manager: Optional[DeviceManager] = None
+        device_manager: Optional[Any] = None,
+        preprocessor: Optional['DataPreprocessor'] = None
     ) -> DataLoader:
         """
-        Crée un DataLoader avec gestion ROBUSTE et conversion FORMAT UNIFIÉ.  
-        PRINCIPE: Toutes les données sortent dans `output_format` (garanti).   
+        Crée un DataLoader avec validation complète.
+        
+        ✅ VALIDATION STRICTE:
+        - Labels min=0 vérifiés
+        - dtype int64 garanti
+        - Augmentation UNIQUEMENT si is_training=True
+        - Logs détaillés pour debugging
+        
         Args:
-            output_format: Format de sortie GARANTI ("channels_first" ou "channels_last")
-            device_manager: Pour détection device (CPU/GPU/MPS)
+            X: Images (N, H, W, C) ou (N, C, H, W)
+            y: Labels (N,) - DOIT commencer à 0
+            batch_size: Taille des batchs
+            shuffle: Mélanger les données
+            num_workers: Workers DataLoader
+            pin_memory: Pin memory GPU
+            augmentation_config: Config augmentation
+            is_training: Mode training (active augmentation)
+            target_size: Taille cible (H, W)
+            output_format: Format sortie
+            device_manager: Gestionnaire device
+            preprocessor: Preprocessor optionnel
+        
+        Returns:
+            DataLoader configuré
+        
+        Raises:
+            ValueError: Si labels invalides (min != 0)
         """
-        try:
-            from torch.utils.data import DataLoader, TensorDataset
-            import os
-            
-            # Validation
-            if X is None or len(X) == 0:
-                raise ValueError("X vide")
-            # ✅ CORRECTION: y peut être None pour non supervisé
-            if y is not None:
-                if len(y) == 0:
-                    raise ValueError("y vide")
-                if len(X) != len(y):
-                    raise ValueError(f"X et y incompatibles: {len(X)} vs {len(y)}")
-            
-            logger.info(f"🔍 DataLoaderFactory - input_shape: {X.shape}, output_format: {output_format}")
-            
-            # ====================================================================
-            # 1. DÉTECTION FORMAT INITIAL
-            # ====================================================================
-            def detect_format_static(arr: np.ndarray) -> str:
-                """Détection format sans dépendre de DataPreprocessor."""
-                if arr.ndim != 4:
-                    return 'channels_last'
-                
-                n, dim1, dim2, dim3 = arr.shape
-                
-                # channels_last: (N, H, W, C) où C est petit
-                if dim3 in [1, 3, 4] and dim3 < dim1 and dim3 < dim2:
-                    return 'channels_last'
-                
-                # channels_first: (N, C, H, W) où C est petit
-                if dim1 in [1, 3, 4] and dim1 < dim2 and dim1 < dim3:
-                    return 'channels_first'
-                
-                # Heuristique finale
-                if dim1 < min(dim2, dim3) * 0.1:
-                    return 'channels_first'
-                elif dim3 < min(dim1, dim2) * 0.1:
-                    return 'channels_last'
-                else:
-                    return 'channels_last'  # fallback
-            
-            current_format = detect_format_static(X)
-            logger.info(f"✅ Format détecté: {current_format} (shape={X.shape})")
-            
-            # ====================================================================
-            # 2. NORMALISATION DU FORMAT (convertir vers output_format)
-            # ====================================================================
-            X_converted = X.copy()
-            
-            if current_format != output_format:
-                if current_format == "channels_last" and output_format == "channels_first":
-                    # (N, H, W, C) → (N, C, H, W)
-                    X_converted = np.transpose(X, (0, 3, 1, 2))
-                    logger.info(f"🔄 Conversion: channels_last → channels_first")
-                    
-                elif current_format == "channels_first" and output_format == "channels_last":
-                    # (N, C, H, W) → (N, H, W, C)
-                    X_converted = np.transpose(X, (0, 2, 3, 1))
-                    logger.info(f"🔄 Conversion: channels_first → channels_last")
-            
-            # VALIDATION format après conversion
-            if output_format == "channels_first":
-                if X_converted.shape[1] not in [1, 3, 4]:
-                    logger.warning(f"⚠️ Canaux suspects en channels_first: {X_converted.shape[1]}")
-            else:  # channels_last
-                if X_converted.shape[3] not in [1, 3, 4]:
-                    logger.warning(f"⚠️ Canaux suspects en channels_last: {X_converted.shape[3]}")
-            
-            # ====================================================================
-            # 3. CONFIGURATION AUGMENTATION
-            # ====================================================================
-            use_augmentation = (
-                augmentation_config and 
-                augmentation_config.get('augmentation_enabled', False) and 
-                is_training
-            )
-            
-            if use_augmentation:
-                # VALIDATION CRITIQUE: target_size REQUIRED pour augmentation
-                if not target_size:
-                    raise ValueError(
-                        "❌ ERREUR CRITIQUE: target_size REQUIS quand augmentation activée\n"
-                        "Raison: Les augmentations (rotate, zoom) changent la taille des images,\n"
-                        "        ce qui brise le batching PyTorch sans resize final.\n"
-                        "Solution: Spécifiez target_size dans preprocessing_config ou model_config."
-                    )
-                
-                # Augmentation nécessite channels_last pour Albumentations
-                if output_format == "channels_first":
-                    # Conversion temporaire pour augmentation
-                    X_aug = np.transpose(X_converted, (0, 2, 3, 1))
-                    logger.info(f"🔄 Conversion temporaire pour augmentation: channels_first → channels_last")
-                else:
-                    X_aug = X_converted
-                
-                dataset = AugmentedImageDataset(
-                    X_aug, y,
-                    target_size=target_size,
-                    augmentation_config=augmentation_config,
-                    is_training=True,
-                    preprocessor=preprocessor  # Pour normalisation POST-augmentation
+        logger.info(
+            f"🔧 Création DataLoader:\n"
+            f"   • X shape: {X.shape}\n"
+            f"   • y shape: {y.shape if y is not None else 'None'}\n"
+            f"   • Batch size: {batch_size}\n"
+            f"   • Augmentation: {augmentation_config is not None and is_training}\n"
+            f"   • Target size: {target_size}\n"
+            f"   • Is training: {is_training}"
+        )
+        
+        # ========================================================================
+        # VALIDATION CRITIQUE DES LABELS
+        # ========================================================================
+        if y is not None:
+            # Forcer dtype int64
+            if y.dtype != np.int64:
+                logger.warning(
+                    f"⚠️ Labels dtype={y.dtype} → conversion int64 "
+                    f"(requis pour CrossEntropyLoss)"
                 )
-                
-                logger.info(
-                    f"✅ AugmentedImageDataset créé - "
-                    f"samples: {len(dataset)}, "
-                    f"augmentation: {use_augmentation}, "
-                    f"target_size: {target_size}"
+                y = y.astype(np.int64)
+            
+            # Validation range
+            label_min = int(y.min())
+            label_max = int(y.max())
+            unique_labels = np.unique(y)
+            n_classes = len(unique_labels)
+            
+            # ❌ ERREUR CRITIQUE: Labels ne commencent pas à 0
+            if label_min != 0:
+                raise ValueError(
+                    f"❌ LABELS INVALIDES AVANT DATALOADER:\n"
+                    f"   • min(y) = {label_min} (DOIT être 0)\n"
+                    f"   • max(y) = {label_max}\n"
+                    f"   • Labels présents: {unique_labels.tolist()}\n"
+                    f"   • Nombre de classes: {n_classes}\n"
+                    f"   \n"
+                    f"   💡 SOLUTION:\n"
+                    f"   Vérifier l'encodage des labels EN AMONT du DataLoader.\n"
+                    f"   Les labels doivent être [0, 1, 2, ..., n_classes-1]"
                 )
             
-            else:
-                # Pas d'augmentation: utiliser TensorDataset simple
-                X_tensor = torch.tensor(X_converted, dtype=torch.float32)
-                y_tensor = torch.tensor(y, dtype=torch.long)
-                
-                # Si device_manager fourni, déplacer sur device
-                if device_manager and device_manager.device != torch.device('cpu'):
-                    X_tensor = X_tensor.to(device_manager.device)
-                    y_tensor = y_tensor.to(device_manager.device)
-                
-                dataset = TensorDataset(X_tensor, y_tensor)
-                
-                logger.info(
-                    f"✅ TensorDataset créé - "
-                    f"samples: {len(dataset)}, "
-                    f"shape: {X_tensor.shape}, "
-                    f"format: {output_format}, "
-                    f"dtype: {X_tensor.dtype}"
-                )
-            
-            # ====================================================================
-            # 4. CONFIGURATION DATALOADER (optimisée production)
-            # ====================================================================
-            # num_workers dynamique basé sur système
-            if num_workers is None:
-                import os
-                if os.cpu_count():
-                    num_workers = min(4, os.cpu_count() // 2)
-                else:
-                    num_workers = 0
-                logger.info(f"⚙️ num_workers auto-configuré: {num_workers}")
-            
-            # pin_memory seulement si CUDA disponible
-            if pin_memory and not torch.cuda.is_available():
-                pin_memory = False
-                logger.info("ℹ️ pin_memory désactivé (CUDA non disponible)")
-            
-            loader = DataLoader(
-                dataset,
-                batch_size=batch_size,
-                shuffle=shuffle,
-                num_workers=num_workers,
-                pin_memory=pin_memory,
-                drop_last=False,
-                persistent_workers=num_workers > 0
-            )
-            
+            # ✅ VALIDATION OK
             logger.info(
-                f"✅ DataLoader créé avec succès:\n"
-                f"   • Batches: {len(loader)}\n"
-                f"   • Batch size: {batch_size}\n"
-                f"   • Augmentation: {use_augmentation}\n"
-                f"   • Format initial: {current_format}\n"
-                f"   • Format final: {output_format}\n"
-                f"   • num_workers: {num_workers}\n"
-                f"   • pin_memory: {pin_memory}"
+                f"✅ Labels validés avant DataLoader:\n"
+                f"   • dtype: {y.dtype}\n"
+                f"   • range: [{label_min}, {label_max}]\n"
+                f"   • unique: {unique_labels.tolist()}\n"
+                f"   • n_classes: {n_classes}"
+            )
+        
+        # ========================================================================
+        # DÉTECTION AUGMENTATION
+        # ========================================================================
+        augmentation_enabled = False
+        augmentation_pipeline = None
+        
+        if augmentation_config and is_training:
+            augmentation_enabled = augmentation_config.get('augmentation_enabled', False)
+            
+            if augmentation_enabled:
+                logger.info("🎨 Configuration augmentation de données")
+                
+                # ✅ PIPELINE STANDARD SANS BIAIS
+                augmentation_pipeline = A.Compose([
+                    # Flips (réalistes)
+                    A.HorizontalFlip(p=0.5),
+                    A.VerticalFlip(p=0.3),
+                    
+                    # Rotation limitée (pas de 180°)
+                    A.Rotate(limit=15, p=0.5),
+                    
+                    # Ajustements luminosité/contraste (modérés)
+                    A.RandomBrightnessContrast(
+                        brightness_limit=0.2,
+                        contrast_limit=0.2,
+                        p=0.3
+                    ),
+                    
+                    # Bruit gaussien léger
+                    A.GaussNoise(var_limit=(10.0, 50.0), p=0.2),
+                    
+                    # Flou léger
+                    A.Blur(blur_limit=3, p=0.2)
+                ])
+                
+                logger.info(
+                    f"✅ Pipeline augmentation créé:\n"
+                    f"   • HorizontalFlip: p=0.5\n"
+                    f"   • VerticalFlip: p=0.3\n"
+                    f"   • Rotate: ±15°, p=0.5\n"
+                    f"   • BrightnessContrast: ±20%, p=0.3\n"
+                    f"   • GaussNoise: p=0.2\n"
+                    f"   • Blur: p=0.2"
+                )
+        
+        # ========================================================================
+        # CRÉATION DATASET
+        # ========================================================================
+        if augmentation_enabled:
+            logger.info("🎨 Création AugmentedImageDataset")
+            
+            # ✅ DATASET AVEC AUGMENTATION
+            dataset = AugmentedImageDataset(
+                images=X,
+                labels=y,  # ✅ Déjà validé ci-dessus
+                transform=augmentation_pipeline,
+                preprocessor=preprocessor,
+                output_format=output_format
             )
             
-            return loader
+        else:
+            logger.info("📦 Création TensorDataset standard")
             
-        except Exception as e:
-            logger.error(f"❌ Erreur création DataLoader: {e}", exc_info=True)
-            raise
+            # ✅ DATASET STANDARD (pas d'augmentation)
+            X_tensor = torch.from_numpy(X).float()
+            
+            if y is not None:
+                y_tensor = torch.from_numpy(y).long()  # ✅ int64
+                dataset = TensorDataset(X_tensor, y_tensor)
+            else:
+                # Mode non supervisé
+                dummy_labels = torch.zeros(len(X), dtype=torch.long)
+                dataset = TensorDataset(X_tensor, dummy_labels)
+        
+        # ========================================================================
+        # CRÉATION DATALOADER
+        # ========================================================================
+        dataloader = DataLoader(
+            dataset,
+            batch_size=batch_size,
+            shuffle=shuffle,
+            num_workers=num_workers,
+            pin_memory=pin_memory,
+            drop_last=False,
+            persistent_workers=num_workers > 0
+        )
+        
+        logger.info(
+            f"✅ DataLoader créé avec succès:\n"
+            f"   • Batches: {len(dataloader)}\n"
+            f"   • Batch size: {batch_size}\n"
+            f"   • Augmentation: {augmentation_enabled}\n"
+            f"   • Shuffle: {shuffle}\n"
+            f"   • Workers: {num_workers}"
+        )
+        
+        return dataloader

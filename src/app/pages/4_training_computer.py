@@ -239,7 +239,7 @@ class MLTrainingWorkflowPro:
         
         # === BOUTON SPLIT ===
         st.markdown("---")
-        if st.button("🔄 Effectuer le Split", type="primary", use_container_width=True):
+        if st.button("🔄 Effectuer le Split", type="primary", width='stretch'):
             with st.spinner("Split en cours..."):
                 try:
                     # Split avec fonction helper
@@ -629,7 +629,7 @@ class MLTrainingWorkflowPro:
                         if st.button(
                             "✅ Sélectionné" if is_selected else "📝 Sélectionner",
                             key=f"select_{model['id']}",
-                            use_container_width=True,
+                            width='stretch',
                             type="primary" if is_selected else "secondary"
                         ):
                             STATE.selected_model_type = model["id"]
@@ -1234,7 +1234,7 @@ class MLTrainingWorkflowPro:
         if st.button(
             "🚀 Démarrer l'Entraînement", 
             type="primary", 
-            use_container_width=True, 
+            width='stretch', 
             disabled=launch_disabled
         ):
             self.launch_training()
@@ -1243,7 +1243,7 @@ class MLTrainingWorkflowPro:
         st.markdown("---")
         col_back, _ = st.columns(2)
         with col_back:
-            if st.button("⬅️ Retour", use_container_width=True):
+            if st.button("⬅️ Retour", width='stretch'):
                 STATE.current_step = 4
                 st.rerun()
 
@@ -1433,7 +1433,7 @@ class MLTrainingWorkflowPro:
             with st.expander("🔍 Détails de l'erreur"):
                 st.json(history)
             
-            if st.button("🔙 Retour à la configuration", use_container_width=True):
+            if st.button("🔙 Retour à la configuration", width='stretch'):
                 STATE.current_step = 4
                 st.rerun()
     
@@ -1489,18 +1489,18 @@ class MLTrainingWorkflowPro:
                 template="plotly_white",
                 height=400
             )
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width='stretch')
         
         # Actions post-entraînement
         st.markdown("---")
         col_action1, col_action2 = st.columns(2)
         
         with col_action1:
-            if st.button("📊 Aller à l'Évaluation", type="primary", use_container_width=True):
+            if st.button("📊 Aller à l'Évaluation", type="primary", width='stretch'):
                 st.switch_page("pages/5_anomaly_evaluation.py")
         
         with col_action2:
-            if st.button("🔄 Nouvel Entraînement", use_container_width=True):
+            if st.button("🔄 Nouvel Entraînement", width='stretch'):
                 # Réinitialisation partielle
                 STATE.current_step = 0
                 STATE.workflow_complete = False
@@ -1572,11 +1572,11 @@ class MLTrainingWorkflowPro:
         col_nav1, col_nav2, col_nav3 = st.columns(3)
         
         with col_nav1:
-            if st.button("🏠 Retour au Dashboard", use_container_width=True):
+            if st.button("🏠 Retour au Dashboard", width='stretch'):
                 st.switch_page("pages/1_dashboard.py")
         
         with col_nav2:
-            if st.button("🔄 Réinitialiser le Workflow", use_container_width=True):
+            if st.button("🔄 Réinitialiser le Workflow", width='stretch'):
                 # Réinitialisation complète
                 STATE.current_step = 0
                 STATE.selected_model_type = None
@@ -1586,7 +1586,7 @@ class MLTrainingWorkflowPro:
         
         with col_nav3:
             if hasattr(STATE, 'trained_model') and STATE.trained_model is not None:
-                if st.button("📊 Évaluation des Résultats", type="primary", use_container_width=True):
+                if st.button("📊 Évaluation des Résultats", type="primary", width='stretch'):
                     st.switch_page("pages/5_anomaly_evaluation.py")
 
 

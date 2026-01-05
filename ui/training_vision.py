@@ -520,7 +520,15 @@ def render_split_distribution_chart(split_data: Dict, mode: str):
         )]
     )
     
-    st.plotly_chart(fig, width="stretch")
+    st.plotly_chart(
+        fig, 
+        config={
+            'displayModeBar': True,
+            'displaylogo': False,
+            'modeBarButtonsToRemove': ['pan2d', 'lasso2d', 'select2d']
+        },
+        width="stretch"
+    )
     
     # Distribution des classes par split
     if mode == "unsupervised":
@@ -798,7 +806,15 @@ def render_imbalance_analysis(imbalance_info: Dict, y_train: np.ndarray):
         height=400
     )
     
-    st.plotly_chart(fig, width="stretch")
+    st.plotly_chart(
+        fig, 
+        config={
+            'displayModeBar': True,
+            'displaylogo': False,
+            'modeBarButtonsToRemove': ['pan2d', 'lasso2d', 'select2d']
+        },
+        width="stretch"
+    )
 
 
 # ============================================================================

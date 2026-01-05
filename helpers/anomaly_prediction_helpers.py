@@ -4,7 +4,8 @@ Gestion cohérente du resize avec le preprocessing
 """
 import numpy as np
 import torch
-from typing import Dict, Any, Optional, Tuple
+from typing import Dict, Any, Optional, Tuple, List
+from pathlib import Path
 from src.shared.logging import get_logger
 
 logger = get_logger(__name__)
@@ -24,6 +25,7 @@ def robust_predict_with_preprocessor(
     - Validation cohérence shapes avant comparaison
     - Resize automatique si nécessaire
     - Gestion explicite target_size depuis preprocessor
+    - Récupération INTELLIGENTE des vrais noms de classes
     - Logs détaillés pour debugging
     
     Args:
@@ -38,8 +40,155 @@ def robust_predict_with_preprocessor(
         Dict avec prédictions, scores, heatmaps, etc.
     """
     try:
+        # ====================================================================
+        # ÉTAPE 1: RÉCUPÉRATION INTELLIGENTE DES NOMS DE CLASSES
+        # ====================================================================
+        class_names = None
+        n_classes = None
+        
+        # ----------------------------------------------------------------
+        # SOURCE #1: STATE.training_results (PRIORITAIRE - stockage explicite)
+        # ----------------------------------------------------------------
+        if STATE is not None and hasattr(STATE, 'training_results'):
+            training_results = STATE.training_results
+            
+            if isinstance(training_results, dict):
+                # Chercher dans plusieurs clés possibles
+                for key in ['class_names', 'labels', 'target_names', 'classes']:
+                    if key in training_results and training_results[key]:
+                        class_names = training_results[key]
+                        logger.info(f"✅ Noms de classes depuis training_results['{key}']: {class_names}")
+                        break
+            
+            elif hasattr(training_results, 'class_names'):
+                class_names = training_results.class_names
+                logger.info(f"✅ Noms de classes depuis training_results.class_names: {class_names}")
+            elif hasattr(training_results, 'labels'):
+                class_names = training_results.labels
+                logger.info(f"✅ Noms de classes depuis training_results.labels: {class_names}")
+        
+        # ----------------------------------------------------------------
+        # SOURCE #2: STATE.data.class_names (depuis chargement dataset)
+        # ----------------------------------------------------------------
+        if class_names is None and STATE is not None:
+            if hasattr(STATE, 'data'):
+                data = STATE.data
+                
+                # Chercher dans data
+                for key in ['class_names', 'labels', 'target_names', 'classes']:
+                    if hasattr(data, key):
+                        value = getattr(data, key)
+                        if value is not None and len(value) > 0:
+                            class_names = value
+                            logger.info(f"✅ Noms de classes depuis STATE.data.{key}: {class_names}")
+                            break
+        
+        # ----------------------------------------------------------------
+        # SOURCE #3: Inférence depuis dossiers du dataset
+        # ----------------------------------------------------------------
+        if class_names is None and STATE is not None:
+            if hasattr(STATE, 'data') and hasattr(STATE.data, 'y_test'):
+                y_test = STATE.data.y_test
+                
+                if y_test is not None:
+                    unique_classes = np.unique(y_test)
+                    n_classes = len(unique_classes)
+                    
+                    logger.info(f"📊 Détection depuis y_test: {n_classes} classes uniques")
+                    
+                    # Essayer de récupérer les noms depuis le dataset_path
+                    if hasattr(STATE.data, 'dataset_path') and STATE.data.dataset_path:
+                        try:
+                            dataset_path = Path(STATE.data.dataset_path)
+                            
+                            # Chercher dans train/ ou dataset racine
+                            train_dir = dataset_path / 'train'
+                            if train_dir.exists() and train_dir.is_dir():
+                                folders = sorted([d.name for d in train_dir.iterdir() if d.is_dir()])
+                                if len(folders) == n_classes:
+                                    class_names = folders
+                                    logger.info(f"✅ Noms de classes depuis dossiers 'train/': {class_names}")
+                            else:
+                                # Essayer racine du dataset
+                                folders = sorted([d.name for d in dataset_path.iterdir() if d.is_dir()])
+                                if len(folders) == n_classes:
+                                    class_names = folders
+                                    logger.info(f"✅ Noms de classes depuis dossiers racine: {class_names}")
+                        except Exception as e:
+                            logger.debug(f"Impossible d'extraire noms depuis dossiers: {e}")
+        
+        # ----------------------------------------------------------------
+        # SOURCE #4: Inférence depuis model_config
+        # ----------------------------------------------------------------
+        if class_names is None and STATE is not None:
+            if hasattr(STATE, 'model_config') and STATE.model_config is not None:
+                model_config = STATE.model_config
+                
+                if isinstance(model_config, dict):
+                    # Chercher num_classes pour générer noms par défaut
+                    if 'num_classes' in model_config:
+                        n_classes = model_config['num_classes']
+                    
+                    # Chercher noms explicites
+                    for key in ['class_names', 'labels', 'target_names']:
+                        if key in model_config and model_config[key]:
+                            class_names = model_config[key]
+                            logger.info(f"✅ Noms de classes depuis model_config['{key}']: {class_names}")
+                            break
+                elif hasattr(model_config, 'num_classes'):
+                    n_classes = model_config.num_classes
+                elif hasattr(model_config, 'class_names'):
+                    class_names = model_config.class_names
+                    logger.info(f"✅ Noms de classes depuis model_config.class_names: {class_names}")
+        
+        # ----------------------------------------------------------------
+        # FALLBACK: Génération noms par défaut selon nombre de classes
+        # ----------------------------------------------------------------
+        if class_names is None:
+            # Déterminer n_classes si pas encore défini
+            if n_classes is None:
+                # Essayer de détecter depuis y_test
+                if STATE is not None and hasattr(STATE, 'data') and hasattr(STATE.data, 'y_test'):
+                    y_test = STATE.data.y_test
+                    if y_test is not None:
+                        unique_classes = np.unique(y_test)
+                        n_classes = len(unique_classes)
+                        logger.info(f"📊 n_classes détecté depuis y_test: {n_classes}")
+                
+                # Sinon, essayer de détecter depuis la sortie du modèle
+                if n_classes is None and hasattr(model, 'num_classes'):
+                    n_classes = model.num_classes
+                elif n_classes is None and hasattr(model, 'out_channels'):
+                    n_classes = model.out_channels
+                elif n_classes is None:
+                    # Assume binaire par défaut
+                    logger.warning("⚠️ Impossible de déterminer n_classes, assume binaire")
+                    n_classes = 2
+            
+            # Générer noms selon nombre de classes
+            if n_classes == 2:
+                # Binaire par défaut
+                class_names = ["Normal", "Anomalie"]
+                logger.info(f"✅ Noms binaires par défaut: {class_names}")
+            else:
+                # Multiclasse avec noms génériques
+                class_names = [f"Classe_{i}" for i in range(n_classes)]
+                logger.warning(
+                    f"⚠️ Noms génériques utilisés: {class_names}\n"
+                    f"   Pour afficher les vrais noms, stocker class_names dans STATE.training_results"
+                )
+        
+        # Validation finale
+        if not isinstance(class_names, list):
+            try:
+                class_names = list(class_names) if class_names else ["Classe_0", "Classe_1"]
+            except:
+                class_names = ["Classe_0", "Classe_1"]
+        
+        logger.info(f"🏷️ Noms de classes finaux: {class_names} ({len(class_names)} classes)")
+        
         # ========================================================================
-        # ÉTAPE 1: PREPROCESSING AVEC GESTION TARGET_SIZE
+        # ÉTAPE 2: PREPROCESSING AVEC GESTION TARGET_SIZE
         # ========================================================================
         target_size = None
         
@@ -72,7 +221,7 @@ def robust_predict_with_preprocessor(
                 logger.info(f"✅ Shape corrigée: {X_processed.shape}")
         
         # ========================================================================
-        # ÉTAPE 2: DEVICE SETUP
+        # ÉTAPE 3: DEVICE SETUP
         # ========================================================================
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         model.to(device)
@@ -89,7 +238,7 @@ def robust_predict_with_preprocessor(
             X_tensor = torch.tensor(X_processed, dtype=torch.float32).to(device)
         
         # ========================================================================
-        # ÉTAPE 3: PRÉDICTION SELON TYPE DE MODÈLE
+        # ÉTAPE 4: PRÉDICTION SELON TYPE DE MODÈLE
         # ========================================================================
         with torch.no_grad():
             if model_type in ["autoencoder", "conv_autoencoder", "variational_autoencoder", "denoising_autoencoder"]:
@@ -117,10 +266,9 @@ def robust_predict_with_preprocessor(
                             )
                             
                             # Calcul erreur SPATIALE (B, C, H_out, W_out)
-                            # Puis moyenne sur canaux ET spatial pour avoir (B,)
                             reconstruction_errors = np.mean(
-                                (reconstructed_np) ** 2,  # Erreur quadratique
-                                axis=(1, 2, 3)  # Moyenne sur C, H, W
+                                (reconstructed_np) ** 2,
+                                axis=(1, 2, 3)
                             )
                             
                         else:
@@ -167,6 +315,16 @@ def robust_predict_with_preprocessor(
                     threshold = np.clip(threshold, 0.3, 0.7)
                     
                     y_pred_binary = (y_pred_proba > threshold).astype(int)
+                    
+                    # Noms de classes pour autoencoder (binaire)
+                    if len(class_names) >= 2:
+                        y_pred_class_names = [
+                            class_names[0] if p == 0 else class_names[1] 
+                            for p in y_pred_binary
+                        ]
+                    else:
+                        # Fallback si class_names insuffisant
+                        y_pred_class_names = ["Normal" if p == 0 else "Anomalie" for p in y_pred_binary]
                     
                     # GÉNÉRATION HEATMAPS (si demandé)
                     error_maps = None
@@ -228,9 +386,13 @@ def robust_predict_with_preprocessor(
                     result = {
                         "y_pred_proba": y_pred_proba,
                         "y_pred_binary": y_pred_binary,
+                        "y_pred_class_names": y_pred_class_names,
+                        "class_names": class_names,
                         "reconstruction_errors": reconstruction_errors,
                         "reconstructed": reconstructed_np,
                         "adaptive_threshold": threshold,
+                        "n_classes": len(class_names),
+                        "class_names_source": "explicit" if class_names else "fallback",
                         "success": True
                     }
                     
@@ -269,35 +431,68 @@ def robust_predict_with_preprocessor(
                     # Extraction probabilités selon nombre de classes
                     n_classes = y_proba.shape[1]
                     
-                    if n_classes == 2:
+                    # Détection si multiclasse
+                    is_multiclass = n_classes > 2
+                    
+                    if is_multiclass:
+                        # Multiclasse: utiliser argmax pour prédictions
+                        y_pred_indices = np.argmax(y_proba, axis=1)
+                        y_pred_proba = np.max(y_proba, axis=1)  # Probabilité de la classe prédite
+                        
+                        # Noms de classes pour multiclasse
+                        if class_names is not None and len(class_names) >= n_classes:
+                            y_pred_class_names = [class_names[i] for i in y_pred_indices]
+                        else:
+                            # Générer des noms par défaut
+                            y_pred_class_names = [f"Classe_{i}" for i in y_pred_indices]
+                        
+                        logger.info(
+                            f"✅ Prédictions classification multiclasse ({n_classes} classes): "
+                            f"{len(y_pred_indices)} samples, "
+                            f"classes prédites: {np.unique(y_pred_indices).tolist()}"
+                        )
+                        
+                        # Pour compatibilité avec le reste du code (qui attend y_pred_binary)
+                        # Dans le cas multiclasse, y_pred_binary contient les indices des classes
+                        y_pred_binary = y_pred_indices
+                        
+                    else:
                         # Binaire: probabilité classe positive
-                        y_pred_proba = y_proba[:, 1]
-                        y_pred_binary = (y_pred_proba > 0.5).astype(int)
+                        if n_classes == 2:
+                            y_pred_proba = y_proba[:, 1]
+                            y_pred_binary = (y_pred_proba > 0.5).astype(int)
+                            
+                            # Noms de classes pour binaire
+                            if class_names is not None and len(class_names) >= 2:
+                                y_pred_class_names = [
+                                    class_names[0] if p == 0 else class_names[1] 
+                                    for p in y_pred_binary
+                                ]
+                            else:
+                                y_pred_class_names = [
+                                    "Normal" if p == 0 else "Anomalie" 
+                                    for p in y_pred_binary
+                                ]
+                        else:
+                            # Cas spécial: une seule classe
+                            y_pred_proba = y_proba[:, 0]
+                            y_pred_binary = (y_pred_proba > 0.5).astype(int)
+                            y_pred_class_names = ["Normal" if p == 0 else "Anomalie" for p in y_pred_binary]
+                        
                         logger.info(
                             f"✅ Prédictions classification binaire: {len(y_pred_binary)} samples, "
                             f"anomalies: {y_pred_binary.sum()}"
-                        )
-                    elif n_classes == 1:
-                        # Cas spécial: une seule classe
-                        y_pred_proba = y_proba[:, 0]
-                        y_pred_binary = (y_pred_proba > 0.5).astype(int)
-                        logger.info(
-                            f"✅ Prédictions classification (1 classe): {len(y_pred_binary)} samples"
-                        )
-                    else:
-                        # Multiclasse: utiliser argmax pour prédictions et max pour proba
-                        y_pred_binary = np.argmax(y_proba, axis=1)
-                        y_pred_proba = np.max(y_proba, axis=1)  # Probabilité de la classe prédite
-                        logger.info(
-                            f"✅ Prédictions classification multiclasse ({n_classes} classes): "
-                            f"{len(y_pred_binary)} samples, "
-                            f"classes prédites: {np.unique(y_pred_binary).tolist()}"
                         )
                     
                     return {
                         "y_pred_proba": y_pred_proba,
                         "y_pred_binary": y_pred_binary,
+                        "y_pred_class_names": y_pred_class_names,
+                        "class_names": class_names,
                         "class_probabilities": y_proba,
+                        "is_multiclass": is_multiclass,
+                        "n_classes": len(class_names),
+                        "class_names_source": "explicit" if class_names else "fallback",
                         "success": True
                     }
                 
@@ -316,22 +511,36 @@ def robust_predict_with_preprocessor(
             reconstruction_errors = np.clip(reconstruction_errors, 0, 1)
             
             threshold = 0.5
+            y_pred_binary = (reconstruction_errors > threshold).astype(int)
+            
+            # Noms de classes par défaut
+            y_pred_class_names = ["Normal" if p == 0 else "Anomalie" for p in y_pred_binary]
             
             return {
                 "y_pred_proba": reconstruction_errors,
-                "y_pred_binary": (reconstruction_errors > threshold).astype(int),
+                "y_pred_binary": y_pred_binary,
+                "y_pred_class_names": y_pred_class_names,
+                "class_names": ["Normal", "Anomalie"],
                 "reconstruction_errors": reconstruction_errors,
                 "reconstructed": X_test.copy() if len(X_test.shape) == 4 else np.expand_dims(X_test, axis=1),
                 "adaptive_threshold": threshold,
+                "n_classes": 2,
+                "class_names_source": "fallback",
                 "success": False,
                 "fallback": True
             }
         else:
             y_pred_proba = np.random.beta(2, 5, len(X_test))
+            y_pred_binary = (y_pred_proba > 0.5).astype(int)
+            y_pred_class_names = ["Normal" if p == 0 else "Anomalie" for p in y_pred_binary]
             
             return {
                 "y_pred_proba": y_pred_proba,
-                "y_pred_binary": (y_pred_proba > 0.5).astype(int),
+                "y_pred_binary": y_pred_binary,
+                "y_pred_class_names": y_pred_class_names,
+                "class_names": ["Normal", "Anomalie"],
+                "n_classes": 2,
+                "class_names_source": "fallback",
                 "success": False,
                 "fallback": True
             }

@@ -19,11 +19,12 @@ from sklearn.metrics import (
     accuracy_score, precision_score, recall_score, f1_score,
     roc_auc_score, confusion_matrix, classification_report
 )
+
 from sklearn.utils.class_weight import compute_class_weight
 
 from src.config.model_config import ModelConfig, ModelType
 from src.config.training_config import TrainingConfig, OptimizerType, SchedulerType
-from src.data.computer_vision_preprocessing import DataLoaderFactory, DataPreprocessor, DataValidator, Result
+from src.data.computer_vision_preprocessing import AutoencoderPreprocessor, DataLoaderFactory, DataPreprocessor, DataValidator, Result
 from src.shared.logging import get_logger
 from utils.callbacks import TrainingCallback
 from utils.device_manager import DeviceManager
@@ -459,7 +460,7 @@ class ComputerVisionTrainer:
                     target_size=target_size
                 )
             
-                if not validation_result.success:
+                if not validation_result['success']:
                     logger.error(f"❌ Validation premier batch échouée: {validation_result.error}")
                     return Result.err(
                         f"Problème format détecté:\n{validation_result.error}"
@@ -586,129 +587,257 @@ class ComputerVisionTrainer:
         train_loader: DataLoader,
         expected_channels: int,
         target_size: Optional[Tuple[int, int]] = None
-    ) -> Result:
+    ) -> Dict[str, Any]:
         """
-        Validation complète du premier batch avec détails.       
-        Args:
-            expected_channels: Nombre de canaux attendus (1, 3, ou 4)
-            target_size: Taille attendue (H, W) ou None
+        Validation ULTRA-STRICTE du premier batch.      
+        VALIDATIONS:
+        1. Dimensions tensor (4D)
+        2. Nombre de canaux
+        3. Taille d'image (si target_size fourni)
+        4. Range des valeurs
+        5. Labels (CRITIQUE: min=0, max<num_classes)
+        
+        Returns:
+            Dict avec {'success': bool, 'data': dict, 'error': Optional[str]}
         """
         try:
-            # Récupérer le premier batch
+            # Récupérer premier batch
             first_batch = next(iter(train_loader))
             
             if len(first_batch) != 2:
-                return Result.err(
-                    f"Batch invalide: {len(first_batch)} éléments au lieu de 2"
-                )
+                return {
+                    'success': False,
+                    'error': f"Batch invalide: {len(first_batch)} éléments au lieu de 2",
+                    'data': None
+                }
             
             data, labels = first_batch
             
+            logger.info(
+                f"🔍 Validation premier batch:\n"
+                f"   • Data shape: {data.shape}\n"
+                f"   • Labels shape: {labels.shape}\n"
+                f"   • Data dtype: {data.dtype}\n"
+                f"   • Labels dtype: {labels.dtype}"
+            )
+            
             # ====================================================================
-            # VALIDATION #1 : Dimensions du tensor
+            # VALIDATION #1 : DIMENSIONS TENSOR
             # ====================================================================
             if data.dim() != 4:
-                return Result.err(
-                    f"❌ DIMENSIONS INVALIDES:\n"
-                    f"   Attendu: 4D (B, C, H, W)\n"
-                    f"   Reçu: {data.dim()}D\n"
-                    f"   Shape: {data.shape}"
-                )
+                return {
+                    'success': False,
+                    'error': (
+                        f"❌ DIMENSIONS INVALIDES:\n"
+                        f"   Attendu: 4D (B, C, H, W)\n"
+                        f"   Reçu: {data.dim()}D\n"
+                        f"   Shape: {data.shape}\n"
+                        f"\n"
+                        f"   💡 CAUSE PROBABLE:\n"
+                        f"   - Format channels_first/last incorrect\n"
+                        f"   - Preprocessing a échoué\n"
+                        f"   - DataLoader mal configuré"
+                    ),
+                    'data': None
+                }
             
             batch_size, channels, height, width = data.shape
             
             # ====================================================================
-            # VALIDATION #2 : Nombre de canaux
+            # VALIDATION #2 : NOMBRE DE CANAUX
             # ====================================================================
             if channels != expected_channels:
-                return Result.err(
-                    f"❌ CANAUX INCORRECTS:\n"
-                    f"   Attendu: {expected_channels}\n"
-                    f"   Reçu: {channels}\n"
-                    f"   Shape: {data.shape}\n"
-                    f"   \n"
-                    f"   CAUSE PROBABLE:\n"
-                    f"   - input_channels mal configuré dans model_config\n"
-                    f"   - Conversion channels_first/last échouée\n"
-                    f"   - Modèle incompatible avec ces données"
-                )
+                return {
+                    'success': False,
+                    'error': (
+                        f"❌ CANAUX INCORRECTS:\n"
+                        f"   Attendu: {expected_channels}\n"
+                        f"   Reçu: {channels}\n"
+                        f"   Shape: {data.shape}\n"
+                        f"\n"
+                        f"   💡 CAUSE PROBABLE:\n"
+                        f"   - input_channels mal configuré dans model_config\n"
+                        f"   - Conversion channels_first/last échouée\n"
+                        f"   - Modèle incompatible avec ces données\n"
+                        f"\n"
+                        f"   🛠️ SOLUTION:\n"
+                        f"   Vérifier model_config.input_channels et preprocessor.transform()"
+                    ),
+                    'data': None
+                }
             
             # ====================================================================
-            # VALIDATION #3 : Taille d'image (si target_size spécifié)
+            # VALIDATION #3 : TAILLE D'IMAGE
             # ====================================================================
             if target_size:
                 expected_h, expected_w = target_size
                 if (height, width) != (expected_h, expected_w):
-                    return Result.err(
-                        f"❌ TAILLE D'IMAGE INCORRECTE:\n"
-                        f"   Attendu: {expected_h}x{expected_w}\n"
-                        f"   Reçu: {height}x{width}\n"
-                        f"   \n"
-                        f"   CAUSE PROBABLE:\n"
-                        f"   - Resize non appliqué correctement\n"
-                        f"   - Augmentation sans resize final\n"
-                        f"   - Incohérence dans target_size"
-                    )
+                    return {
+                        'success': False,
+                        'error': (
+                            f"❌ TAILLE D'IMAGE INCORRECTE:\n"
+                            f"   Attendu: {expected_h}x{expected_w}\n"
+                            f"   Reçu: {height}x{width}\n"
+                            f"\n"
+                            f"   💡 CAUSE PROBABLE:\n"
+                            f"   - Resize non appliqué correctement\n"
+                            f"   - Augmentation sans resize final\n"
+                            f"   - Incohérence dans target_size\n"
+                            f"\n"
+                            f"   🛠️ SOLUTION:\n"
+                            f"   Vérifier preprocessing_config.target_size"
+                        ),
+                        'data': None
+                    }
             
             # ====================================================================
-            # VALIDATION #4 : Range des valeurs
+            # VALIDATION #4 : RANGE DES VALEURS
             # ====================================================================
             data_min = float(data.min())
             data_max = float(data.max())
+            data_mean = float(data.mean())
+            data_std = float(data.std())
             
-            # Vérifier normalisation
+            # Warning si range anormal
             if data_max > 10 or data_min < -10:
                 logger.warning(
                     f"⚠️ Range de valeurs large: [{data_min:.3f}, {data_max:.3f}]\n"
-                    f"   Normalisation peut ne pas être appliquée."
+                    f"   Normalisation peut ne pas être appliquée.\n"
+                    f"   Mean: {data_mean:.3f}, Std: {data_std:.3f}"
                 )
             
             # ====================================================================
-            # VALIDATION #5 : Labels
+            # VALIDATION #5 : LABELS (CRITIQUE)
             # ====================================================================
             if labels.dim() != 1:
-                return Result.err(f"Labels 1D attendus, reçu: {labels.dim()}D")
+                return {
+                    'success': False,
+                    'error': f"❌ Labels 1D attendus, reçu: {labels.dim()}D",
+                    'data': None
+                }
             
             if len(labels) != batch_size:
-                return Result.err(
-                    f"Incohérence batch/labels: {batch_size} vs {len(labels)}"
-                )
+                return {
+                    'success': False,
+                    'error': (
+                        f"❌ Incohérence batch/labels:\n"
+                        f"   Batch size: {batch_size}\n"
+                        f"   Labels length: {len(labels)}"
+                    ),
+                    'data': None
+                }
             
-            # Vérifier valeurs labels
-            unique_labels = torch.unique(labels).cpu().numpy()
+            # Conversion labels pour analyse
+            labels_np = labels.cpu().numpy()
+            label_min = int(labels_np.min())
+            label_max = int(labels_np.max())
+            unique_labels = np.unique(labels_np).tolist()
+            
+            # ❌ ERREUR CRITIQUE: Labels ne commencent pas à 0
+            if label_min != 0:
+                return {
+                    'success': False,
+                    'error': (
+                        f"❌ LABELS INVALIDES DANS LE BATCH:\n"
+                        f"   • min(labels) = {label_min} (DOIT être 0)\n"
+                        f"   • max(labels) = {label_max}\n"
+                        f"   • Labels présents: {unique_labels}\n"
+                        f"   • Labels dtype: {labels.dtype}\n"
+                        f"\n"
+                        f"   💡 CAUSE PROBABLE:\n"
+                        f"   1. Encoding incorrect des labels en amont\n"
+                        f"   2. Bug dans AugmentedImageDataset.__getitem__()\n"
+                        f"   3. Problème de conversion dans DataLoader\n"
+                        f"   4. Labels non réencodés après filtrage\n"
+                        f"\n"
+                        f"   🛠️ SOLUTION:\n"
+                        f"   - Vérifier que y_train contient bien [0, 1, 2, ...]\n"
+                        f"   - Utiliser LabelEncoder().fit_transform(y_train)\n"
+                        f"   - Débugger AugmentedImageDataset ligne par ligne\n"
+                        f"   - Ajouter logging dans __getitem__()\n"
+                        f"\n"
+                        f"   🔍 DEBUG:\n"
+                        f"   Exécuter le script diagnostic_labels.py pour identifier\n"
+                        f"   l'étape exacte où les labels sont corrompus"
+                    ),
+                    'data': None
+                }
+            
+            # ❌ Labels hors limites du modèle
+            if hasattr(self, 'model_config') and hasattr(self.model_config, 'num_classes'):
+                model_num_classes = self.model_config.num_classes
+                
+                if label_max >= model_num_classes:
+                    return {
+                        'success': False,
+                        'error': (
+                            f"❌ LABEL HORS LIMITES:\n"
+                            f"   • max(labels) = {label_max}\n"
+                            f"   • model.num_classes = {model_num_classes}\n"
+                            f"   • CrossEntropyLoss attend labels ∈ [0, {model_num_classes-1}]\n"
+                            f"\n"
+                            f"   💡 CAUSE PROBABLE:\n"
+                            f"   - Incohérence entre num_classes du modèle et données\n"
+                            f"   - Labels mal encodés (skip de certaines classes)\n"
+                            f"\n"
+                            f"   🛠️ SOLUTION:\n"
+                            f"   Vérifier que model_config.num_classes = len(np.unique(y_train))"
+                        ),
+                        'data': None
+                    }
             
             # ====================================================================
-            # LOG SUCCÈS DÉTAILLÉ
+            # ✅ VALIDATION RÉUSSIE - LOG DÉTAILLÉ
             # ====================================================================
             logger.info(
                 f"✅ PREMIER BATCH VALIDÉ:\n"
                 f"   • Shape: {tuple(data.shape)}\n"
                 f"   • Canaux: {channels} (attendus: {expected_channels}) ✓\n"
-                f"   • Taille: {height}x{width} {'✓' if not target_size else f'(cible: {target_size})'}\n"
+                f"   • Taille: {height}x{width}" + 
+                (f" (cible: {target_size})" if target_size else "") + " ✓\n"
                 f"   • Range: [{data_min:.3f}, {data_max:.3f}]\n"
+                f"   • Mean: {data_mean:.3f}, Std: {data_std:.3f}\n"
                 f"   • Labels: {labels.shape}\n"
-                f"   • Labels uniques: {unique_labels.tolist()}\n"
-                f"   • Dtype: {data.dtype}\n"
+                f"   • Labels range: [{label_min}, {label_max}] ✓\n"
+                f"   • Labels uniques: {unique_labels}\n"
+                f"   • Labels dtype: {labels.dtype}\n"
                 f"   • Device: {data.device}"
             )
             
-            return Result.ok({
-                "batch_shape": tuple(data.shape),
-                "channels": channels,
-                "height": height,
-                "width": width,
-                "range": (data_min, data_max),
-                "labels_shape": tuple(labels.shape),
-                "unique_labels": unique_labels.tolist(),
-                "dtype": str(data.dtype),
-                "device": str(data.device)
-            })
+            return {
+                'success': True,
+                'data': {
+                    "batch_shape": tuple(data.shape),
+                    "channels": channels,
+                    "height": height,
+                    "width": width,
+                    "data_range": (data_min, data_max),
+                    "data_mean": data_mean,
+                    "data_std": data_std,
+                    "labels_shape": tuple(labels.shape),
+                    "label_min": label_min,
+                    "label_max": label_max,
+                    "unique_labels": unique_labels,
+                    "labels_dtype": str(labels.dtype),
+                    "device": str(data.device),
+                    "labels_valid": True
+                },
+                'error': None
+            }
             
         except StopIteration:
-            return Result.err("DataLoader vide")
+            return {
+                'success': False,
+                'error': "❌ DataLoader vide - Aucun batch disponible",
+                'data': None
+            }
         except Exception as e:
             logger.error(f"❌ Erreur validation batch: {e}", exc_info=True)
-            return Result.err(f"Validation batch échouée: {str(e)}")
+            return {
+                'success': False,
+                'error': f"Validation batch échouée: {str(e)}",
+                'data': None
+            }
 
     
     def _build_training_result(self, train_result: Result) -> Dict[str, Any]:
@@ -798,12 +927,12 @@ class ComputerVisionTrainer:
         
         # Mode supervisé: validation complète
         train_val = DataValidator.validate_input_data(X_train, y_train, "train")
-        if not train_val.success:
-            return train_val
+        if not train_val['success']:  # ✅ CORRECTION: Accès par clé ['success']
+            return Result.err(train_val['error'])
         
         val_val = DataValidator.validate_input_data(X_val, y_val, "validation")
-        if not val_val.success:
-            return val_val
+        if not val_val['success']:  # ✅ CORRECTION: Accès par clé ['success']
+            return Result.err(val_val['error'])
         
         # Vérification cohérence des shapes
         if X_train.shape[1:] != X_val.shape[1:]:
@@ -935,13 +1064,42 @@ class ComputerVisionTrainer:
                 logger.info("ℹ️ Pas de resize (taille originale conservée)")
             
             # ====================================================================
-            # CRÉATION PREPROCESSOR
+            # SÉLECTION PREPROCESSOR SELON MODEL_TYPE
             # ====================================================================
-            self.preprocessor = DataPreprocessor(
-                strategy="standardize",
-                auto_detect_format=True,
-                target_size=final_target_size
-            )
+            is_autoencoder = self.model_config.model_type in [
+                ModelType.CONV_AUTOENCODER,
+                ModelType.VAE,
+                ModelType.DENOISING_AE,
+                ModelType.PATCH_CORE
+            ]
+            
+            is_transfer_learning = self.model_config.model_type == ModelType.TRANSFER_LEARNING
+            
+            if is_autoencoder:
+                # AutoencoderPreprocessor pour AE
+                self.preprocessor = AutoencoderPreprocessor(
+                    target_size=final_target_size
+                )
+                logger.info("✅ AutoencoderPreprocessor sélectionné")
+                
+            elif is_transfer_learning:
+                # Transfer Learning → strategy="imagenet"
+                self.preprocessor = DataPreprocessor(
+                    strategy="imagenet",  
+                    auto_detect_format=True,
+                    target_size=final_target_size
+                )
+                logger.info("✅ DataPreprocessor sélectionné - strategy: imagenet (normalisation dans modèle)")
+                
+            else:
+                # Autres modèles
+                strategy = self.preprocessing_config.get("strategy", "normalize")
+                self.preprocessor = DataPreprocessor(
+                    strategy=strategy,
+                    auto_detect_format=True,
+                    target_size=final_target_size
+                )
+                logger.info(f"✅ DataPreprocessor sélectionné - strategy: {strategy}")
             
             # ====================================================================
             # FIT_TRANSFORM SUR TRAIN
@@ -1060,7 +1218,7 @@ class ComputerVisionTrainer:
             
             logger.info(
                 f"✅ Preprocessing configuré avec succès:\n"
-                f"   • Strategy: standardize\n"
+                f"   • Strategy: {getattr(self.preprocessor, 'strategy', 'unknown')}\n"
                 f"   • Input format: {input_format}\n"
                 f"   • Output format: channels_first\n"
                 f"   • Resized: {resized}\n"
@@ -1352,16 +1510,47 @@ class ComputerVisionTrainer:
                     cb.on_train_begin()
                 except Exception as e:
                     logger.warning(f"Callback on_train_begin échoué: {e}")
+
+            # SETUP FINE-TUNING SCHEDULER
+            finetuning_scheduler = None
             
+            if self.model_config.model_type == ModelType.TRANSFER_LEARNING:
+                # Détermine le stratégie selon dataset size
+                train_size = len(train_loader.dataset)
+                
+                if train_size < 500:
+                    strategy = "gradual"
+                    unfreeze_epochs = [3, 6, 9]
+                    
+                    from src.models.computer_vision.classification.transfer_learning import FineTuningScheduler
+                    
+                    finetuning_scheduler = FineTuningScheduler(
+                        self.model,
+                        strategy=strategy,
+                        unfreeze_epochs=unfreeze_epochs
+                    )
+                    
+                    logger.info(
+                        f"✅ FineTuningScheduler activé:\n"
+                        f"   • Strategy: {strategy}\n"
+                        f"   • Unfreeze epochs: {unfreeze_epochs}\n"
+                        f"   • Dataset size: {train_size}"
+                    )
+            
+            # === BOUCLE EPOCHS ===
             for epoch in range(self.training_config.epochs):
                 epoch_start = time.time()
                 
-                # CORRECTION: Callbacks avec try/catch
+                # === CALLBACKS on_epoch_begin ===
                 for cb in self.callbacks:
                     try:
                         cb.on_epoch_begin(epoch)
                     except Exception as e:
                         logger.warning(f"Callback on_epoch_begin échoué: {e}")
+                
+                # DÉGEL PROGRESSIF
+                if finetuning_scheduler:
+                    finetuning_scheduler.step(epoch)
                 
                 # === TRAIN ===
                 train_loss = self._train_epoch(train_loader, is_autoencoder)
@@ -1373,7 +1562,7 @@ class ComputerVisionTrainer:
                 else:
                     val_loss, val_metrics = self._validate_epoch(val_loader, y_val)
                 
-                # CORRECTION: Indentation fix - Mise à jour historique
+                # Indentation fix - Mise à jour historique
                 self.history['train_loss'].append(float(train_loss))
                 self.history['val_loss'].append(float(val_loss))
                 
@@ -1489,10 +1678,24 @@ class ComputerVisionTrainer:
         except Exception as e:
             logger.error(f"Erreur boucle training: {e}", exc_info=True)
             return Result.err(f"Training loop échoué: {str(e)}")
+        
 
-    def _train_epoch(self, train_loader: DataLoader, is_autoencoder: bool = False) -> float:
+    def _train_epoch(
+        self,
+        train_loader: DataLoader,
+        is_autoencoder: bool = False
+    ) -> float:
         """
-        Entraîne une époque - unifié pour classification et autoencoders.
+        Entraîne une époque avec VALIDATION RUNTIME des labels.
+        
+        VALIDATIONS:
+        - Labels min=0 à chaque batch (premier batch uniquement en production)
+        - Labels max < num_classes
+        - Shape output correcte
+        - Pas de NaN/Inf
+        
+        Returns:
+            Average training loss
         """
         # PatchCore: pas de training classique
         is_patchcore = self.model_config.model_type == ModelType.PATCH_CORE
@@ -1502,7 +1705,7 @@ class ComputerVisionTrainer:
 
         self.model.train()
         running_loss = 0.0
-        first_batch = True  # assertions runtime une seule fois
+        first_batch = True  # Pour validation runtime (debug mode)
 
         for batch_idx, (data, target_labels) in enumerate(train_loader):
             data = data.to(self.device_manager.device)
@@ -1512,67 +1715,92 @@ class ComputerVisionTrainer:
             else:
                 target = target_labels.to(self.device_manager.device)
 
-                # ============================================================
-                # ASSERTION CRITIQUE 4 : Validation labels (premier batch)
-                # ============================================================
+                # ================================================================
+                # VALIDATION RUNTIME DES LABELS (PREMIER BATCH)
+                # ================================================================
                 if first_batch:
                     batch_min = int(target.min().item())
                     batch_max = int(target.max().item())
+                    batch_unique = torch.unique(target).cpu().tolist()
                     model_output_size = self.model_config.num_classes
 
+                    # ❌ ERREUR: Labels ne commencent pas à 0
                     if batch_min != 0:
                         raise RuntimeError(
-                            f"❌ Labels invalides: min={batch_min}. "
-                            f"Les labels doivent commencer à 0."
+                            f"❌ LABELS INVALIDES (batch {batch_idx}):\n"
+                            f"   • min(labels) = {batch_min} (DOIT être 0)\n"
+                            f"   • max(labels) = {batch_max}\n"
+                            f"   • Labels présents: {batch_unique}\n"
+                            f"\n"
+                            f"   💡 BUG DANS DATALOADER/DATASET\n"
+                            f"   Les labels ont été corrompus entre la création\n"
+                            f"   du dataset et ce batch.\n"
+                            f"\n"
+                            f"   🛠️ SOLUTION:\n"
+                            f"   1. Vérifier AugmentedImageDataset.__getitem__()\n"
+                            f"   2. Ajouter logging pour tracer la corruption\n"
+                            f"   3. Exécuter diagnostic_labels.py"
                         )
 
+                    # ❌ ERREUR: Labels hors limites
                     if batch_max >= model_output_size:
                         raise RuntimeError(
-                            f"❌ LABEL HORS LIMITES:\n"
-                            f"   • max(label)={batch_max}\n"
-                            f"   • model.num_classes={model_output_size}\n"
-                            f"   • CrossEntropyLoss va crasher"
+                            f"❌ LABEL HORS LIMITES (batch {batch_idx}):\n"
+                            f"   • max(labels) = {batch_max}\n"
+                            f"   • model.num_classes = {model_output_size}\n"
+                            f"   • CrossEntropyLoss attend [0, {model_output_size-1}]\n"
+                            f"\n"
+                            f"   💡 INCOHÉRENCE MODEL/DATA\n"
+                            f"   Le modèle a été construit pour {model_output_size} classes\n"
+                            f"   mais les données contiennent des labels jusqu'à {batch_max}"
                         )
-
+                    
+                    # ✅ Log validation OK
                     logger.info(
-                        f"✅ Premier batch validé - "
-                        f"labels=[{batch_min}..{batch_max}], "
-                        f"num_classes={model_output_size}"
+                        f"✅ Batch {batch_idx} validé:\n"
+                        f"   • labels range: [{batch_min}, {batch_max}]\n"
+                        f"   • labels unique: {batch_unique}\n"
+                        f"   • num_classes: {model_output_size}"
                     )
+                    
                     first_batch = False
 
-            # ============================================================
-            # Forward
-            # ============================================================
+            # ================================================================
+            # FORWARD PASS
+            # ================================================================
             self.optimizer.zero_grad()
             output = self.model(data)
 
             if output is None:
-                logger.warning("⚠️ Modèle a retourné None - Skip batch")
+                logger.warning(f"⚠️ Modèle a retourné None - Skip batch {batch_idx}")
                 continue
 
-            # ============================================================
-            # ASSERTION CRITIQUE 5 : Shape output
-            # ============================================================
+            # ================================================================
+            # VALIDATION SHAPE OUTPUT
+            # ================================================================
             if not is_autoencoder:
                 expected_shape = (data.size(0), self.model_config.num_classes)
                 if output.shape != expected_shape:
                     raise RuntimeError(
-                        f"❌ MODEL OUTPUT SHAPE INCORRECTE:\n"
+                        f"❌ MODEL OUTPUT SHAPE INCORRECTE (batch {batch_idx}):\n"
                         f"   • Attendue: {expected_shape}\n"
-                        f"   • Reçue: {output.shape}"
+                        f"   • Reçue: {output.shape}\n"
+                        f"\n"
+                        f"   💡 CAUSE PROBABLE:\n"
+                        f"   - Classifier mal configuré\n"
+                        f"   - num_classes incorrect dans model_config"
                     )
             else:
-                if output.shape != target.shape:
+                if output.shape != data.shape:
                     raise RuntimeError(
-                        f"❌ SHAPE MISMATCH AUTOENCODER:\n"
-                        f"   • output={output.shape}\n"
-                        f"   • target={target.shape}"
+                        f"❌ SHAPE MISMATCH AUTOENCODER (batch {batch_idx}):\n"
+                        f"   • Input shape: {data.shape}\n"
+                        f"   • Output shape: {output.shape}"
                     )
 
-            # ============================================================
-            # Loss
-            # ============================================================
+            # ================================================================
+            # LOSS COMPUTATION
+            # ================================================================
             if (
                 self.model_config.model_type == ModelType.VAE
                 and hasattr(self.model, "compute_vae_loss")
@@ -1581,11 +1809,19 @@ class ComputerVisionTrainer:
             else:
                 loss = self.train_criterion(output, target)
 
-            # ============================================================
-            # Backward
-            # ============================================================
+            # Vérification NaN/Inf
+            if torch.isnan(loss) or torch.isinf(loss):
+                logger.error(
+                    f"❌ Loss invalide détectée (batch {batch_idx}): {loss.item()}"
+                )
+                continue
+
+            # ================================================================
+            # BACKWARD PASS
+            # ================================================================
             loss.backward()
 
+            # Gradient clipping
             if self.training_config.gradient_clip > 0:
                 torch.nn.utils.clip_grad_norm_(
                     self.model.parameters(),
@@ -1595,7 +1831,15 @@ class ComputerVisionTrainer:
             self.optimizer.step()
             running_loss += loss.item()
 
-        return running_loss / len(train_loader)
+        avg_loss = running_loss / len(train_loader)
+        
+        logger.info(
+            f"✅ Epoch terminée:\n"
+            f"   • Batches processed: {len(train_loader)}\n"
+            f"   • Average loss: {avg_loss:.6f}"
+        )
+        
+        return avg_loss
 
     
     def _validate_epoch_autoencoder(self, val_loader: DataLoader) -> float:

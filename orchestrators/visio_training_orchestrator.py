@@ -356,6 +356,53 @@ class ComputerVisionTrainingOrchestrator:
                 "preprocessing_strategy": context.preprocessing_config.get("strategy", "standardize"),
                 "augmentation_enabled": context.preprocessing_config.get("augmentation_enabled", False)
             })
+
+
+    def _adapt_preprocessing_for_model_type(
+        self,
+        model_type: str,
+        user_strategy: Optional[str] = None
+    ) -> dict:
+        """
+        Adapte automatiquement la stratégie selon le modèle.
+        Args:
+            model_type: Type de modèle (str)
+            user_strategy: Stratégie utilisateur (optionnelle)
+        Returns:
+            Dict avec stratégie adaptée et indicateur normalisation ImageNet
+        """
+
+        transfer_learning_models = [
+            "transfer_learning", "resnet", "vgg",
+            "efficientnet", "mobilenet", "densenet"
+        ]
+
+        autoencoder_models = [
+            "conv_autoencoder", "variational_autoencoder",
+            "denoising_autoencoder", "autoencoder"
+        ]
+
+        if model_type in transfer_learning_models:
+            return {
+                "strategy": "imagenet",
+                "apply_imagenet_norm": True,
+                "reason": "transfer_learning_required"
+            }
+
+        if model_type in autoencoder_models:
+            return {
+                "strategy": "normalize",
+                "apply_imagenet_norm": False,
+                "reason": "autoencoder_required"
+            }
+
+        return {
+            "strategy": user_strategy or "normalize",
+            "apply_imagenet_norm": False,
+            "reason": "user_choice_respected"
+        }
+
+    
     
     def _create_trainer(self, context: TrainingContext):
         """
@@ -487,6 +534,80 @@ class ComputerVisionTrainingOrchestrator:
                     f"✅ Mode non supervisé confirmé | "
                     f"y_train={'présent' if hasattr(context, 'y_train') and context.y_train is not None else 'None'}"
                 )
+
+            # ========================================================================
+            # ÉTAPE 3.5: ADAPTATION PREPROCESSING SELON MODÈLE
+            # ========================================================================
+            preprocessing_config = getattr(context, 'preprocessing_config', {})
+
+            if preprocessing_config:
+                model_type = context.model_config["model_type"]
+
+                user_strategy = preprocessing_config.get("strategy")
+
+                adapted = self._adapt_preprocessing_for_model_type(
+                    model_type=model_type,
+                    user_strategy=user_strategy
+                )
+
+                # Fusion propre (on ne perd PAS target_size, resize, etc.)
+                preprocessing_config.update(adapted)
+                context.preprocessing_config = preprocessing_config
+
+                logger.info(
+                    f"✅ Preprocessing adapté - "
+                    f"model_type={model_type}, "
+                    f"strategy={adapted['strategy']}, "
+                    f"reason={adapted['reason']}"
+                )
+
+            # ========================================================================
+            # ÉTAPE 3.6: AUTO-DÉTECTION target_size SI AUGMENTATION ACTIVÉE
+            # ========================================================================
+            preprocessing_config = getattr(context, 'preprocessing_config', {})
+
+            if preprocessing_config:
+                augmentation_enabled = preprocessing_config.get('augmentation_enabled', False)
+                target_size = preprocessing_config.get('target_size')
+                
+                # 🆕 AUTO-FIX: Si augmentation activée mais target_size=None
+                if augmentation_enabled and target_size is None:
+                    logger.warning(
+                        "⚠️ AUTO-CORRECTION: augmentation_enabled=True mais target_size=None\n"
+                        "   → Calcul automatique target_size depuis données d'entrée"
+                    )
+                    
+                    # Calculer depuis input_size (déjà calculée ligne 438)
+                    # OU depuis X_train directement
+                    if hasattr(context, 'X_train') and context.X_train is not None:
+                        X_shape = context.X_train.shape
+                        
+                        # Détecter format
+                        if X_shape[-1] in [1, 3, 4]:  # channels_last
+                            h, w = X_shape[1], X_shape[2]
+                        else:  # channels_first
+                            h, w = X_shape[2], X_shape[3]
+                        
+                        # Utiliser taille actuelle comme target
+                        target_size = (h, w)
+                        
+                        logger.info(
+                            f"✅ target_size AUTO-CALCULÉ: {target_size}\n"
+                            f"   Source: shape données entrée {X_shape}"
+                        )
+                        
+                        # Mettre à jour context
+                        preprocessing_config['target_size'] = target_size
+                        context.preprocessing_config = preprocessing_config
+                    
+                    else:
+                        # Fallback: désactiver augmentation
+                        logger.error(
+                            "❌ IMPOSSIBLE de calculer target_size automatiquement\n"
+                            "   → DÉSACTIVATION de l'augmentation pour éviter crash"
+                        )
+                        preprocessing_config['augmentation_enabled'] = False
+                        context.preprocessing_config = preprocessing_config
             
             # ========================================================================
             # ÉTAPE 4: CRÉATION ModelConfig AVEC model_params ENRICHI
@@ -1024,7 +1145,7 @@ class ComputerVisionTrainingOrchestrator:
         preprocessor: DataPreprocessor
     ) -> Dict:
         """
-        Construit l'historique final normalisé.    
+        Construit l'historique final normalisé avec NOMS DE CLASSES.
         Gestion robuste des types None et validation
         """
         
@@ -1077,7 +1198,150 @@ class ComputerVisionTrainingOrchestrator:
             except Exception:
                 return default_list
         
+        def extract_class_names(context):
+            """
+            Extraction INTELLIGENTE des noms de classes depuis toutes les sources.
+            """
+            class_names = None
+            n_classes = None
+            
+            # ====================================================================
+            # SOURCE #1: Depuis context.class_names (explicite)
+            # ====================================================================
+            if hasattr(context, 'class_names') and context.class_names:
+                class_names = context.class_names
+                self.logger.info(f"✅ class_names depuis context: {class_names}")
+                return class_names
+            
+            # ====================================================================
+            # SOURCE #2: Depuis model_config
+            # ====================================================================
+            if hasattr(context, 'model_config') and context.model_config:
+                model_config = context.model_config
+                
+                if isinstance(model_config, dict):
+                    # Chercher dans plusieurs clés possibles
+                    for key in ['class_names', 'labels', 'target_names']:
+                        if key in model_config and model_config[key]:
+                            class_names = model_config[key]
+                            self.logger.info(f"✅ class_names depuis model_config['{key}']: {class_names}")
+                            return class_names
+                elif hasattr(model_config, 'class_names'):
+                    class_names = model_config.class_names
+                    self.logger.info(f"✅ class_names depuis model_config.class_names: {class_names}")
+                    return class_names
+                elif hasattr(model_config, 'labels'):
+                    class_names = model_config.labels
+                    self.logger.info(f"✅ class_names depuis model_config.labels: {class_names}")
+                    return class_names
+            
+            # ====================================================================
+            # SOURCE #3: Depuis split_config.metadata
+            # ====================================================================
+            if hasattr(context, 'split_config'):
+                split_config = context.split_config
+                
+                if isinstance(split_config, dict) and 'metadata' in split_config:
+                    metadata = split_config['metadata']
+                    
+                    for key in ['class_names', 'labels', 'target_names']:
+                        if key in metadata and metadata[key]:
+                            class_names = metadata[key]
+                            self.logger.info(f"✅ class_names depuis split_config.metadata['{key}']: {class_names}")
+                            return class_names
+            
+            # ====================================================================
+            # SOURCE #4: Depuis y_train/y (inférence depuis données)
+            # ====================================================================
+            try:
+                # Essayer de récupérer depuis y_train ou y
+                y_data = None
+                
+                if hasattr(context, 'y_train') and context.y_train is not None:
+                    y_data = context.y_train
+                elif hasattr(context, 'y') and context.y is not None:
+                    y_data = context.y
+                
+                if y_data is not None:
+                    unique_classes = np.unique(y_data)
+                    n_classes = len(unique_classes)
+                    
+                    self.logger.info(f"📊 Détection depuis y_data: {n_classes} classes uniques")
+                    
+                    # Si nous avons un dataset_path, essayer d'extraire les noms des dossiers
+                    dataset_path = None
+                    if hasattr(context, 'dataset_path') and context.dataset_path:
+                        dataset_path = context.dataset_path
+                    elif hasattr(context, 'dir') and context.dir:
+                        dataset_path = context.dir
+                    elif hasattr(context, 'split_config') and isinstance(context.split_config, dict):
+                        dataset_path = context.split_config.get('dataset_path')
+                    
+                    if dataset_path:
+                        try:
+                            from pathlib import Path
+                            path = Path(dataset_path)
+                            
+                            # Chercher dans train/ ou racine
+                            train_dir = path / 'train'
+                            if train_dir.exists() and train_dir.is_dir():
+                                folders = sorted([d.name for d in train_dir.iterdir() if d.is_dir()])
+                                if len(folders) == n_classes:
+                                    class_names = folders
+                                    self.logger.info(f"✅ class_names depuis dossiers 'train/': {class_names}")
+                                    return class_names
+                            
+                            # Essayer racine
+                            folders = sorted([d.name for d in path.iterdir() if d.is_dir()])
+                            if len(folders) == n_classes:
+                                class_names = folders
+                                self.logger.info(f"✅ class_names depuis dossiers racine: {class_names}")
+                                return class_names
+                                
+                        except Exception as e:
+                            self.logger.debug(f"Impossible d'extraire class_names depuis dossiers: {e}")
+                    
+                    # Fallback: génération noms selon nombre de classes
+                    if n_classes == 2:
+                        class_names = ["Normal", "Anomalie"]
+                        self.logger.info(f"✅ class_names binaires par défaut: {class_names}")
+                    else:
+                        class_names = [f"Classe_{i}" for i in range(n_classes)]
+                        self.logger.warning(
+                            f"⚠️ class_names génériques utilisés: {class_names}\n"
+                            f"   Pour afficher les vrais noms, définir context.class_names"
+                        )
+                    
+                    return class_names
+                    
+            except Exception as e:
+                self.logger.debug(f"Impossible d'inférer class_names depuis y_data: {e}")
+            
+            # ====================================================================
+            # FALLBACK FINAL
+            # ====================================================================
+            # Si rien trouvé, utiliser binaire par défaut
+            class_names = ["Normal", "Anomalie"]
+            self.logger.warning(f"⚠️ Aucune source de class_names trouvée, utilisation fallback: {class_names}")
+            
+            return class_names
+        
         try:
+            # ========================================================================
+            # 🆕 EXTRACTION DES NOMS DE CLASSES (APPEL)
+            # ========================================================================
+            class_names = extract_class_names(context)
+            
+            # Validation finale
+            if not isinstance(class_names, list):
+                try:
+                    class_names = list(class_names) if class_names else ["Normal", "Anomalie"]
+                except:
+                    class_names = ["Normal", "Anomalie"]
+            
+            n_classes = len(class_names)
+            self.logger.info(f"🏷️ Noms de classes finaux: {class_names} ({n_classes} classes)")
+            
             # ========================================================================
             # EXTRACTION SAFE DES MÉTRIQUES
             # ========================================================================
@@ -1139,12 +1403,19 @@ class ComputerVisionTrainingOrchestrator:
                 'anomaly_type': str(context.anomaly_type) if context.anomaly_type else None,
                 'preprocessor_available': preprocessor_available,
                 'preprocessor_config': preprocessor_config,
-                'mlflow_run_id': str(run_id) if run_id else None
+                'mlflow_run_id': str(run_id) if run_id else None,
+                
+                # 🆕 AJOUT CRITIQUE POUR MULTICLASSE
+                'class_names': class_names,
+                'n_classes': n_classes,
+                'class_names_source': "explicit" if class_names and class_names != ["Normal", "Anomalie"] else "inferred"
             }
             
             self.logger.info(
                 f"✅ Historique construit: {total_epochs} epochs, "
-                f"best_loss: {best_val_loss:.4f}, preprocessor: {preprocessor_available}"
+                f"best_loss: {best_val_loss:.4f}, "
+                f"preprocessor: {preprocessor_available}, "
+                f"classes: {n_classes}"
             )
             
             return final_history
@@ -1152,7 +1423,7 @@ class ComputerVisionTrainingOrchestrator:
         except Exception as e:
             self.logger.error(f"❌ Erreur construction historique: {e}", exc_info=True)
             
-            # FALLBACK : Historique minimal valide
+            # FALLBACK : Historique minimal valide AVEC class_names
             return {
                 'success': True,
                 'train_loss': [0.0],
@@ -1171,6 +1442,11 @@ class ComputerVisionTrainingOrchestrator:
                 'preprocessor_available': False,
                 'preprocessor_config': None,
                 'mlflow_run_id': None,
+                
+                # 🆕 MÊME EN ERREUR, ON GARANTIT LES class_names
+                'class_names': ["Normal", "Anomalie"],
+                'n_classes': 2,
+                'class_names_source': "fallback_error",
                 'error': str(e)
             }
 

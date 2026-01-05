@@ -1,11 +1,10 @@
 """
-PatchCore avec coreset subsampling et backbone pré-entraîné.
-Version avec gestion correcte des types et compatibility training pipeline.
+PatchCore CORRIGÉ avec normalisation ImageNet.
 
-Dans: src/models/computer_vision/anomaly_detection/patch_core.py
+CRITIQUE: Le backbone (wide_resnet50_2) est pré-entraîné sur ImageNet
+donc DOIT recevoir des images normalisées selon ImageNet.
 
-Pas besoin de resize dynamique car PatchCore accepte toutes les tailles via
-adaptive pooling des feature maps.
+Remplacer dans: src/models/computer_vision/anomaly_detection/patch_core.py
 """
 import torch
 import torch.nn as nn
@@ -16,13 +15,18 @@ import numpy as np
 from typing import List, Tuple, Optional, Union, Any
 from src.shared.logging import get_logger
 
+# 🆕 IMPORT CRITIQUE
+from src.data.imagenet_preprocessing import ImageNetNormalizer
+
 logger = get_logger(__name__)
 
 class ProfessionalPatchCore(nn.Module):
     """
-    PatchCore pour détection d'anomalies.  
-    Accepte toutes les tailles d'images (adaptive pooling)
-    Compatible avec training pipeline standard
+    PatchCore avec normalisation ImageNet CORRECTE.
+    
+    🆕 CHANGEMENT MAJEUR:
+    - Ajout ImageNetNormalizer pour preprocessing correct
+    - Application auto dans _adapt_channels()
     """
     
     def __init__(
@@ -33,7 +37,8 @@ class ProfessionalPatchCore(nn.Module):
         coreset_ratio: float = 0.01,
         num_neighbors: int = 1,
         input_channels: int = 3,
-        input_size: Optional[Tuple[int, int]] = None,  
+        input_size: Optional[Tuple[int, int]] = None,
+        apply_imagenet_normalization: bool = True,  # 🆕 NOUVEAU
         **kwargs
     ):
         super().__init__()
@@ -46,27 +51,42 @@ class ProfessionalPatchCore(nn.Module):
         self.coreset_ratio = coreset_ratio
         self.num_neighbors = num_neighbors
         self.input_channels = input_channels
-        self.input_size = input_size  
+        self.input_size = input_size
+        self.apply_imagenet_normalization = apply_imagenet_normalization
         
         self.memory_bank = None
         self.faiss_index = None
         self.feature_dim = None
         self._is_fitted = False
         
+        # Chargement backbone
         self.backbone = self._get_backbone(backbone_name)
         self.feature_extractor = FeatureExtractor(self.backbone, layers)
         
+        # Adapter canaux si nécessaire
         if input_channels != 3:
             self.channel_adapter = nn.Conv2d(input_channels, 3, kernel_size=1, bias=False)
             nn.init.xavier_uniform_(self.channel_adapter.weight)
         else:
             self.channel_adapter = None
         
+        # 🆕 NOUVEAU: Normalizer ImageNet
+        if apply_imagenet_normalization:
+            self.imagenet_normalizer = ImageNetNormalizer()
+            logger.info("✅ ImageNet normalizer activé pour PatchCore")
+        else:
+            self.imagenet_normalizer = None
+            logger.warning(
+                "⚠️ ImageNet normalizer DÉSACTIVÉ pour PatchCore. "
+                "Performances sous-optimales attendues!"
+            )
+        
         logger.info(
             f"PatchCore initialisé - "
             f"backbone: {backbone_name}, "
             f"layers: {layers}, "
-            f"coreset_ratio: {coreset_ratio}"
+            f"coreset_ratio: {coreset_ratio}, "
+            f"imagenet_norm: {apply_imagenet_normalization}"
         )
     
     def _get_backbone(self, name: str) -> nn.Module:
@@ -91,33 +111,50 @@ class ProfessionalPatchCore(nn.Module):
         return model
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Forward pass compatible avec training pipeline standard."""
+        """Forward pass compatible training pipeline."""
         if self.training:
-            # Retourne un dummy tensor pour la compatibilité
             return torch.zeros(x.size(0), 1, device=x.device, requires_grad=True)
         else:
-            # En inference, extrait les features sans backward
             with torch.no_grad():
                 features = self.feature_extractor(self._adapt_channels(x))
-                return features.mean(dim=(2, 3))  # ou autre opération simple
+                return features.mean(dim=(2, 3))
     
     def _adapt_channels(self, x: torch.Tensor) -> torch.Tensor:
-        """Adapte le nombre de canaux si nécessaire."""
+        """
+        Adapte canaux ET applique normalisation ImageNet.
+        
+        🆕 CHANGEMENT MAJEUR: Normalisation ImageNet AVANT feature extraction
+        """
+        # Conversion canaux si nécessaire
         if self.channel_adapter is not None:
-            return self.channel_adapter(x)
+            x = self.channel_adapter(x)
+        
+        # 🆕 NOUVEAU: Normalisation ImageNet
+        if self.imagenet_normalizer is not None:
+            # Validation range [0, 1]
+            x_min, x_max = x.min().item(), x.max().item()
+            
+            if x_min < -0.1 or x_max > 1.1:
+                logger.warning(
+                    f"⚠️ PatchCore: Range incorrect [{x_min:.3f}, {x_max:.3f}]. "
+                    f"Attendu [0, 1] pour ImageNet norm"
+                )
+            
+            x = self.imagenet_normalizer(x)
+        
         return x
     
     def _coreset_subsampling(self, features: np.ndarray) -> np.ndarray:
-        """Coreset subsampling avec algorithme greedy k-center."""
+        """Coreset subsampling avec greedy k-center."""
         n_samples = features.shape[0]
         n_coreset = max(1, int(n_samples * self.coreset_ratio))
         
         if n_coreset >= n_samples:
-            logger.info("Coreset ratio >= 1.0, utilisation de tous les features")
+            logger.info("Coreset ratio >= 1.0, tous les features utilisés")
             return features
         
         logger.info(
-            f"Début coreset subsampling: {n_samples} → {n_coreset} samples "
+            f"Coreset subsampling: {n_samples} → {n_coreset} "
             f"({self.coreset_ratio*100:.1f}%)"
         )
         
@@ -132,27 +169,23 @@ class ProfessionalPatchCore(nn.Module):
             indices.append(np.argmax(distances))
             
             if (i + 1) % max(1, n_coreset // 10) == 0:
-                logger.debug(f"Coreset progress: {i+1}/{n_coreset}")
+                logger.debug(f"Coreset: {i+1}/{n_coreset}")
         
         coreset_features = features[indices]
-        
-        logger.info(
-            f"Coreset subsampling terminé - "
-            f"coverage: {len(indices)} points"
-        )
+        logger.info(f"✅ Coreset terminé - {len(indices)} points")
         
         return coreset_features
     
-    # Méthodes pour sauvegarder et charger l'état du modèle avec FAISS
     def state_dict(self):
+        """Sauvegarde avec FAISS."""
         state = super().state_dict()
         if self.faiss_index is not None:
-            # Convertir FAISS en bytes pour torch.save
             import faiss
             state['faiss_index_bytes'] = faiss.serialize_index(self.faiss_index)
         return state
 
     def load_state_dict(self, state_dict):
+        """Chargement avec FAISS."""
         faiss_bytes = state_dict.pop('faiss_index_bytes', None)
         if faiss_bytes is not None:
             import faiss
@@ -160,8 +193,12 @@ class ProfessionalPatchCore(nn.Module):
         super().load_state_dict(state_dict)
         
     def fit(self, dataloader) -> None:
-        """Construit la memory bank avec coreset subsampling."""
-        logger.info("🔨 Début construction memory bank PatchCore")
+        """
+        Construit la memory bank.
+        
+        🆕 CHANGEMENT: Les features sont extraites APRÈS normalisation ImageNet
+        """
+        logger.info("🔨 Construction memory bank PatchCore")
         
         all_features = []
         
@@ -173,6 +210,7 @@ class ProfessionalPatchCore(nn.Module):
                 else:
                     images = batch
                 
+                # 🆕 IMPORTANT: _adapt_channels() applique ImageNet norm
                 images = self._adapt_channels(images)
                 features = self.feature_extractor(images)
                 features_np = features.cpu().numpy()
@@ -182,7 +220,7 @@ class ProfessionalPatchCore(nn.Module):
                     logger.debug(f"Features extraction: batch {batch_idx+1}")
         
         all_features = np.concatenate(all_features, axis=0)
-        logger.info(f"Features extraites: shape={all_features.shape}")
+        logger.info(f"Features extraites: {all_features.shape}")
         
         # Reshape (N, C, H, W) → (N*H*W, C)
         n_samples, n_channels, h, w = all_features.shape
@@ -196,13 +234,13 @@ class ProfessionalPatchCore(nn.Module):
         norms = np.maximum(norms, 1e-8)
         all_features = all_features / norms
         
-        logger.info(f"Features normalisées (L2)")
+        logger.info("Features normalisées (L2)")
         
         # Coreset subsampling
         self.memory_bank = self._coreset_subsampling(all_features)
         self.feature_dim = self.memory_bank.shape[1]
         
-        # Construction index FAISS
+        # Construction FAISS
         logger.info(f"Construction index FAISS (dim={self.feature_dim})")
         self.faiss_index = faiss.IndexFlatL2(self.feature_dim)
         self.faiss_index.add(self.memory_bank.astype(np.float32))
@@ -215,13 +253,15 @@ class ProfessionalPatchCore(nn.Module):
         )
     
     def predict(self, dataloader) -> np.ndarray:
-        """Calcule les scores d'anomalie sur un dataset."""
-        if not self._is_fitted or self.faiss_index is None:
-            raise ValueError(
-                "Modèle non entraîné. Appelez fit(train_loader) avant predict()."
-            )
+        """
+        Calcule les scores d'anomalie.
         
-        logger.info("🔮 Début prédictions PatchCore")
+        🆕 CHANGEMENT: Applique ImageNet norm avant extraction features
+        """
+        if not self._is_fitted or self.faiss_index is None:
+            raise ValueError("Modèle non entraîné. Appelez fit() d'abord.")
+        
+        logger.info("🔮 Prédictions PatchCore")
         
         all_scores = []
         
@@ -233,6 +273,7 @@ class ProfessionalPatchCore(nn.Module):
                 else:
                     images = batch
                 
+                # 🆕 IMPORTANT: Normalisation ImageNet
                 images = self._adapt_channels(images)
                 features = self.feature_extractor(images)
                 batch_size, num_features, h, w = features.shape
@@ -260,15 +301,16 @@ class ProfessionalPatchCore(nn.Module):
         
         scores = np.concatenate(all_scores)
         
-        logger.info(
-            f"✅ Prédictions terminées - "
-            f"n_samples: {len(scores)}"
-        )
+        logger.info(f"✅ Prédictions terminées - n_samples: {len(scores)}")
         
         return scores
     
     def get_anomaly_map(self, image: torch.Tensor) -> np.ndarray:
-        """Génère une heatmap d'anomalie spatiale."""
+        """
+        Génère heatmap d'anomalie.
+        
+        🆕 CHANGEMENT: Applique ImageNet norm
+        """
         if not self._is_fitted:
             raise ValueError("Modèle non entraîné")
         
@@ -277,6 +319,7 @@ class ProfessionalPatchCore(nn.Module):
         
         self.eval()
         with torch.no_grad():
+            # 🆕 Normalisation ImageNet
             image = self._adapt_channels(image)
             features = self.feature_extractor(image)
             _, num_features, h, w = features.shape
@@ -295,13 +338,14 @@ class ProfessionalPatchCore(nn.Module):
             anomaly_map = distances[:, 0].reshape(h, w)
             
             if anomaly_map.max() > anomaly_map.min():
-                anomaly_map = (anomaly_map - anomaly_map.min()) / (anomaly_map.max() - anomaly_map.min())
+                anomaly_map = (anomaly_map - anomaly_map.min()) / \
+                              (anomaly_map.max() - anomaly_map.min())
             
             return anomaly_map
 
 
 class FeatureExtractor(nn.Module):
-    """Extracteur de features multi-échelles depuis un backbone CNN."""
+    """Extracteur de features multi-échelles."""
     
     def __init__(self, backbone: nn.Module, layers: List[str]):
         super().__init__()
@@ -313,23 +357,21 @@ class FeatureExtractor(nn.Module):
         
         for layer_name in layers:
             if layer_name not in layer_dict:
-                raise ValueError(
-                    f"Couche '{layer_name}' introuvable dans le backbone"
-                )
+                raise ValueError(f"Couche '{layer_name}' introuvable")
             
             layer = layer_dict[layer_name]
             layer.register_forward_hook(self._get_hook(layer_name))
         
-        logger.info(f"FeatureExtractor initialisé avec couches: {layers}")
+        logger.info(f"FeatureExtractor avec couches: {layers}")
     
     def _get_hook(self, layer_name: str):
-        """Crée un hook pour capturer les activations."""
+        """Hook pour capturer activations."""
         def hook(module, input, output):
             self.features[layer_name] = output
         return hook
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Extrait et agrège les features multi-échelles."""
+        """Extrait et agrège features."""
         self.features.clear()
         _ = self.backbone(x)
         
@@ -337,7 +379,7 @@ class FeatureExtractor(nn.Module):
         
         for layer_name in self.layers:
             feat = self.features[layer_name]
-            # Adaptive pooling pour uniformiser → (14, 14)
+            # Adaptive pooling (14, 14)
             feat_pooled = F.adaptive_avg_pool2d(feat, (14, 14))
             feature_maps.append(feat_pooled)
         

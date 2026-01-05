@@ -489,13 +489,22 @@ class StateManager:
         dir_path: str, 
         structure: dict, 
         info: dict,
-        y_train: Optional[np.ndarray] = None  # ✅ AJOUT
+        y_train: Optional[np.ndarray] = None
     ) -> bool:
         """
-        Charge des données images avec détection intelligente unsupervised/supervised.
-        
+        Charge des données images avec détection intelligente unsupervised/supervised.   
+        Stockage EXPLICITE des class_names depuis info    
         Args:
-            y_train: Labels du TRAIN UNIQUEMENT (pour MVTec AD → détection unsupervised)
+            X: Images brutes
+            X_norm: Images normalisées
+            y: Labels complets (ou None pour non supervisé)
+            dir_path: Chemin du dataset
+            structure: Métadonnées de structure
+            info: Informations du dataset (CONTIENT class_names)
+            y_train: Labels du TRAIN UNIQUEMENT (pour MVTec AD)
+        
+        Returns:
+            True si succès, False si échec
         """
         try:
             if len(X) == 0 or len(X) != len(y):
@@ -520,6 +529,28 @@ class StateManager:
             d.img_shape = X.shape[1:] if len(X.shape) > 3 else X.shape[1:]
             
             d.y_train = y_train
+            
+            # ✅ AJOUT CRITIQUE: Stockage explicite des class_names depuis info
+            if info and 'class_names' in info:
+                d.class_names = info['class_names']
+                logger.info(f"✅ class_names stockés dans STATE.data: {d.class_names}")
+            else:
+                # Fallback: Essayer de déduire depuis structure
+                if structure and 'categories' in structure:
+                    if 'class_to_idx' in structure:
+                        # Utiliser l'ordre garanti
+                        sorted_categories = sorted(structure['class_to_idx'].items(), key=lambda x: x[1])
+                        d.class_names = [cat for cat, idx in sorted_categories]
+                        logger.info(f"✅ class_names depuis structure.class_to_idx: {d.class_names}")
+                    else:
+                        d.class_names = sorted(structure['categories'])
+                        logger.info(f"✅ class_names depuis structure.categories: {d.class_names}")
+                else:
+                    logger.warning("⚠️ class_names non disponibles")
+                    d.class_names = None
+            
+            # ✅ AJOUT: Stockage explicite du chemin dataset (pour extraction ultérieure)
+            d.dataset_path = dir_path
             
             # === DÉTECTION INTELLIGENTE DE LA TÂCHE ===
             from utils.task_detector import detect_cv_task
@@ -547,8 +578,21 @@ class StateManager:
                 f"✅ Images chargées: {len(X)} images | "
                 f"Tâche détectée: {task_name} | "
                 f"y_train fourni: {y_train is not None} | "
-                f"Classes détectées: {len(np.unique(labels_for_detection))}"
+                f"Classes détectées: {d.n_classes}"
             )
+            
+            # ✅ VALIDATION FINALE: Vérifier cohérence class_names
+            if d.class_names:
+                if len(d.class_names) != d.n_classes:
+                    logger.warning(
+                        f"⚠️ Incohérence class_names: "
+                        f"len(class_names)={len(d.class_names)}, n_classes={d.n_classes}"
+                    )
+                else:
+                    logger.info(
+                        f"✅ class_names cohérents: {len(d.class_names)} noms pour {d.n_classes} classes\n"
+                        f"   Noms: {d.class_names}"
+                    )
             
             return True
             

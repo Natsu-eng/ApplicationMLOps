@@ -15,6 +15,7 @@ import torch.nn as nn
 import torchvision.models as models
 from typing import Optional, List, Dict, Any, Tuple
 from src.shared.logging import get_logger
+from src.data.imagenet_preprocessing import ImageNetNormalizer
 
 logger = get_logger(__name__)
 
@@ -97,7 +98,8 @@ class TransferLearningModel(nn.Module):
         dropout_rate: float = 0.5,
         use_custom_classifier: bool = True,
         input_size: Optional[Tuple[int, int]] = None,
-        input_channels: int = 3
+        input_channels: int = 3,
+        apply_imagenet_normalization: bool = True 
     ):
         super(TransferLearningModel, self).__init__()
         
@@ -108,9 +110,8 @@ class TransferLearningModel(nn.Module):
                 f"Options: {list(self.SUPPORTED_MODELS.keys())}"
             )
         
-        # Récupérer les infos du modèle DÈS LE DÉBUT
         model_info = self.SUPPORTED_MODELS[model_name]
-        self.num_features = model_info["features"]  # Nombre de features avant le classifier
+        self.num_features = model_info["features"]
         
         # === VALIDATION ===
         if num_classes < 2:
@@ -134,6 +135,18 @@ class TransferLearningModel(nn.Module):
         self.dropout_rate = dropout_rate
         self.input_size = input_size if input_size else (224, 224)
         self.input_channels = input_channels
+        self.apply_imagenet_normalization = apply_imagenet_normalization
+        
+        # Initialisation normalizer ImageNet
+        if apply_imagenet_normalization:
+            self.imagenet_normalizer = ImageNetNormalizer()
+            logger.info("✅ ImageNet normalizer activé")
+        else:
+            self.imagenet_normalizer = None
+            logger.warning(
+                "⚠️ ImageNet normalizer DÉSACTIVÉ. "
+                "Performances sous-optimales attendues!"
+            )
         
         # === CHARGEMENT DU BACKBONE ===
         try:
@@ -147,10 +160,9 @@ class TransferLearningModel(nn.Module):
         
         except Exception as e:
             logger.warning(f"⚠️ Erreur chargement avec 'weights': {e}")
-            # Fallback pour anciennes versions PyTorch
             try:
                 self.backbone = models.__dict__[model_name](pretrained=pretrained)
-                logger.info(f"✅ Modèle {model_name} chargé (fallback pretrained={pretrained})")
+                logger.info(f"✅ Modèle {model_name} chargé (fallback)")
             except Exception as e2:
                 logger.error(f"❌ Erreur chargement {model_name}: {e2}")
                 raise
@@ -174,88 +186,88 @@ class TransferLearningModel(nn.Module):
             f"model={model_name}, "
             f"classes={num_classes}, "
             f"frozen_config={self.freeze_layers}, "
-            f"num_features={self.num_features}, "
+            f"imagenet_norm={apply_imagenet_normalization}, "
             f"params={self.count_parameters():,}"
         )
-
     
-    def _replace_classifier(self, use_custom: bool):
+    # Remplacement du classifier selon la taille du dataset
+    def _replace_classifier(self, use_custom: bool, dataset_size: Optional[int] = None):
         """
-        Remplace le classifier du modèle backbone.
-        Gère automatiquement les différentes architectures (ResNet, VGG, etc)
+        Remplace classifier avec complexité adaptée au dataset.
+        Args:
+            dataset_size: Nombre d'images train (si connu)
         """
-        # VÉRIFICATION CRITIQUE
         if not hasattr(self, 'num_features') or self.num_features is None:
-            raise AttributeError(
-                "❌ ERREUR CRITIQUE: num_features non défini avant _replace_classifier!\n"
-                "   Dans __init__, définir self.num_features AVANT d'appeler _replace_classifier"
+            raise AttributeError("❌ num_features non défini")
+        
+        logger.info(f"🔧 Remplacement classifier - num_features={self.num_features}")
+        
+        # SÉLECTION ADAPTATIVE
+        if dataset_size and dataset_size < 200:
+            # PETIT DATASET: Classifier MINIMAL
+            classifier = nn.Sequential(
+                nn.Linear(self.num_features, 128),  # ← Réduit 512→128
+                nn.ReLU(),
+                nn.Dropout(self.dropout_rate),
+                nn.Linear(128, self.num_classes)
             )
-        
-        logger.info(f"🔧 Remplacement classifier - num_features={self.num_features}, use_custom={use_custom}")
-        
-        if use_custom:
-            # Classifier multi-couches avec BatchNorm et Dropout
+            logger.info(f"✅ Classifier MINIMAL (dataset={dataset_size} < 200)")
+            
+        elif dataset_size and dataset_size < 500:
+            # DATASET MOYEN: Classifier SIMPLE
+            classifier = nn.Sequential(
+                nn.Linear(self.num_features, 256),  # ← Réduit 512→256
+                nn.BatchNorm1d(256),
+                nn.ReLU(),
+                nn.Dropout(self.dropout_rate),
+                nn.Linear(256, self.num_classes)
+            )
+            logger.info(f"✅ Classifier SIMPLE (dataset={dataset_size} < 500)")
+            
+        elif use_custom:
+            # DATASET LARGE: Classifier COMPLET (original)
             classifier = nn.Sequential(
                 nn.Linear(self.num_features, 512),
                 nn.BatchNorm1d(512),
-                nn.ReLU(inplace=True),
-                nn.Dropout(p=self.dropout_rate),
+                nn.ReLU(),
+                nn.Dropout(self.dropout_rate),
                 nn.Linear(512, 256),
                 nn.BatchNorm1d(256),
-                nn.ReLU(inplace=True),
-                nn.Dropout(p=self.dropout_rate * 0.5),
+                nn.ReLU(),
+                nn.Dropout(self.dropout_rate * 0.5),
                 nn.Linear(256, self.num_classes)
             )
+            logger.info(f"✅ Classifier COMPLET (dataset={dataset_size})")
         else:
-            # Classifier simple
+            # Classifier linéaire simple
             classifier = nn.Linear(self.num_features, self.num_classes)
+            logger.info("✅ Classifier LINÉAIRE")
         
-        # Identifie et remplace le classifier selon le type de modèle
-        if hasattr(self.backbone, 'fc'):  # ResNet, DenseNet
+        # Remplacement dans le modèle
+        if hasattr(self.backbone, 'fc'):
             self.backbone.fc = classifier
-            logger.debug(f"Classifier remplacé via 'fc' pour {self.model_name}")
-        
-        elif hasattr(self.backbone, 'classifier'):  # VGG, MobileNet, EfficientNet
+        elif hasattr(self.backbone, 'classifier'):
             if isinstance(self.backbone.classifier, nn.Sequential):
-                # Remplace la dernière couche du Sequential
                 last_layer_idx = len(self.backbone.classifier) - 1
                 self.backbone.classifier[last_layer_idx] = classifier
-                logger.debug(f"Classifier remplacé via 'classifier[{last_layer_idx}]'")
             else:
                 self.backbone.classifier = classifier
-                logger.debug(f"Classifier remplacé via 'classifier'")
-        
         else:
-            raise ValueError(
-                f"Impossible de remplacer le classifier pour {self.model_name}. "
-                f"Attributs disponibles: {[attr for attr in dir(self.backbone) if not attr.startswith('_')]}"
-            )
+            raise ValueError(f"Impossible de remplacer le classifier pour {self.model_name}")
         
-        logger.info(f"✅ Classifier remplacé avec succès - num_features={self.num_features}")
+        logger.info(f"✅ Classifier remplacé")
     
     def _freeze_layers(self, num_layers: int):
-        """
-        Gèle les N premières couches du modèle.
-        Utile pour fine-tuning progressif.
-        
-        Args:
-            num_layers: Nombre de couches à geler
-                       -1 = Geler tout sauf le classifier
-                        0 = Rien de gelé
-                       >0 = Geler les N premières couches
-        """
+        """Gèle les N premières couches."""
         if num_layers == -1:
-            # Geler tout SAUF le classifier
             for name, param in self.backbone.named_parameters():
-                # NE PAS geler si c'est le classifier
                 if 'fc' in name or 'classifier' in name:
-                    param.requires_grad = True   # Débloquer le classifier
+                    param.requires_grad = True
                 else:
-                    param.requires_grad = False  # Geler tout le reste
-            logger.info("✅ Toutes les couches gelées sauf le classifier")
+                    param.requires_grad = False
+            logger.info("✅ Toutes les couches gelées sauf classifier")
             return
         
-        # Geler les N premières couches
         frozen_count = 0
         for param in self.backbone.parameters():
             if frozen_count < num_layers:
@@ -269,217 +281,116 @@ class TransferLearningModel(nn.Module):
         
         logger.info(
             f"✅ Gelé {frozen_count} couches. "
-            f"Paramètres entraînables: {trainable:,}/{total:,} "
-            f"({trainable/total*100:.1f}%)"
+            f"Params entraînables: {trainable:,}/{total:,} ({trainable/total*100:.1f}%)"
         )
     
-    def unfreeze_layers(self, num_layers: int = -1):
-        """
-        Dégèle des couches pour fine-tuning progressif.       
-        Args:
-            num_layers: Nombre de couches à dégeler
-                       -1 = Tout dégeler
-                       >0 = Dégeler les N dernières couches
-        """
-        if num_layers == -1:
-            # Dégeler tout
-            for param in self.backbone.parameters():
-                param.requires_grad = True
-            logger.info("✅ Toutes les couches dégelées")
-        else:
-            # Dégeler les N dernières couches
-            params_list = list(self.backbone.parameters())
-            for param in params_list[-num_layers:]:
-                param.requires_grad = True
-            logger.info(f"✅ Dégelé les {num_layers} dernières couches")
-    
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Forward pass avec conversion automatique des canaux.   
-        Gère dynamiquement:
-        - Grayscale (1 channel) → RGB (3 channels)
-        - RGBA (4 channels) → RGB (3 channels)
-        - Format detection (channels_first/last)
-        """
-        original_shape = x.shape
-        original_device = x.device
-        original_dtype = x.dtype
-        
-        logger.debug(f"Forward - input: shape={original_shape}, dtype={original_dtype}, device={original_device}")
-        
-        # ===================================================================
-        # 1. VALIDATION DIMENSIONS
-        # ===================================================================
-        if x.dim() not in [3, 4]:
-            raise ValueError(
-                f"Expected 3D (C,H,W) or 4D (B,C,H,W) tensor, "
-                f"got {x.dim()}D: {original_shape}"
-            )
-        
-        # Ajouter batch dimension si nécessaire
-        if x.dim() == 3:
-            x = x.unsqueeze(0)
-            logger.debug(f"Added batch dimension: {x.shape}")
-        
-        batch_size = x.size(0)
-        
-        # ===================================================================
-        # 2. DÉTECTION ET CONVERSION DE FORMAT
-        # ===================================================================
-        # Heuristique: channels_first si dim1 est petit (1,3,4) et < dim2,dim3
-        if x.size(1) in [1, 3, 4] and x.size(1) < x.size(2) and x.size(1) < x.size(3):
-            # Format channels_first: (B, C, H, W)
-            channels = x.size(1)
-            height, width = x.size(2), x.size(3)
-            current_format = "channels_first"
-        else:
-            # Assume channels_last: (B, H, W, C)
-            height, width = x.size(1), x.size(2)
-            channels = x.size(3)
-            current_format = "channels_last"
-            
-            # Convertir en channels_first pour PyTorch
-            x = x.permute(0, 3, 1, 2)
-            channels = x.size(1)  # Mettre à jour après permutation
-            logger.debug(f"Converted channels_last → channels_first: {original_shape} → {x.shape}")
-        
-        # ===================================================================
-        # 3. CONVERSION DES CANAUX POUR TRANSFER LEARNING
-        # ===================================================================
-        # Transfer learning requiert 3 canaux (RGB)
-        target_channels = 3
-        
-        if channels == 1:
-            # Grayscale → RGB: dupliquer les canaux
-            x = x.repeat(1, target_channels, 1, 1)
-            logger.info(f"🔧 Grayscale → RGB: {channels} → {target_channels} channels")
-            
-        elif channels == 4:
-            # RGBA → RGB: prendre les 3 premiers canaux
-            x = x[:, :3, :, :]
-            logger.info(f"🔧 RGBA → RGB: {channels} → {target_channels} channels")
-            
-        elif channels == 3:
-            # Déjà bon format
-            pass
-            
-        else:
-            raise ValueError(
-                f"❌ Nombre de canaux non supporté: {channels}\n"
-                f"   Shape d'entrée: {original_shape}\n"
-                f"   Format détecté: {current_format}\n"
-                f"   Transfer learning requiert 1, 3 ou 4 canaux."
-            )
-        
-        # ===================================================================
-        # 4. VALIDATION FINALE
-        # ===================================================================
-        if x.size(1) != target_channels:
-            raise ValueError(
-                f"❌ Échec conversion canaux: {channels} → {x.size(1)} (attendus: {target_channels})"
-            )
-        
-        # ===================================================================
-        # 5. EXÉCUTION DU MODÈLE
-        # ===================================================================
-        try:
-            output = self.backbone(x)
-            
-            # Restaurer la dimension batch si nécessaire
-            if original_shape[0] == 1 and batch_size == 1:
-                output = output.squeeze(0)
-                logger.debug(f"Removed batch dimension: {output.shape}")
-            
-            return output
-            
-        except RuntimeError as e:
-            # Détection d'erreur mémoire
-            if "CUDA out of memory" in str(e) or "out of memory" in str(e):
-                logger.error(
-                    f"❌ GPU OUT OF MEMORY:\n"
-                    f"   Input shape: {x.shape}\n"
-                    f"   Model: {self.model_name}\n"
-                    f"   Device: {x.device}"
-                )
-                raise RuntimeError(
-                    f"GPU out of memory avec batch_size={batch_size}. "
-                    f"Essayez de réduire le batch_size."
-                ) from e
-            else:
-                logger.error(
-                    f"❌ Erreur forward {self.model_name}:\n"
-                    f"   Input shape: {x.shape}\n"
-                    f"   Channels: {x.size(1)}\n"
-                    f"   Error: {e}"
-                )
-                raise
-
-    # === NOUVELLE MÉTHODE DE GEL PAR POURCENTAGE ===
     def _freeze_by_percentage(self, percentage: float):
-        """
-        Gèle un pourcentage donné des paramètres du modèle.       
-        Args:
-            percentage: Pourcentage de paramètres à geler (0-100)
-        """
+        """Gèle un pourcentage des paramètres."""
         if not 0 <= percentage <= 100:
             raise ValueError(f"Pourcentage entre 0-100, reçu: {percentage}")
-        
-        # ÉTAPE 1 : Lister TOUS les paramètres ordonnés
+        logger.info(f"🔧 Gel {percentage}% des params") 
+
+        # Liste tous les paramètres ordonnés      
         all_params = []
         param_counts = []
         
+        # Compte total des paramètres
         for name, param in self.backbone.named_parameters():
             all_params.append((name, param))
             param_counts.append(param.numel())
         
+        # Calcul du nombre cible de paramètres à geler
         total_params = sum(param_counts)
-        target_frozen_params = int(total_params * percentage / 100)
+        target_frozen = int(total_params * percentage / 100)
         
-        logger.info(
-            f"🔧 Gel {percentage}% des params = "
-            f"{target_frozen_params:,} / {total_params:,}"
-        )
-        
-        # ÉTAPE 2 : Geler jusqu'à atteindre le seuil
+        # Gèle jusqu'à atteindre le seuil
         frozen_params = 0
         for (name, param), count in zip(all_params, param_counts):
-            if frozen_params + count <= target_frozen_params:
+            if frozen_params + count <= target_frozen:
                 param.requires_grad = False
                 frozen_params += count
-                logger.debug(f"  ❄️ Gelé: {name} ({count:,} params)")
             else:
                 param.requires_grad = True
-                logger.debug(f"  🔥 Entraînable: {name} ({count:,} params)")
         
-        # ÉTAPE 3 : Validation
-        actual_frozen = sum(
-            p.numel() for p in self.parameters() if not p.requires_grad
+        actual = (frozen_params / total_params) * 100
+        logger.info(f"✅ Gel {actual:.1f}% des params ({frozen_params:,}/{total_params:,})")
+
+
+    def unfreeze_layers(self, num_layers: int = -1):
+        """Dégèle des couches."""
+        if num_layers == -1:
+            for param in self.backbone.parameters():
+                param.requires_grad = True
+            logger.info("✅ Toutes les couches dégelées")
+        else:
+            params_list = list(self.backbone.parameters())
+            for param in params_list[-num_layers:]:
+                param.requires_grad = True
+            logger.info(f"✅ Dégelé les {num_layers} dernières couches")
+
+    
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Forward pass avec gestion des canaux et normalisation ImageNet.      
+        HYPOTHÈSE: Les données arrivent déjà:
+        - Format: channels_first (N, C, H, W)
+        - Range: [0, 1] (car preprocessor.strategy="imagenet" l'a fait)
+        - Le modèle applique la normalisation ImageNet (mean/std)
+        """
+        # DEBUG: Vérification entrée
+        logger.debug(
+            f"🔍 TransferLearningModel.forward():\n"
+            f"   • shape: {x.shape}\n"
+            f"   • dtype: {x.dtype}\n"
+            f"   • range: [{x.min():.3f}, {x.max():.3f}]\n"
+            f"   • mean: {x.mean():.3f}, std: {x.std():.3f}"
         )
-        actual_percentage = (actual_frozen / total_params) * 100
         
-        logger.info(
-            f"Gel configuré: {actual_frozen:,} params gelés "
-            f"({actual_percentage:.1f}% réel vs {percentage}% demandé)"
-        )
+        # Validation canaux
+        if x.size(1) not in [1, 3, 4]:
+            raise ValueError(f"Format canaux invalide: {x.shape}")
         
-        if abs(actual_percentage - percentage) > 5:
-            logger.warning(
-                f"⚠️ Écart gel: demandé {percentage}%, obtenu {actual_percentage:.1f}%"
+        # Conversion canaux si nécessaire
+        if x.size(1) == 1:
+            x = x.repeat(1, 3, 1, 1)
+            logger.debug("✅ Conversion 1→3 canaux (grayscale → RGB)")
+        elif x.size(1) == 4:
+            x = x[:, :3, :, :]
+            logger.debug("✅ Conversion 4→3 canaux (RGBA → RGB)")
+        
+        # === NORMALISATION IMAGENET OBLIGATOIRE ===
+        if self.imagenet_normalizer is not None:
+            # Vérifier que l'input est dans [0, 1]
+            x_min, x_max = x.min().item(), x.max().item()
+            
+            if x_min < -0.1 or x_max > 1.1:
+                logger.warning(
+                    f"⚠️ Input hors [0,1]: [{x_min:.3f}, {x_max:.3f}]. "
+                    f"Normalisation ImageNet peut échouer."
+                )
+            
+            x = self.imagenet_normalizer(x)
+            logger.debug(
+                f"✅ ImageNet normalization appliquée:\n"
+                f"   • Après norm: [{x.min():.3f}, {x.max():.3f}]\n"
+                f"   • Mean: {x.mean():.3f}, Std: {x.std():.3f}"
             )
+        else:
+            logger.warning("⚠️ ImageNet normalizer désactivé - performances dégradées")
+        
+        # Forward backbone
+        output = self.backbone(x)
+        
+        return output
 
     
     def get_features(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Extrait les features avant le classifier.
-        Utile pour feature extraction ou visualisation.
-        
+        """Extrait les features avant classifier.
         Args:
-            x: Images d'entrée
-            
-        Returns:
-            Features (batch_size, num_features)
-        """
-        # Retirer temporairement le classifier
+            x: Tensor d'entrée (B, C, H, W)
+            Returns:
+            Features extraites (B, num_features)
+            """
         if hasattr(self.backbone, 'fc'):
             original_fc = self.backbone.fc
             self.backbone.fc = nn.Identity()
@@ -487,35 +398,28 @@ class TransferLearningModel(nn.Module):
             original_classifier = self.backbone.classifier
             self.backbone.classifier = nn.Identity()
         else:
-            raise ValueError("Cannot extract features from this model")
+            raise ValueError("Cannot extract features")
         
-        # Forward sans classifier
         features = self.backbone(x)
         
-        # Restaurer le classifier
+        # Restaurer le classifier original
         if hasattr(self.backbone, 'fc'):
             self.backbone.fc = original_fc
         else:
             self.backbone.classifier = original_classifier
         
         return features
+
     
     def count_parameters(self, trainable_only: bool = False) -> int:
-        """
-        Compte les paramètres du modèle.        
-        Args:
-            trainable_only: Compter uniquement les paramètres entraînables
-            
-        Returns:
-            Nombre de paramètres
-        """
+        """Compte les paramètres."""
         if trainable_only:
             return sum(p.numel() for p in self.parameters() if p.requires_grad)
         else:
             return sum(p.numel() for p in self.parameters())
     
     def summary(self) -> Dict[str, Any]:
-        """Retourne un résumé complet du modèle."""
+        """Résumé complet."""
         trainable = self.count_parameters(trainable_only=True)
         total = self.count_parameters(trainable_only=False)
         
@@ -528,6 +432,7 @@ class TransferLearningModel(nn.Module):
             "dropout_rate": self.dropout_rate,
             "input_size": self.input_size,
             "input_channels": self.input_channels,
+            "imagenet_normalization": self.apply_imagenet_normalization,  
             "num_features": self.num_features,
             "total_parameters": total,
             "trainable_parameters": trainable,
@@ -536,17 +441,12 @@ class TransferLearningModel(nn.Module):
         }
     
     def enable_gradient_checkpointing(self):
-        """
-        Active le gradient checkpointing pour économiser la mémoire.
-        Utile pour les gros modèles ou petits GPU.
-        """
+        """Active gradient checkpointing."""
         if hasattr(self.backbone, 'gradient_checkpointing_enable'):
             self.backbone.gradient_checkpointing_enable()
             logger.info("✅ Gradient checkpointing activé")
         else:
-            logger.warning(
-                f"⚠️ Gradient checkpointing non supporté pour {self.model_name}"
-            )
+            logger.warning(f"⚠️ Gradient checkpointing non supporté")
 
 
 # === FONCTION FACTORY ===
@@ -555,41 +455,31 @@ def get_transfer_learning_model(
     model_name: str = "resnet50",
     num_classes: int = 2,
     pretrained: bool = True,
+    apply_imagenet_normalization: bool = True,  
     **kwargs
 ) -> TransferLearningModel:
     """
-    Factory pour créer des modèles de transfer learning.
-    
+    Factory avec normalisation ImageNet par défaut. 
     Args:
         model_name: Nom du modèle backbone
         num_classes: Nombre de classes
         pretrained: Charger les poids pré-entraînés
-        **kwargs: Arguments additionnels (freeze_layers, dropout_rate, input_size, etc.)
-        
-    Returns:
-        TransferLearningModel configuré
-        
-    Example:
-        >>> model = get_transfer_learning_model(
-        ...     "resnet50",
-        ...     num_classes=10,
-        ...     freeze_layers=100,
-        ...     dropout_rate=0.3
-        ... )
+        apply_imagenet_normalization: Active normalisation ImageNet (RECOMMANDÉ)
     """
     try:
         model = TransferLearningModel(
             model_name=model_name,
             num_classes=num_classes,
             pretrained=pretrained,
+            apply_imagenet_normalization=apply_imagenet_normalization,
             **kwargs
         )
         
-        logger.info(f"✅ Modèle {model_name} créé avec succès")
+        logger.info(f"✅ Modèle {model_name} créé (ImageNet norm: {apply_imagenet_normalization})")
         return model
     
     except Exception as e:
-        logger.error(f"❌ Erreur création modèle {model_name}: {e}")
+        logger.error(f"❌ Erreur création modèle: {e}")
         raise
 
 # === STRATÉGIES DE FINE-TUNING ===
