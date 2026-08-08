@@ -12,8 +12,8 @@ d'études — en cours de migration d'un outil académique Streamlit vers un
 Le dépôt contient deux choses en parallèle, le temps de la migration :
 
 | | Rôle |
-|---|---|
-| **`backend/` + `frontend/`** | Le nouveau SaaS, construit **lot par lot**. État actuel : **Lot 0** — le squelette démarre, aucune fonctionnalité métier n'est encore portée. Voir [`backend/workflow.md`](backend/workflow.md). |
+| --- | --- |
+| **`backend/` + `frontend/`** | Le nouveau SaaS, construit **lot par lot**. État actuel : **Lot 1** — authentification JWT et modèle multi-tenant Organisation/équipe fonctionnels de bout en bout. Voir [`backend/workflow.md`](backend/workflow.md). |
 | **`src/`, `ui/`, `helpers/`, `monitoring/`, `orchestrators/`...** | L'application **Streamlit historique**, conservée intacte comme référence pendant le portage progressif de sa logique ML vers `backend/`. Documentation : [`docs/legacy/README.md`](docs/legacy/README.md). |
 
 Rien n'est supprimé de l'application historique tant que sa logique n'a pas
@@ -63,7 +63,7 @@ les READMEs de chaque dossier ci-dessous.
 ## Documentation
 
 | Document | Contenu |
-|---|---|
+| --- | --- |
 | [`backend/README.md`](backend/README.md) | Backend : stack, démarrage, structure des fichiers |
 | [`backend/ARCHITECTURE.md`](backend/ARCHITECTURE.md) | Backend : schéma des couches, conventions techniques |
 | [`backend/workflow.md`](backend/workflow.md) | Avancement lot par lot, décisions prises |
@@ -81,5 +81,6 @@ streamlit run src/app/main.py
 
 ---
 
-**Statut** : migration en cours — Lot 0 (squelette backend + frontend)
-livré. Voir [`backend/workflow.md`](backend/workflow.md) pour la suite.
+**Statut** : migration en cours — Lot 0 (squelette) et Lot 1
+(authentification + organisations) livrés. Voir
+[`backend/workflow.md`](backend/workflow.md) pour la suite.

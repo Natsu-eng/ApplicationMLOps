@@ -5,15 +5,15 @@ SPA du SaaS DataLab Pro. Stack et conventions reprises de CIAM
 
 ## État d'avancement
 
-> **Lot 0 (squelette) — état actuel.** Une seule page : vérifie la connexion
-> au backend (`GET /api/health`) et affiche le statut. Aucune vraie page
-> métier (connexion, upload, entraînement...) n'existe encore — voir
-> [`../backend/workflow.md`](../backend/workflow.md) pour l'avancement.
+> **Lot 1 (authentification + organisations) — état actuel.** Connexion,
+> inscription (création d'organisation), tableau de bord protégé avec
+> gestion d'équipe. Upload de données et entraînement arrivent aux lots
+> suivants — voir [`../backend/workflow.md`](../backend/workflow.md).
 
 ## Stack
 
 | Techno | Version |
-|---|---|
+| --- | --- |
 | React / React-DOM | 19.1.0 |
 | TypeScript | 5.8.3 |
 | Vite | 6.3.5 |
@@ -35,16 +35,22 @@ npm run dev
 
 ## Structure
 
-```
+```text
 frontend/
 ├── src/
-│   ├── main.tsx        ← point d'entrée
-│   ├── App.tsx           ← page unique du Lot 0 (statut backend)
-│   ├── api/client.ts       ← client API centralisé (fetch natif)
-│   └── index.css             ← import Tailwind
+│   ├── main.tsx                 ← point d'entrée
+│   ├── App.tsx                    ← routes (react-router-dom)
+│   ├── api/client.ts                ← client API centralisé (fetch natif, JWT Bearer)
+│   ├── contexts/AuthContext.tsx       ← session (token localStorage, /auth/me au chargement)
+│   ├── components/ProtectedRoute.tsx    ← garde de route (redirige vers /login)
+│   ├── pages/
+│   │   ├── Login.tsx                      ← connexion
+│   │   ├── Register.tsx                     ← inscription (crée une organisation)
+│   │   └── Dashboard.tsx                      ← profil + équipe + ajout de membre (owner)
+│   └── index.css                                ← import Tailwind
 ├── index.html
 ├── package.json
-├── vite.config.ts               ← proxy /api → backend en dev
+├── vite.config.ts               ← proxy /api, /auth → backend en dev
 ├── tsconfig*.json
 ├── .env.example
 └── README.md                       ← ce fichier

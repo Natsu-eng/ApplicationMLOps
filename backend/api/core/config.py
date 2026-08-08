@@ -29,6 +29,11 @@ class Settings(BaseSettings):
     # (même convention que CIAM — voir backend/api/core/database.py)
     database_url: str = "sqlite:///./database/datalab.db"
 
+    # Authentification — JWT HS256 (voir api/core/security.py)
+    # ⚠️ OBLIGATOIRE à changer en production. Générer :
+    #    python -c "import secrets; print(secrets.token_hex(64))"
+    jwt_secret_key: str = "changez-cette-cle-en-production"
+
     # Journalisation
     log_level: str = "INFO"
 

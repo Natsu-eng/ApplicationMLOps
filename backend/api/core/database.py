@@ -54,7 +54,11 @@ def get_db():
 
 
 def init_db() -> None:
-    """Crée les tables déclarées. Sans effet tant qu'aucun modèle n'est enregistré (Lot 0)."""
+    """Crée les tables déclarées par les modèles ORM enregistrés sur `Base`."""
+    # Import local (et non en tête de module) pour éviter l'import circulaire :
+    # api.core.models importe déjà `Base` depuis ce fichier.
+    from api.core.models import Organization, User  # noqa: F401
+
     Base.metadata.create_all(bind=engine)
     logger.info("[DB] Prête (%s)", "SQLite" if _is_sqlite else "PostgreSQL")
 
