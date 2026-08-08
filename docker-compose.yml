@@ -1,0 +1,87 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# DOCKER COMPOSE — DataLab Pro (FastAPI + React + PostgreSQL)
+#
+# Services (Lot 0) :
+#   db       — PostgreSQL 15
+#   backend  — FastAPI + Gunicorn (port 8000 interne)
+#   frontend — React buildé + Nginx (port 80 public)
+#
+# Démarrage : docker compose up -d --build
+# ═══════════════════════════════════════════════════════════════════════════
+
+services:
+
+  db:
+    image: postgres:15-alpine
+    container_name: datalab_db
+    env_file: backend/.env
+    environment:
+      PGDATA: /var/lib/postgresql/data/pgdata
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - datalab_network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: datalab-backend:latest
+    container_name: datalab_backend
+    expose:
+      - "8000"
+    env_file: backend/.env
+    environment:
+      # En Docker, le backend rejoint la base via le nom de service "db", pas "localhost"
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      PYTHONUNBUFFERED: "1"
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - datalab_network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    image: datalab-frontend:latest
+    container_name: datalab_frontend
+    ports:
+      - "80:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - datalab_network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost/nginx-health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+volumes:
+  postgres_data:
+    name: datalab_postgres_data
+
+networks:
+  datalab_network:
+    driver: bridge
+    name: datalab_network

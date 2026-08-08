@@ -1,8 +1,11 @@
-# Environments
+# Environments — s'applique à backend/.env et frontend/.env(.local) aussi
 .env
-.venv
+.env.local
+.venv/
 venv/
 env/
+node_modules/
+dist/
 
 # Python cache
 __pycache__/
@@ -13,23 +16,25 @@ __pycache__/
 .idea/
 .history/
 
-# Streamlit
+# Streamlit (app historique)
 .streamlit/
 
-# Logs & Artifacts
+# Logs & artefacts
 logs/
 *.log
 mlflow_artifacts/
 models_output/
 
-# Data files
-*.csv
-*.parquet
-*.xlsx
-*.xls
-*.json
+# Bases de données locales (SQLite dev)
+backend/database/*.db
 
-# Dependencies
+# Données utilisateur (jeux de données legacy app Streamlit — chemins précis,
+# ne masque plus *.csv/*.json/*.xlsx globalement pour ne pas ignorer par
+# erreur des fichiers de config comme package.json/tsconfig.json)
+notebooks/*.csv
+notebooks/*.parquet
+
+# Dépendances Python
 .eggs/
 *.egg-info/
 
@@ -39,9 +44,8 @@ models_output/
 
 # Jupyter Notebooks
 .ipynb_checkpoints/
-*.ipynb
 
-# mvtec_ad
+# mvtec_ad (dataset volumineux, non versionné)
 mvtec/
 src/data/mvtec_ad/
 
