@@ -31,7 +31,7 @@ fonctionne (voir [`workflow.md`](workflow.md) pour le détail).
 ```bash
 cd backend
 python -m venv .venv
-.venv\Scripts\activate        # Windows — sur Linux/Mac : source .venv/bin/activate
+.venv\Scripts\Activate.ps1    # PowerShell — cmd.exe : .venv\Scripts\activate.bat — Linux/Mac : source .venv/bin/activate
 pip install -r requirements.txt
 copy .env.example .env        # cp sur Linux/Mac — les valeurs par défaut suffisent en dev
 uvicorn api.main:app --reload --port 8000
@@ -40,7 +40,7 @@ uvicorn api.main:app --reload --port 8000
 
 ## Structure
 
-```
+```text
 backend/
 ├── api/
 │   ├── main.py             ← point d'entrée FastAPI : CORS, cycle de vie, healthcheck, routers
