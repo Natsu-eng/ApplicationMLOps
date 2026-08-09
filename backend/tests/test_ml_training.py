@@ -8,13 +8,16 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+import pytest
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
 
 import services.ml_training as ml_training_module
 from services.ml_preprocessing import split_dataset
+from services.ml_registry import MODEL_REGISTRY
 from services.ml_training import (
     TrainingConfig,
+    _classification_selection_score,
     _compute_cqr,
     _cqr_fit_calib_indices,
     _make_cv,
@@ -49,11 +52,19 @@ def _make_multiclass_df(n_per_class=40, seed=0):
 
 
 def test_regression_pipeline_end_to_end():
+    """Le gagnant peut désormais être n'importe quel modèle du registre
+    supportant la régression (Lot 5 : catalogue élargi au-delà des 3
+    boosters) — l'assertion sur `algorithm` reste dynamique plutôt que
+    figée sur les 3 noms historiques, qui deviendrait fausse dès qu'un
+    autre modèle gagne légitimement (ex. Ridge sur un signal linéaire)."""
+    from services.ml_registry import models_for_task
+
     df = _make_regression_df()
     split = split_dataset(df, "cible", ["x1", "x2"], "regression", None, 0.2, 42)
     result = train_and_evaluate(split, "regression", _FAST_CONFIG, lambda s, p: None)
 
-    assert result.algorithm in ("LightGBM", "XGBoost", "CatBoost")
+    valid_labels = {spec.label("regression") for spec in models_for_task("regression", "all")}
+    assert result.algorithm in valid_labels
     assert result.metrics["r2_test"] > 0.8  # signal fort et peu bruité, doit être bien capté
     assert result.cqr is not None
     assert 0 <= result.cqr["empirical_coverage"] <= 1
@@ -113,9 +124,9 @@ def test_cv_estimator_is_pipeline_with_preprocessor_first_step(monkeypatch):
     cv = _make_cv("regression", 3, None)
     config = TrainingConfig(optuna_trials=1, cv_folds=3)
 
-    model_cls, space_fn = ml_training_module._REGRESSORS["LightGBM"]
+    spec = MODEL_REGISTRY["lightgbm"]
     _optimize_one_model(
-        "LightGBM", model_cls, space_fn, split.X_train, y_train, "regression", cv, split.groups_train,
+        spec, split.X_train, y_train, "regression", cv, split.groups_train,
         preprocessor_template, config, lambda s, p: None, 0, 10,
     )
 
@@ -201,9 +212,9 @@ def test_feature_engineering_frequency_encoding_survives_pipeline_wiring(monkeyp
 
     monkeypatch.setattr(ml_training_module, "cross_val_score", fake_cross_val_score)
 
-    model_cls, space_fn = ml_training_module._REGRESSORS["LightGBM"]
+    spec = MODEL_REGISTRY["lightgbm"]
     _optimize_one_model(
-        "LightGBM", model_cls, space_fn, split.X_train, split.y_train.to_numpy(dtype=float),
+        spec, split.X_train, split.y_train.to_numpy(dtype=float),
         "regression", cv, None, preprocessor_template, config, lambda s, p: None, 0, 10,
     )
 
@@ -255,3 +266,283 @@ def test_cqr_coverage_non_regression_after_fix():
     target = result.cqr["target_coverage"]
     empirical = result.cqr["empirical_coverage"]
     assert empirical >= target - 0.12
+
+
+# ── Lot 5 — score de sélection robuste (classification) ────────────────────
+#
+# `_classification_selection_score` doit rester calculable et comparable
+# (même échelle AUC) quel que soit le type d'estimateur du catalogue — c'est
+# la condition nécessaire pour que "meilleur score CV parmi N modèles
+# hétérogènes" ait un sens (correction 1 du cadrage Lot 5).
+
+
+def _make_binary_df(n=200, seed=1):
+    rng = np.random.default_rng(seed)
+    x1 = rng.normal(size=n)
+    x2 = rng.normal(size=n)
+    y = (2 * x1 - x2 + rng.normal(0, 0.5, n) > 0).astype(int)
+    return pd.DataFrame({"x1": x1, "x2": x2, "cible": y})
+
+
+def test_selection_score_uses_predict_proba_when_available():
+    """Estimateur avec predict_proba (cas standard, ex. RandomForest) : le
+    score de sélection doit être un AUC calculé depuis predict_proba, égal à
+    l'appel manuel équivalent — non un score tronqué ou un repli silencieux."""
+    from sklearn.ensemble import RandomForestClassifier
+    from sklearn.metrics import roc_auc_score
+
+    df = _make_binary_df()
+    X, y = df[["x1", "x2"]].to_numpy(), df["cible"].to_numpy()
+    model = RandomForestClassifier(random_state=42, n_estimators=50).fit(X, y)
+
+    score = _classification_selection_score(model, X, y)
+    expected = roc_auc_score(y, model.predict_proba(X)[:, 1])
+    assert score == pytest.approx(expected)
+
+
+def test_selection_score_falls_back_to_decision_function_without_predict_proba():
+    """SVC construit SANS probability=True (recherche Optuna, Lot 5 —
+    évite la calibration Platt coûteuse à chaque essai) : le score de
+    sélection doit passer par decision_function et rester un AUC comparable
+    à celui des autres candidats, pas planter ni dégénérer en accuracy."""
+    from sklearn.metrics import roc_auc_score
+    from sklearn.svm import SVC
+
+    df = _make_binary_df()
+    X, y = df[["x1", "x2"]].to_numpy(), df["cible"].to_numpy()
+    model = SVC(probability=False, random_state=42).fit(X, y)
+    assert not hasattr(model, "predict_proba") or not model.get_params().get("probability", False)
+
+    score = _classification_selection_score(model, X, y)
+    expected = roc_auc_score(y, model.decision_function(X))
+    assert score == pytest.approx(expected)
+    assert 0.0 <= score <= 1.0
+
+
+def test_selection_score_falls_back_to_accuracy_without_proba_or_decision():
+    """Estimateur sans predict_proba ni decision_function (cas limite,
+    aucun modèle du catalogue actuel n'est dans ce cas — filet de sécurité
+    générique) : repli sur l'accuracy plutôt qu'une exception."""
+
+    class _PredictOnly:
+        def predict(self, X):
+            return np.zeros(len(X), dtype=int)
+
+    df = _make_binary_df()
+    X, y = df[["x1", "x2"]].to_numpy(), (df["cible"].to_numpy() * 0)  # toutes les classes à 0 → accuracy = 1.0
+    score = _classification_selection_score(_PredictOnly(), X, y)
+    assert score == 1.0
+
+
+def test_selection_score_comparable_across_registry_families():
+    """Chaque modèle du registre, une fois fit, produit un score de
+    sélection CALCULABLE (pas d'exception) et dans l'échelle AUC/accuracy
+    [0, 1] — condition de comparabilité entre familles hétérogènes."""
+    from services.ml_registry import models_for_task
+
+    df = _make_binary_df(n=150)
+    split = split_dataset(df, "cible", ["x1", "x2"], "classification", None, 0.2, 42)
+    X_train, y_train = split.X_train.to_numpy(), split.y_train.to_numpy()
+
+    for spec in models_for_task("classification", subset="all"):
+        model = spec.build_estimator("classification", 42, {}, False)
+        model.fit(X_train, y_train)
+        score = _classification_selection_score(model, split.X_test.to_numpy(), split.y_test.to_numpy())
+        assert 0.0 <= score <= 1.0, f"{spec.id} : score hors échelle ({score})"
+
+
+# ── Lot 5 — SHAP par famille (tree/linear/kernel) ───────────────────────────
+
+
+def test_shap_linear_explainer_matches_coefficients_in_processed_space():
+    """Sanity check numérique (correction 2 du cadrage Lot 5) : sur un modèle
+    linéaire connu, les valeurs SHAP doivent égaler coef_ * (x - moyenne du
+    fond) DANS L'ESPACE PRÉPROCESSÉ. Si l'explainer recevait les données
+    brutes (mauvais espace — les coefficients ont été appris sur des données
+    centrées-réduites), cette égalité échouerait silencieusement sans lever
+    d'exception, ce qui est précisément le risque signalé par la correction :
+    une explicabilité fausse mais sans crash. Fond ≤ 100 lignes (paramètre
+    par défaut `max_samples` du masker Independent de SHAP) pour que la
+    moyenne utilisée soit prévisible, sans sous-échantillonnage interne."""
+    from sklearn.linear_model import Ridge
+    from sklearn.preprocessing import StandardScaler
+
+    from services.ml_training import _build_explainer
+
+    rng = np.random.default_rng(5)
+    n = 80
+    X_raw = rng.normal(size=(n, 3))
+    y = 5.0 * X_raw[:, 0] + 0.5 * X_raw[:, 1] - 2.0 * X_raw[:, 2] + rng.normal(0, 0.05, n)
+
+    # Préprocessing minimal explicite (équivalent, pour l'essentiel, à ce que
+    # fait build_preprocessor sur les colonnes numériques) — isole le
+    # comportement de l'explainer du reste du pipeline.
+    X_proc = StandardScaler().fit_transform(X_raw)
+    model = Ridge(alpha=0.01, random_state=42).fit(X_proc, y)
+
+    explainer = _build_explainer("linear", model, X_proc)
+    shap_values = np.asarray(explainer.shap_values(X_proc[:20]))
+
+    expected = model.coef_ * (X_proc[:20] - X_proc.mean(axis=0))
+    assert np.allclose(shap_values, expected, atol=1e-6)
+
+
+def test_shap_kernel_explainer_produces_result_for_small_feature_set():
+    """KernelExplainer (routage 'kernel' — SVM/KNN/Naive Bayes) produit un
+    résultat exploitable pour un petit nombre de variables — une entrée par
+    variable, une importance numérique, pas seulement 'non vide'."""
+    from sklearn.svm import SVC
+
+    from services.ml_training import _compute_shap_summary
+
+    rng = np.random.default_rng(2)
+    n = 60
+    X = rng.normal(size=(n, 3))
+    y = (X[:, 0] + X[:, 1] > 0).astype(int)
+    model = SVC(probability=True, random_state=42).fit(X, y)
+
+    summary = _compute_shap_summary(model, "kernel", X, X[:10], ["f1", "f2", "f3"])
+    assert len(summary) == 3
+    assert all(isinstance(entry["importance"], float) for entry in summary)
+
+
+def test_explainability_degrades_above_kernel_feature_threshold():
+    """Au-delà de _KERNEL_SHAP_MAX_FEATURES variables, l'explicabilité kernel
+    est désactivée avec un statut + message explicite plutôt que de lancer un
+    calcul trop long — jamais une disparition silencieuse (Lot 5)."""
+    from services.ml_training import _KERNEL_SHAP_MAX_FEATURES, _compute_explainability
+
+    n_features = _KERNEL_SHAP_MAX_FEATURES + 5
+    feature_names = [f"f{i}" for i in range(n_features)]
+
+    class _DummyModel:
+        def predict(self, X):
+            return np.zeros(len(X))
+
+    shap_summary, status = _compute_explainability(
+        _DummyModel(), "kernel",
+        np.zeros((10, n_features)), np.zeros((10, n_features)),
+        feature_names, TrainingConfig(),
+    )
+    assert shap_summary == []
+    assert status["status"] == "degraded"
+    assert status["message"]  # message non vide, en langage clair (pas de jargon brut)
+
+
+def test_explainability_degrades_on_unexpected_shap_failure(monkeypatch):
+    """Filet de sécurité générique : si le calcul SHAP échoue pour une raison
+    imprévue, l'entraînement ne doit pas planter — dégradation avec message,
+    pas d'exception qui remonte à l'appelant."""
+
+    def _boom(*args, **kwargs):
+        raise RuntimeError("échec simulé")
+
+    monkeypatch.setattr(ml_training_module, "_compute_shap_summary", _boom)
+
+    shap_summary, status = ml_training_module._compute_explainability(
+        object(), "tree", np.zeros((5, 2)), np.zeros((5, 2)), ["f1", "f2"], TrainingConfig(),
+    )
+    assert shap_summary == []
+    assert status["status"] == "degraded"
+    assert status["message"]
+
+
+def test_model_card_carries_ok_explainability_status_for_tree_models():
+    """Non-régression : les boosters (routage 'tree') restent au statut 'ok'
+    — le chantier SHAP par famille ne dégrade pas ce qui marchait déjà."""
+    df = _make_regression_df()
+    split = split_dataset(df, "cible", ["x1", "x2"], "regression", None, 0.2, 42)
+    result = train_and_evaluate(split, "regression", _FAST_CONFIG, lambda s, p: None)
+    assert result.model_card["explainability"] == {"status": "ok", "message": None}
+
+
+# ── Lot 5 — nouveaux modèles du registre (RandomForest/ExtraTrees/linéaire/SVM/KNN/NaiveBayes) ──
+
+
+def test_every_registry_model_fits_and_predicts_end_to_end():
+    """Chaque modèle du registre s'entraîne et prédit sans erreur, pour
+    chacune de ses tâches supportées, via le Pipeline(préprocesseur, modèle)
+    exact utilisé par le moteur — pas un raccourci (Lot 5 : catalogue élargi
+    à 9 modèles, 3 familles)."""
+    from services.ml_registry import models_for_task
+
+    reg_df = _make_regression_df(n=120)
+    reg_split = split_dataset(reg_df, "cible", ["x1", "x2"], "regression", None, 0.2, 42)
+
+    clf_df = _make_binary_df(n=120)
+    clf_split = split_dataset(clf_df, "cible", ["x1", "x2"], "classification", None, 0.2, 42)
+
+    for task_type, split in (("regression", reg_split), ("classification", clf_split)):
+        for spec in models_for_task(task_type, "all"):
+            preprocessor = build_preprocessor(split.X_train)
+            model = spec.build_estimator(task_type, 42, {}, False)
+            pipeline = Pipeline([("preprocess", preprocessor), ("model", model)])
+            pipeline.fit(split.X_train, split.y_train)
+            preds = pipeline.predict(split.X_test)
+            assert len(preds) == len(split.X_test), f"{spec.id}/{task_type} : taille de prédiction incorrecte"
+
+
+def test_cv_estimator_is_pipeline_for_scaling_required_models(monkeypatch):
+    """Même preuve structurelle que Lot A (`test_cv_estimator_is_pipeline_with_preprocessor_first_step`),
+    mais pour des modèles qui EXIGENT le scaling (`requires_scaling=True` —
+    SVM/KNN/régression linéaire) : confirme que le pattern
+    `Pipeline(préprocesseur, modèle)` cloné/refit par fold par
+    `cross_val_score` n'est pas spécifique aux arbres — le scaler de ces
+    modèles est fit DANS le fold, jamais en amont (Lot 5, non-régression de
+    l'anti-fuite Lot A pour les nouveaux modèles)."""
+    captured: dict = {}
+
+    def fake_cross_val_score(estimator, X, y, cv=None, groups=None, scoring=None, n_jobs=None):
+        captured["estimator"] = estimator
+        return np.array([0.7, 0.7, 0.7])
+
+    monkeypatch.setattr(ml_training_module, "cross_val_score", fake_cross_val_score)
+
+    df = _make_regression_df()
+    split = split_dataset(df, "cible", ["x1", "x2"], "regression", None, 0.2, 42)
+    y_train = split.y_train.to_numpy(dtype=float)
+    preprocessor_template = build_preprocessor(split.X_train)
+    cv = _make_cv("regression", 3, None)
+    config = TrainingConfig(optuna_trials=1, cv_folds=3)
+
+    for spec_id in ("svm", "knn", "linear_reg"):
+        spec = MODEL_REGISTRY[spec_id]
+        assert spec.requires_scaling
+        captured.clear()
+        _optimize_one_model(
+            spec, split.X_train, y_train, "regression", cv, split.groups_train,
+            preprocessor_template, config, lambda s, p: None, 0, 10,
+        )
+        estimator = captured["estimator"]
+        assert isinstance(estimator, Pipeline), spec_id
+        assert estimator.steps[0][0] == "preprocess", spec_id
+        assert isinstance(estimator.named_steps["preprocess"], ColumnTransformer), spec_id
+
+
+# ── Lot 5 — sélection par défaut (stratégie produit "B") ────────────────────
+
+
+def test_default_subset_is_boosters_plus_random_forest(monkeypatch):
+    """Sans sélection explicite (mode expert pas encore exposé, Lot E), seul
+    le sous-ensemble par défaut du registre tourne — boosters + RandomForest
+    (`ModelSpec.is_default`) — pas le catalogue complet à chaque
+    entraînement. Le reste du catalogue (ExtraTrees, linéaire, SVM, KNN,
+    Naive Bayes) reste disponible dans le registre mais n'est pas lancé."""
+    from services.ml_registry import models_for_task
+
+    called_ids: list[str] = []
+    original = ml_training_module._optimize_one_model
+
+    def _tracking(spec, *args, **kwargs):
+        called_ids.append(spec.id)
+        return original(spec, *args, **kwargs)
+
+    monkeypatch.setattr(ml_training_module, "_optimize_one_model", _tracking)
+
+    df = _make_regression_df()
+    split = split_dataset(df, "cible", ["x1", "x2"], "regression", None, 0.2, 42)
+    train_and_evaluate(split, "regression", _FAST_CONFIG, lambda s, p: None)
+
+    expected_ids = {spec.id for spec in models_for_task("regression", "default")}
+    assert set(called_ids) == expected_ids
+    assert expected_ids == {"lightgbm", "xgboost", "catboost", "random_forest"}

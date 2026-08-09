@@ -101,14 +101,55 @@ n'affichait que des métriques chiffrées, jamais un graphique. Corrigé :
 *Vérifié bout en bout sur les vrais datasets de l'utilisateur (Iris,
 Concrete Compressive Strength) — pas seulement sur données synthétiques.*
 
+### Lot 4c — Ingénierie de variables guidée, sans fuite
+
+Suggestions de variables dérivées (décomposition de date, ratios,
+regroupement des modalités rares + encodage de fréquence, imputation
+configurable par colonne) proposées automatiquement à partir des garde-fous
+déjà détectés sur le dataset, **approuvées explicitement par l'utilisateur**
+avant d'entrer dans l'entraînement — jamais appliquées silencieusement. La
+transparence va jusqu'au résultat : le modèle affiche quelles
+transformations ont réellement été utilisées.
+
+### Lot 5 — Catalogue supervisé élargi, architecture modulable par registre
+
+Jusqu'ici, seuls 3 algorithmes de boosting étaient comparés (décision
+volontaire du Lot 3, pour une explicabilité uniforme). Ce lot élargit le
+catalogue à **9 modèles sur 3 familles** (arbres/ensembles, régression
+linéaire régularisée, distance/noyau) via une **architecture en registre** :
+ajouter un modèle au catalogue ne demande plus de toucher le moteur
+d'entraînement, seulement de déclarer une nouvelle entrée. Par défaut,
+l'outil ne lance que le sous-ensemble le plus robuste et rapide (les 3
+boosters + Random Forest) — les modèles plus sensibles ou plus lents (SVM,
+KNN, régression linéaire, Naive Bayes) restent disponibles dans le
+catalogue, prêts à être activés par un utilisateur avancé dans un lot futur,
+sans qu'aucune UI de choix ne soit encore proposée.
+
+Deux angles techniques rouverts pour ce lot, tous deux prouvés fonctionner
+correctement au-delà des seuls arbres :
+
+- **L'explicabilité (SHAP)** s'adapte désormais au type de modèle plutôt que
+  de supposer un arbre — avec, pour les modèles les plus coûteux à
+  expliquer, un calcul borné dans le temps et un message clair plutôt qu'un
+  blocage silencieux quand l'explication détaillée n'est pas disponible.
+- **La fiabilité des prédictions (CQR)**, déjà indépendante de l'algorithme
+  gagnant depuis le Lot 3, continue de fonctionner sans adaptation pour
+  n'importe quel nouveau modèle de régression du catalogue.
+
+*Mesuré, pas estimé : le surcoût du catalogue complet par rapport au
+sous-ensemble par défaut est d'environ 7 % sur un entraînement réel — les
+nouveaux modèles sont bon marché à entraîner, le temps reste dominé par la
+recherche d'hyperparamètres des boosters, commune aux deux configurations.*
+
 ---
 
 ## Robustesse — pas juste "ça marche chez moi"
 
-- **Tests automatisés** (`backend/tests/`, pytest) : 94 tests qui restent
+- **Tests automatisés** (`backend/tests/`, pytest) : 146 tests qui restent
   dans le dépôt et couvrent l'isolation entre organisations, les
-  permissions, l'entraînement réel (pas mocké), la prédiction, la
-  suppression, l'exploration de données (EDA) et les données d'évaluation.
+  permissions, l'entraînement réel (pas mocké, y compris sur les 9 modèles
+  du catalogue Lot 5), la prédiction, la suppression, l'exploration de
+  données (EDA) et les données d'évaluation.
 - **Bugs réels trouvés et corrigés en usage réel**, pas en théorie :
   - SHAP change de format de sortie en classification multiclasse selon la
     version installée — trouvé en testant sur un vrai dataset Iris, corrigé,
@@ -140,7 +181,8 @@ Concrete Compressive Strength) — pas seulement sur données synthétiques.*
 | Multi-utilisateurs | Organisation/équipe, pas compte individuel isolé | Usage en équipe dans un bureau d'études |
 | File de tâches | RQ + Redis | CIAM n'en a pas besoin (tâches courtes) ; un entraînement ML, si |
 | Positionnement | Généraliste multi-secteurs | Pas de verrouillage sur un métier particulier dès le départ |
-| Catalogue Lot 3 | 3 algos de boosting seulement (pas RF/SVM/linéaire...) | Permet SHAP + CQR de qualité uniforme ; le catalogue large arrive au Lot 5 |
+| Catalogue Lot 3 | 3 algos de boosting seulement au lancement | Permet SHAP + CQR de qualité uniforme le temps de livrer l'architecture par registre (élargi à 9 modèles au Lot 5) |
+| Sélection par défaut Lot 5 | Seuls boosters + RandomForest tournent automatiquement | Modèles plus lents/sensibles (SVM, KNN...) réservés à un mode expert futur (Lot E), pour garder un temps d'entraînement raisonnable par défaut |
 | Graphiques | Recharts, pas Plotly | Plus léger, thémable à notre design, déjà éprouvé par CIAM |
 | Progression | Polling REST, pas WebSocket | Plus simple à fiabiliser pour ce volume d'événements |
 
@@ -152,11 +194,13 @@ Identifié explicitement en testant le produit, pas oublié :
 
 | Lot | Contenu |
 | --- | --- |
-| **4c** (prochain) | Ingénierie de variables — créer des variables dérivées (ratios, transformations) avant l'entraînement |
-| **5** | Catalogue ML complet (RandomForest, régression linéaire/logistique, SVM, KNN, Naive Bayes, + SMOTE, + clustering) comparé automatiquement |
+| **E** (prochain) | Mode expert — exposer le choix d'activer les modèles hors sous-ensemble par défaut (ExtraTrees, linéaire, SVM, KNN, Naive Bayes) |
 | **6-8** | Vision par ordinateur / détection d'anomalies (l'autre grand pilier de l'app historique, pas encore porté) |
 | **9** | Registre de modèles versionné (l'artefact existe déjà, pas encore le versioning/export) |
 | **10** | Durcissement SaaS : audit, quotas, facturation — prêt pour un client pilote |
+
+*Clustering (non supervisé) et SMOTE avancé : hors périmètre pour l'instant,
+non planifiés dans les lots ci-dessus.*
 
 ---
 

@@ -1,31 +1,46 @@
-"""Entraînement ML supervisé — LightGBM / XGBoost / CatBoost, recherche
-d'hyperparamètres Optuna, sélection du meilleur modèle sur la validation
-croisée, explicabilité SHAP et intervalles de confiance conformes (CQR,
-variante Mondrian) pour la régression.
+"""Entraînement ML supervisé — catalogue de modèles piloté par
+`services/ml_registry.py` (9 modèles, 3 familles : arbres/ensembles,
+linéaire, distance/noyau), recherche d'hyperparamètres Optuna, sélection du
+meilleur modèle sur la validation croisée, explicabilité SHAP routée par
+famille et intervalles de confiance conformes (CQR, variante Mondrian) pour
+la régression.
 
 Méthodologie reprise d'un notebook de référence partagé par l'équipe (voir
-`backend/workflow.md`, Lot 3) :
-- 3 algorithmes de gradient boosting comparés systématiquement, tous
-  compatibles SHAP TreeExplainer et régression quantile (CQR) — d'où le
-  choix de s'y limiter pour ce lot (le catalogue sklearn plus large arrive
-  au Lot 5, sans cette profondeur d'explicabilité).
+`backend/workflow.md`, Lot 3), étendue au catalogue complet au Lot 5 :
+- Le moteur ne référence aucun nom d'algorithme en dur — il consomme
+  `ml_registry.models_for_task()`. Par défaut (stratégie produit "B"), seul
+  le sous-ensemble robuste/rapide tourne (boosters + RandomForest,
+  `ModelSpec.is_default`) ; le reste du catalogue (ExtraTrees, régression
+  régularisée, SVM, KNN, Naive Bayes) est disponible mais pas lancé tant que
+  le mode expert (Lot E) n'expose pas son activation.
 - sélection du meilleur modèle sur le score de VALIDATION CROISÉE, jamais
   sur le score test — le score test n'est qu'une estimation finale rapportée.
+  En classification, le score (`_classification_selection_score`) reste
+  calculable et comparable même pour un candidat sans `predict_proba` (ex.
+  SVC construit sans calibration Platt pendant la recherche) : repli sur
+  `decision_function`, puis sur l'accuracy (Lot 5).
 - CV/split groupés (`GroupKFold`/`GroupShuffleSplit`) quand une colonne de
   groupe est fournie, pour rester anti-fuite jusque dans la recherche
   d'hyperparamètres.
 - Préprocesseur (imputation, standardisation, one-hot) toujours refit
   À L'INTÉRIEUR de chaque fold de CV et de la portion fit du CQR — jamais
-  fit sur des données qui serviront à valider ou à calibrer (Lot A).
+  fit sur des données qui serviront à valider ou à calibrer (Lot A). Il est
+  déjà indifférencié par famille de modèle (le scaling est inconditionnel),
+  ce qui satisfait sans changement le besoin des modèles à scaling requis.
+- Explicabilité SHAP routée par famille (`explainer_kind` du registre) :
+  TreeExplainer (arbres), LinearExplainer (linéaire), KernelExplainer
+  (distance/noyau — borné et dégradé proprement au-delà d'une taille
+  raisonnable, jamais un plantage silencieux, voir `_compute_explainability`).
 - CQR Mondrian : la calibration conforme est faite par strate de prédiction
   plutôt qu'avec un quantile unique, pour corriger la sous-couverture aux
   valeurs extrêmes (défaut connu du split conformal simple). Le split
   fit/calibration est lui-même groupé (`GroupShuffleSplit`) quand une
-  colonne de groupe est fournie (Lot A).
+  colonne de groupe est fournie (Lot A). Découplé du modèle gagnant (les
+  régresseurs de quantile sont toujours des LightGBM dédiés) : fonctionne
+  sans adaptation pour tout nouveau modèle de régression du catalogue.
 
 Le clustering (non supervisé) est hors périmètre de ce module — voir
-`services/ml_task.py`, qui ne détecte que classification/régression ; le
-non-supervisé arrive avec le catalogue ML complet (Lot 5).
+`services/ml_task.py`, qui ne détecte que classification/régression.
 """
 from __future__ import annotations
 
@@ -37,8 +52,7 @@ import numpy as np
 import optuna
 import pandas as pd
 import shap
-from catboost import CatBoostClassifier, CatBoostRegressor
-from lightgbm import LGBMClassifier, LGBMRegressor
+from lightgbm import LGBMRegressor
 from sklearn.base import clone
 from sklearn.compose import ColumnTransformer
 from sklearn.metrics import (
@@ -64,9 +78,9 @@ from sklearn.model_selection import (
 )
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import LabelEncoder, label_binarize
-from xgboost import XGBClassifier, XGBRegressor
 
 from services.ml_preprocessing import SplitResult, build_preprocessor
+from services.ml_registry import ModelSpec, models_for_task
 
 logger = logging.getLogger("datalab.ml_training")
 optuna.logging.set_verbosity(optuna.logging.WARNING)
@@ -101,62 +115,6 @@ class TrainedModelResult:
     evaluation: dict[str, Any]  # matrice de confusion+ROC/PR (classif) ou prédit-vs-réel+résidus (régression)
 
 
-# ── Espaces de recherche Optuna — un par algorithme, régression et classification ──
-
-def _lightgbm_space(trial: optuna.Trial) -> dict:
-    return dict(
-        n_estimators=trial.suggest_int("n_estimators", 50, 500),
-        learning_rate=trial.suggest_float("learning_rate", 0.01, 0.2, log=True),
-        num_leaves=trial.suggest_int("num_leaves", 20, 200),
-        max_depth=trial.suggest_int("max_depth", 4, 14),
-        min_child_samples=trial.suggest_int("min_child_samples", 5, 80),
-        subsample=trial.suggest_float("subsample", 0.6, 1.0),
-        colsample_bytree=trial.suggest_float("colsample_bytree", 0.6, 1.0),
-        reg_alpha=trial.suggest_float("reg_alpha", 1e-3, 10, log=True),
-        reg_lambda=trial.suggest_float("reg_lambda", 1e-3, 10, log=True),
-    )
-
-
-def _xgboost_space(trial: optuna.Trial) -> dict:
-    return dict(
-        n_estimators=trial.suggest_int("n_estimators", 50, 500),
-        learning_rate=trial.suggest_float("learning_rate", 0.01, 0.2, log=True),
-        max_depth=trial.suggest_int("max_depth", 3, 12),
-        subsample=trial.suggest_float("subsample", 0.6, 1.0),
-        colsample_bytree=trial.suggest_float("colsample_bytree", 0.6, 1.0),
-        reg_alpha=trial.suggest_float("reg_alpha", 1e-3, 10, log=True),
-        reg_lambda=trial.suggest_float("reg_lambda", 1e-3, 10, log=True),
-    )
-
-
-def _catboost_space(trial: optuna.Trial) -> dict:
-    return dict(
-        iterations=trial.suggest_int("iterations", 100, 600),
-        learning_rate=trial.suggest_float("learning_rate", 0.01, 0.2, log=True),
-        depth=trial.suggest_int("depth", 4, 10),
-        l2_leaf_reg=trial.suggest_float("l2_leaf_reg", 1e-3, 10, log=True),
-    )
-
-
-_REGRESSORS: dict[str, tuple[type, Callable[[optuna.Trial], dict]]] = {
-    "LightGBM": (LGBMRegressor, _lightgbm_space),
-    "XGBoost": (XGBRegressor, _xgboost_space),
-    "CatBoost": (CatBoostRegressor, _catboost_space),
-}
-
-_CLASSIFIERS: dict[str, tuple[type, Callable[[optuna.Trial], dict]]] = {
-    "LightGBM": (LGBMClassifier, _lightgbm_space),
-    "XGBoost": (XGBClassifier, _xgboost_space),
-    "CatBoost": (CatBoostClassifier, _catboost_space),
-}
-
-_QUIET_KWARGS = {
-    "LightGBM": {"verbose": -1},
-    "XGBoost": {"verbosity": 0},
-    "CatBoost": {"verbose": False},
-}
-
-
 def _make_cv(task_type: str, cv_folds: int, groups: Optional[np.ndarray]):
     """GroupKFold si une colonne de groupe est fournie (anti-fuite jusque dans
     la CV) — sinon StratifiedKFold (classification) ou KFold (régression)."""
@@ -167,10 +125,42 @@ def _make_cv(task_type: str, cv_folds: int, groups: Optional[np.ndarray]):
     return KFold(n_splits=cv_folds, shuffle=True, random_state=42)
 
 
+def _classification_selection_score(estimator, X, y) -> float:
+    """Score de sélection en classification — AUC (ovr, pondérée par classe)
+    calculée à partir de `predict_proba` quand l'estimateur en dispose,
+    sinon de `decision_function` (ex. SVC construit sans `probability=True`
+    pendant la recherche Optuna — voir `ml_registry._build_svm` : la
+    calibration Platt de `probability=True` est coûteuse et inutile pour un
+    score de comparaison, elle n'est reconstruite que pour le candidat
+    retenu, une seule fois). Repli sur l'accuracy seulement si l'estimateur
+    n'a ni l'un ni l'autre, ou si une classe est absente du fold courant
+    (roc_auc non calculable dans ce cas précis).
+
+    Signature de scorer scikit-learn : `estimator` est déjà FIT sur le fold
+    d'entraînement quand cette fonction est appelée par `cross_val_score`.
+    Utilisée pour TOUS les candidats de classification du catalogue (Lot 5,
+    correction 1) — condition nécessaire pour que "meilleur score CV parmi N
+    modèles hétérogènes" compare des scores sur la même échelle."""
+    y_arr = np.asarray(y)
+    n_classes = len(np.unique(y_arr))
+    try:
+        if hasattr(estimator, "predict_proba"):
+            proba = estimator.predict_proba(X)
+            if n_classes == 2:
+                return float(roc_auc_score(y_arr, proba[:, 1]))
+            return float(roc_auc_score(y_arr, proba, multi_class="ovr", average="weighted"))
+        if hasattr(estimator, "decision_function"):
+            scores = estimator.decision_function(X)
+            if n_classes == 2:
+                return float(roc_auc_score(y_arr, scores))
+            return float(roc_auc_score(y_arr, scores, multi_class="ovr", average="weighted"))
+    except ValueError:
+        pass  # ex. classe absente de ce fold — repli sur accuracy ci-dessous
+    return float(accuracy_score(y_arr, estimator.predict(X)))
+
+
 def _optimize_one_model(
-    algo_name: str,
-    model_cls: type,
-    space_fn: Callable[[optuna.Trial], dict],
+    spec: ModelSpec,
     X_raw: pd.DataFrame,
     y: np.ndarray,
     task_type: str,
@@ -182,24 +172,31 @@ def _optimize_one_model(
     progress_base: int,
     progress_span: int,
 ) -> tuple[Any, float]:
-    """Recherche Optuna (TPE) pour un algorithme — retourne (meilleurs
-    hyperparamètres appliqués à un estimateur non-fit, score de CV moyen).
+    """Recherche Optuna (TPE) pour un modèle du registre (Lot 5) — retourne
+    (meilleurs hyperparamètres appliqués à un estimateur non-fit, score de CV
+    moyen).
 
     `X_raw` est le train BRUT (non préprocessé) : chaque essai construit un
     `Pipeline(préprocesseur, modèle)` non-fit et le passe à `cross_val_score`,
     qui le clone et le refit à l'intérieur de chaque fold — le préprocesseur
-    ne voit donc jamais la portion de validation du fold (Lot A)."""
-    scoring = "r2" if task_type == "regression" else "roc_auc_ovr_weighted"
+    ne voit donc jamais la portion de validation du fold (Lot A). Ce pattern
+    est générique à tout `ModelSpec.build_estimator`, indépendamment du
+    besoin de scaling du modèle (Lot 5, Phase 1 : déjà satisfait par
+    `build_preprocessor`, aucune branche par famille nécessaire ici)."""
+    algo_name = spec.label(task_type)
+    # Régression : "r2", scoring homogène par nature (tous les régresseurs
+    # produisent une valeur continue). Classification : scorer maison
+    # `_classification_selection_score`, robuste à l'absence de
+    # `predict_proba` (Lot 5, correction 1) — gère elle-même son repli, plus
+    # besoin du try/except externe qui existait pour le scorer texte
+    # `"roc_auc_ovr_weighted"` (celui-ci exigeait `predict_proba` sans repli).
+    scoring = "r2" if task_type == "regression" else _classification_selection_score
 
     def objective(trial: optuna.Trial) -> float:
-        params = space_fn(trial)
-        model = model_cls(random_state=config.seed, **_QUIET_KWARGS[algo_name], **params)
+        params = spec.hyperparameter_space(trial)
+        model = spec.build_estimator(task_type, config.seed, params, False)
         pipeline = Pipeline([("preprocess", clone(preprocessor_template)), ("model", model)])
-        try:
-            scores = cross_val_score(pipeline, X_raw, y, cv=cv, groups=groups, scoring=scoring, n_jobs=1)
-        except ValueError:
-            # ex: roc_auc_ovr_weighted indisponible (classe absente dans un fold) — repli sur accuracy
-            scores = cross_val_score(pipeline, X_raw, y, cv=cv, groups=groups, scoring="accuracy", n_jobs=1)
+        scores = cross_val_score(pipeline, X_raw, y, cv=cv, groups=groups, scoring=scoring, n_jobs=1)
         return float(np.mean(scores))
 
     def on_trial_end(study: optuna.Study, trial: optuna.trial.FrozenTrial) -> None:
@@ -212,7 +209,11 @@ def _optimize_one_model(
     study = optuna.create_study(direction="maximize", sampler=optuna.samplers.TPESampler(seed=config.seed))
     study.optimize(objective, n_trials=config.optuna_trials, callbacks=[on_trial_end], show_progress_bar=False)
 
-    best_model = model_cls(random_state=config.seed, **_QUIET_KWARGS[algo_name], **study.best_params)
+    # `final_fit=True` : configuration de construction complète (ex. SVC
+    # retrouve `probability=True`, nécessaire à `predict_proba` en évaluation
+    # finale/inférence) — un seul objet construit ici, jamais fit tant que ce
+    # candidat n'est pas le gagnant (voir `train_and_evaluate`).
+    best_model = spec.build_estimator(task_type, config.seed, study.best_params, True)
     return best_model, study.best_value
 
 
@@ -264,22 +265,60 @@ def _bootstrap_ci(
     }
 
 
-def _compute_shap_summary(estimator: Any, X_sample: np.ndarray, feature_names: list[str]) -> list[dict[str, Any]]:
-    """Importance globale des features par SHAP (TreeExplainer) — moyenne des
-    valeurs absolues sur un échantillon du test. Le détail par observation
-    (dependence/waterfall) est laissé pour une itération future de la page
-    d'évaluation (Lot 4).
+# ── SHAP par famille (Lot 5) ────────────────────────────────────────────────
+#
+# Bornage de KernelExplainer — le seul des trois explainers dont le coût
+# croît avec (taille du fond × taille de l'échantillon expliqué × nombre de
+# variables) : sans borne, un modèle SVM/KNN/Naive Bayes sur un dataset large
+# rendrait l'explicabilité impraticable. Constantes nommées (pas de valeur en
+# dur perdue dans le code) — voir `_compute_explainability`.
+_KERNEL_SHAP_MAX_FEATURES = 50  # au-delà : SHAP désactivé pour ce modèle, message explicite plutôt qu'un calcul trop long
+_KERNEL_SHAP_BACKGROUND_SIZE = 50  # points de fond résumés par k-means (pas les données brutes)
+_KERNEL_SHAP_SAMPLE_SIZE = 50  # échantillon expliqué — nettement plus bas que shap_sample_size (tree/linear, rapides)
+
+
+def _build_explainer(explainer_kind: str, estimator: Any, X_train_background: np.ndarray):
+    """Construit l'explainer SHAP adapté à la famille du modèle gagnant.
+
+    Point critique (Lot 5, correction 2) : `X_train_background` DOIT être
+    dans le même espace que celui vu par `estimator` — c'est-à-dire déjà
+    passé par le préprocesseur (post-scaling, post-OHE), jamais les données
+    brutes. Un `LinearExplainer`/`KernelExplainer` nourri de données brutes
+    ne lève aucune erreur mais produit des valeurs SHAP fausses (les
+    coefficients du modèle linéaire, eux, ont été appris dans l'espace
+    préprocessé) — l'appelant (`_compute_explainability`) ne passe donc
+    jamais autre chose que `X_train_proc`/`X_test_proc`.
+    """
+    if explainer_kind == "tree":
+        return shap.TreeExplainer(estimator)
+    if explainer_kind == "linear":
+        return shap.LinearExplainer(estimator, X_train_background)
+    background = shap.kmeans(X_train_background, min(_KERNEL_SHAP_BACKGROUND_SIZE, len(X_train_background)))
+    predict_fn = estimator.predict_proba if hasattr(estimator, "predict_proba") else estimator.predict
+    return shap.KernelExplainer(predict_fn, background)
+
+
+def _compute_shap_summary(
+    estimator: Any, explainer_kind: str, X_train_background: np.ndarray, X_sample: np.ndarray, feature_names: list[str]
+) -> list[dict[str, Any]]:
+    """Importance globale des features par SHAP — moyenne des valeurs
+    absolues sur un échantillon du test, quel que soit le type d'explainer
+    routé par `explainer_kind` (Lot 5 : tree/linear/kernel). Le détail par
+    observation (dependence/waterfall) est laissé pour une itération future
+    de la page d'évaluation (Lot 4).
 
     La forme de `shap_values` en classification multiclasse dépend de la
-    version de SHAP/du backend : soit une liste d'une matrice
-    (n_échantillons, n_features) par classe (API historique), soit un seul
-    tableau (n_échantillons, n_features, n_classes) (API unifiée récente).
-    Les deux sont gérées — bug réel rencontré en test (classification 3
-    classes) : sans ce second cas, `mean_abs` restait 2D et l'indexation
-    par une ligne entière au lieu d'un scalaire levait
-    `only integer scalar arrays can be converted to a scalar index`.
+    version de SHAP/du backend et de l'explainer : soit une liste d'une
+    matrice (n_échantillons, n_features) par classe (API historique), soit un
+    seul tableau (n_échantillons, n_features, n_classes) (API unifiée
+    récente) — `KernelExplainer` sur `predict_proba` produit des formes
+    analogues à `TreeExplainer` en multiclasse. Les deux sont gérées — bug
+    réel rencontré en test (classification 3 classes, Lot 3) : sans ce second
+    cas, `mean_abs` restait 2D et l'indexation par une ligne entière au lieu
+    d'un scalaire levait `only integer scalar arrays can be converted to a
+    scalar index`.
     """
-    explainer = shap.TreeExplainer(estimator)
+    explainer = _build_explainer(explainer_kind, estimator, X_train_background)
     shap_values = explainer.shap_values(X_sample)
     if isinstance(shap_values, list):
         abs_values = np.mean([np.abs(sv) for sv in shap_values], axis=0)
@@ -292,6 +331,56 @@ def _compute_shap_summary(estimator: Any, X_sample: np.ndarray, feature_names: l
     mean_abs = abs_values.mean(axis=0)
     order = np.argsort(mean_abs)[::-1]
     return [{"feature": feature_names[i], "importance": float(mean_abs[i])} for i in order]
+
+
+def _compute_explainability(
+    estimator: Any,
+    explainer_kind: str,
+    X_train_proc: np.ndarray,
+    X_test_proc: np.ndarray,
+    feature_names: list[str],
+    config: TrainingConfig,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Calcule le résumé SHAP du modèle gagnant, ou dégrade proprement —
+    jamais de plantage du job et jamais une section qui disparaît sans
+    explication (Lot 5) : `explainability_status` (à afficher côté UI, pas
+    seulement stocké) porte toujours un statut + un message clair en cas de
+    dégradation.
+
+    `KernelExplainer` (routage "kernel" — SVM/KNN/Naive Bayes) est borné
+    (fond et échantillon réduits, voir constantes ci-dessus) et désactivé
+    au-delà de `_KERNEL_SHAP_MAX_FEATURES` variables plutôt que de lancer un
+    calcul trop long. Un dernier filet `try/except` couvre les cas non
+    anticipés (ex. modèle dégénéré sur un petit jeu de données) : dans tous
+    les cas, `train_and_evaluate` continue et produit un modèle utilisable.
+    """
+    n_features = len(feature_names)
+    if explainer_kind == "kernel" and n_features > _KERNEL_SHAP_MAX_FEATURES:
+        return [], {
+            "status": "degraded",
+            "message": (
+                "L'explication détaillée des prédictions n'est pas disponible pour ce type de "
+                f"modèle sur un jeu de données avec autant de variables ({n_features}) — "
+                "le calcul serait trop long pour rester praticable."
+            ),
+        }
+
+    sample_size = _KERNEL_SHAP_SAMPLE_SIZE if explainer_kind == "kernel" else config.shap_sample_size
+    sample_size = min(sample_size, len(X_test_proc))
+    rng = np.random.default_rng(config.seed)
+    sample_idx = rng.choice(len(X_test_proc), size=sample_size, replace=False)
+
+    try:
+        shap_summary = _compute_shap_summary(
+            estimator, explainer_kind, X_train_proc, X_test_proc[sample_idx], feature_names
+        )
+        return shap_summary, {"status": "ok", "message": None}
+    except Exception as exc:  # dernier filet — l'explicabilité ne doit jamais faire échouer l'entraînement
+        logger.warning("[Training] Calcul SHAP dégradé (explainer=%s) : %s", explainer_kind, exc)
+        return [], {
+            "status": "degraded",
+            "message": "L'explication détaillée n'a pas pu être calculée pour ce modèle sur ce jeu de données.",
+        }
 
 
 def _downsample_curve(x: np.ndarray, y: np.ndarray, max_points: int = 100) -> tuple[list[float], list[float]]:
@@ -520,23 +609,34 @@ def train_and_evaluate(
     preprocessor_template = build_preprocessor(split.X_train, feature_engineering_config)
 
     cv = _make_cv(task_type, config.cv_folds, split.groups_train)
-    catalog = _REGRESSORS if task_type == "regression" else _CLASSIFIERS
+    # Stratégie produit "B" (Lot 5) : par défaut, seul le sous-ensemble
+    # robuste/rapide tourne (boosters + RandomForest, `ModelSpec.is_default`)
+    # — les modèles sensibles/lents (SVM, KNN, linéaire, Naive Bayes) restent
+    # dans le registre, disponibles mais pas lancés tant que le mode expert
+    # (Lot E) n'expose pas leur activation. Câblé ici en un seul mot
+    # ("default" → "all") sans toucher au reste de la boucle : c'est la
+    # mécanique que le Lot E n'aura qu'à rendre pilotable depuis l'API/l'UI.
+    catalog = models_for_task(task_type, subset="default")
 
-    candidates: list[tuple[str, Any, float]] = []
+    candidates: list[tuple[str, ModelSpec, Any, float]] = []
     n_models = len(catalog)
-    span_per_model = 65 // n_models  # 5%→70% réparti entre les 3 algos
-    for i, (algo_name, (model_cls, space_fn)) in enumerate(catalog.items()):
+    span_per_model = 65 // n_models  # 5%→70% réparti entre les modèles du catalogue
+    for i, spec in enumerate(catalog):
+        algo_name = spec.label(task_type)
         base = 5 + i * span_per_model
         progress_cb(f"Optimisation {algo_name}", base)
         best_model, cv_score = _optimize_one_model(
-            algo_name, model_cls, space_fn, split.X_train, y_train, task_type, cv, split.groups_train,
+            spec, split.X_train, y_train, task_type, cv, split.groups_train,
             preprocessor_template, config, progress_cb, base, span_per_model,
         )
-        candidates.append((algo_name, best_model, cv_score))
+        candidates.append((algo_name, spec, best_model, cv_score))
         logger.info("[Training] %s — score CV = %.4f", algo_name, cv_score)
 
     # Sélection sur la CV, jamais sur le test (voir docstring du module).
-    algo_name, best_model, cv_score = max(candidates, key=lambda c: c[2])
+    # `winning_spec` conservé pour router l'explainer SHAP sur la bonne
+    # famille (Lot 5) — le reste du pipeline (métriques, CQR) reste
+    # indépendant du type de modèle, comme avant.
+    algo_name, winning_spec, best_model, cv_score = max(candidates, key=lambda c: c[3])
     progress_cb(f"Modèle retenu : {algo_name} — entraînement final", 72)
 
     # Artefact de production : fit sur TOUT le train, comme pour n'importe
@@ -571,10 +671,9 @@ def train_and_evaluate(
         evaluation = _compute_classification_evaluation(y_test, pred_test, proba_test, class_names or [])
 
     progress_cb("Calcul de l'explicabilité (SHAP)", 78)
-    sample_size = min(config.shap_sample_size, len(X_test_proc))
-    rng = np.random.default_rng(config.seed)
-    sample_idx = rng.choice(len(X_test_proc), size=sample_size, replace=False)
-    shap_summary = _compute_shap_summary(best_model, X_test_proc[sample_idx], feature_names)
+    shap_summary, explainability_status = _compute_explainability(
+        best_model, winning_spec.explainer_kind, X_train_proc, X_test_proc, feature_names, config
+    )
 
     cqr_result: Optional[dict[str, Any]] = None
     cqr_artifacts: Optional[dict[str, Any]] = None
@@ -608,6 +707,10 @@ def train_and_evaluate(
         "metrics": metrics,
         "cqr": cqr_result,
         "top_features": shap_summary[:10],
+        # Statut d'explicabilité (Lot 5) — "ok" ou "degraded" + message FR
+        # clair. Doit être AFFICHÉ côté frontend quand dégradé, pas
+        # seulement stocké (voir ModelResultModal.tsx).
+        "explainability": explainability_status,
     }
 
     bundle: dict[str, Any] = {
