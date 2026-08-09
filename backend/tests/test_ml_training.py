@@ -517,3 +517,32 @@ def test_cv_estimator_is_pipeline_for_scaling_required_models(monkeypatch):
         assert isinstance(estimator, Pipeline), spec_id
         assert estimator.steps[0][0] == "preprocess", spec_id
         assert isinstance(estimator.named_steps["preprocess"], ColumnTransformer), spec_id
+
+
+# ── Lot 5 — sélection par défaut (stratégie produit "B") ────────────────────
+
+
+def test_default_subset_is_boosters_plus_random_forest(monkeypatch):
+    """Sans sélection explicite (mode expert pas encore exposé, Lot E), seul
+    le sous-ensemble par défaut du registre tourne — boosters + RandomForest
+    (`ModelSpec.is_default`) — pas le catalogue complet à chaque
+    entraînement. Le reste du catalogue (ExtraTrees, linéaire, SVM, KNN,
+    Naive Bayes) reste disponible dans le registre mais n'est pas lancé."""
+    from services.ml_registry import models_for_task
+
+    called_ids: list[str] = []
+    original = ml_training_module._optimize_one_model
+
+    def _tracking(spec, *args, **kwargs):
+        called_ids.append(spec.id)
+        return original(spec, *args, **kwargs)
+
+    monkeypatch.setattr(ml_training_module, "_optimize_one_model", _tracking)
+
+    df = _make_regression_df()
+    split = split_dataset(df, "cible", ["x1", "x2"], "regression", None, 0.2, 42)
+    train_and_evaluate(split, "regression", _FAST_CONFIG, lambda s, p: None)
+
+    expected_ids = {spec.id for spec in models_for_task("regression", "default")}
+    assert set(called_ids) == expected_ids
+    assert expected_ids == {"lightgbm", "xgboost", "catboost", "random_forest"}

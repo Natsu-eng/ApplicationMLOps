@@ -594,11 +594,14 @@ def train_and_evaluate(
     preprocessor_template = build_preprocessor(split.X_train, feature_engineering_config)
 
     cv = _make_cv(task_type, config.cv_folds, split.groups_train)
-    # `subset="all"` : le catalogue complet tourne encore ici — la sélection
-    # par défaut (boosters + RandomForest, stratégie produit "B") est câblée
-    # dans un commit dédié (Lot 5, `ModelSpec.is_default`) sans toucher à
-    # cette boucle, qui ne référence déjà plus aucun nom d'algorithme en dur.
-    catalog = models_for_task(task_type, subset="all")
+    # Stratégie produit "B" (Lot 5) : par défaut, seul le sous-ensemble
+    # robuste/rapide tourne (boosters + RandomForest, `ModelSpec.is_default`)
+    # — les modèles sensibles/lents (SVM, KNN, linéaire, Naive Bayes) restent
+    # dans le registre, disponibles mais pas lancés tant que le mode expert
+    # (Lot E) n'expose pas leur activation. Câblé ici en un seul mot
+    # ("default" → "all") sans toucher au reste de la boucle : c'est la
+    # mécanique que le Lot E n'aura qu'à rendre pilotable depuis l'API/l'UI.
+    catalog = models_for_task(task_type, subset="default")
 
     candidates: list[tuple[str, ModelSpec, Any, float]] = []
     n_models = len(catalog)
