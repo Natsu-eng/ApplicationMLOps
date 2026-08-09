@@ -321,6 +321,49 @@ occurrences : `EdaModal.tsx`, `EvaluationCharts.tsx` ×2). Corrigé en
 laissant le paramètre non typé et en forçant la conversion à l'intérieur :
 `formatter={(v) => Number(v).toFixed(3)}`.
 
+### Correctif — suppression d'un entraînement terminé impossible sur PostgreSQL
+
+Signalé en usage réel : supprimer un entraînement **terminé** (donc avec un
+`MLModel` associé) échouait systématiquement en 500 sur PostgreSQL, alors
+que la suppression d'un job encore `queued` (sans modèle) fonctionnait —
+d'où une confusion initiale côté utilisateur (« ça a marché une fois,
+maintenant plus »), le symptôme visible dépendant en fait de si le job
+supprimé avait ou non produit un modèle.
+
+- **Cause** : dans `delete_training_job` (`api/routers/training.py`), la
+  route accède à `job.model` (pour effacer l'artefact `joblib`) **avant**
+  `db.delete(job)`. Cet accès charge le `MLModel` dans la session
+  SQLAlchemy ; au flush, l'ORM tente alors de mettre `NULL` sur
+  `ml_models.training_job_id` pour "dissocier" l'objet déjà chargé — hors
+  cette colonne est `NOT NULL`, ce qui lève une `IntegrityError`. Le
+  `ON DELETE CASCADE` déclaré sur la contrainte FK (voir
+  `MLModel.training_job_id`) n'est jamais atteint : l'ORM échoue avant.
+  `passive_deletes=True` seul (ajouté sur `TrainingJob.model`, bonne
+  pratique conservée) ne suffit pas ici car il ne protège que les relations
+  *non chargées* au moment du flush — la nôtre l'est, explicitement, par la
+  route elle-même.
+- **Correctif** : suppression explicite de `job.model` en Python
+  (`db.delete(job.model)`) avant `db.delete(job)`, plutôt que de compter
+  sur le cascade DB dans un cas où l'objet est de toute façon déjà chargé —
+  robuste indépendamment du moteur de base (Postgres/SQLite) et de l'état
+  de chargement de la relation.
+- **Pourquoi les tests ne l'avaient pas détecté** : `test_delete_removes_job_from_history`
+  supprime un job juste après sa création (`queued`, jamais de `MLModel`
+  associé) — le chemin qui plante n'était simplement jamais exercé. Nouveau
+  test `test_delete_completed_job_with_model` (`tests/test_training_api.py`)
+  qui insère un `MLModel` réel avant suppression, comme le ferait le
+  worker.
+- **Correctif frontend associé** : une suppression en échec ne montrait
+  strictement rien à l'utilisateur (pas de bannière d'erreur, carte
+  inchangée) — `onDelete` (`pages/Training.tsx`) affiche désormais l'erreur
+  via la bannière déjà utilisée pour le chargement de la liste, et
+  rafraîchit systématiquement l'historique (y compris en cas d'échec, pour
+  faire disparaître une carte déjà supprimée ailleurs).
+- **Vérifié** : reproduit puis corrigé en conditions réelles sur la base
+  PostgreSQL de développement (`DELETE /training/jobs/7`, job terminé avec
+  modèle CatBoost : 500 avant correctif, 204 après) ; suite pytest complète
+  au vert après correctif (94/94, dont le nouveau test de régression).
+
 ## Prochains lots (résumé — détail complet dans le diagnostic de migration et les échanges de cadrage)
 
 | Lot | Contenu | Livrable testable |

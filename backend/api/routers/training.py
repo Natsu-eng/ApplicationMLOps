@@ -326,8 +326,16 @@ def delete_training_job(job_id: int, current_user: User = Depends(get_current_us
         except Exception:
             pass  # best-effort — la suppression en base reste sûre dans tous les cas
 
-    if job.model and job.model.file_path:
-        Path(job.model.file_path).unlink(missing_ok=True)
+    if job.model:
+        # Supprimé explicitement ici (pas seulement via le ON DELETE CASCADE
+        # de la contrainte FK) : `job.model` est déjà chargé en mémoire à ce
+        # stade (ligne précédente), et SQLAlchemy tente alors de mettre à
+        # NULL `ml_models.training_job_id` avant de supprimer `job` — colonne
+        # NOT NULL, ça lève une IntegrityError. Le supprimer nous-mêmes ici
+        # évite ce comportement, quelle que soit la base (Postgres/SQLite).
+        if job.model.file_path:
+            Path(job.model.file_path).unlink(missing_ok=True)
+        db.delete(job.model)
 
-    db.delete(job)  # cascade DB vers MLModel (ondelete="CASCADE")
+    db.delete(job)
     db.commit()

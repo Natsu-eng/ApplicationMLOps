@@ -124,8 +124,12 @@ class TrainingJob(Base):
     organization: Mapped["Organization"] = relationship("Organization")
     dataset: Mapped["Dataset"] = relationship("Dataset")
     created_by: Mapped[Optional["User"]] = relationship("User")
+    # passive_deletes=True : ne pas mettre training_job_id à NULL en Python à
+    # la suppression (impossible, colonne NOT NULL) — laisser le ON DELETE
+    # CASCADE de la contrainte FK (voir MLModel.training_job_id) faire le
+    # travail côté base de données.
     model: Mapped[Optional["MLModel"]] = relationship(
-        "MLModel", back_populates="training_job", uselist=False
+        "MLModel", back_populates="training_job", uselist=False, passive_deletes=True
     )
 
 

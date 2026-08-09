@@ -105,7 +105,7 @@ Concrete Compressive Strength) — pas seulement sur données synthétiques.*
 
 ## Robustesse — pas juste "ça marche chez moi"
 
-- **Tests automatisés** (`backend/tests/`, pytest) : 35 tests qui restent
+- **Tests automatisés** (`backend/tests/`, pytest) : 94 tests qui restent
   dans le dépôt et couvrent l'isolation entre organisations, les
   permissions, l'entraînement réel (pas mocké), la prédiction, la
   suppression, l'exploration de données (EDA) et les données d'évaluation.
@@ -119,6 +119,12 @@ Concrete Compressive Strength) — pas seulement sur données synthétiques.*
     Linux/Docker.
   - Le conteneur Redis de développement ne redémarrait pas automatiquement
     avec Docker Desktop — reconfiguré pour survivre aux redémarrages.
+  - Suppression d'un entraînement **terminé** (avec modèle associé)
+    impossible sur PostgreSQL (500 systématique) — l'ORM tentait de mettre
+    à `NULL` une colonne `NOT NULL` avant de laisser la base gérer la
+    cascade ; le job sans modèle (encore en file) se supprimait bien, d'où
+    la confusion initiale. Corrigé + couvert par un test de régression qui
+    insère un vrai modèle avant suppression (voir `backend/workflow.md`).
 - **Migrations de schéma idempotentes** (façon CIAM) plutôt qu'exiger une
   base vierge à chaque évolution du modèle de données.
 - **Isolation vérifiée à chaque lot**, pas supposée : chaque nouvelle

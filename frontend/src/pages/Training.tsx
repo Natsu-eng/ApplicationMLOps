@@ -110,7 +110,13 @@ export default function Training() {
                   job={job}
                   onView={() => setViewingJob(job)}
                   onDelete={async () => {
-                    await api.training.remove(job.id);
+                    try {
+                      await api.training.remove(job.id);
+                    } catch (err) {
+                      // Toujours rafraîchir même en cas d'échec : si la suppression
+                      // a déjà réussi ailleurs (404), la carte doit disparaître.
+                      setError(err instanceof ApiError ? err.message : "Suppression impossible");
+                    }
                     loadJobs();
                   }}
                 />

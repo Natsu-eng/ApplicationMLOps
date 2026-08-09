@@ -7,7 +7,10 @@ dépendance externe par test_ml_training.py, qui appelle directement
 from __future__ import annotations
 
 import io
+import json
 from unittest.mock import patch
+
+from api.core.models import MLModel, TrainingJob
 
 
 def _register(client, email="owner@bureau.fr", org="Bureau"):
@@ -95,6 +98,44 @@ def test_delete_removes_job_from_history(mock_queue, client):
     assert client.delete(f"/training/jobs/{job['id']}", headers=headers).status_code == 204
     assert client.get(f"/training/jobs/{job['id']}", headers=headers).status_code == 404
     assert client.get("/training/jobs", headers=headers).json() == []
+
+
+@patch("api.routers.training.training_queue")
+def test_delete_completed_job_with_model(mock_queue, client, db_session):
+    """Reproduit un bug réel trouvé en usage (Postgres) : la relation
+    `TrainingJob.model` sans `passive_deletes=True` tentait de mettre à NULL
+    `ml_models.training_job_id` (colonne NOT NULL) avant la suppression du
+    job, au lieu de laisser le `ON DELETE CASCADE` de la contrainte FK s'en
+    charger côté base — supprimer n'importe quel entraînement déjà terminé
+    (donc avec un modèle associé) échouait systématiquement en 500. Le test
+    précédent (`test_delete_removes_job_from_history`) ne le couvrait pas
+    car il supprime un job juste après création, avant qu'un modèle lui
+    soit associé. Voir `api/core/models.py::TrainingJob.model`."""
+    mock_queue.enqueue.return_value.id = "fake-rq-id"
+    headers = _register(client)
+    dataset = _upload_dataset(client, headers)
+    job_id = client.post(
+        "/training/jobs", headers=headers, json={"dataset_id": dataset["id"], "target_column": "cible"}
+    ).json()["id"]
+
+    job = db_session.query(TrainingJob).filter(TrainingJob.id == job_id).first()
+    job.status = "completed"
+    db_session.add(
+        MLModel(
+            organization_id=job.organization_id,
+            training_job_id=job.id,
+            algorithm="LightGBM",
+            task_type="regression",
+            target_column="cible",
+            feature_columns_json=json.dumps(["x1", "x2"]),
+            file_path="unused.joblib",
+            metrics_json=json.dumps({}),
+        )
+    )
+    db_session.commit()
+
+    assert client.delete(f"/training/jobs/{job_id}", headers=headers).status_code == 204
+    assert client.get(f"/training/jobs/{job_id}", headers=headers).status_code == 404
 
 
 @patch("api.routers.training.training_queue")
