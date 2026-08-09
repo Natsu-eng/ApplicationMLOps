@@ -364,12 +364,100 @@ supprimé avait ou non produit un modèle.
   modèle CatBoost : 500 avant correctif, 204 après) ; suite pytest complète
   au vert après correctif (94/94, dont le nouveau test de régression).
 
+## Lot 5 — Catalogue supervisé élargi, architecture modulable par registre (livré)
+
+Portée stricte : ML supervisé uniquement (classification/régression). Le
+non-supervisé (clustering) et SMOTE restent hors périmètre — pas amorcés
+dans ce lot. Phase 1 (lecture seule, audit de l'existant + plan
+d'architecture) validée avant toute implémentation ; Phase 2 livrée en 6
+commits isolés sur la branche `lot5-catalogue-supervise-elargi`.
+
+- [x] `services/ml_registry.py` (nouveau) — registre de modèles :
+  `ModelSpec` déclare, pour chaque entrée, son identifiant, sa famille
+  (arbre_ensemble/lineaire/distance_noyau), les tâches supportées, son
+  constructeur d'estimateur (`build_estimator(task_type, seed, params,
+  final_fit)` — absorbe les particularités par estimateur : `random_state`
+  absent pour KNN/SVR, `probability=True` différé au candidat final pour
+  SVC), son espace Optuna, son type d'explainer SHAP (`tree`/`linear`/
+  `kernel`), et son appartenance au sous-ensemble par défaut (`is_default`).
+  9 modèles enregistrés : LightGBM, XGBoost, CatBoost, RandomForest,
+  ExtraTrees (arbres/ensembles) ; régression Ridge/LogisticRegression, un
+  seul spec `linear_reg` (linéaire) ; SVM (SVR/SVC), KNN, Naive Bayes
+  (distance/noyau — Naive Bayes y est rattaché par convention de routage
+  vers KernelExplainer, pas par nature mathématique, commenté dans le code).
+- [x] `services/ml_training.py` refactoré pour consommer le registre
+  (`models_for_task()`) — **aucun nom d'algorithme en dur** dans le moteur ;
+  ajouter un modèle = ajouter une entrée au registre (critère d'acceptation
+  n°1 du cadrage, démontré par le commit 4 : 6 nouveaux modèles ajoutés sans
+  toucher `_optimize_one_model`/`train_and_evaluate` au-delà du câblage
+  registre déjà en place).
+- [x] **Score de sélection robuste** (`_classification_selection_score`) —
+  remplace le scorer texte `"roc_auc_ovr_weighted"` (exigeait
+  `predict_proba`, aurait imposé `SVC(probability=True)` partout : mesuré
+  **~9,3× plus lent par fit** — 0,786s vs 0,084s sur un dataset réel
+  1025×13, 5 répétitions). Nouveau scorer : `predict_proba` si disponible,
+  sinon `decision_function`, sinon repli sur l'accuracy — tous les candidats
+  de classification restent comparés sur la même échelle AUC.
+- [x] **SHAP routé par famille** (`_build_explainer`) — `TreeExplainer`
+  (arbres, inchangé), `LinearExplainer` (linéaire), `KernelExplainer`
+  (distance/noyau, fond résumé par k-means ≤ 50 points, échantillon expliqué
+  ≤ 50, désactivé au-delà de 50 variables). Les deux nouveaux explainers
+  reçoivent explicitement les données dans l'espace **préprocessé**
+  (`X_train_proc`/`X_test_proc`), jamais brutes — un explainer nourri du
+  mauvais espace produit des valeurs SHAP fausses sans lever d'erreur.
+  Sanity check numérique dédié : les valeurs SHAP d'un modèle linéaire
+  connu égalent `coef_ * (x - moyenne du fond)` dans l'espace préprocessé.
+  `_compute_explainability` dégrade proprement (jamais de plantage du job) :
+  `model_card.explainability = {"status": "ok"|"degraded", "message": ...}`,
+  affiché côté frontend (`ModelResultModal`) au lieu de laisser la section
+  SHAP disparaître silencieusement.
+- [x] **CQR confirmé indépendant du modèle gagnant** (déjà vrai depuis le
+  Lot 3 — les régresseurs de quantile sont toujours des LightGBM dédiés) :
+  aucune adaptation nécessaire pour que Ridge/SVR/RandomForest/ExtraTrees/
+  KNN gagnants aient un CQR fonctionnel.
+- [x] **Préprocessing confirmé déjà indifférencié par famille** (Phase 1) :
+  `build_preprocessor` scale déjà tout le numérique inconditionnellement —
+  aucune modification nécessaire pour satisfaire le besoin de scaling de
+  SVM/KNN/linéaire. `ModelSpec.requires_scaling` reste déclaratif.
+- [x] **Sélection par défaut = stratégie produit "B"** — par défaut, seuls
+  les 4 modèles robustes/rapides tournent (boosters + RandomForest,
+  `subset="default"`) ; les 5 autres restent dans le registre, disponibles
+  mais pas lancés (mécanique d'activation prête pour le Lot E, pas encore
+  exposée en API/UI). Benchmark réel (dataset 1026×13, 15 essais Optuna,
+  4 folds) : catalogue par défaut 235,5s, catalogue complet 251,2s (+7 % —
+  nettement moins que l'estimation prudente de la Phase 1, les modèles
+  ajoutés étant bon marché à fit face au coût dominant de la recherche
+  Optuna des boosters, commun aux deux configurations).
+- [x] Frontend `ModelResultModal.tsx` — affiche le message clair de
+  `explainability_status` quand SHAP dégrade (seule modification UI de ce
+  lot, cadrage explicite : pas de refonte de cartes).
+
+**Vérifié** :
+
+- Suite pytest complète verte à chaque commit (gate systématique, jamais un
+  commit sans validation) : 134 → 138 → 143 → 145 → 146 tests au fil des 5
+  commits backend (partis de 134 tests Lot 4c ; le 6ᵉ commit est
+  frontend-only, pas de nouveau test pytest).
+- Fold-safety (Lot A) prouvée structurellement pour les modèles à scaling
+  requis (SVM/KNN/linéaire), pas seulement les arbres : le préprocesseur
+  reste cloné/refit à l'intérieur de chaque fold.
+- Chaque modèle du registre s'entraîne et prédit sans erreur, sur les deux
+  tâches qu'il supporte, sur un dataset réel.
+- Non-régression confirmée : l'assertion figée sur les 3 boosters historiques
+  (`test_regression_pipeline_end_to_end`) a été rendue dynamique — un signal
+  fortement linéaire peut désormais légitimement faire gagner un autre
+  modèle du catalogue sans casser le test.
+
+**Scope volontairement limité** (périmètre acté au cadrage, à ne pas
+rouvrir) : clustering et SMOTE hors périmètre ; sélection expert des modèles
+(UI pour activer ExtraTrees/linéaire/SVM/KNN/Naive Bayes) prévue au Lot E,
+la mécanique (`subset`) est prête côté moteur mais pas exposée en API.
+
 ## Prochains lots (résumé — détail complet dans le diagnostic de migration et les échanges de cadrage)
 
 | Lot | Contenu | Livrable testable |
 | --- | --- | --- |
-| 4c | Ingénierie de variables : créer des variables dérivées (ratios, transformations, extraction de dates) avant l'entraînement | Un utilisateur peut créer une nouvelle colonne calculée et l'utiliser comme feature |
-| 5 | Catalogue ML complet comparé automatiquement (RandomForest, régression linéaire/logistique, SVM, KNN, Naive Bayes, + SMOTE, + clustering) | Un non-expert bénéficie d'un pool de candidats large sans avoir à choisir un algorithme |
+| E | Sélection expert des modèles (exposer `subset`/activation individuelle en API + UI) | Un utilisateur avancé choisit d'activer SVM/KNN/linéaire/ExtraTrees/Naive Bayes |
 | 6-8 | Upload / entraînement / évaluation vision (détection d'anomalies) | Parité fonctionnelle côté vision |
 | 9 | Registre de modèles unifié (versioning, export) | Remplace les 3 mécanismes de persistance de l'app historique |
 | 10 | Durcissement SaaS (erreurs, audit, quotas) | Prêt pour un client pilote |

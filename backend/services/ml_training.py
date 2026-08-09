@@ -1,31 +1,46 @@
-"""Entraînement ML supervisé — LightGBM / XGBoost / CatBoost, recherche
-d'hyperparamètres Optuna, sélection du meilleur modèle sur la validation
-croisée, explicabilité SHAP et intervalles de confiance conformes (CQR,
-variante Mondrian) pour la régression.
+"""Entraînement ML supervisé — catalogue de modèles piloté par
+`services/ml_registry.py` (9 modèles, 3 familles : arbres/ensembles,
+linéaire, distance/noyau), recherche d'hyperparamètres Optuna, sélection du
+meilleur modèle sur la validation croisée, explicabilité SHAP routée par
+famille et intervalles de confiance conformes (CQR, variante Mondrian) pour
+la régression.
 
 Méthodologie reprise d'un notebook de référence partagé par l'équipe (voir
-`backend/workflow.md`, Lot 3) :
-- 3 algorithmes de gradient boosting comparés systématiquement, tous
-  compatibles SHAP TreeExplainer et régression quantile (CQR) — d'où le
-  choix de s'y limiter pour ce lot (le catalogue sklearn plus large arrive
-  au Lot 5, sans cette profondeur d'explicabilité).
+`backend/workflow.md`, Lot 3), étendue au catalogue complet au Lot 5 :
+- Le moteur ne référence aucun nom d'algorithme en dur — il consomme
+  `ml_registry.models_for_task()`. Par défaut (stratégie produit "B"), seul
+  le sous-ensemble robuste/rapide tourne (boosters + RandomForest,
+  `ModelSpec.is_default`) ; le reste du catalogue (ExtraTrees, régression
+  régularisée, SVM, KNN, Naive Bayes) est disponible mais pas lancé tant que
+  le mode expert (Lot E) n'expose pas son activation.
 - sélection du meilleur modèle sur le score de VALIDATION CROISÉE, jamais
   sur le score test — le score test n'est qu'une estimation finale rapportée.
+  En classification, le score (`_classification_selection_score`) reste
+  calculable et comparable même pour un candidat sans `predict_proba` (ex.
+  SVC construit sans calibration Platt pendant la recherche) : repli sur
+  `decision_function`, puis sur l'accuracy (Lot 5).
 - CV/split groupés (`GroupKFold`/`GroupShuffleSplit`) quand une colonne de
   groupe est fournie, pour rester anti-fuite jusque dans la recherche
   d'hyperparamètres.
 - Préprocesseur (imputation, standardisation, one-hot) toujours refit
   À L'INTÉRIEUR de chaque fold de CV et de la portion fit du CQR — jamais
-  fit sur des données qui serviront à valider ou à calibrer (Lot A).
+  fit sur des données qui serviront à valider ou à calibrer (Lot A). Il est
+  déjà indifférencié par famille de modèle (le scaling est inconditionnel),
+  ce qui satisfait sans changement le besoin des modèles à scaling requis.
+- Explicabilité SHAP routée par famille (`explainer_kind` du registre) :
+  TreeExplainer (arbres), LinearExplainer (linéaire), KernelExplainer
+  (distance/noyau — borné et dégradé proprement au-delà d'une taille
+  raisonnable, jamais un plantage silencieux, voir `_compute_explainability`).
 - CQR Mondrian : la calibration conforme est faite par strate de prédiction
   plutôt qu'avec un quantile unique, pour corriger la sous-couverture aux
   valeurs extrêmes (défaut connu du split conformal simple). Le split
   fit/calibration est lui-même groupé (`GroupShuffleSplit`) quand une
-  colonne de groupe est fournie (Lot A).
+  colonne de groupe est fournie (Lot A). Découplé du modèle gagnant (les
+  régresseurs de quantile sont toujours des LightGBM dédiés) : fonctionne
+  sans adaptation pour tout nouveau modèle de régression du catalogue.
 
 Le clustering (non supervisé) est hors périmètre de ce module — voir
-`services/ml_task.py`, qui ne détecte que classification/régression ; le
-non-supervisé arrive avec le catalogue ML complet (Lot 5).
+`services/ml_task.py`, qui ne détecte que classification/régression.
 """
 from __future__ import annotations
 

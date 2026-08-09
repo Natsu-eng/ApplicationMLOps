@@ -154,7 +154,7 @@ class MLModel(Base):
     training_job_id: Mapped[int] = mapped_column(
         Integer, ForeignKey("training_jobs.id", ondelete="CASCADE"), nullable=False, unique=True
     )
-    algorithm: Mapped[str] = mapped_column(String(50), nullable=False)  # LightGBM | XGBoost | CatBoost
+    algorithm: Mapped[str] = mapped_column(String(50), nullable=False)  # libellé lisible du registre (services/ml_registry.py, Lot 5)
     task_type: Mapped[str] = mapped_column(String(20), nullable=False)
     target_column: Mapped[str] = mapped_column(String(255), nullable=False)
     feature_columns_json: Mapped[str] = mapped_column(Text, nullable=False)
