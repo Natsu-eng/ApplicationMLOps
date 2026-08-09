@@ -161,15 +161,66 @@ Lot 4).
   (curl/scripts jetables) — désormais couverts par des tests qui restent
   dans le dépôt. Voir la section *Tests* de `backend/README.md`.
 
-## Prochains lots (résumé — détail complet dans le diagnostic de migration)
+## Lot 4a — Prédiction sur un modèle entraîné + guidage (livré)
+
+Rétrospective déclenchée par un retour utilisateur explicite : après le
+Lot 3, un modèle s'entraînait mais ne servait à rien — impossible de
+l'utiliser sur une nouvelle donnée. C'est désormais corrigé, avant tout
+travail de visualisation (Lot 4b).
+
+- [x] `services/ml_inference.py` — charge le bundle joblib (modèle +
+  preprocessor + régresseurs CQR), construit une ligne à partir de la saisie
+  utilisateur, prédit (+ intervalle de confiance en régression, +
+  probabilités par classe en classification)
+- [x] `api/core/models.py::MLModel.feature_schema_json` — schéma (nom +
+  type) des variables d'entrée, dérivé du schéma du dataset au moment de
+  l'entraînement, pour que le frontend génère un formulaire adapté sans
+  redemander le dataset d'origine
+- [x] **Première migration de schéma additive** (`api/core/database.py::_add_column_if_missing`)
+  — pattern idempotent façon CIAM, introduit à ce lot car c'est la première
+  fois qu'un champ est ajouté à une table déjà existante (`create_all()` ne
+  modifie jamais les tables déjà créées)
+- [x] `POST /training/jobs/{id}/predict` — isolé par organisation comme le reste
+- [x] Frontend : `PredictionForm` (formulaire généré dynamiquement depuis
+  `feature_schema`, intégré à `ModelResultModal`), `ui/Tooltip.tsx` +
+  info-bulles en langage clair sur les métriques (R², RMSE, F1, AUC-ROC,
+  score de CV, SHAP, CQR) — répond au besoin de guidage pour des
+  utilisateurs qui ne sont pas data scientists de métier
+- [x] **Sélection manuelle des variables d'entraînement** exposée dans le
+  formulaire `Training` (le backend l'acceptait déjà depuis le Lot 3 côté
+  API, seule l'UI manquait) — décocher une colonne sans valeur prédictive
+  (ex. un identifiant) plutôt que de tout laisser par défaut
+
+**Vérifié** :
+
+- Tests pytest (`tests/test_inference.py`) : entraînement réel (pas mocké)
+  exécuté en process de test, bundle persisté, prédiction avec intervalle
+  CQR plausible, rejet propre d'une variable manquante.
+- **Bout en bout en conditions réelles**, API + worker RQ réel + Redis via
+  Docker : entraînement sur le dataset Iris de l'utilisateur avec sélection
+  manuelle de 4 variables, puis prédiction sur deux fleurs aux
+  caractéristiques opposées — `Iris-setosa` (91,9 % de confiance) pour de
+  petites pétales, `Iris-virginica` (90,3 %) pour de grandes pétales :
+  cohérent botaniquement, pas seulement "ça ne plante pas".
+- **Incident Redis trouvé et corrigé pendant ce test** : Docker Desktop
+  s'était arrêté entre deux sessions de travail, le conteneur Redis
+  autonome utilisé en dev (hors `docker-compose`) ne redémarrait pas tout
+  seul avec lui — reconfiguré avec `--restart unless-stopped`.
+- 24/24 tests pytest toujours au vert après ce lot.
+
+## Prochains lots (résumé — détail complet dans le diagnostic de migration et les échanges de cadrage)
 
 | Lot | Contenu | Livrable testable |
 | --- | --- | --- |
-| 4-5 | Évaluation/visualisation ML classique (Plotly), catalogue complet (sklearn, SMOTE, clustering) | Parité fonctionnelle avec l'app Streamlit historique |
+| 4b | EDA dataset (stats, histogrammes, corrélations, valeurs manquantes) + visualisations d'évaluation (matrice de confusion, ROC/PR, résidus) — **Recharts**, pas Plotly (plus léger, thémable à notre design system, déjà éprouvé par CIAM) | Explorer un dataset avant d'entraîner ; voir les courbes d'un modèle, pas seulement ses métriques brutes |
+| 4c | Ingénierie de variables : créer des variables dérivées (ratios, transformations, extraction de dates) avant l'entraînement | Un utilisateur peut créer une nouvelle colonne calculée et l'utiliser comme feature |
+| 5 | Catalogue ML complet comparé automatiquement (RandomForest, régression linéaire/logistique, SVM, KNN, Naive Bayes, + SMOTE, + clustering) | Un non-expert bénéficie d'un pool de candidats large sans avoir à choisir un algorithme |
 | 6-8 | Upload / entraînement / évaluation vision (détection d'anomalies) | Parité fonctionnelle côté vision |
-| 9 | Registre de modèles unifié (versioning) | Remplace les 3 mécanismes de persistance de l'app historique |
+| 9 | Registre de modèles unifié (versioning, export) | Remplace les 3 mécanismes de persistance de l'app historique |
 | 10 | Durcissement SaaS (erreurs, audit, quotas) | Prêt pour un client pilote |
 
 Ce fichier sera complété à chaque lot livré avec le détail réel (fichiers
 créés, endpoints exposés, décisions techniques prises en cours de route) —
-même format que le `workflow.md` de CIAM, sourcé fichier par fichier.
+même format que le `workflow.md` de CIAM, sourcé fichier par fichier. Voir
+aussi [`../recap.md`](../recap.md) pour une synthèse lisible de l'ensemble,
+mise à jour au même rythme.

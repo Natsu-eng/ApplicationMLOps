@@ -1,7 +1,7 @@
 # ARCHITECTURE.md — Backend DataLab Pro
 
-> **Lot 3 — entraînement ML supervisé.** Ce document est vivant : il grandit
-> à chaque lot livré. Historique des décisions : voir
+> **Lot 4a — prédiction sur modèle entraîné.** Ce document est vivant : il
+> grandit à chaque lot livré. Historique des décisions : voir
 > [`workflow.md`](workflow.md).
 
 ## 1. Vue d'ensemble
@@ -189,10 +189,39 @@ Ce schéma se complète lot par lot :
   l'artefact), et référence un bundle `joblib` (modèle + preprocessor +
   régresseurs de quantile CQR) sur disque
   (`storage/models/{organization_id}/{training_job_id}.joblib`) — base du
-  registre de modèles versionné prévu au Lot 9, pas encore l'article fini
-  (pas de versioning ni d'endpoint de téléchargement/inférence pour l'instant).
+  registre de modèles versionné prévu au Lot 9 (pas encore de versioning ni
+  d'endpoint de téléchargement de l'artefact brut, mais l'inférence
+  elle-même existe depuis le Lot 4a — voir section 8).
 
-## 8. Conventions reprises de CIAM
+## 8. Prédiction / inférence (Lot 4a)
+
+- **Referme la boucle ouverte au Lot 3** : un modèle entraîné sans pouvoir
+  être réutilisé n'a pas de valeur pour un bureau d'études — signalé
+  explicitement par un retour utilisateur avant le début du Lot 4b.
+- `services/ml_inference.py::predict_one` charge le bundle joblib
+  (`preprocessor` + `model` + éventuels régresseurs de quantile `cqr`),
+  construit une ligne à partir d'un dict `{colonne: valeur}` fourni par le
+  frontend, applique le même `preprocessor.transform()` qu'à l'entraînement
+  (jamais un `fit` — les statistiques d'imputation/normalisation restent
+  celles apprises sur le train), puis prédit.
+- **Régression** : recalcule l'intervalle conforme (CQR) sur la nouvelle
+  observation avec les mêmes régresseurs de quantile et les mêmes strates
+  que l'entraînement (`strata_bounds`/`qhat_per_stratum` persistés dans le
+  bundle) — pas un intervalle générique, celui calibré pour ce modèle
+  précis. Le `clip_negative` décidé à l'entraînement (cible historiquement
+  positive ou non) est réappliqué à l'identique.
+- **Classification** : renvoie la classe prédite (via `class_names` persisté
+  dans le bundle, pour ne jamais exposer un indice numérique brut à
+  l'utilisateur) et les probabilités par classe si le modèle les expose.
+- `MLModel.feature_schema_json` (nom + type de chaque variable d'entrée,
+  dérivé du schéma du dataset au moment de l'entraînement) permet au
+  frontend de générer un formulaire de saisie adapté sans redemander le
+  dataset d'origine — première fois qu'un champ est ajouté à une table
+  déjà existante, d'où l'introduction de `_add_column_if_missing` (migration
+  additive idempotente, voir `api/core/database.py`) plutôt que d'exiger
+  une base vierge à chaque évolution de schéma.
+
+## 9. Conventions reprises de CIAM
 
 - Un échec d'initialisation non critique (base de données indisponible au
   démarrage) ne bloque jamais le démarrage de l'API : il est journalisé et

@@ -3,7 +3,9 @@ import { ShieldCheck, Sparkles } from "lucide-react";
 import { ApiError, api, type BootstrapCI, type MLModelDetail, type TrainingJobSummary } from "../../api/client";
 import { Badge } from "../ui/Badge";
 import { Modal } from "../ui/Modal";
+import { LabelWithHelp } from "../ui/Tooltip";
 import { formatMetricValue, formatPercent } from "../../utils/format";
+import PredictionForm from "./PredictionForm";
 
 function isBootstrapCI(value: unknown): value is BootstrapCI {
   return typeof value === "object" && value !== null && "ci_low" in value && "ci_high" in value;
@@ -12,17 +14,21 @@ function isBootstrapCI(value: unknown): value is BootstrapCI {
 /** Cartes de métriques principales — l'ensemble affiché dépend du type de tâche. */
 function MetricCard({
   label,
+  help,
   value,
   ci,
 }: {
   label: string;
+  help?: string;
   value: number | null | undefined;
   ci?: BootstrapCI;
 }) {
   if (value === null || value === undefined) return null;
   return (
     <div className="rounded-xl border border-slate-800 bg-slate-950/40 px-4 py-3">
-      <p className="text-xs text-slate-500 mb-1">{label}</p>
+      <p className="text-xs text-slate-500 mb-1">
+        {help ? <LabelWithHelp label={label} help={help} /> : label}
+      </p>
       <p className="text-xl font-semibold text-slate-100 tabular-nums">{formatMetricValue(value)}</p>
       {ci && (
         <p className="text-[11px] text-slate-600 mt-0.5 tabular-nums">
@@ -102,27 +108,30 @@ export default function ModelResultModal({
                 <>
                   <MetricCard
                     label="R² (test)"
+                    help="Part de la variation de la cible expliquée par le modèle, de 0 à 1. 0,90 = le modèle explique 90 % des écarts observés — plus c'est proche de 1, mieux c'est."
                     value={model.metrics.r2_test as number}
                     ci={isBootstrapCI(model.metrics.r2_bootstrap) ? model.metrics.r2_bootstrap : undefined}
                   />
                   <MetricCard
                     label="RMSE"
+                    help="Erreur moyenne de prédiction, dans l'unité de la cible. Plus c'est bas, mieux c'est — à comparer à l'échelle typique de vos valeurs."
                     value={model.metrics.rmse as number}
                     ci={isBootstrapCI(model.metrics.rmse_bootstrap) ? model.metrics.rmse_bootstrap : undefined}
                   />
-                  <MetricCard label="MAE" value={model.metrics.mae as number} />
-                  <MetricCard label="Score CV" value={model.metrics.cv_score as number} />
+                  <MetricCard label="MAE" help="Erreur absolue moyenne — comme le RMSE mais moins sensible aux grosses erreurs isolées." value={model.metrics.mae as number} />
+                  <MetricCard label="Score CV" help="Performance moyenne sur plusieurs découpages des données d'entraînement — plus fiable qu'un seul test, c'est ce score qui a servi à choisir ce modèle." value={model.metrics.cv_score as number} />
                 </>
               ) : (
                 <>
                   <MetricCard
                     label="Précision globale"
+                    help="Pourcentage de prédictions correctes sur le jeu de test."
                     value={model.metrics.accuracy as number}
                     ci={isBootstrapCI(model.metrics.accuracy_bootstrap) ? model.metrics.accuracy_bootstrap : undefined}
                   />
-                  <MetricCard label="F1-score" value={model.metrics.f1 as number} />
-                  <MetricCard label="AUC-ROC" value={model.metrics.roc_auc as number} />
-                  <MetricCard label="Score CV" value={model.metrics.cv_score as number} />
+                  <MetricCard label="F1-score" help="Équilibre entre précision et rappel — utile quand les classes sont déséquilibrées, où la précision seule peut être trompeuse." value={model.metrics.f1 as number} />
+                  <MetricCard label="AUC-ROC" help="Capacité du modèle à distinguer les classes, de 0,5 (hasard) à 1 (parfait)." value={model.metrics.roc_auc as number} />
+                  <MetricCard label="Score CV" help="Performance moyenne sur plusieurs découpages des données d'entraînement — plus fiable qu'un seul test, c'est ce score qui a servi à choisir ce modèle." value={model.metrics.cv_score as number} />
                 </>
               )}
             </div>
@@ -138,7 +147,10 @@ export default function ModelResultModal({
           <section>
             <p className="text-xs uppercase tracking-wide text-slate-500 mb-2 flex items-center gap-1.5">
               <Sparkles size={12} className="text-teal-400" />
-              Variables les plus influentes (SHAP)
+              <LabelWithHelp
+                label="Variables les plus influentes"
+                help="Plus une variable a une barre longue, plus elle pèse dans les décisions du modèle — calculé par la méthode SHAP, standard en explicabilité de modèles ML."
+              />
             </p>
             <ShapBars features={model.shap_summary} />
           </section>
@@ -146,7 +158,10 @@ export default function ModelResultModal({
           {model.cqr && (
             <section>
               <p className="text-xs uppercase tracking-wide text-slate-500 mb-2">
-                Intervalles de confiance conformes (CQR)
+                <LabelWithHelp
+                  label="Fiabilité des prédictions"
+                  help="Plutôt qu'une seule valeur, le modèle peut donner une fourchette dans laquelle la vraie valeur tombe la plupart du temps — utile pour savoir jusqu'où faire confiance à une prédiction."
+                />
               </p>
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
                 <MetricCard label="Couverture visée" value={model.cqr.target_coverage} />
@@ -159,6 +174,8 @@ export default function ModelResultModal({
               </p>
             </section>
           )}
+
+          <PredictionForm jobId={job.id} taskType={model.task_type} featureSchema={model.feature_schema} />
 
           <section>
             <p className="text-xs uppercase tracking-wide text-slate-500 mb-2">Fiche modèle</p>

@@ -78,6 +78,12 @@ def run_training_job(job_id: int) -> None:
             artifact_path = model_file_path(job.organization_id, job.id)
             joblib.dump(result.pipeline_bundle, artifact_path)
 
+            # Schéma des colonnes d'entrée (nom + type) — dérivé du schéma déjà
+            # calculé à l'upload du dataset (Lot 2), pour que le frontend puisse
+            # générer un formulaire de prédiction sans redemander le dataset.
+            dataset_columns = json.loads(dataset.columns_json or "[]")
+            feature_schema = [c for c in dataset_columns if c["name"] in feature_columns]
+
             ml_model = MLModel(
                 organization_id=job.organization_id,
                 training_job_id=job.id,
@@ -85,6 +91,7 @@ def run_training_job(job_id: int) -> None:
                 task_type=job.task_type,
                 target_column=job.target_column,
                 feature_columns_json=json.dumps(feature_columns),
+                feature_schema_json=json.dumps(feature_schema),
                 file_path=str(artifact_path),
                 metrics_json=json.dumps(result.metrics),
                 shap_summary_json=json.dumps(result.shap_summary),

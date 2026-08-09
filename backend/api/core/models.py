@@ -150,6 +150,10 @@ class MLModel(Base):
     task_type: Mapped[str] = mapped_column(String(20), nullable=False)
     target_column: Mapped[str] = mapped_column(String(255), nullable=False)
     feature_columns_json: Mapped[str] = mapped_column(Text, nullable=False)
+    # JSON [{"name": ..., "dtype": ...}, ...] des colonnes d'entrée (pas la
+    # cible) — permet au frontend de générer un formulaire de prédiction
+    # adapté (nombre vs texte) sans redemander le dataset d'origine (Lot 4).
+    feature_schema_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     file_path: Mapped[str] = mapped_column(String(500), nullable=False)
     metrics_json: Mapped[str] = mapped_column(Text, nullable=False)
     shap_summary_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)

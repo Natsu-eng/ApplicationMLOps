@@ -240,6 +240,11 @@ export interface ShapFeature {
   importance: number;
 }
 
+export interface FeatureSchemaEntry {
+  name: string;
+  dtype: string;
+}
+
 export interface MLModelDetail {
   id: number;
   training_job_id: number;
@@ -247,11 +252,24 @@ export interface MLModelDetail {
   task_type: TaskType;
   target_column: string;
   feature_columns: string[];
+  feature_schema: FeatureSchemaEntry[];
   metrics: Record<string, number | BootstrapCI | null>;
   shap_summary: ShapFeature[];
   cqr: CqrResult | null;
   model_card: Record<string, unknown>;
   created_at: string;
+}
+
+export interface PredictionInterval {
+  low: number;
+  high: number;
+  confidence: number;
+}
+
+export interface PredictionResult {
+  prediction: number | string;
+  probabilities?: Record<string, number>;
+  interval?: PredictionInterval;
 }
 
 // ── API ────────────────────────────────────────────────────────────────────
@@ -302,5 +320,10 @@ export const api = {
     listJobs: () => request<TrainingJobSummary[]>("/training/jobs"),
     getJob: (id: number) => request<TrainingJobSummary>(`/training/jobs/${id}`),
     getModel: (id: number) => request<MLModelDetail>(`/training/jobs/${id}/model`),
+    predict: (jobId: number, data: Record<string, unknown>) =>
+      request<PredictionResult>(`/training/jobs/${jobId}/predict`, {
+        method: "POST",
+        body: JSON.stringify({ data }),
+      }),
   },
 };

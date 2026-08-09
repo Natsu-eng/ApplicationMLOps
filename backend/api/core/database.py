@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 from api.core.config import get_settings
@@ -53,13 +53,32 @@ def get_db():
         db.close()
 
 
+def _add_column_if_missing(table: str, column: str, column_sql_type: str) -> None:
+    """Ajoute une colonne à une table déjà existante si elle est absente —
+    migration idempotente maison plutôt qu'Alembic (voir ARCHITECTURE.md).
+    `create_all()` ne modifie jamais une table existante, seulement les
+    tables manquantes : sans ça, ajouter un champ à un modèle ORM casserait
+    silencieusement toute base créée avant l'ajout."""
+    inspector = inspect(engine)
+    if table not in inspector.get_table_names():
+        return  # la table sera créée avec la bonne colonne par create_all()
+    existing_columns = {col["name"] for col in inspector.get_columns(table)}
+    if column in existing_columns:
+        return
+    with engine.begin() as conn:
+        conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {column_sql_type}"))
+    logger.info("[DB] Migration : colonne %s.%s ajoutée", table, column)
+
+
 def init_db() -> None:
-    """Crée les tables déclarées par les modèles ORM enregistrés sur `Base`."""
+    """Crée les tables déclarées par les modèles ORM enregistrés sur `Base`,
+    puis applique les migrations additives connues (voir `_add_column_if_missing`)."""
     # Import local (et non en tête de module) pour éviter l'import circulaire :
     # api.core.models importe déjà `Base` depuis ce fichier.
     from api.core.models import Dataset, MLModel, Organization, TrainingJob, User  # noqa: F401
 
     Base.metadata.create_all(bind=engine)
+    _add_column_if_missing("ml_models", "feature_schema_json", "TEXT")
     logger.info("[DB] Prête (%s)", "SQLite" if _is_sqlite else "PostgreSQL")
 
 

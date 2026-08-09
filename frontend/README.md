@@ -5,10 +5,12 @@ SPA du SaaS DataLab Pro. Stack et conventions reprises de CIAM
 
 ## État d'avancement
 
-> **Lot 3 (entraînement ML supervisé) — état actuel.** Connexion, inscription,
-> tableau de bord avec équipe, "Mes données", et page "Entraînement" :
-> configuration d'un job, suivi de progression en direct (polling), résultat
-> détaillé (métriques, importance SHAP, intervalles conformes CQR) — voir
+> **Lot 4a (prédiction) — état actuel.** Connexion, inscription, tableau de
+> bord avec équipe, "Mes données", page "Entraînement" (configuration —
+> avec sélection manuelle des variables —, suivi de progression en direct,
+> résultat détaillé), et désormais un formulaire pour **prédire sur une
+> nouvelle donnée** directement depuis le résultat d'un modèle, avec
+> info-bulles pédagogiques sur les métriques — voir
 > [`../backend/workflow.md`](../backend/workflow.md).
 
 ## Système de design
@@ -55,14 +57,16 @@ frontend/
 │   ├── components/
 │   │   ├── AppShell.tsx                 ← en-tête + navigation commune aux pages protégées
 │   │   ├── ProtectedRoute.tsx             ← garde de route (redirige vers /login)
-│   │   └── ui/                              ← système de design (Card, Button, Badge, Avatar, Input, Modal)
+│   │   └── ui/                              ← système de design (Card, Button, Badge, Avatar, Input, Modal, Tooltip)
 │   ├── pages/
 │   │   ├── Login.tsx                          ← connexion
 │   │   ├── Register.tsx                         ← inscription (crée une organisation)
 │   │   ├── Dashboard.tsx                          ← profil + équipe + ajout de membre (owner)
 │   │   ├── Datasets.tsx                             ← upload, liste, aperçu des datasets
-│   │   └── Training.tsx                               ← configuration + suivi + historique d'entraînements
-│   ├── components/training/ModelResultModal.tsx        ← métriques, barres SHAP, couverture CQR, fiche modèle
+│   │   └── Training.tsx                               ← config (dont sélection de variables) + suivi + historique
+│   ├── components/training/
+│   │   ├── ModelResultModal.tsx                          ← métriques, barres SHAP, couverture CQR, fiche modèle
+│   │   └── PredictionForm.tsx                              ← formulaire de prédiction généré depuis feature_schema
 │   ├── utils/format.ts                                ← formatage taille/date/métriques
 │   └── index.css                                        ← Tailwind + fond dégradé global
 ├── index.html

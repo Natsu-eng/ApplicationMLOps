@@ -52,3 +52,14 @@ def _fresh_database() -> Iterator[None]:
 @pytest.fixture
 def client() -> TestClient:
     return TestClient(app)
+
+
+@pytest.fixture
+def db_session() -> Iterator:
+    """Session DB directe — pour les tests qui doivent insérer des données
+    comme le ferait un worker (hors requête HTTP), ex : test_inference.py."""
+    db = _TestingSessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()

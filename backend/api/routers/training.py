@@ -23,6 +23,7 @@ from api.core.job_queue import training_queue
 from api.core.models import Dataset, MLModel, TrainingJob, User
 from api.routers.auth import get_current_user
 from services.datasets import DatasetParsingError, read_dataframe
+from services.ml_inference import InferenceError, load_bundle, predict_one
 from services.ml_task import detect_task_type
 
 router = APIRouter(prefix="/training", tags=["training"])
@@ -60,6 +61,11 @@ class TrainingJobSummary(BaseModel):
     headline_metric: Optional[dict[str, Any]] = None
 
 
+class FeatureSchemaEntry(BaseModel):
+    name: str
+    dtype: str
+
+
 class MLModelDetail(BaseModel):
     id: int
     training_job_id: int
@@ -67,11 +73,22 @@ class MLModelDetail(BaseModel):
     task_type: str
     target_column: str
     feature_columns: List[str]
+    feature_schema: List[FeatureSchemaEntry] = []
     metrics: dict[str, Any]
     shap_summary: List[dict[str, Any]]
     cqr: Optional[dict[str, Any]] = None
     model_card: dict[str, Any]
     created_at: datetime
+
+
+class PredictionRequest(BaseModel):
+    data: dict[str, Any]
+
+
+class PredictionResponse(BaseModel):
+    prediction: Any
+    probabilities: Optional[dict[str, float]] = None
+    interval: Optional[dict[str, float]] = None
 
 
 # ── Aides internes ───────────────────────────────────────────────────────────
@@ -244,9 +261,42 @@ def get_training_job_model(job_id: int, current_user: User = Depends(get_current
         task_type=model.task_type,
         target_column=model.target_column,
         feature_columns=json.loads(model.feature_columns_json),
+        feature_schema=json.loads(model.feature_schema_json) if model.feature_schema_json else [],
         metrics=json.loads(model.metrics_json),
         shap_summary=json.loads(model.shap_summary_json) if model.shap_summary_json else [],
         cqr=json.loads(model.cqr_json) if model.cqr_json else None,
         model_card=json.loads(model.model_card_json) if model.model_card_json else {},
         created_at=model.created_at,
     )
+
+
+@router.post("/jobs/{job_id}/predict", response_model=PredictionResponse)
+def predict_with_model(
+    job_id: int,
+    body: PredictionRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Prédit sur une nouvelle observation avec le modèle produit par ce job.
+
+    Referme la boucle ouverte au Lot 3 : entraîner un modèle ne servait à
+    rien tant qu'il ne pouvait pas être réutilisé (voir workflow.md, Lot 4).
+    """
+    job = _get_org_job(job_id, current_user, db)
+    if job.status != "completed" or job.model is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"code": "MODELE_NON_DISPONIBLE", "message": "Cet entraînement n'a pas encore produit de modèle"},
+        )
+    model: MLModel = job.model
+    feature_columns = json.loads(model.feature_columns_json)
+
+    try:
+        bundle = load_bundle(model.file_path)
+        result = predict_one(bundle, feature_columns, body.data)
+    except InferenceError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": "PREDICTION_IMPOSSIBLE", "message": str(exc)},
+        )
+    return PredictionResponse(**result)

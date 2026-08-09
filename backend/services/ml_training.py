@@ -327,7 +327,10 @@ def _compute_cqr(
     # Borne physique : si toutes les valeurs observées sont positives, la
     # cible ne peut raisonnablement pas être négative (ex : durée, montant,
     # résistance...) — heuristique générique, pas une hypothèse métier figée.
-    if float(np.min(y_train)) >= 0:
+    # Mémorisée (clip_negative) pour être réappliquée à l'identique en
+    # inférence sur de nouvelles données (services/ml_inference.py).
+    clip_negative = float(np.min(y_train)) >= 0
+    if clip_negative:
         lo_final = np.clip(lo_final, 0, None)
 
     y_test_arr = np.asarray(y_test)
@@ -341,7 +344,8 @@ def _compute_cqr(
         "n_strata": K,
         "strata_bounds": [float(b) for b in bounds],
         "qhat_per_stratum": [float(q) for q in qhat],
-        # Régresseurs persistés dans le bundle joblib pour une inférence future (hors Lot 3)
+        "clip_negative": clip_negative,
+        # Régresseurs persistés dans le bundle joblib pour une inférence future (Lot 4)
         "_q_lo_model": q_lo,
         "_q_hi_model": q_hi,
     }

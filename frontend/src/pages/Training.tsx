@@ -195,6 +195,8 @@ function TrainingForm({
   const [columns, setColumns] = useState<ColumnSchema[]>([]);
   const [targetColumn, setTargetColumn] = useState("");
   const [groupColumn, setGroupColumn] = useState("");
+  const [selectedFeatures, setSelectedFeatures] = useState<Set<string>>(new Set());
+  const [showFeaturePicker, setShowFeaturePicker] = useState(false);
   const [optunaTrials, setOptunaTrials] = useState(20);
   const [testSize, setTestSize] = useState(0.2);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -228,6 +230,7 @@ function TrainingForm({
       await api.training.createJob({
         dataset_id: datasetId,
         target_column: targetColumn,
+        feature_columns: Array.from(selectedFeatures),
         group_column: groupColumn || undefined,
         optuna_trials: optunaTrials,
         test_size: testSize,
@@ -241,6 +244,23 @@ function TrainingForm({
   }
 
   const otherColumns = columns.filter((c) => c.name !== targetColumn);
+
+  // Par défaut, toutes les variables sauf la cible et la colonne de groupe
+  // (une colonne de groupe sert à identifier des échantillons répétés, pas
+  // à prédire — l'inclure comme feature fuiterait l'identité du groupe).
+  useEffect(() => {
+    setSelectedFeatures(new Set(otherColumns.filter((c) => c.name !== groupColumn).map((c) => c.name)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [targetColumn, groupColumn, columns]);
+
+  function toggleFeature(name: string) {
+    setSelectedFeatures((prev) => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      return next;
+    });
+  }
 
   return (
     <Card className="p-5">
@@ -315,6 +335,40 @@ function TrainingForm({
                 </div>
               )}
 
+              {targetColumn && (
+                <div>
+                  <button
+                    type="button"
+                    onClick={() => setShowFeaturePicker((v) => !v)}
+                    className="text-sm text-teal-400 hover:text-teal-300"
+                  >
+                    {showFeaturePicker ? "Masquer" : "Choisir"} les variables utilisées
+                    <span className="text-slate-600"> ({selectedFeatures.size} sélectionnée{selectedFeatures.size > 1 ? "s" : ""})</span>
+                  </button>
+                  {showFeaturePicker && (
+                    <div className="mt-2 max-h-40 overflow-y-auto rounded-lg border border-slate-800 bg-slate-950/40 p-2 space-y-1">
+                      {otherColumns
+                        .filter((c) => c.name !== groupColumn)
+                        .map((c) => (
+                          <label key={c.name} className="flex items-center gap-2 text-xs text-slate-300 px-1 py-0.5">
+                            <input
+                              type="checkbox"
+                              checked={selectedFeatures.has(c.name)}
+                              onChange={() => toggleFeature(c.name)}
+                              className="accent-teal-500"
+                            />
+                            {c.name} <span className="text-slate-600">({c.dtype})</span>
+                          </label>
+                        ))}
+                    </div>
+                  )}
+                  <p className="text-xs text-slate-600 mt-1">
+                    Par défaut, toutes les variables sauf la cible sont utilisées — décochez celles à
+                    exclure (ex. un identifiant sans valeur prédictive).
+                  </p>
+                </div>
+              )}
+
               <div>
                 <label className="block text-sm text-slate-400 mb-1">
                   Recherche d'hyperparamètres — {optunaTrials} essais
@@ -356,7 +410,11 @@ function TrainingForm({
             </p>
           )}
 
-          <Button type="submit" disabled={!targetColumn || isSubmitting} className="w-full">
+          <Button
+            type="submit"
+            disabled={!targetColumn || selectedFeatures.size === 0 || isSubmitting}
+            className="w-full"
+          >
             <PlayCircle size={16} />
             {isSubmitting ? "Lancement…" : "Lancer l'entraînement"}
           </Button>

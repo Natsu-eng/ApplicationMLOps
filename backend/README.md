@@ -11,10 +11,11 @@ détection d'anomalies) sur leurs propres données. Architecture inspirée de
 Ce backend est construit **lot par lot**, chaque lot livrant quelque chose qui
 fonctionne (voir [`workflow.md`](workflow.md) pour le détail).
 
-> **Lot 3 (entraînement ML supervisé) — état actuel.** Authentification,
-> upload/catalogage de datasets, et entraînement de bout en bout
-> (LightGBM/XGBoost/CatBoost + Optuna + SHAP + intervalles conformes CQR) en
-> tâche de fond (RQ + Redis) avec suivi de progression en direct.
+> **Lot 4a (prédiction) — état actuel.** Authentification, upload/catalogage
+> de datasets, entraînement de bout en bout (LightGBM/XGBoost/CatBoost +
+> Optuna + SHAP + CQR) en tâche de fond avec suivi de progression, **et
+> désormais la prédiction sur une nouvelle donnée avec le modèle entraîné**
+> — la boucle complète entraîner → utiliser est fermée.
 
 ## Stack
 
@@ -71,12 +72,13 @@ backend/
 │   └── routers/
 │       ├── auth.py               ← inscription, connexion, profil, gestion d'équipe
 │       ├── datasets.py             ← upload, liste, aperçu, suppression de datasets
-│       └── training.py               ← lancement, suivi et résultat des entraînements
+│       └── training.py               ← lancement, suivi, résultat et prédiction des entraînements
 ├── services/
 │   ├── datasets.py             ← lecture/validation pure des fichiers tabulaires
 │   ├── ml_task.py                ← détection classification/régression
 │   ├── ml_preprocessing.py         ← dédoublonnage, split anti-fuite, imputation/encodage
-│   └── ml_training.py                ← Optuna, sélection sur CV, SHAP, CQR Mondrian
+│   ├── ml_training.py                ← Optuna, sélection sur CV, SHAP, CQR Mondrian
+│   └── ml_inference.py                 ← prédiction sur nouvelle donnée avec un modèle entraîné
 ├── workers/
 │   ├── run_worker.py             ← point d'entrée du worker (SimpleWorker, portable Windows/Linux)
 │   └── training_worker.py          ← fonction exécutée par le worker pour chaque job
