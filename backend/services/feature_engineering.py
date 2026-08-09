@@ -24,7 +24,23 @@ from typing import Any, Optional
 import numpy as np
 import pandas as pd
 
+from services.data_quality import analyze_data_quality
 from services.stats_utils import sample_if_large
+
+CURRENT_SPEC_VERSION = 1
+# Versionnée dès la première spec (Lot 4c) : une spec persistée (bundle
+# joblib + TrainingJob.feature_engineering_json) doit rester rejouable à
+# l'identique à l'inférence, potentiellement des mois après l'entraînement.
+# Une version inconnue/incompatible est un refus explicite (voir
+# `validate_spec_version`), jamais une interprétation best-effort qui
+# produirait une prédiction fausse silencieusement.
+
+_UPSTREAM_TRANSFORMATION_TYPES = {"datetime_decompose", "ratio"}
+# Transformations déterministes (ne dépendent d'aucune statistique agrégée) —
+# seules celles-ci sont rejouées par `apply_upstream_feature_engineering`.
+# Les autres types de transformation (`frequency_encoding`, `imputation`)
+# vivent dans `spec["pipeline"]`, consommé par
+# `ml_preprocessing.build_preprocessor`, pas par ce module.
 
 # ── Constantes nommées ──────────────────────────────────────────────────────
 
@@ -245,4 +261,124 @@ def apply_ratio_features(
         if transformation.get("type") != "ratio":
             continue
         result, columns = _apply_one_ratio(result, columns, transformation)
+    return result, columns
+
+
+# ── Regroupement de fréquence & imputation — suggestions uniquement ─────────
+#
+# Les transformations elles-mêmes (step de `Pipeline` fold-safe) vivent dans
+# `ml_preprocessing.build_preprocessor` (Lot 4c) — ce module ne fait ici que
+# proposer les suggestions en langage clair, branchées sur les garde-fous
+# Lot B déjà calculés, sans redétection.
+
+_IMPUTATION_STRATEGIES_NUMERIC = ("mean", "median", "constant")
+_IMPUTATION_STRATEGIES_CATEGORICAL = ("most_frequent", "constant")
+
+
+def _suggest_frequency_encoding(quality_warnings: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    suggestions: list[dict[str, Any]] = []
+    for warning in quality_warnings:
+        if warning.get("code") != "cardinalite_excessive" or not warning.get("columns"):
+            continue
+        col = warning["columns"][0]
+        suggestions.append(_suggestion(
+            code="regroupement_frequence",
+            title=f"Regrouper les valeurs rares de « {col} » et encoder par fréquence",
+            explanation=(
+                "Cette colonne a trop de catégories différentes pour un encodage "
+                "classique (one-hot). Regrouper les catégories rares sous une "
+                "modalité commune, puis encoder chaque valeur par sa fréquence "
+                "d'apparition, évite l'explosion du nombre de colonnes."
+            ),
+            action=f"Appliquer le regroupement + encodage de fréquence sur « {col} ».",
+            columns=[col],
+            based_on_warning="cardinalite_excessive",
+            transformation={"type": "frequency_encoding", "column": col},
+        ))
+    return suggestions
+
+
+def _suggest_imputation(quality_warnings: list[dict[str, Any]], df: pd.DataFrame) -> list[dict[str, Any]]:
+    suggestions: list[dict[str, Any]] = []
+    for warning in quality_warnings:
+        if warning.get("code") != "valeurs_manquantes_elevees" or not warning.get("columns"):
+            continue
+        col = warning["columns"][0]
+        is_numeric = pd.api.types.is_numeric_dtype(df[col]) if col in df.columns else True
+        default_strategy = "median" if is_numeric else "most_frequent"
+        options = _IMPUTATION_STRATEGIES_NUMERIC if is_numeric else _IMPUTATION_STRATEGIES_CATEGORICAL
+        suggestions.append(_suggestion(
+            code="imputation_configurable",
+            title=f"Choisir la stratégie d'imputation de « {col} »",
+            explanation=(
+                "Beaucoup de valeurs manquent sur cette colonne — le remplacement "
+                "par défaut (médiane pour une variable numérique, valeur la plus "
+                "fréquente pour une catégorielle) n'est pas toujours le plus adapté."
+            ),
+            action=f"Choisir une stratégie d'imputation pour « {col} » (par défaut : {default_strategy}).",
+            columns=[col],
+            based_on_warning="valeurs_manquantes_elevees",
+            transformation={"type": "imputation", "column": col, "strategy": default_strategy},
+            choice={"type": "imputation_strategy", "options": list(options), "default": default_strategy},
+        ))
+    return suggestions
+
+
+def suggest_feature_engineering(
+    df: pd.DataFrame, target_column: str, group_column: Optional[str] = None
+) -> list[dict[str, Any]]:
+    """Point d'entrée — réutilise `analyze_data_quality` (Lot B) une seule
+    fois et en dérive toutes les suggestions de ce lot, plutôt que de
+    redétecter les mêmes problèmes. Même exclusion cible/groupe que
+    `analyze_data_quality` pour la détection datetime (aucun sens à proposer
+    de décomposer la cible ou la colonne de groupe)."""
+    quality_warnings = analyze_data_quality(df, target_column, group_column)
+
+    excluded = {target_column} | ({group_column} if group_column else set())
+    feature_df = df[[c for c in df.columns if c not in excluded]]
+
+    suggestions: list[dict[str, Any]] = []
+    suggestions += suggest_datetime_columns(feature_df)
+    suggestions += suggest_ratio_features(quality_warnings)
+    suggestions += _suggest_frequency_encoding(quality_warnings)
+    suggestions += _suggest_imputation(quality_warnings, df)
+    return suggestions
+
+
+def validate_spec_version(spec: dict[str, Any]) -> None:
+    version = spec.get("version")
+    if version != CURRENT_SPEC_VERSION:
+        raise FeatureEngineeringSpecError(
+            f"Version de spec de feature engineering non supportée : {version!r} "
+            f"(version attendue : {CURRENT_SPEC_VERSION}). Un modèle entraîné avec "
+            "une version différente ne peut pas être rejoué de façon fiable."
+        )
+
+
+def apply_upstream_feature_engineering(
+    df: pd.DataFrame, feature_columns: list[str], spec: Optional[dict[str, Any]]
+) -> tuple[pd.DataFrame, list[str]]:
+    """Fonction UNIQUE et partagée, appelée à l'identique par le worker
+    d'entraînement (`workers/training_worker.py`, avant `split_dataset`) et
+    par l'inférence (`services/ml_inference.py`, avant
+    `preprocessor.transform`) — c'est elle qui garantit que les
+    transformations déterministes (datetime, ratio) produisent exactement
+    les mêmes colonnes dans les deux contextes (voir docstring du module).
+
+    `spec` absente ou vide → no-op, comportement historique inchangé
+    (rétrocompatibilité totale). Sinon, la version est vérifiée avant toute
+    application (voir `validate_spec_version`) et tout type de transformation
+    `upstream` inconnu lève une erreur explicite plutôt que d'être ignoré
+    silencieusement."""
+    if not spec:
+        return df, list(feature_columns)
+
+    validate_spec_version(spec)
+    upstream = spec.get("upstream") or []
+    unknown_types = {t.get("type") for t in upstream} - _UPSTREAM_TRANSFORMATION_TYPES
+    if unknown_types:
+        raise FeatureEngineeringSpecError(f"Type(s) de transformation amont inconnu(s) : {sorted(unknown_types)}")
+
+    result, columns = apply_datetime_decomposition(df, feature_columns, upstream)
+    result, columns = apply_ratio_features(result, columns, upstream)
     return result, columns

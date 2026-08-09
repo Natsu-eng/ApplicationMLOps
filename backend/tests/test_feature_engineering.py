@@ -3,12 +3,18 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from services.feature_engineering import (
+    CURRENT_SPEC_VERSION,
+    FeatureEngineeringSpecError,
     apply_datetime_decomposition,
     apply_ratio_features,
+    apply_upstream_feature_engineering,
     suggest_datetime_columns,
+    suggest_feature_engineering,
     suggest_ratio_features,
+    validate_spec_version,
 )
 
 
@@ -134,3 +140,97 @@ def test_apply_ratio_features_is_deterministic_single_row_vs_batch():
     batch_result, _ = apply_ratio_features(df, ["a", "b"], spec)
     single_result, _ = apply_ratio_features(df.iloc[[12]].reset_index(drop=True), ["a", "b"], spec)
     assert single_result.loc[0, "a_sur_b"] == batch_result.loc[12, "a_sur_b"]
+
+
+# ── Orchestration : suggest_feature_engineering / apply_upstream_feature_engineering ──
+
+
+def _rich_df(n=300, seed=5):
+    rng = np.random.default_rng(seed)
+    base = pd.Timestamp("2021-01-01")
+    surface = rng.normal(100, 20, n)
+    consommation = surface * 3 + rng.normal(0, 1, n)  # quasi colinéaire à surface
+    ville = rng.choice([f"ville_{i}" for i in range(80)], n)  # cardinalité excessive
+    revenu = rng.normal(2000, 500, n)
+    revenu[rng.choice(n, size=int(n * 0.4), replace=False)] = np.nan  # >30% manquant
+    cible = 2 * surface - consommation + rng.normal(0, 5, n)
+    return pd.DataFrame({
+        "date_signature": [(base + pd.Timedelta(days=int(d))).strftime("%Y-%m-%d") for d in rng.integers(0, 900, n)],
+        "surface": surface,
+        "consommation": consommation,
+        "ville": ville,
+        "revenu": revenu,
+        "cible": cible,
+    })
+
+
+def test_suggest_feature_engineering_covers_all_transformation_types():
+    df = _rich_df()
+    suggestions = suggest_feature_engineering(df, target_column="cible")
+    codes = {s["code"] for s in suggestions}
+    assert codes == {
+        "decomposition_date", "ratio_colonnes_correlees",
+        "regroupement_frequence", "imputation_configurable",
+    }
+    # Chaque suggestion branchée sur un garde-fou Lot B porte bien son code d'origine.
+    by_code = {s["code"]: s for s in suggestions}
+    assert by_code["regroupement_frequence"]["based_on_warning"] == "cardinalite_excessive"
+    assert by_code["imputation_configurable"]["based_on_warning"] == "valeurs_manquantes_elevees"
+    assert by_code["ratio_colonnes_correlees"]["based_on_warning"] == "collinearite_forte"
+    assert by_code["decomposition_date"]["based_on_warning"] is None
+
+
+def test_suggest_feature_engineering_excludes_target_and_group_from_datetime_scan():
+    df = _rich_df()
+    df["groupe_date"] = df["date_signature"]  # colonne de groupe elle-même une date
+    suggestions = suggest_feature_engineering(df, target_column="cible", group_column="groupe_date")
+    datetime_columns = {c for s in suggestions if s["code"] == "decomposition_date" for c in s["columns"]}
+    assert "groupe_date" not in datetime_columns
+
+
+def test_apply_upstream_feature_engineering_noop_on_empty_spec():
+    df = _rich_df(n=10)
+    result, columns = apply_upstream_feature_engineering(df, ["surface", "ville"], None)
+    assert columns == ["surface", "ville"]
+    assert result is df
+
+
+def test_apply_upstream_feature_engineering_combines_datetime_and_ratio():
+    df = _rich_df(n=10)
+    spec = {
+        "version": CURRENT_SPEC_VERSION,
+        "upstream": [
+            {"type": "datetime_decompose", "source_column": "date_signature"},
+            {"type": "ratio", "numerator": "surface", "denominator": "consommation"},
+        ],
+        "pipeline": {"frequency_encoding": ["ville"]},
+    }
+    result, columns = apply_upstream_feature_engineering(
+        df, ["date_signature", "surface", "consommation", "ville"], spec
+    )
+    assert "date_signature" not in columns
+    assert "date_signature_annee" in columns
+    assert "surface_sur_consommation" in columns
+    assert "ville" in columns  # frequency_encoding est une clé pipeline, pas upstream — colonne inchangée ici
+
+
+def test_apply_upstream_feature_engineering_rejects_wrong_version():
+    df = _rich_df(n=5)
+    spec = {"version": 999, "upstream": []}
+    with pytest.raises(FeatureEngineeringSpecError):
+        apply_upstream_feature_engineering(df, ["surface"], spec)
+
+
+def test_apply_upstream_feature_engineering_rejects_unknown_transformation_type():
+    df = _rich_df(n=5)
+    spec = {"version": CURRENT_SPEC_VERSION, "upstream": [{"type": "target_encoding", "column": "ville"}]}
+    with pytest.raises(FeatureEngineeringSpecError):
+        apply_upstream_feature_engineering(df, ["ville"], spec)
+
+
+def test_validate_spec_version_accepts_current_rejects_other():
+    validate_spec_version({"version": CURRENT_SPEC_VERSION})
+    with pytest.raises(FeatureEngineeringSpecError):
+        validate_spec_version({"version": CURRENT_SPEC_VERSION + 1})
+    with pytest.raises(FeatureEngineeringSpecError):
+        validate_spec_version({})
