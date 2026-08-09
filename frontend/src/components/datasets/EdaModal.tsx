@@ -5,14 +5,24 @@ import {
   BarChart,
   CartesianGrid,
   ResponsiveContainer,
+  Scatter,
+  ScatterChart,
   Tooltip as RechartsTooltip,
   XAxis,
   YAxis,
 } from "recharts";
-import { ApiError, api, type DatasetSummary, type EdaResponse, type HistogramResponse } from "../../api/client";
+import {
+  ApiError,
+  api,
+  type DatasetSummary,
+  type EdaResponse,
+  type FeatureByTargetResponse,
+  type HistogramResponse,
+} from "../../api/client";
 import { Modal } from "../ui/Modal";
 import { Heatmap } from "../ui/Heatmap";
 import { LabelWithHelp } from "../ui/Tooltip";
+import { BoxPlotChart, type BoxPlotDatum } from "../ui/BoxPlot";
 
 const CHART_TOOLTIP_STYLE = {
   contentStyle: {
@@ -24,35 +34,79 @@ const CHART_TOOLTIP_STYLE = {
   labelStyle: { color: "#cbd5e1" },
 };
 
+/** Convertit une réponse histogramme (bins numériques OU comptage
+ * catégoriel) en données Recharts — factorisé car réutilisé pour la
+ * distribution d'une variable choisie ET pour la distribution de la cible. */
+function histogramToChartData(histogram: HistogramResponse | null) {
+  if (!histogram) return [];
+  return histogram.kind === "numeric"
+    ? histogram.counts.map((count, i) => ({
+        name: `${histogram.bin_edges![i].toFixed(1)}–${histogram.bin_edges![i + 1].toFixed(1)}`,
+        count,
+      }))
+    : (histogram.categories ?? []).map((cat, i) => ({ name: cat, count: histogram.counts[i] }));
+}
+
+function boxplotStatsToDatum(stats: { min: number | null; q1: number | null; median: number | null; q3: number | null; max: number | null; outliers: number[] }, name: string): BoxPlotDatum | null {
+  if (stats.min === null || stats.q1 === null || stats.median === null || stats.q3 === null || stats.max === null) {
+    return null;
+  }
+  return { name, min: stats.min, q1: stats.q1, median: stats.median, q3: stats.q3, max: stats.max, outliers: stats.outliers };
+}
+
 export default function EdaModal({ dataset, onClose }: { dataset: DatasetSummary; onClose: () => void }) {
   const [eda, setEda] = useState<EdaResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selectedColumn, setSelectedColumn] = useState<string>("");
   const [histogram, setHistogram] = useState<HistogramResponse | null>(null);
+  const [targetColumn, setTargetColumn] = useState<string>("");
+  const [featureForTarget, setFeatureForTarget] = useState<string>("");
+  const [featureByTarget, setFeatureByTarget] = useState<FeatureByTargetResponse | null>(null);
 
   useEffect(() => {
     api.datasets
-      .eda(dataset.id)
+      .eda(dataset.id, targetColumn || undefined)
       .then((data) => {
         setEda(data);
-        if (data.column_stats.length > 0) setSelectedColumn(data.column_stats[0].name);
+        if (data.column_stats.length > 0 && !selectedColumn) setSelectedColumn(data.column_stats[0].name);
       })
       .catch((err) => setError(err instanceof ApiError ? err.message : "Exploration indisponible"));
-  }, [dataset.id]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dataset.id, targetColumn]);
 
   useEffect(() => {
     if (!selectedColumn) return;
     api.datasets.histogram(dataset.id, selectedColumn).then(setHistogram).catch(() => setHistogram(null));
   }, [dataset.id, selectedColumn]);
 
+  useEffect(() => {
+    if (!targetColumn || !featureForTarget) {
+      setFeatureByTarget(null);
+      return;
+    }
+    api.datasets
+      .featureByTarget(dataset.id, featureForTarget, targetColumn)
+      .then(setFeatureByTarget)
+      .catch(() => setFeatureByTarget(null));
+  }, [dataset.id, targetColumn, featureForTarget]);
+
   const missingData = eda?.missing_summary.map((m) => ({ name: m.column, pct: m.missing_pct })) ?? [];
-  const histogramData =
-    histogram?.kind === "numeric"
-      ? histogram.counts.map((count, i) => ({
-          name: `${histogram.bin_edges![i].toFixed(1)}–${histogram.bin_edges![i + 1].toFixed(1)}`,
-          count,
-        }))
-      : histogram?.categories?.map((cat, i) => ({ name: cat, count: histogram.counts[i] })) ?? [];
+  const histogramData = histogramToChartData(histogram);
+  const targetDistributionData = histogramToChartData(eda?.target_distribution ?? null);
+
+  const numericFeatureOptions = (eda?.column_stats ?? []).filter(
+    (c) => c.kind === "numeric" && c.name !== targetColumn,
+  );
+
+  const outlierBoxData: BoxPlotDatum[] =
+    eda?.outlier_summary
+      .map((b) => boxplotStatsToDatum(b, b.column))
+      .filter((d): d is BoxPlotDatum => d !== null) ?? [];
+
+  const featureByTargetBoxData: BoxPlotDatum[] =
+    featureByTarget?.groups
+      .map((g) => boxplotStatsToDatum(g, g.class_name))
+      .filter((d): d is BoxPlotDatum => d !== null) ?? [];
 
   return (
     <Modal title={`${dataset.name} — Exploration`} onClose={onClose}>
@@ -62,6 +116,74 @@ export default function EdaModal({ dataset, onClose }: { dataset: DatasetSummary
       {eda && (
         <div className="space-y-6">
           <p className="text-xs text-slate-500">{eda.row_count} lignes analysées</p>
+
+          <section>
+            <p className="text-xs uppercase tracking-wide text-slate-500 mb-2">
+              <LabelWithHelp
+                label="Analyser par rapport à une cible"
+                help="Optionnel — choisir une colonne cible débloque sa distribution et le pouvoir discriminant des autres variables par rapport à elle."
+              />
+            </p>
+            <select
+              value={targetColumn}
+              onChange={(e) => {
+                setTargetColumn(e.target.value);
+                setFeatureForTarget("");
+              }}
+              className="w-full rounded-lg border border-slate-700 bg-slate-950/60 px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-teal-500/50"
+            >
+              <option value="">Aucune — exploration générale</option>
+              {eda.column_stats.map((c) => (
+                <option key={c.name} value={c.name}>
+                  {c.name} ({c.dtype})
+                </option>
+              ))}
+            </select>
+          </section>
+
+          {targetColumn && targetDistributionData.length > 0 && (
+            <section>
+              <p className="text-xs uppercase tracking-wide text-slate-500 mb-2">
+                <LabelWithHelp
+                  label={`Distribution de « ${targetColumn} »`}
+                  help="Pour une cible numérique : forme de la distribution (symétrique, étalée, avec des valeurs extrêmes...). Pour une cible catégorielle : équilibre entre les classes — un fort déséquilibre est signalé séparément dans les garde-fous."
+                />
+              </p>
+              <ResponsiveContainer width="100%" height={200}>
+                <BarChart data={targetDistributionData} margin={{ left: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
+                  <XAxis dataKey="name" tick={{ fill: "#64748b", fontSize: 10 }} angle={-30} textAnchor="end" height={50} />
+                  <YAxis tick={{ fill: "#64748b", fontSize: 11 }} allowDecimals={false} />
+                  <RechartsTooltip {...CHART_TOOLTIP_STYLE} />
+                  <Bar dataKey="count" fill="#818cf8" radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </section>
+          )}
+
+          {targetColumn && numericFeatureOptions.length > 0 && (
+            <section>
+              <p className="text-xs uppercase tracking-wide text-slate-500 mb-2">
+                <LabelWithHelp
+                  label="Pouvoir discriminant d'une variable"
+                  help="Boîtes à moustaches d'une variable numérique, une par valeur de la cible — si les boîtes sont nettement séparées, cette variable aide probablement à distinguer les cas."
+                />
+              </p>
+              <select
+                value={featureForTarget}
+                onChange={(e) => setFeatureForTarget(e.target.value)}
+                className="w-full rounded-lg border border-slate-700 bg-slate-950/60 px-3 py-2 text-sm text-slate-100 mb-3 focus:outline-none focus:ring-2 focus:ring-teal-500/50"
+              >
+                <option value="">Choisir une variable numérique…</option>
+                {numericFeatureOptions.map((c) => (
+                  <option key={c.name} value={c.name}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+              {featureByTargetBoxData.length > 0 && <BoxPlotChart data={featureByTargetBoxData} height={220} />}
+            </section>
+          )}
 
           {missingData.length > 0 && (
             <section>
@@ -92,7 +214,7 @@ export default function EdaModal({ dataset, onClose }: { dataset: DatasetSummary
             <section>
               <p className="text-xs uppercase tracking-wide text-slate-500 mb-2">
                 <LabelWithHelp
-                  label="Corrélations"
+                  label="Corrélations numériques"
                   help="Deux variables très corrélées (proche de 1 ou -1) portent souvent une information redondante — utile à savoir avant de choisir les variables d'un entraînement."
                 />
               </p>
@@ -102,6 +224,75 @@ export default function EdaModal({ dataset, onClose }: { dataset: DatasetSummary
                 matrix={eda.correlation_matrix.matrix}
                 variant="diverging"
               />
+            </section>
+          )}
+
+          {eda.categorical_correlation_matrix.columns.length >= 2 && (
+            <section>
+              <p className="text-xs uppercase tracking-wide text-slate-500 mb-2">
+                <LabelWithHelp
+                  label="Corrélations catégorielles"
+                  help="Association entre variables catégorielles (V de Cramér, corrigé pour ne pas surestimer à cause du nombre de catégories) — de 0 (indépendantes) à 1 (l'une détermine complètement l'autre)."
+                />
+              </p>
+              <Heatmap
+                xLabels={eda.categorical_correlation_matrix.columns}
+                yLabels={eda.categorical_correlation_matrix.columns}
+                matrix={eda.categorical_correlation_matrix.matrix}
+                variant="sequential"
+              />
+            </section>
+          )}
+
+          {outlierBoxData.length > 0 && (
+            <section>
+              <p className="text-xs uppercase tracking-wide text-slate-500 mb-2">
+                <LabelWithHelp
+                  label="Détection d'outliers"
+                  help="Boîte à moustaches par variable numérique — les points isolés au-delà des moustaches sont des valeurs atypiques (règle IQR), à vérifier avant de les considérer comme des erreurs ou des cas réels rares."
+                />
+              </p>
+              <BoxPlotChart data={outlierBoxData} height={240} />
+            </section>
+          )}
+
+          {eda.top_correlated_pairs.length > 0 && (
+            <section>
+              <p className="text-xs uppercase tracking-wide text-slate-500 mb-2">
+                <LabelWithHelp
+                  label="Paires de variables les plus corrélées"
+                  help="Nuage de points des paires numériques les plus liées entre elles — permet de visualiser directement la relation derrière un chiffre de corrélation."
+                />
+              </p>
+              <div className="space-y-4">
+                {eda.top_correlated_pairs.map((pair) => (
+                  <div key={`${pair.x_column}-${pair.y_column}`}>
+                    <p className="text-xs text-slate-500 mb-1">
+                      {pair.x_column} × {pair.y_column}{" "}
+                      <span className="text-slate-600">(r = {pair.correlation?.toFixed(2) ?? "—"})</span>
+                    </p>
+                    <ResponsiveContainer width="100%" height={180}>
+                      <ScatterChart margin={{ left: 0, right: 12, bottom: 8 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+                        <XAxis
+                          type="number"
+                          dataKey="x"
+                          tick={{ fill: "#64748b", fontSize: 10 }}
+                          name={pair.x_column}
+                        />
+                        <YAxis
+                          type="number"
+                          dataKey="y"
+                          tick={{ fill: "#64748b", fontSize: 10 }}
+                          name={pair.y_column}
+                        />
+                        <RechartsTooltip {...CHART_TOOLTIP_STYLE} />
+                        <Scatter data={pair.points} fill="#2dd4bf" fillOpacity={0.6} isAnimationActive={false} />
+                      </ScatterChart>
+                    </ResponsiveContainer>
+                  </div>
+                ))}
+              </div>
             </section>
           )}
 
