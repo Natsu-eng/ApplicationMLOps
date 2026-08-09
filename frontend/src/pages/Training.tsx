@@ -8,6 +8,7 @@ import {
   type TrainingJobSummary,
 } from "../api/client";
 import AppShell from "../components/AppShell";
+import { DataQualityWarnings } from "../components/training/DataQualityWarnings";
 import ModelResultModal from "../components/training/ModelResultModal";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
@@ -382,6 +383,14 @@ function TrainingForm({
                     colonne qui les identifie : train et test ne partageront jamais le même groupe.
                   </p>
                 </div>
+              )}
+
+              {targetColumn && datasetId && (
+                <DataQualityWarnings
+                  datasetId={datasetId}
+                  targetColumn={targetColumn}
+                  groupColumn={groupColumn || undefined}
+                />
               )}
 
               {targetColumn && (
