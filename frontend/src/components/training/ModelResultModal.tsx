@@ -5,6 +5,7 @@ import { Badge } from "../ui/Badge";
 import { Modal } from "../ui/Modal";
 import { LabelWithHelp } from "../ui/Tooltip";
 import { formatMetricValue, formatPercent } from "../../utils/format";
+import EvaluationCharts from "./EvaluationCharts";
 import PredictionForm from "./PredictionForm";
 
 function isBootstrapCI(value: unknown): value is BootstrapCI {
@@ -143,6 +144,8 @@ export default function ModelResultModal({
               </p>
             )}
           </section>
+
+          <EvaluationCharts taskType={model.task_type} evaluation={model.evaluation} />
 
           <section>
             <p className="text-xs uppercase tracking-wide text-slate-500 mb-2 flex items-center gap-1.5">

@@ -1,6 +1,6 @@
 # ARCHITECTURE.md — Backend DataLab Pro
 
-> **Lot 4a — prédiction sur modèle entraîné.** Ce document est vivant : il
+> **Lot 4b — EDA et graphiques d'évaluation.** Ce document est vivant : il
 > grandit à chaque lot livré. Historique des décisions : voir
 > [`workflow.md`](workflow.md).
 
@@ -70,7 +70,9 @@ Ce schéma se complète lot par lot :
 | 1 (livré) | `api/core/security.py` (JWT + bcrypt), `api/core/models.py` (User, Organization), `api/routers/auth.py` |
 | 2 (livré) | `api/routers/datasets.py`, `api/core/storage.py`, `services/datasets.py` (première brique de la couche `services/`) |
 | 3 (livré) | `api/core/job_queue.py` (RQ + Redis), `workers/` (worker portable), `services/ml_*.py`, `api/routers/training.py` |
-| 4-5 | `services/` continue de grandir — visualisations Plotly, catalogue ML complet (sklearn, SMOTE, clustering) |
+| 4a (livré) | `services/ml_inference.py`, migration additive `feature_schema_json` |
+| 4b (livré) | `services/dataset_eda.py`, migration additive `evaluation_json`, évaluation calculée à l'entraînement dans `services/ml_training.py` |
+| 5 | `services/` continue de grandir — catalogue ML complet (sklearn, SMOTE, clustering) |
 
 ## 3. Points d'entrée
 
@@ -221,7 +223,39 @@ Ce schéma se complète lot par lot :
   additive idempotente, voir `api/core/database.py`) plutôt que d'exiger
   une base vierge à chaque évolution de schéma.
 
-## 9. Conventions reprises de CIAM
+## 9. EDA et graphiques d'évaluation (Lot 4b)
+
+- `services/dataset_eda.py` calcule à la demande (jamais persisté — un
+  dataset ne change pas après upload, pas besoin de stocker un résultat
+  recalculable en quelques millisecondes) : statistiques par colonne,
+  matrice de corrélation de Pearson, résumé des valeurs manquantes,
+  histogramme d'une colonne donnée. `_clean_float` remplace `NaN`/`inf` par
+  `None` avant sérialisation — pandas/numpy produisent ces valeurs sur des
+  colonnes avec valeurs manquantes ou variance nulle, et `json.dumps` ne
+  sait pas les encoder nativement.
+- **Asymétrie volontaire** entre `GET /datasets/{id}/eda` (tout calculer en
+  un appel : stats + corrélations + valeurs manquantes, coût faible sur un
+  dataset typique de bureau d'études) et `GET
+  /datasets/{id}/histogram?column=X` (à la demande, une colonne à la fois)
+  — un histogramme par colonne recalculé à chaque ouverture de la modale
+  n'a pas de valeur si l'utilisateur ne regarde qu'une ou deux variables.
+- **Évaluation persistée, pas recalculée** : contrairement à l'EDA,
+  `evaluation_json` (matrice de confusion, courbes ROC/PR, résidus) est
+  calculé une seule fois par `services/ml_training.py` au moment de
+  l'entraînement et stocké sur `MLModel` — recalculer impliquerait de
+  recharger le bundle joblib et de repasser le jeu de test à chaque
+  consultation du résultat, coûteux et inutile puisque le modèle ne change
+  jamais après entraînement.
+- `_downsample_curve` sous-échantillonne les points prédit/réel/résidus en
+  régression à 300 points maximum — un scatter de dizaines de milliers de
+  points n'apporte rien de plus visuellement et alourdit inutilement la
+  réponse JSON et le rendu Recharts.
+- Frontend : `components/ui/Heatmap.tsx`, composant maison en grille CSS
+  plutôt qu'une dépendance graphique supplémentaire — Recharts n'a pas de
+  heatmap native, et les deux seuls usages (corrélations, matrice de
+  confusion) ne justifient pas une bibliothèque dédiée.
+
+## 10. Conventions reprises de CIAM
 
 - Un échec d'initialisation non critique (base de données indisponible au
   démarrage) ne bloque jamais le démarrage de l'API : il est journalisé et

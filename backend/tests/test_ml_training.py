@@ -47,6 +47,8 @@ def test_regression_pipeline_end_to_end():
     assert result.cqr is not None
     assert 0 <= result.cqr["empirical_coverage"] <= 1
     assert len(result.shap_summary) == 2
+    assert len(result.evaluation["actual"]) == len(result.evaluation["predicted"])
+    assert len(result.evaluation["residuals"]) == len(result.evaluation["actual"])
 
 
 def test_multiclass_classification_shap_does_not_crash():
@@ -60,6 +62,10 @@ def test_multiclass_classification_shap_does_not_crash():
     for entry in result.shap_summary:
         assert isinstance(entry["importance"], float)
     assert result.cqr is None  # pas de CQR en classification
+
+    matrix = result.evaluation["confusion_matrix"]
+    assert len(matrix) == 3 and all(len(row) == 3 for row in matrix)  # 3 classes
+    assert set(result.evaluation["roc_curves"].keys()) == {"0", "1", "2"}
 
 
 def test_group_anti_leak_split_reflected_in_model_card():

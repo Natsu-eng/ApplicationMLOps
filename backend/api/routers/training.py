@@ -78,6 +78,7 @@ class MLModelDetail(BaseModel):
     shap_summary: List[dict[str, Any]]
     cqr: Optional[dict[str, Any]] = None
     model_card: dict[str, Any]
+    evaluation: dict[str, Any] = {}
     created_at: datetime
 
 
@@ -266,6 +267,7 @@ def get_training_job_model(job_id: int, current_user: User = Depends(get_current
         shap_summary=json.loads(model.shap_summary_json) if model.shap_summary_json else [],
         cqr=json.loads(model.cqr_json) if model.cqr_json else None,
         model_card=json.loads(model.model_card_json) if model.model_card_json else {},
+        evaluation=json.loads(model.evaluation_json) if model.evaluation_json else {},
         created_at=model.created_at,
     )
 

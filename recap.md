@@ -81,14 +81,34 @@ prédictif) est aussi devenue accessible depuis le formulaire — et chaque
 entraînement peut désormais être supprimé de l'historique (avec annulation
 du job en file si besoin).
 
+### Lot 4b — Explorer avant d'entraîner, voir au-delà des chiffres
+
+Deux manques signalés après le Lot 3 : impossible d'explorer un dataset
+avant de choisir sa cible et ses variables, et le résultat d'un modèle
+n'affichait que des métriques chiffrées, jamais un graphique. Corrigé :
+
+- **Exploration de données (EDA)** accessible depuis "Mes données" —
+  statistiques par colonne, matrice de corrélation, valeurs manquantes
+  signalées visuellement au-delà de 30 %, histogramme à la demande pour
+  n'importe quelle variable.
+- **Graphiques d'évaluation** dans le résultat d'un modèle : matrice de
+  confusion et courbes ROC/précision-rappel en classification ; nuage
+  prédit-vs-réel et résidus en régression — avec les mêmes info-bulles
+  pédagogiques qu'au Lot 4a pour rester lisible par un non-expert.
+- Bibliothèque de graphiques tranchée à ce lot : **Recharts**, pas Plotly
+  (décision déjà actée mais implémentée ici pour la première fois).
+
+*Vérifié bout en bout sur les vrais datasets de l'utilisateur (Iris,
+Concrete Compressive Strength) — pas seulement sur données synthétiques.*
+
 ---
 
 ## Robustesse — pas juste "ça marche chez moi"
 
-- **Tests automatisés** (`backend/tests/`, pytest) : 26 tests qui restent
+- **Tests automatisés** (`backend/tests/`, pytest) : 35 tests qui restent
   dans le dépôt et couvrent l'isolation entre organisations, les
   permissions, l'entraînement réel (pas mocké), la prédiction, la
-  suppression.
+  suppression, l'exploration de données (EDA) et les données d'évaluation.
 - **Bugs réels trouvés et corrigés en usage réel**, pas en théorie :
   - SHAP change de format de sortie en classification multiclasse selon la
     version installée — trouvé en testant sur un vrai dataset Iris, corrigé,
@@ -126,8 +146,7 @@ Identifié explicitement en testant le produit, pas oublié :
 
 | Lot | Contenu |
 | --- | --- |
-| **4b** (en cours) | Exploration de données (EDA) avant l'entraînement — distributions, corrélations, valeurs manquantes ; et graphiques d'évaluation (matrice de confusion, ROC/PR, résidus) |
-| **4c** | Ingénierie de variables — créer des variables dérivées (ratios, transformations) avant l'entraînement |
+| **4c** (prochain) | Ingénierie de variables — créer des variables dérivées (ratios, transformations) avant l'entraînement |
 | **5** | Catalogue ML complet (RandomForest, régression linéaire/logistique, SVM, KNN, Naive Bayes, + SMOTE, + clustering) comparé automatiquement |
 | **6-8** | Vision par ordinateur / détection d'anomalies (l'autre grand pilier de l'app historique, pas encore porté) |
 | **9** | Registre de modèles versionné (l'artefact existe déjà, pas encore le versioning/export) |

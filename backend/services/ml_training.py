@@ -37,13 +37,16 @@ from lightgbm import LGBMClassifier, LGBMRegressor
 from sklearn.base import clone
 from sklearn.metrics import (
     accuracy_score,
+    confusion_matrix,
     f1_score,
     mean_absolute_error,
     mean_squared_error,
+    precision_recall_curve,
     precision_score,
     r2_score,
     recall_score,
     roc_auc_score,
+    roc_curve,
 )
 from sklearn.model_selection import (
     GroupKFold,
@@ -52,7 +55,7 @@ from sklearn.model_selection import (
     cross_val_score,
     train_test_split,
 )
-from sklearn.preprocessing import LabelEncoder
+from sklearn.preprocessing import LabelEncoder, label_binarize
 from xgboost import XGBClassifier, XGBRegressor
 
 from services.ml_preprocessing import SplitResult, build_preprocessor
@@ -87,6 +90,7 @@ class TrainedModelResult:
     shap_summary: list[dict[str, Any]]
     cqr: Optional[dict[str, Any]]
     model_card: dict[str, Any]
+    evaluation: dict[str, Any]  # matrice de confusion+ROC/PR (classif) ou prédit-vs-réel+résidus (régression)
 
 
 # ── Espaces de recherche Optuna — un par algorithme, régression et classification ──
@@ -275,6 +279,71 @@ def _compute_shap_summary(estimator: Any, X_sample: np.ndarray, feature_names: l
     return [{"feature": feature_names[i], "importance": float(mean_abs[i])} for i in order]
 
 
+def _downsample_curve(x: np.ndarray, y: np.ndarray, max_points: int = 100) -> tuple[list[float], list[float]]:
+    """Les courbes ROC/PR de sklearn ont autant de points que d'échantillons
+    test — inutile d'envoyer des milliers de points au frontend pour un
+    graphe qui en affiche visuellement une centaine tout au plus."""
+    if len(x) <= max_points:
+        return [float(v) for v in x], [float(v) for v in y]
+    idx = np.linspace(0, len(x) - 1, max_points).astype(int)
+    return [float(x[i]) for i in idx], [float(y[i]) for i in idx]
+
+
+def _compute_classification_evaluation(
+    y_test: np.ndarray, pred_test: np.ndarray, proba_test: np.ndarray, class_names: list[str]
+) -> dict[str, Any]:
+    """Matrice de confusion + courbes ROC/PR (une par classe, one-vs-rest en
+    multiclasse) — pour la page d'évaluation (Lot 4b), qui affiche des
+    graphiques plutôt que des métriques brutes seules."""
+    labels = list(range(len(class_names)))
+    matrix = confusion_matrix(y_test, pred_test, labels=labels)
+
+    roc_curves: dict[str, Any] = {}
+    pr_curves: dict[str, Any] = {}
+
+    if len(class_names) == 2:
+        fpr, tpr, _ = roc_curve(y_test, proba_test[:, 1])
+        precision, recall, _ = precision_recall_curve(y_test, proba_test[:, 1])
+        fpr_s, tpr_s = _downsample_curve(fpr, tpr)
+        prec_s, rec_s = _downsample_curve(precision, recall)
+        roc_curves[class_names[1]] = {"fpr": fpr_s, "tpr": tpr_s}
+        pr_curves[class_names[1]] = {"precision": prec_s, "recall": rec_s}
+    else:
+        y_bin = label_binarize(y_test, classes=labels)
+        for i, name in enumerate(class_names):
+            fpr, tpr, _ = roc_curve(y_bin[:, i], proba_test[:, i])
+            precision, recall, _ = precision_recall_curve(y_bin[:, i], proba_test[:, i])
+            fpr_s, tpr_s = _downsample_curve(fpr, tpr)
+            prec_s, rec_s = _downsample_curve(precision, recall)
+            roc_curves[name] = {"fpr": fpr_s, "tpr": tpr_s}
+            pr_curves[name] = {"precision": prec_s, "recall": rec_s}
+
+    return {
+        "confusion_matrix": matrix.tolist(),
+        "class_names": class_names,
+        "roc_curves": roc_curves,
+        "pr_curves": pr_curves,
+    }
+
+
+def _compute_regression_evaluation(
+    y_test: np.ndarray, pred_test: np.ndarray, seed: int, max_points: int = 300
+) -> dict[str, Any]:
+    """Échantillon prédit-vs-réel + résidus, pour les graphiques de diagnostic
+    (détection d'hétéroscédasticité, biais systématique...)."""
+    y_arr, pred_arr = np.asarray(y_test), np.asarray(pred_test)
+    n = len(y_arr)
+    rng = np.random.default_rng(seed)
+    idx = rng.choice(n, size=min(max_points, n), replace=False)
+    actual_sample = y_arr[idx]
+    predicted_sample = pred_arr[idx]
+    return {
+        "actual": [float(v) for v in actual_sample],
+        "predicted": [float(v) for v in predicted_sample],
+        "residuals": [float(v) for v in (actual_sample - predicted_sample)],
+    }
+
+
 def _compute_cqr(
     X_train_proc: np.ndarray,
     y_train: np.ndarray,
@@ -412,11 +481,13 @@ def train_and_evaluate(
         metrics["rmse_bootstrap"] = _bootstrap_ci(
             y_test, pred_test, lambda a, b: float(mean_squared_error(a, b) ** 0.5), config.seed
         )
+        evaluation = _compute_regression_evaluation(y_test, pred_test, config.seed)
     else:
         proba_test = best_model.predict_proba(X_test_proc)
         metrics = _classification_metrics(y_test, pred_test, proba_test)
         metrics["cv_score"] = float(cv_score)
         metrics["accuracy_bootstrap"] = _bootstrap_ci(y_test, pred_test, accuracy_score, config.seed)
+        evaluation = _compute_classification_evaluation(y_test, pred_test, proba_test, class_names or [])
 
     progress_cb("Calcul de l'explicabilité (SHAP)", 78)
     sample_size = min(config.shap_sample_size, len(X_test_proc))
@@ -469,4 +540,5 @@ def train_and_evaluate(
         shap_summary=shap_summary,
         cqr=cqr_result,
         model_card=model_card,
+        evaluation=evaluation,
     )

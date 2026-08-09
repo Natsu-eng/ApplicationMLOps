@@ -11,11 +11,13 @@ détection d'anomalies) sur leurs propres données. Architecture inspirée de
 Ce backend est construit **lot par lot**, chaque lot livrant quelque chose qui
 fonctionne (voir [`workflow.md`](workflow.md) pour le détail).
 
-> **Lot 4a (prédiction) — état actuel.** Authentification, upload/catalogage
-> de datasets, entraînement de bout en bout (LightGBM/XGBoost/CatBoost +
-> Optuna + SHAP + CQR) en tâche de fond avec suivi de progression, **et
-> désormais la prédiction sur une nouvelle donnée avec le modèle entraîné**
-> — la boucle complète entraîner → utiliser est fermée.
+> **Lot 4b (EDA + évaluation) — état actuel.** Authentification,
+> upload/catalogage de datasets, **exploration de données (EDA) avant
+> entraînement**, entraînement de bout en bout (LightGBM/XGBoost/CatBoost +
+> Optuna + SHAP + CQR) en tâche de fond avec suivi de progression,
+> prédiction sur une nouvelle donnée, et désormais des **graphiques
+> d'évaluation** (matrice de confusion, ROC/PR, résidus) — la boucle
+> complète explorer → entraîner → comprendre → utiliser est fermée.
 
 ## Stack
 

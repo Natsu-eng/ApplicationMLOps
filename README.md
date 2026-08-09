@@ -13,7 +13,7 @@ Le dépôt contient deux choses en parallèle, le temps de la migration :
 
 | | Rôle |
 | --- | --- |
-| **`backend/` + `frontend/`** | Le nouveau SaaS, construit **lot par lot**. État actuel : **Lot 4a** — entraînement ML supervisé (LightGBM/XGBoost/CatBoost, Optuna, SHAP, CQR) **et prédiction sur nouvelle donnée** avec le modèle entraîné. Voir [`backend/workflow.md`](backend/workflow.md) et [`recap.md`](recap.md) pour une synthèse lisible. |
+| **`backend/` + `frontend/`** | Le nouveau SaaS, construit **lot par lot**. État actuel : **Lot 4b** — exploration de données (EDA) avant entraînement, entraînement ML supervisé (LightGBM/XGBoost/CatBoost, Optuna, SHAP, CQR), prédiction sur nouvelle donnée, **et graphiques d'évaluation** (matrice de confusion, ROC/PR, résidus). Voir [`backend/workflow.md`](backend/workflow.md) et [`recap.md`](recap.md) pour une synthèse lisible. |
 | **`src/`, `ui/`, `helpers/`, `monitoring/`, `orchestrators/`...** | L'application **Streamlit historique**, conservée intacte comme référence pendant le portage progressif de sa logique ML vers `backend/`. Documentation : [`docs/legacy/README.md`](docs/legacy/README.md). |
 
 Rien n'est supprimé de l'application historique tant que sa logique n'a pas
@@ -87,6 +87,6 @@ streamlit run src/app/main.py
 ---
 
 **Statut** : migration en cours — Lots 0 à 3 (squelette, auth, datasets,
-entraînement ML) et Lot 4a (prédiction) livrés. Voir
+entraînement ML), Lot 4a (prédiction) et Lot 4b (EDA + évaluation) livrés. Voir
 [`backend/workflow.md`](backend/workflow.md) pour le détail lot par lot, ou
 [`recap.md`](recap.md) pour une synthèse lisible de l'ensemble.

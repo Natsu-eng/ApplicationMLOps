@@ -5,12 +5,14 @@ SPA du SaaS DataLab Pro. Stack et conventions reprises de CIAM
 
 ## État d'avancement
 
-> **Lot 4a (prédiction) — état actuel.** Connexion, inscription, tableau de
-> bord avec équipe, "Mes données", page "Entraînement" (configuration —
-> avec sélection manuelle des variables —, suivi de progression en direct,
-> résultat détaillé), et désormais un formulaire pour **prédire sur une
-> nouvelle donnée** directement depuis le résultat d'un modèle, avec
-> info-bulles pédagogiques sur les métriques — voir
+> **Lot 4b (EDA + évaluation) — état actuel.** Connexion, inscription,
+> tableau de bord avec équipe, "Mes données" avec désormais un bouton
+> **"Explorer"** (statistiques, corrélations, valeurs manquantes,
+> histogrammes), page "Entraînement" (configuration — avec sélection
+> manuelle des variables —, suivi de progression en direct, résultat
+> détaillé avec **graphiques d'évaluation** — matrice de confusion, ROC/PR,
+> prédit-vs-réel, résidus — en plus des métriques et du formulaire de
+> prédiction), avec info-bulles pédagogiques sur les métriques — voir
 > [`../backend/workflow.md`](../backend/workflow.md).
 
 ## Système de design

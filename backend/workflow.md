@@ -225,11 +225,106 @@ worker, ni un test qu'on ne veut plus garder).
   peut pas supprimer l'entraînement d'une autre), 26/26 sur l'ensemble de
   la suite
 
+## Lot 4b — Exploration de données (EDA) et graphiques d'évaluation (livré)
+
+Deux manques signalés explicitement par l'utilisateur après le Lot 3 : pas
+moyen d'explorer un dataset avant de lancer un entraînement, et le résultat
+d'un modèle ne montrait que des métriques chiffrées, sans graphique.
+Choix de bibliothèque également tranché à ce lot : **Recharts plutôt que
+Plotly** (plus léger, thémable au système de design existant — dégradé
+teal/verre dépoli —, déjà éprouvé par CIAM).
+
+- [x] `services/dataset_eda.py` — statistiques par colonne (numérique :
+  moyenne/écart-type/min/max/médiane ; catégorielle : cardinalité/valeurs
+  les plus fréquentes), matrice de corrélation de Pearson (colonnes
+  numériques uniquement), résumé des valeurs manquantes, histogramme à la
+  demande (bins pour le numérique, top-N + "Autres" pour le catégoriel) —
+  `_clean_float` neutralise les `NaN`/`inf` en `None` avant sérialisation
+  JSON (sinon `json.dumps` échoue silencieusement côté client)
+- [x] `api/routers/datasets.py` : `GET /datasets/{id}/eda` (statistiques +
+  corrélations + valeurs manquantes en un seul appel), `GET
+  /datasets/{id}/histogram?column=X&bins=N` (à la demande, pour ne pas
+  calculer tous les histogrammes d'un dataset large à chaque ouverture) —
+  isolés par organisation comme le reste
+- [x] `services/ml_training.py` — évaluation persistée au moment de
+  l'entraînement (une seule fois, pas recalculée à chaque consultation) :
+  `_compute_classification_evaluation` (matrice de confusion, courbes
+  ROC/PR par classe en un-contre-tous pour le multiclasse),
+  `_compute_regression_evaluation` (valeurs réelles/prédites et résidus sur
+  le jeu de test, sous-échantillonnés à 300 points via `_downsample_curve`
+  pour ne pas alourdir la réponse JSON sur un gros dataset)
+- [x] `api/core/models.py::MLModel.evaluation_json` — deuxième migration
+  additive (même pattern `_add_column_if_missing` qu'au Lot 4a), confirmée
+  appliquée sur la base PostgreSQL réelle au redémarrage du backend
+  (`[DB] Migration : colonne ml_models.evaluation_json ajoutée`)
+- [x] `api/routers/training.py::MLModelDetail.evaluation` — désérialise
+  `evaluation_json`, `{}` si absent (modèles entraînés avant ce lot,
+  rétrocompatible sans script de backfill)
+- [x] Frontend : `components/ui/Heatmap.tsx` — grille CSS maison (pas de
+  dépendance graphique dédiée, Recharts n'a pas de heatmap native), deux
+  variantes (`diverging` centrée sur 0 pour les corrélations, `sequential`
+  pour les comptages/matrice de confusion) ; `components/datasets/EdaModal.tsx`
+  (valeurs manquantes en barres, corrélations en heatmap, histogramme avec
+  sélecteur de colonne, tableau récapitulatif) ; `components/training/EvaluationCharts.tsx`
+  (`ClassificationCharts` : matrice de confusion + ROC + PR ;
+  `RegressionCharts` : prédit-vs-réel + résidus, avec ligne de référence
+  diagonale/zéro) ; bouton "Explorer" sur chaque carte dataset
+  (`pages/Datasets.tsx`) ; graphiques intégrés dans `ModelResultModal` juste
+  après les métriques de performance
+- [x] `package.json` : `recharts` ajouté, upgrade vers la v3 en cours de
+  route (la v2 était dépréciée) — a changé la signature du prop `formatter`
+  du `Tooltip` (voir correctif ci-dessous)
+- [x] Tests pytest : `tests/test_dataset_eda.py` (statistiques
+  numériques/catégorielles, corrélations, valeurs manquantes, histogramme
+  numérique et catégoriel, isolation par organisation) + extension de
+  `tests/test_ml_training.py` (présence de `evaluation` en classification et
+  régression, cohérence des dimensions matrice de confusion / classes)
+
+**Vérifié** :
+
+- Suite pytest complète : **35/35** tests au vert (contre 26 avant ce lot).
+- `npm run build` (frontend) sans erreur TypeScript.
+- **Bout en bout en conditions réelles**, API + worker RQ réel + PostgreSQL,
+  sur les vrais datasets de l'utilisateur :
+  - `GET /datasets/7/eda` (Iris, 150 lignes) : statistiques numériques et
+    catégorielles correctes, `Species` bien détectée catégorielle avec ses
+    3 valeurs à 50 occurrences chacune ; `GET /datasets/7/histogram` sur
+    `SepalLengthCm` : 8 bins cohérents avec la distribution connue du
+    dataset.
+  - Entraînement classification réel sur Iris (job id 11, CatBoost,
+    accuracy 0,933) : `evaluation` contient une matrice de confusion 3×3
+    plausible (`[[10,0,0],[0,9,1],[0,1,9]]`), les 3 classes, des courbes
+    ROC/PR par classe.
+  - Entraînement régression réel sur Concrete Compressive Strength (1030
+    lignes, job id 12, CatBoost, R² test 0,933) : `evaluation` contient 201
+    triplets réel/prédit/résidu (échantillonnage à 300 points non
+    déclenché ici, jeu de test plus petit), CQR cohérent (couverture
+    empirique 83,6 % pour une cible de 80 %).
+- **Processus périmés retrouvés en cours de vérification** (déjà rencontré
+  au Lot 3) : un ancien `uvicorn`/worker lancé depuis l'interpréteur Python
+  global (pas le `.venv`) occupait encore le port 8000 et servait du code
+  d'avant ce lot — identifié via `Get-NetTCPConnection`, arrêté, backend et
+  worker relancés depuis `.venv`, migration `evaluation_json` confirmée
+  appliquée au redémarrage propre.
+- Non vérifié : rendu visuel réel en navigateur (pas d'outil d'interaction
+  navigateur dans cette session) — build TypeScript propre et payloads API
+  corrects sont les seules garanties disponibles ; les trois processus
+  (API, worker, frontend) sont laissés actifs pour vérification visuelle
+  directe.
+
+### Correctif — Recharts v3 et le prop `formatter` du `Tooltip`
+
+`Tooltip.formatter` en Recharts v3 attend `Formatter<ValueType, NameType>`
+où `ValueType` peut être `undefined` — un callback typé explicitement
+`(v: number) => string` ne compile plus (`npm run build` échouait sur 3
+occurrences : `EdaModal.tsx`, `EvaluationCharts.tsx` ×2). Corrigé en
+laissant le paramètre non typé et en forçant la conversion à l'intérieur :
+`formatter={(v) => Number(v).toFixed(3)}`.
+
 ## Prochains lots (résumé — détail complet dans le diagnostic de migration et les échanges de cadrage)
 
 | Lot | Contenu | Livrable testable |
 | --- | --- | --- |
-| 4b | EDA dataset (stats, histogrammes, corrélations, valeurs manquantes) + visualisations d'évaluation (matrice de confusion, ROC/PR, résidus) — **Recharts**, pas Plotly (plus léger, thémable à notre design system, déjà éprouvé par CIAM) | Explorer un dataset avant d'entraîner ; voir les courbes d'un modèle, pas seulement ses métriques brutes |
 | 4c | Ingénierie de variables : créer des variables dérivées (ratios, transformations, extraction de dates) avant l'entraînement | Un utilisateur peut créer une nouvelle colonne calculée et l'utiliser comme feature |
 | 5 | Catalogue ML complet comparé automatiquement (RandomForest, régression linéaire/logistique, SVM, KNN, Naive Bayes, + SMOTE, + clustering) | Un non-expert bénéficie d'un pool de candidats large sans avoir à choisir un algorithme |
 | 6-8 | Upload / entraînement / évaluation vision (détection d'anomalies) | Parité fonctionnelle côté vision |

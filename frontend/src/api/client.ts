@@ -182,6 +182,46 @@ export interface PreviewResponse {
   row_count: number | null;
 }
 
+export interface ColumnStat {
+  name: string;
+  dtype: string;
+  kind: "numeric" | "categorical";
+  missing_count: number;
+  missing_pct: number;
+  mean: number | null;
+  std: number | null;
+  min: number | null;
+  max: number | null;
+  median: number | null;
+  n_unique: number | null;
+  top_values: { value: string; count: number }[] | null;
+}
+
+export interface MissingSummaryEntry {
+  column: string;
+  missing_count: number;
+  missing_pct: number;
+}
+
+export interface CorrelationMatrix {
+  columns: string[];
+  matrix: (number | null)[][];
+}
+
+export interface EdaResponse {
+  row_count: number;
+  column_stats: ColumnStat[];
+  missing_summary: MissingSummaryEntry[];
+  correlation_matrix: CorrelationMatrix;
+}
+
+export interface HistogramResponse {
+  kind: "numeric" | "categorical";
+  bin_edges?: number[];
+  counts: number[];
+  categories?: string[];
+}
+
 export type TaskType = "classification" | "regression";
 export type JobStatus = "queued" | "running" | "completed" | "failed";
 
@@ -245,6 +285,31 @@ export interface FeatureSchemaEntry {
   dtype: string;
 }
 
+export interface RocCurve {
+  fpr: number[];
+  tpr: number[];
+}
+
+export interface PrCurve {
+  precision: number[];
+  recall: number[];
+}
+
+export interface ClassificationEvaluation {
+  confusion_matrix: number[][];
+  class_names: string[];
+  roc_curves: Record<string, RocCurve>;
+  pr_curves: Record<string, PrCurve>;
+}
+
+export interface RegressionEvaluation {
+  actual: number[];
+  predicted: number[];
+  residuals: number[];
+}
+
+export type ModelEvaluation = Partial<ClassificationEvaluation & RegressionEvaluation>;
+
 export interface MLModelDetail {
   id: number;
   training_job_id: number;
@@ -257,6 +322,7 @@ export interface MLModelDetail {
   shap_summary: ShapFeature[];
   cqr: CqrResult | null;
   model_card: Record<string, unknown>;
+  evaluation: ModelEvaluation;
   created_at: string;
 }
 
@@ -309,6 +375,11 @@ export const api = {
     preview: (id: number, limit = 50) =>
       request<PreviewResponse>(`/datasets/${id}/preview?limit=${limit}`),
     remove: (id: number) => request<void>(`/datasets/${id}`, { method: "DELETE" }),
+    eda: (id: number) => request<EdaResponse>(`/datasets/${id}/eda`),
+    histogram: (id: number, column: string, bins = 20) =>
+      request<HistogramResponse>(
+        `/datasets/${id}/histogram?column=${encodeURIComponent(column)}&bins=${bins}`,
+      ),
   },
 
   training: {

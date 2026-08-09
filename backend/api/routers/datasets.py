@@ -23,6 +23,12 @@ from api.core.database import get_db
 from api.core.models import Dataset, User
 from api.core.storage import dataset_file_path, delete_dataset_file
 from api.routers.auth import get_current_user
+from services.dataset_eda import (
+    compute_column_stats,
+    compute_correlation_matrix,
+    compute_histogram,
+    compute_missing_summary,
+)
 from services.datasets import (
     DatasetParsingError,
     UnsupportedFileType,
@@ -67,6 +73,46 @@ class PreviewResponse(BaseModel):
     rows: List[dict]
     sample_size: int
     row_count: Optional[int] = None
+
+
+class ColumnStat(BaseModel):
+    name: str
+    dtype: str
+    kind: str  # "numeric" | "categorical"
+    missing_count: int
+    missing_pct: float
+    mean: Optional[float] = None
+    std: Optional[float] = None
+    min: Optional[float] = None
+    max: Optional[float] = None
+    median: Optional[float] = None
+    n_unique: Optional[int] = None
+    top_values: Optional[List[dict]] = None
+
+
+class MissingSummaryEntry(BaseModel):
+    column: str
+    missing_count: int
+    missing_pct: float
+
+
+class CorrelationMatrix(BaseModel):
+    columns: List[str]
+    matrix: List[List[Optional[float]]]
+
+
+class EdaResponse(BaseModel):
+    row_count: int
+    column_stats: List[ColumnStat]
+    missing_summary: List[MissingSummaryEntry]
+    correlation_matrix: CorrelationMatrix
+
+
+class HistogramResponse(BaseModel):
+    kind: str  # "numeric" | "categorical"
+    bin_edges: Optional[List[float]] = None
+    counts: List[int]
+    categories: Optional[List[str]] = None
 
 
 def _to_summary(dataset: Dataset) -> DatasetSummary:
@@ -216,6 +262,65 @@ def preview_dataset(
         sample_size=len(rows),
         row_count=dataset.row_count,
     )
+
+
+@router.get("/{dataset_id}/eda", response_model=EdaResponse)
+def get_dataset_eda(dataset_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Exploration de données (EDA) — stats par colonne, corrélations,
+    valeurs manquantes. Calculé à la demande (pas stocké) : un dataset peut
+    changer de statut mais son fichier ne change jamais une fois uploadé,
+    donc pas besoin de mise en cache pour ce volume d'usage."""
+    dataset = _get_org_dataset(dataset_id, current_user, db)
+    if dataset.status != "ready":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"code": "DATASET_NON_PRET", "message": "Ce dataset n'a pas pu être analysé"},
+        )
+    try:
+        df = read_dataframe(Path(dataset.file_path), Path(dataset.file_path).suffix)
+    except DatasetParsingError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"code": "DATASET_LECTURE_ECHEC", "message": str(exc)},
+        )
+    return EdaResponse(
+        row_count=len(df),
+        column_stats=[ColumnStat(**c) for c in compute_column_stats(df)],
+        missing_summary=[MissingSummaryEntry(**m) for m in compute_missing_summary(df)],
+        correlation_matrix=CorrelationMatrix(**compute_correlation_matrix(df)),
+    )
+
+
+@router.get("/{dataset_id}/histogram", response_model=HistogramResponse)
+def get_dataset_histogram(
+    dataset_id: int,
+    column: str,
+    bins: int = 20,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Histogramme d'une seule colonne, à la demande — évite de calculer les
+    histogrammes de toutes les colonnes d'un coup sur un dataset large."""
+    dataset = _get_org_dataset(dataset_id, current_user, db)
+    if dataset.status != "ready":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"code": "DATASET_NON_PRET", "message": "Ce dataset n'a pas pu être analysé"},
+        )
+    try:
+        df = read_dataframe(Path(dataset.file_path), Path(dataset.file_path).suffix)
+        histogram = compute_histogram(df, column, bins=max(5, min(bins, 100)))
+    except DatasetParsingError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"code": "DATASET_LECTURE_ECHEC", "message": str(exc)},
+        )
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": "COLONNE_INTROUVABLE", "message": str(exc)},
+        )
+    return HistogramResponse(**histogram)
 
 
 @router.delete("/{dataset_id}", status_code=status.HTTP_204_NO_CONTENT)

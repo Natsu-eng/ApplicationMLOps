@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState, type DragEvent } from "react";
-import { AlertCircle, Eye, FileSpreadsheet, Trash2, UploadCloud } from "lucide-react";
+import { AlertCircle, ChartColumn, Eye, FileSpreadsheet, Trash2, UploadCloud } from "lucide-react";
 import { ApiError, api, type DatasetSummary, type PreviewResponse } from "../api/client";
 import AppShell from "../components/AppShell";
+import EdaModal from "../components/datasets/EdaModal";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
@@ -16,6 +17,7 @@ export default function Datasets() {
   const [isUploading, setIsUploading] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const [previewing, setPreviewing] = useState<DatasetSummary | null>(null);
+  const [exploring, setExploring] = useState<DatasetSummary | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const load = useCallback(async () => {
@@ -125,6 +127,7 @@ export default function Datasets() {
               key={dataset.id}
               dataset={dataset}
               onPreview={() => setPreviewing(dataset)}
+              onExplore={() => setExploring(dataset)}
               onDelete={() => handleDelete(dataset.id)}
             />
           ))}
@@ -132,6 +135,7 @@ export default function Datasets() {
       )}
 
       {previewing && <PreviewModal dataset={previewing} onClose={() => setPreviewing(null)} />}
+      {exploring && <EdaModal dataset={exploring} onClose={() => setExploring(null)} />}
     </AppShell>
   );
 }
@@ -145,10 +149,12 @@ function StatusBadge({ status }: { status: string }) {
 function DatasetCard({
   dataset,
   onPreview,
+  onExplore,
   onDelete,
 }: {
   dataset: DatasetSummary;
   onPreview: () => void;
+  onExplore: () => void;
   onDelete: () => void;
 }) {
   return (
@@ -179,6 +185,9 @@ function DatasetCard({
       <div className="mt-auto flex gap-2 pt-3 border-t border-slate-800/70">
         <Button variant="ghost" size="sm" onClick={onPreview} disabled={dataset.status !== "ready"}>
           <Eye size={14} /> Aperçu
+        </Button>
+        <Button variant="ghost" size="sm" onClick={onExplore} disabled={dataset.status !== "ready"}>
+          <ChartColumn size={14} /> Explorer
         </Button>
         <Button variant="danger" size="sm" onClick={onDelete} aria-label="Supprimer">
           <Trash2 size={14} />

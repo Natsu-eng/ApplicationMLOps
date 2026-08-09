@@ -97,6 +97,7 @@ def run_training_job(job_id: int) -> None:
                 shap_summary_json=json.dumps(result.shap_summary),
                 cqr_json=json.dumps(result.cqr) if result.cqr else None,
                 model_card_json=json.dumps(result.model_card),
+                evaluation_json=json.dumps(result.evaluation),
             )
             db.add(ml_model)
 

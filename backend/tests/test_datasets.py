@@ -70,3 +70,35 @@ def test_preview_returns_sample_rows(client):
     body = resp.json()
     assert body["columns"] == ["a", "b"]
     assert body["sample_size"] == 2
+
+
+def test_eda_returns_stats_and_correlations(client):
+    headers = _register(client)
+    created = client.post("/datasets", headers=headers, files=_csv_file()).json()
+
+    resp = client.get(f"/datasets/{created['id']}/eda", headers=headers)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["row_count"] == 2
+    assert len(body["column_stats"]) == 2
+    assert body["correlation_matrix"]["columns"] == ["a", "b"]
+
+
+def test_histogram_returns_numeric_bins(client):
+    headers = _register(client)
+    created = client.post("/datasets", headers=headers, files=_csv_file()).json()
+
+    resp = client.get(f"/datasets/{created['id']}/histogram", headers=headers, params={"column": "a"})
+    assert resp.status_code == 200
+    assert resp.json()["kind"] == "numeric"
+
+
+def test_histogram_rejects_unknown_column(client):
+    headers = _register(client)
+    created = client.post("/datasets", headers=headers, files=_csv_file()).json()
+
+    resp = client.get(
+        f"/datasets/{created['id']}/histogram", headers=headers, params={"column": "inexistante"}
+    )
+    assert resp.status_code == 400
+    assert resp.json()["detail"]["code"] == "COLONNE_INTROUVABLE"

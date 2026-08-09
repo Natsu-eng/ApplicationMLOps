@@ -159,6 +159,10 @@ class MLModel(Base):
     shap_summary_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     cqr_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     model_card_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # Matrice de confusion + courbes ROC/PR (classification) ou
+    # prédit-vs-réel + résidus (régression) — pour les graphiques
+    # d'évaluation (Lot 4b), pas pour les métriques brutes déjà dans metrics_json.
+    evaluation_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
 
     organization: Mapped["Organization"] = relationship("Organization")

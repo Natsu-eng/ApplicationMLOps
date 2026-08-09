@@ -86,6 +86,7 @@ def _train_and_persist_model(db, organization_id: int) -> TrainingJob:
         shap_summary_json=json.dumps(result.shap_summary),
         cqr_json=json.dumps(result.cqr),
         model_card_json=json.dumps(result.model_card),
+        evaluation_json=json.dumps(result.evaluation),
     )
     db.add(model)
     db.commit()
