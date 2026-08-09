@@ -102,3 +102,38 @@ def test_histogram_rejects_unknown_column(client):
     )
     assert resp.status_code == 400
     assert resp.json()["detail"]["code"] == "COLONNE_INTROUVABLE"
+
+
+def test_quality_check_returns_warnings_list(client):
+    headers = _register(client)
+    created = client.post("/datasets", headers=headers, files=_csv_file()).json()
+
+    resp = client.get(
+        f"/datasets/{created['id']}/quality-check", headers=headers, params={"target_column": "b"}
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert isinstance(body["warnings"], list)
+
+
+def test_quality_check_rejects_unknown_target_column(client):
+    headers = _register(client)
+    created = client.post("/datasets", headers=headers, files=_csv_file()).json()
+
+    resp = client.get(
+        f"/datasets/{created['id']}/quality-check", headers=headers, params={"target_column": "inexistante"}
+    )
+    assert resp.status_code == 400
+    assert resp.json()["detail"]["code"] == "COLONNE_INTROUVABLE"
+
+
+def test_quality_check_isolation_between_organizations(client):
+    headers_a = _register(client, "a@bureau-a.fr", "Bureau A")
+    headers_b = _register(client, "b@bureau-b.fr", "Bureau B")
+
+    created = client.post("/datasets", headers=headers_a, files=_csv_file()).json()
+
+    resp = client.get(
+        f"/datasets/{created['id']}/quality-check", headers=headers_b, params={"target_column": "b"}
+    )
+    assert resp.status_code == 404

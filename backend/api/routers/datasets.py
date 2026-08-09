@@ -23,6 +23,7 @@ from api.core.database import get_db
 from api.core.models import Dataset, User
 from api.core.storage import dataset_file_path, delete_dataset_file
 from api.routers.auth import get_current_user
+from services.data_quality import analyze_data_quality
 from services.dataset_eda import (
     compute_column_stats,
     compute_correlation_matrix,
@@ -113,6 +114,20 @@ class HistogramResponse(BaseModel):
     bin_edges: Optional[List[float]] = None
     counts: List[int]
     categories: Optional[List[str]] = None
+
+
+class DataWarning(BaseModel):
+    level: str  # "info" | "attention" | "critique"
+    code: str
+    title: str
+    explanation: str
+    action: str
+    columns: List[str] = []
+    details: Optional[dict] = None
+
+
+class DataQualityResponse(BaseModel):
+    warnings: List[DataWarning]
 
 
 def _to_summary(dataset: Dataset) -> DatasetSummary:
@@ -321,6 +336,41 @@ def get_dataset_histogram(
             detail={"code": "COLONNE_INTROUVABLE", "message": str(exc)},
         )
     return HistogramResponse(**histogram)
+
+
+@router.get("/{dataset_id}/quality-check", response_model=DataQualityResponse)
+def get_dataset_quality_check(
+    dataset_id: int,
+    target_column: str,
+    group_column: Optional[str] = None,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Garde-fous de données (Lot B) — avertissements actionnables sur le
+    dataset par rapport à la colonne cible choisie (fuite, déséquilibre,
+    cardinalité...). Calculé à la demande, au moment du choix dataset+cible,
+    avant le lancement de l'entraînement — jamais bloquant : on informe,
+    on n'empêche pas."""
+    dataset = _get_org_dataset(dataset_id, current_user, db)
+    if dataset.status != "ready":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"code": "DATASET_NON_PRET", "message": "Ce dataset n'a pas pu être analysé"},
+        )
+    try:
+        df = read_dataframe(Path(dataset.file_path), Path(dataset.file_path).suffix)
+        warnings = analyze_data_quality(df, target_column, group_column)
+    except DatasetParsingError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"code": "DATASET_LECTURE_ECHEC", "message": str(exc)},
+        )
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": "COLONNE_INTROUVABLE", "message": str(exc)},
+        )
+    return DataQualityResponse(warnings=[DataWarning(**w) for w in warnings])
 
 
 @router.delete("/{dataset_id}", status_code=status.HTTP_204_NO_CONTENT)
