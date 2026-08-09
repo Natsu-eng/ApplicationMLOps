@@ -13,6 +13,7 @@ from sklearn.pipeline import Pipeline
 
 import services.ml_training as ml_training_module
 from services.ml_preprocessing import split_dataset
+from services.ml_registry import MODEL_REGISTRY
 from services.ml_training import (
     TrainingConfig,
     _compute_cqr,
@@ -113,9 +114,9 @@ def test_cv_estimator_is_pipeline_with_preprocessor_first_step(monkeypatch):
     cv = _make_cv("regression", 3, None)
     config = TrainingConfig(optuna_trials=1, cv_folds=3)
 
-    model_cls, space_fn = ml_training_module._REGRESSORS["LightGBM"]
+    spec = MODEL_REGISTRY["lightgbm"]
     _optimize_one_model(
-        "LightGBM", model_cls, space_fn, split.X_train, y_train, "regression", cv, split.groups_train,
+        spec, split.X_train, y_train, "regression", cv, split.groups_train,
         preprocessor_template, config, lambda s, p: None, 0, 10,
     )
 
@@ -201,9 +202,9 @@ def test_feature_engineering_frequency_encoding_survives_pipeline_wiring(monkeyp
 
     monkeypatch.setattr(ml_training_module, "cross_val_score", fake_cross_val_score)
 
-    model_cls, space_fn = ml_training_module._REGRESSORS["LightGBM"]
+    spec = MODEL_REGISTRY["lightgbm"]
     _optimize_one_model(
-        "LightGBM", model_cls, space_fn, split.X_train, split.y_train.to_numpy(dtype=float),
+        spec, split.X_train, split.y_train.to_numpy(dtype=float),
         "regression", cv, None, preprocessor_template, config, lambda s, p: None, 0, 10,
     )
 

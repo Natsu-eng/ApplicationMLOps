@@ -37,8 +37,7 @@ import numpy as np
 import optuna
 import pandas as pd
 import shap
-from catboost import CatBoostClassifier, CatBoostRegressor
-from lightgbm import LGBMClassifier, LGBMRegressor
+from lightgbm import LGBMRegressor
 from sklearn.base import clone
 from sklearn.compose import ColumnTransformer
 from sklearn.metrics import (
@@ -64,9 +63,9 @@ from sklearn.model_selection import (
 )
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import LabelEncoder, label_binarize
-from xgboost import XGBClassifier, XGBRegressor
 
 from services.ml_preprocessing import SplitResult, build_preprocessor
+from services.ml_registry import ModelSpec, models_for_task
 
 logger = logging.getLogger("datalab.ml_training")
 optuna.logging.set_verbosity(optuna.logging.WARNING)
@@ -101,62 +100,6 @@ class TrainedModelResult:
     evaluation: dict[str, Any]  # matrice de confusion+ROC/PR (classif) ou prédit-vs-réel+résidus (régression)
 
 
-# ── Espaces de recherche Optuna — un par algorithme, régression et classification ──
-
-def _lightgbm_space(trial: optuna.Trial) -> dict:
-    return dict(
-        n_estimators=trial.suggest_int("n_estimators", 50, 500),
-        learning_rate=trial.suggest_float("learning_rate", 0.01, 0.2, log=True),
-        num_leaves=trial.suggest_int("num_leaves", 20, 200),
-        max_depth=trial.suggest_int("max_depth", 4, 14),
-        min_child_samples=trial.suggest_int("min_child_samples", 5, 80),
-        subsample=trial.suggest_float("subsample", 0.6, 1.0),
-        colsample_bytree=trial.suggest_float("colsample_bytree", 0.6, 1.0),
-        reg_alpha=trial.suggest_float("reg_alpha", 1e-3, 10, log=True),
-        reg_lambda=trial.suggest_float("reg_lambda", 1e-3, 10, log=True),
-    )
-
-
-def _xgboost_space(trial: optuna.Trial) -> dict:
-    return dict(
-        n_estimators=trial.suggest_int("n_estimators", 50, 500),
-        learning_rate=trial.suggest_float("learning_rate", 0.01, 0.2, log=True),
-        max_depth=trial.suggest_int("max_depth", 3, 12),
-        subsample=trial.suggest_float("subsample", 0.6, 1.0),
-        colsample_bytree=trial.suggest_float("colsample_bytree", 0.6, 1.0),
-        reg_alpha=trial.suggest_float("reg_alpha", 1e-3, 10, log=True),
-        reg_lambda=trial.suggest_float("reg_lambda", 1e-3, 10, log=True),
-    )
-
-
-def _catboost_space(trial: optuna.Trial) -> dict:
-    return dict(
-        iterations=trial.suggest_int("iterations", 100, 600),
-        learning_rate=trial.suggest_float("learning_rate", 0.01, 0.2, log=True),
-        depth=trial.suggest_int("depth", 4, 10),
-        l2_leaf_reg=trial.suggest_float("l2_leaf_reg", 1e-3, 10, log=True),
-    )
-
-
-_REGRESSORS: dict[str, tuple[type, Callable[[optuna.Trial], dict]]] = {
-    "LightGBM": (LGBMRegressor, _lightgbm_space),
-    "XGBoost": (XGBRegressor, _xgboost_space),
-    "CatBoost": (CatBoostRegressor, _catboost_space),
-}
-
-_CLASSIFIERS: dict[str, tuple[type, Callable[[optuna.Trial], dict]]] = {
-    "LightGBM": (LGBMClassifier, _lightgbm_space),
-    "XGBoost": (XGBClassifier, _xgboost_space),
-    "CatBoost": (CatBoostClassifier, _catboost_space),
-}
-
-_QUIET_KWARGS = {
-    "LightGBM": {"verbose": -1},
-    "XGBoost": {"verbosity": 0},
-    "CatBoost": {"verbose": False},
-}
-
-
 def _make_cv(task_type: str, cv_folds: int, groups: Optional[np.ndarray]):
     """GroupKFold si une colonne de groupe est fournie (anti-fuite jusque dans
     la CV) — sinon StratifiedKFold (classification) ou KFold (régression)."""
@@ -168,9 +111,7 @@ def _make_cv(task_type: str, cv_folds: int, groups: Optional[np.ndarray]):
 
 
 def _optimize_one_model(
-    algo_name: str,
-    model_cls: type,
-    space_fn: Callable[[optuna.Trial], dict],
+    spec: ModelSpec,
     X_raw: pd.DataFrame,
     y: np.ndarray,
     task_type: str,
@@ -182,18 +123,23 @@ def _optimize_one_model(
     progress_base: int,
     progress_span: int,
 ) -> tuple[Any, float]:
-    """Recherche Optuna (TPE) pour un algorithme — retourne (meilleurs
-    hyperparamètres appliqués à un estimateur non-fit, score de CV moyen).
+    """Recherche Optuna (TPE) pour un modèle du registre (Lot 5) — retourne
+    (meilleurs hyperparamètres appliqués à un estimateur non-fit, score de CV
+    moyen).
 
     `X_raw` est le train BRUT (non préprocessé) : chaque essai construit un
     `Pipeline(préprocesseur, modèle)` non-fit et le passe à `cross_val_score`,
     qui le clone et le refit à l'intérieur de chaque fold — le préprocesseur
-    ne voit donc jamais la portion de validation du fold (Lot A)."""
+    ne voit donc jamais la portion de validation du fold (Lot A). Ce pattern
+    est générique à tout `ModelSpec.build_estimator`, indépendamment du
+    besoin de scaling du modèle (Lot 5, Phase 1 : déjà satisfait par
+    `build_preprocessor`, aucune branche par famille nécessaire ici)."""
+    algo_name = spec.label(task_type)
     scoring = "r2" if task_type == "regression" else "roc_auc_ovr_weighted"
 
     def objective(trial: optuna.Trial) -> float:
-        params = space_fn(trial)
-        model = model_cls(random_state=config.seed, **_QUIET_KWARGS[algo_name], **params)
+        params = spec.hyperparameter_space(trial)
+        model = spec.build_estimator(task_type, config.seed, params, False)
         pipeline = Pipeline([("preprocess", clone(preprocessor_template)), ("model", model)])
         try:
             scores = cross_val_score(pipeline, X_raw, y, cv=cv, groups=groups, scoring=scoring, n_jobs=1)
@@ -212,7 +158,7 @@ def _optimize_one_model(
     study = optuna.create_study(direction="maximize", sampler=optuna.samplers.TPESampler(seed=config.seed))
     study.optimize(objective, n_trials=config.optuna_trials, callbacks=[on_trial_end], show_progress_bar=False)
 
-    best_model = model_cls(random_state=config.seed, **_QUIET_KWARGS[algo_name], **study.best_params)
+    best_model = spec.build_estimator(task_type, config.seed, study.best_params, True)
     return best_model, study.best_value
 
 
@@ -520,16 +466,21 @@ def train_and_evaluate(
     preprocessor_template = build_preprocessor(split.X_train, feature_engineering_config)
 
     cv = _make_cv(task_type, config.cv_folds, split.groups_train)
-    catalog = _REGRESSORS if task_type == "regression" else _CLASSIFIERS
+    # `subset="all"` : le catalogue complet tourne encore ici — la sélection
+    # par défaut (boosters + RandomForest, stratégie produit "B") est câblée
+    # dans un commit dédié (Lot 5, `ModelSpec.is_default`) sans toucher à
+    # cette boucle, qui ne référence déjà plus aucun nom d'algorithme en dur.
+    catalog = models_for_task(task_type, subset="all")
 
     candidates: list[tuple[str, Any, float]] = []
     n_models = len(catalog)
-    span_per_model = 65 // n_models  # 5%→70% réparti entre les 3 algos
-    for i, (algo_name, (model_cls, space_fn)) in enumerate(catalog.items()):
+    span_per_model = 65 // n_models  # 5%→70% réparti entre les modèles du catalogue
+    for i, spec in enumerate(catalog):
+        algo_name = spec.label(task_type)
         base = 5 + i * span_per_model
         progress_cb(f"Optimisation {algo_name}", base)
         best_model, cv_score = _optimize_one_model(
-            algo_name, model_cls, space_fn, split.X_train, y_train, task_type, cv, split.groups_train,
+            spec, split.X_train, y_train, task_type, cv, split.groups_train,
             preprocessor_template, config, progress_cb, base, span_per_model,
         )
         candidates.append((algo_name, best_model, cv_score))
