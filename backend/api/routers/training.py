@@ -23,14 +23,28 @@ from api.core.job_queue import training_queue
 from api.core.models import Dataset, MLModel, TrainingJob, User
 from api.routers.auth import get_current_user
 from services.datasets import DatasetParsingError, read_dataframe
+from services.feature_engineering import CURRENT_SPEC_VERSION
 from services.ml_inference import InferenceError, load_bundle, predict_one
 from services.ml_task import detect_task_type
+
+_KNOWN_UPSTREAM_TYPES = {"datetime_decompose", "ratio"}
 
 router = APIRouter(prefix="/training", tags=["training"])
 _settings = get_settings()
 
 
 # ── Schémas ──────────────────────────────────────────────────────────────────
+
+class FeatureEngineeringConfig(BaseModel):
+    """Transformations de variables approuvées par l'utilisateur (Lot 4c) —
+    chaque entrée reprend telle quelle le champ `transformation` d'une
+    suggestion renvoyée par `GET /datasets/{id}/feature-engineering-suggestions`.
+    `upstream` : déterministe (datetime, ratio), appliqué une fois avant le
+    split. `pipeline` : appris (encodage de fréquence, imputation), fit dans
+    chaque fold — voir `services/ml_preprocessing.build_preprocessor`."""
+    upstream: List[dict[str, Any]] = []
+    pipeline: dict[str, Any] = {}
+
 
 class TrainingJobCreate(BaseModel):
     dataset_id: int
@@ -41,6 +55,7 @@ class TrainingJobCreate(BaseModel):
     test_size: float = Field(0.2, gt=0.05, lt=0.5)
     optuna_trials: Optional[int] = Field(None, ge=3, le=100)
     cv_folds: Optional[int] = Field(None, ge=2, le=10)
+    feature_engineering: Optional[FeatureEngineeringConfig] = None
 
 
 class TrainingJobSummary(BaseModel):
@@ -79,6 +94,7 @@ class MLModelDetail(BaseModel):
     cqr: Optional[dict[str, Any]] = None
     model_card: dict[str, Any]
     evaluation: dict[str, Any] = {}
+    feature_engineering: Optional[dict[str, Any]] = None
     created_at: datetime
 
 
@@ -120,6 +136,47 @@ def _to_summary(job: TrainingJob) -> TrainingJobSummary:
         algorithm=model.algorithm if model else None,
         headline_metric=_headline_metric(job.task_type, metrics) if metrics else None,
     )
+
+
+def _validate_and_serialize_feature_engineering(
+    fe: Optional[FeatureEngineeringConfig], schema_columns: list[str]
+) -> Optional[str]:
+    """Valide les colonnes référencées par la spec approuvée (mêmes garanties
+    que pour target_column/feature_columns/group_column ci-dessus), puis la
+    sérialise avec son numéro de version (Lot 4c, precision 2) — c'est cette
+    version, pas une saisie du frontend, qui fait foi à l'inférence."""
+    if fe is None:
+        return None
+
+    known_columns = set(schema_columns)
+    for transformation in fe.upstream:
+        ttype = transformation.get("type")
+        if ttype not in _KNOWN_UPSTREAM_TYPES:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"code": "TRANSFORMATION_INCONNUE", "message": f"Type de transformation amont inconnu : {ttype}"},
+            )
+        referenced = (
+            [transformation.get("source_column")] if ttype == "datetime_decompose"
+            else [transformation.get("numerator"), transformation.get("denominator")]
+        )
+        unknown = {c for c in referenced if c not in known_columns}
+        if unknown:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"code": "COLONNES_INCONNUES", "message": f"Colonnes absentes du dataset : {', '.join(sorted(unknown))}"},
+            )
+
+    freq_cols = fe.pipeline.get("frequency_encoding") or []
+    imputation_cols = list((fe.pipeline.get("imputation") or {}).keys())
+    unknown_pipeline = (set(freq_cols) | set(imputation_cols)) - known_columns
+    if unknown_pipeline:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": "COLONNES_INCONNUES", "message": f"Colonnes absentes du dataset : {', '.join(sorted(unknown_pipeline))}"},
+        )
+
+    return json.dumps({"version": CURRENT_SPEC_VERSION, "upstream": fe.upstream, "pipeline": fe.pipeline})
 
 
 def _get_org_job(job_id: int, current_user: User, db: Session) -> TrainingJob:
@@ -180,6 +237,8 @@ def create_training_job(
             detail={"code": "COLONNE_GROUPE_INTROUVABLE", "message": f"Colonne de groupe '{body.group_column}' absente du dataset"},
         )
 
+    feature_engineering_json = _validate_and_serialize_feature_engineering(body.feature_engineering, schema_columns)
+
     try:
         df = read_dataframe(Path(dataset.file_path), Path(dataset.file_path).suffix)
     except DatasetParsingError as exc:
@@ -214,6 +273,7 @@ def create_training_job(
         feature_columns_json=json.dumps(feature_columns),
         group_column=body.group_column,
         config_json=json.dumps(config),
+        feature_engineering_json=feature_engineering_json,
         status="queued",
     )
     db.add(job)
@@ -268,6 +328,7 @@ def get_training_job_model(job_id: int, current_user: User = Depends(get_current
         cqr=json.loads(model.cqr_json) if model.cqr_json else None,
         model_card=json.loads(model.model_card_json) if model.model_card_json else {},
         evaluation=json.loads(model.evaluation_json) if model.evaluation_json else {},
+        feature_engineering=json.loads(model.feature_engineering_json) if model.feature_engineering_json else None,
         created_at=model.created_at,
     )
 
