@@ -13,7 +13,7 @@ Le dépôt contient deux choses en parallèle, le temps de la migration :
 
 | | Rôle |
 | --- | --- |
-| **`backend/` + `frontend/`** | Le nouveau SaaS, construit **lot par lot**. État actuel : **Lot 2** — auth + organisations, upload et catalogage de datasets tabulaires. Voir [`backend/workflow.md`](backend/workflow.md). |
+| **`backend/` + `frontend/`** | Le nouveau SaaS, construit **lot par lot**. État actuel : **Lot 3** — entraînement ML supervisé de bout en bout (LightGBM/XGBoost/CatBoost, Optuna, SHAP, CQR) en tâche de fond avec suivi de progression. Voir [`backend/workflow.md`](backend/workflow.md). |
 | **`src/`, `ui/`, `helpers/`, `monitoring/`, `orchestrators/`...** | L'application **Streamlit historique**, conservée intacte comme référence pendant le portage progressif de sa logique ML vers `backend/`. Documentation : [`docs/legacy/README.md`](docs/legacy/README.md). |
 
 Rien n'est supprimé de l'application historique tant que sa logique n'a pas
@@ -47,13 +47,18 @@ npm run dev
 # → http://localhost:5173
 ```
 
-### Docker (backend + frontend + PostgreSQL)
+### Docker (backend + worker + frontend + PostgreSQL + Redis)
 
 ```bash
 cp backend/.env.example backend/.env
 docker compose up -d --build
-docker compose logs -f backend
+docker compose logs -f backend worker
 ```
+
+L'entraînement de modèles (Lot 3) a besoin de Redis et d'un worker actif —
+`docker compose` les démarre automatiquement (services `redis` et `worker`).
+En dev hors Docker, voir [`backend/README.md`](backend/README.md) pour les
+lancer à la main.
 
 Détails complets (structure, variables d'environnement, conventions) : voir
 les READMEs de chaque dossier ci-dessous.
@@ -81,6 +86,7 @@ streamlit run src/app/main.py
 
 ---
 
-**Statut** : migration en cours — Lot 0 (squelette), Lot 1 (authentification et
-organisations) et Lot 2 (datasets tabulaires) livrés. Voir
-[`backend/workflow.md`](backend/workflow.md) pour la suite.
+**Statut** : migration en cours — Lot 0 (squelette), Lot 1 (authentification
+et organisations), Lot 2 (datasets tabulaires) et Lot 3 (entraînement ML
+supervisé) livrés. Voir [`backend/workflow.md`](backend/workflow.md) pour la
+suite.

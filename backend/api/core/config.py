@@ -38,6 +38,19 @@ class Settings(BaseSettings):
     # tâche de fond (Lot 3) : garder une limite raisonnable pour rester robuste.
     max_upload_size_mb: int = 200
 
+    # File de tâches d'entraînement (Lot 3) — RQ + Redis, décision du diagnostic
+    # de migration (CIAM n'en a pas besoin, ses tâches sont trop courtes ; un
+    # entraînement avec recherche d'hyperparamètres Optuna ne l'est pas).
+    redis_url: str = "redis://localhost:6379/0"
+
+    # Entraînement ML (Lot 3) — défauts appliqués si le job n'en précise pas.
+    optuna_trials_default: int = 20
+    cv_folds_default: int = 4
+    shap_sample_size: int = 500
+    cqr_alpha: float = 0.20  # intervalle de confiance conforme à 80 % (1 - alpha)
+    cqr_n_strata: int = 5  # strates Mondrian — voir services/ml_training.py
+    model_seed: int = 42
+
     # Journalisation
     log_level: str = "INFO"
 

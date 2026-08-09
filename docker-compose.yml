@@ -1,9 +1,11 @@
 # ═══════════════════════════════════════════════════════════════════════════
-# DOCKER COMPOSE — DataLab Pro (FastAPI + React + PostgreSQL)
+# DOCKER COMPOSE — DataLab Pro (FastAPI + React + PostgreSQL + Redis/RQ)
 #
-# Services (Lot 0) :
+# Services :
 #   db       — PostgreSQL 15
+#   redis    — file de tâches d'entraînement (Lot 3)
 #   backend  — FastAPI + Gunicorn (port 8000 interne)
+#   worker   — même image que backend, exécute `rq worker` (Lot 3)
 #   frontend — React buildé + Nginx (port 80 public)
 #
 # Démarrage : docker compose up -d --build
@@ -30,6 +32,19 @@ services:
       retries: 5
       start_period: 10s
 
+  redis:
+    image: redis:7-alpine
+    container_name: datalab_redis
+    networks:
+      - datalab_network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
   backend:
     build:
       context: ./backend
@@ -42,12 +57,15 @@ services:
     environment:
       # En Docker, le backend rejoint la base via le nom de service "db", pas "localhost"
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      REDIS_URL: redis://redis:6379/0
       PYTHONUNBUFFERED: "1"
     volumes:
-      # Datasets uploadés — persistants entre redémarrages du conteneur (Lot 2)
+      # Datasets + modèles entraînés — persistants entre redémarrages (Lot 2/3)
       - ./backend/storage:/app/storage
     depends_on:
       db:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     networks:
       - datalab_network
@@ -58,6 +76,36 @@ services:
       timeout: 10s
       retries: 3
       start_period: 30s
+
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: datalab-backend:latest
+    container_name: datalab_worker
+    command: ["python", "-m", "workers.run_worker"]
+    env_file: backend/.env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      REDIS_URL: redis://redis:6379/0
+      PYTHONUNBUFFERED: "1"
+    volumes:
+      # Même volume que le backend : le worker écrit les artefacts de modèles,
+      # l'API les sert — un seul système de fichiers partagé (Lot 9 : stockage
+      # objet si on scale sur plusieurs machines).
+      - ./backend/storage:/app/storage
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - datalab_network
+    restart: unless-stopped
+    # Le HEALTHCHECK de l'image (curl /api/health) n'a pas de sens ici : le
+    # worker ne sert pas de HTTP — désactivé plutôt que faussement "unhealthy".
+    healthcheck:
+      disable: true
 
   frontend:
     build:

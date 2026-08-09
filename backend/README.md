@@ -11,11 +11,10 @@ détection d'anomalies) sur leurs propres données. Architecture inspirée de
 Ce backend est construit **lot par lot**, chaque lot livrant quelque chose qui
 fonctionne (voir [`workflow.md`](workflow.md) pour le détail).
 
-> **Lot 2 (datasets tabulaires) — état actuel.** L'API démarre, expose
-> `GET /api/health`, un cycle d'authentification complet (inscription,
-> connexion, profil, équipe) et l'upload/catalogage de datasets tabulaires
-> (csv/parquet/xlsx/xls/json) isolés par organisation. L'entraînement arrive
-> au Lot 3.
+> **Lot 3 (entraînement ML supervisé) — état actuel.** Authentification,
+> upload/catalogage de datasets, et entraînement de bout en bout
+> (LightGBM/XGBoost/CatBoost + Optuna + SHAP + intervalles conformes CQR) en
+> tâche de fond (RQ + Redis) avec suivi de progression en direct.
 
 ## Stack
 
@@ -27,6 +26,10 @@ fonctionne (voir [`workflow.md`](workflow.md) pour le détail).
 | Configuration | pydantic-settings (lecture de `.env`) | 2.10.1 |
 | Authentification | JWT HS256 (`python-jose`) + bcrypt | 3.5.0 / 5.0.0 |
 | Datasets | pandas + openpyxl (Excel) + pyarrow (Parquet) | 2.2.2 |
+| ML | scikit-learn + LightGBM + XGBoost + CatBoost | 1.3.2 / 4.3.0 / 2.0.3 / 1.2.5 |
+| Recherche d'hyperparamètres | Optuna (TPE) | 3.6.1 |
+| Explicabilité | SHAP (TreeExplainer) | 0.45.0 |
+| File de tâches | RQ + Redis | 1.16.2 / 5.0.4 |
 
 ## Démarrage local
 
@@ -40,6 +43,18 @@ uvicorn api.main:app --reload --port 8000
 # → http://localhost:8000/docs (documentation interactive Swagger)
 ```
 
+L'entraînement de modèles (Lot 3) a besoin en plus de **Redis** et d'un
+**worker** — sans ça, un job reste bloqué en `queued` :
+
+```bash
+# Redis (le plus simple : Docker, même hors docker-compose)
+docker run -d --name datalab_redis -p 6379:6379 redis:7-alpine
+
+# Worker — dans un second terminal, même venv activé
+cd backend
+python -m workers.run_worker
+```
+
 ## Structure
 
 ```text
@@ -49,15 +64,23 @@ backend/
 │   ├── core/
 │   │   ├── config.py        ← paramètres applicatifs centralisés (pydantic-settings)
 │   │   ├── database.py       ← connexion SQLAlchemy, session, Base ORM
-│   │   ├── models.py          ← Organization, User, Dataset (multi-tenant)
+│   │   ├── models.py          ← Organization, User, Dataset, TrainingJob, MLModel
 │   │   ├── security.py         ← JWT (python-jose) + hashing bcrypt
-│   │   └── storage.py           ← chemin des fichiers datasets sur disque
+│   │   ├── storage.py           ← chemins des fichiers (datasets + modèles) sur disque
+│   │   └── job_queue.py           ← file RQ + connexion Redis
 │   └── routers/
 │       ├── auth.py               ← inscription, connexion, profil, gestion d'équipe
-│       └── datasets.py             ← upload, liste, aperçu, suppression de datasets
+│       ├── datasets.py             ← upload, liste, aperçu, suppression de datasets
+│       └── training.py               ← lancement, suivi et résultat des entraînements
 ├── services/
-│   └── datasets.py             ← lecture/validation pure des fichiers tabulaires
-├── storage/datasets/             ← fichiers uploadés (gitignorés, montés en volume Docker)
+│   ├── datasets.py             ← lecture/validation pure des fichiers tabulaires
+│   ├── ml_task.py                ← détection classification/régression
+│   ├── ml_preprocessing.py         ← dédoublonnage, split anti-fuite, imputation/encodage
+│   └── ml_training.py                ← Optuna, sélection sur CV, SHAP, CQR Mondrian
+├── workers/
+│   ├── run_worker.py             ← point d'entrée du worker (SimpleWorker, portable Windows/Linux)
+│   └── training_worker.py          ← fonction exécutée par le worker pour chaque job
+├── storage/{datasets,models}/      ← fichiers uploadés + artefacts entraînés (gitignorés, volume Docker)
 ├── database/                 ← base SQLite de développement (générée au démarrage, gitignorée)
 ├── requirements.txt
 ├── .env.example                ← variables documentées, aucune valeur réelle

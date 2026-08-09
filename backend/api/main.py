@@ -23,6 +23,7 @@ from api.core.config import get_settings
 from api.core.database import check_connection, init_db
 from api.routers.auth import router as auth_router
 from api.routers.datasets import router as datasets_router
+from api.routers.training import router as training_router
 
 logging.basicConfig(
     level=logging.INFO,
@@ -74,6 +75,7 @@ app.add_middleware(
 
 app.include_router(auth_router)
 app.include_router(datasets_router)
+app.include_router(training_router)
 
 
 @app.get("/api/health", tags=["système"])

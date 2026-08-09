@@ -32,6 +32,13 @@ backend/database/*.db
 backend/storage/datasets/*
 !backend/storage/datasets/.gitkeep
 
+# Modèles entraînés (artefacts joblib, Lot 3) — jamais dans git
+backend/storage/models/*
+!backend/storage/models/.gitkeep
+
+# CatBoost écrit ses logs d'entraînement dans le répertoire courant (Lot 3)
+catboost_info/
+
 # Données utilisateur (jeux de données legacy app Streamlit — chemins précis,
 # ne masque plus *.csv/*.json/*.xlsx globalement pour ne pas ignorer par
 # erreur des fichiers de config comme package.json/tsconfig.json)

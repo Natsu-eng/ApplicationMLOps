@@ -1,7 +1,7 @@
 # ARCHITECTURE.md — Backend DataLab Pro
 
-> **Lot 2 — datasets tabulaires.** Ce document est vivant : il grandit à
-> chaque lot livré. Historique des décisions : voir
+> **Lot 3 — entraînement ML supervisé.** Ce document est vivant : il grandit
+> à chaque lot livré. Historique des décisions : voir
 > [`workflow.md`](workflow.md).
 
 ## 1. Vue d'ensemble
@@ -20,38 +20,48 @@ Stack choisie par parité avec **CIAM** (`concrete-ai-platform`), déjà
 ordre des lots) est documenté dans le diagnostic de migration présenté et
 validé avant le début du code.
 
-## 2. Schéma des couches (état Lot 2)
+## 2. Schéma des couches (état Lot 3)
 
 ```text
 ┌────────────────────────────────────────────────────┐
 │  FRONTEND  (React — voir ../frontend/)               │
-│    AuthContext (token localStorage) + ProtectedRoute   │
-│    AppShell (navigation) + components/ui/ (design system)│
+│    AppShell + components/ui/ (design system)           │
+│    Training : formulaire + polling progression + résultat│
 └─────────────────────┬────────────────────────────────┘
-                       │ HTTP JSON (Bearer JWT sur les routes protégées)
+                       │ HTTP JSON (Bearer JWT)
                        ▼
 ┌────────────────────────────────────────────────────┐
 │  api/main.py — FastAPI                                │
-│    lifespan()  : init_db() (non bloquant)               │
-│    CORS        : origines frontend autorisées              │
-│    GET /api/health                                            │
-│    routers auth (/auth) et datasets (/datasets)                 │
+│    routers auth (/auth), datasets (/datasets),          │
+│    training (/training)                                   │
 └─────────────────────┬────────────────────────────────┘
-                       ▼
-┌────────────────────────────────────────────────────┐
-│  api/routers/{auth,datasets}.py                       │
-│    get_current_user, require_owner (dépendances communes)│
-└─────────────────────┬────────────────────────────────┘
-              ┌────────┴────────┐
-              ▼                 ▼
-┌───────────────────────┐ ┌───────────────────────────┐
-│ api/core/{security,      │ │ services/datasets.py         │
-│ database,models,storage}  │ │  lecture/validation pure       │
-│  JWT+bcrypt · SQLAlchemy    │ │  (csv/parquet/xlsx/xls/json)    │
-│  Organization,User,Dataset   │ │ api/core/storage.py               │
-│  Postgres (prod)/SQLite (dev)  │ │  disque local, storage/datasets/    │
-└───────────────────────┘ └───────────────────────────┘
+              ┌────────┼──────────────────┐
+              ▼        ▼                  ▼
+┌───────────────┐ ┌───────────────┐ ┌─────────────────────┐
+│ api/core/         │ services/datasets   │ api/routers/training.py │
+│ {security,database,│ (lecture pure)      │  crée TrainingJob,          │
+│ models,storage}.py │                     │  enfile sur RQ (non bloquant)│
+└───────────────┘ └───────────────┘ └───────────┬─────────┘
+                                                  │ redis (queue "training")
+                                                  ▼
+                                     ┌─────────────────────────┐
+                                     │  WORKER — process séparé    │
+                                     │  workers/run_worker.py         │
+                                     │  (SimpleWorker+TimerDeathPenalty,│
+                                     │   portable Windows/Linux)         │
+                                     │    → workers/training_worker.py     │
+                                     │    → services/ml_preprocessing.py     │
+                                     │      (dédoublonnage, split anti-fuite)│
+                                     │    → services/ml_training.py           │
+                                     │      (Optuna, SHAP, CQR Mondrian)        │
+                                     │    → persiste MLModel + artefact joblib   │
+                                     │      + progression DB à chaque étape        │
+                                     └─────────────────────────────────────────────┘
 ```
+
+Le frontend ne parle jamais au worker directement : il interroge
+`GET /training/jobs/{id}` par polling, qui lit la même table `TrainingJob`
+que le worker met à jour — une seule source de vérité pour la progression.
 
 Ce schéma se complète lot par lot :
 
@@ -59,8 +69,8 @@ Ce schéma se complète lot par lot :
 | --- | --- |
 | 1 (livré) | `api/core/security.py` (JWT + bcrypt), `api/core/models.py` (User, Organization), `api/routers/auth.py` |
 | 2 (livré) | `api/routers/datasets.py`, `api/core/storage.py`, `services/datasets.py` (première brique de la couche `services/`) |
-| 3 | `api/core/job_queue.py` (RQ + Redis), `workers/`, `api/routers/ws_progress.py` |
-| ≥4 | `services/` continue de grandir — portage de la logique ML pure identifiée dans le diagnostic (catalogue de modèles, preprocessing, orchestrateurs, métriques, visualisations) |
+| 3 (livré) | `api/core/job_queue.py` (RQ + Redis), `workers/` (worker portable), `services/ml_*.py`, `api/routers/training.py` |
+| 4-5 | `services/` continue de grandir — visualisations Plotly, catalogue ML complet (sklearn, SMOTE, clustering) |
 
 ## 3. Points d'entrée
 
@@ -79,6 +89,12 @@ Ce schéma se complète lot par lot :
 | `LOG_LEVEL` | `api/core/config.py` | `INFO` |
 | `JWT_SECRET_KEY` | `api/core/security.py` | clé de développement codée en dur (avertissement journalisé) |
 | `MAX_UPLOAD_SIZE_MB` | `api/routers/datasets.py` | `200` |
+| `REDIS_URL` | `api/core/job_queue.py` | `redis://localhost:6379/0` |
+| `OPTUNA_TRIALS_DEFAULT` | `api/routers/training.py` | `20` |
+| `CV_FOLDS_DEFAULT` | `api/routers/training.py` | `4` |
+| `SHAP_SAMPLE_SIZE` | `services/ml_training.py` | `500` |
+| `CQR_ALPHA` | `services/ml_training.py` | `0.20` (intervalle à 80 %) |
+| `CQR_N_STRATA` | `services/ml_training.py` | `5` |
 
 ## 5. Authentification et multi-tenant (Lot 1)
 
@@ -124,7 +140,59 @@ Ce schéma se complète lot par lot :
   l'`organization_id` fait partie du chemin sur disque — deux niveaux
   indépendants, pas un seul point de défaillance.
 
-## 7. Conventions reprises de CIAM
+## 7. Entraînement ML supervisé (Lot 3)
+
+- **Méthodologie source** : un notebook de référence partagé par l'équipe
+  (`Notebook_Pipeline_Resistance.ipynb`, lu intégralement puis supprimé du
+  dépôt — sa méthodologie est reprise ici, pas son sujet métier). Points
+  repris tels quels :
+  - **sélection du meilleur modèle sur le score de validation croisée,
+    jamais sur le score test** — le score test n'est rapporté qu'à titre
+    d'estimation finale (`services/ml_training.py::train_and_evaluate`).
+  - **split et CV groupés anti-fuite** : si l'utilisateur fournit une
+    colonne de groupe (ex : plusieurs mesures d'un même échantillon),
+    `GroupShuffleSplit`/`GroupKFold` remplacent le split/CV classiques, avec
+    une vérification explicite (assertion) qu'aucun groupe ne se retrouve
+    des deux côtés (`services/ml_preprocessing.py::DataLeakageError`).
+  - **CQR Mondrian** : intervalles de confiance conformes calibrés par
+    strate de prédiction (5 strates par défaut), pas un quantile unique —
+    corrige la sous-couverture aux valeurs extrêmes d'un split conformal
+    simple.
+  - **SHAP TreeExplainer** pour l'explicabilité globale (importance moyenne
+    par feature), cohérent avec des modèles d'arbres.
+- **Pourquoi seulement 3 algorithmes (LightGBM/XGBoost/CatBoost)** : tous
+  compatibles nativement avec SHAP `TreeExplainer` et la régression
+  quantile (nécessaire pour CQR) — permet une profondeur d'explicabilité et
+  de calibration uniforme sur les trois. Le catalogue sklearn plus large
+  (linéaire, SVM, KNN, + SMOTE) arrive au Lot 5 sans cette même profondeur.
+- **Tâche de fond obligatoire** : un entraînement (3 algos × recherche
+  Optuna × validation croisée) prend de quelques dizaines de secondes à
+  plusieurs minutes — jamais dans le cycle requête/réponse HTTP. La requête
+  `POST /training/jobs` ne fait que créer la ligne `TrainingJob` et enfiler
+  le job RQ ; tout le calcul a lieu dans `workers/training_worker.py`.
+- **RQ sur Windows** : la configuration RQ par défaut suppose Unix
+  (`os.fork()` pour isoler chaque job, `signal.SIGALRM` pour les timeouts).
+  Les deux sont absents sur Windows. `workers/run_worker.py` utilise
+  `SimpleWorker` (exécution dans le process du worker, pas de fork) et
+  `TimerDeathPenalty` (timeout par thread) — un seul point d'entrée qui
+  fonctionne identiquement en dev Windows et en conteneur Linux
+  (`docker-compose.yml`, service `worker`), pas un cas spécial cousu pour
+  une seule plateforme.
+- **Progression sans WebSocket** : le worker écrit `progress_step`/
+  `progress_percent` dans `TrainingJob` à chaque étape (par exemple à
+  chaque essai Optuna) ; le frontend fait du polling REST
+  (`GET /training/jobs/{id}` toutes les 3 secondes tant qu'un job est actif).
+  Suffisant et plus simple à fiabiliser qu'un WebSocket pour ce volume
+  d'événements — à réévaluer si le besoin de vrai temps réel se confirme.
+- **Persistance du résultat** : `MLModel` stocke les métriques, le résumé
+  SHAP et les paramètres CQR en JSON (interrogeables sans désérialiser
+  l'artefact), et référence un bundle `joblib` (modèle + preprocessor +
+  régresseurs de quantile CQR) sur disque
+  (`storage/models/{organization_id}/{training_job_id}.joblib`) — base du
+  registre de modèles versionné prévu au Lot 9, pas encore l'article fini
+  (pas de versioning ni d'endpoint de téléchargement/inférence pour l'instant).
+
+## 8. Conventions reprises de CIAM
 
 - Un échec d'initialisation non critique (base de données indisponible au
   démarrage) ne bloque jamais le démarrage de l'API : il est journalisé et

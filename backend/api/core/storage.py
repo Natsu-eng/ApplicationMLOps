@@ -13,6 +13,7 @@ from pathlib import Path
 
 STORAGE_ROOT = Path(__file__).resolve().parent.parent.parent / "storage"
 DATASETS_DIR = STORAGE_ROOT / "datasets"
+MODELS_DIR = STORAGE_ROOT / "models"
 
 
 def dataset_file_path(organization_id: int, dataset_id: int, extension: str) -> Path:
@@ -26,3 +27,9 @@ def delete_dataset_file(path: Path) -> None:
         path.unlink(missing_ok=True)
     except OSError:
         pass
+
+
+def model_file_path(organization_id: int, training_job_id: int) -> Path:
+    org_dir = MODELS_DIR / str(organization_id)
+    org_dir.mkdir(parents=True, exist_ok=True)
+    return org_dir / f"{training_job_id}.joblib"

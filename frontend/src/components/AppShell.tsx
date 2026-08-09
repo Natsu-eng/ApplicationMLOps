@@ -1,12 +1,13 @@
 import type { ReactNode } from "react";
 import { Link, useLocation } from "react-router-dom";
-import { Database, LayoutDashboard, LogOut } from "lucide-react";
+import { BrainCircuit, Database, LayoutDashboard, LogOut } from "lucide-react";
 import { useAuth } from "../contexts/AuthContext";
 import { Avatar } from "./ui/Avatar";
 
 const NAV_ITEMS = [
   { to: "/dashboard", label: "Tableau de bord", icon: LayoutDashboard },
   { to: "/datasets", label: "Mes données", icon: Database },
+  { to: "/training", label: "Entraînement", icon: BrainCircuit },
 ];
 
 /** Coquille commune à toutes les pages protégées : en-tête, navigation, session. */

@@ -84,3 +84,78 @@ class Dataset(Base):
 
     organization: Mapped["Organization"] = relationship("Organization")
     uploaded_by: Mapped[Optional["User"]] = relationship("User")
+
+
+class TrainingJob(Base):
+    """Un entraînement ML lancé sur un dataset — exécuté en tâche de fond (RQ).
+
+    `progress_step`/`progress_percent` sont mis à jour par le worker pendant
+    l'exécution (voir workers/training_worker.py) ; le frontend les lit par
+    polling (`GET /training/jobs/{id}`).
+    """
+
+    __tablename__ = "training_jobs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    organization_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    dataset_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("datasets.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    created_by_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    task_type: Mapped[str] = mapped_column(String(20), nullable=False)  # classification | regression
+    target_column: Mapped[str] = mapped_column(String(255), nullable=False)
+    feature_columns_json: Mapped[str] = mapped_column(Text, nullable=False)
+    group_column: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    config_json: Mapped[str] = mapped_column(Text, nullable=False)
+    # queued | running | completed | failed
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="queued", index=True)
+    progress_step: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    progress_percent: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    rq_job_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+    organization: Mapped["Organization"] = relationship("Organization")
+    dataset: Mapped["Dataset"] = relationship("Dataset")
+    created_by: Mapped[Optional["User"]] = relationship("User")
+    model: Mapped[Optional["MLModel"]] = relationship(
+        "MLModel", back_populates="training_job", uselist=False
+    )
+
+
+class MLModel(Base):
+    """Le modèle produit par un TrainingJob réussi — métriques, explicabilité
+    SHAP et intervalles conformes (CQR) inclus, pas seulement l'artefact.
+
+    Nommé `MLModel` (pas `Model`) pour ne jamais entrer en collision avec
+    `sqlalchemy.orm.Mapped`/`pydantic.BaseModel` dans les imports.
+    """
+
+    __tablename__ = "ml_models"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    organization_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    training_job_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("training_jobs.id", ondelete="CASCADE"), nullable=False, unique=True
+    )
+    algorithm: Mapped[str] = mapped_column(String(50), nullable=False)  # LightGBM | XGBoost | CatBoost
+    task_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    target_column: Mapped[str] = mapped_column(String(255), nullable=False)
+    feature_columns_json: Mapped[str] = mapped_column(Text, nullable=False)
+    file_path: Mapped[str] = mapped_column(String(500), nullable=False)
+    metrics_json: Mapped[str] = mapped_column(Text, nullable=False)
+    shap_summary_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    cqr_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    model_card_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+    organization: Mapped["Organization"] = relationship("Organization")
+    training_job: Mapped["TrainingJob"] = relationship("TrainingJob", back_populates="model")

@@ -5,10 +5,10 @@ SPA du SaaS DataLab Pro. Stack et conventions reprises de CIAM
 
 ## État d'avancement
 
-> **Lot 2 (datasets tabulaires) — état actuel.** Connexion, inscription
-> (création d'organisation), tableau de bord avec gestion d'équipe, page
-> "Mes données" (upload par glisser-déposer, grille de cartes, aperçu).
-> Entraînement arrive au Lot 3 — voir
+> **Lot 3 (entraînement ML supervisé) — état actuel.** Connexion, inscription,
+> tableau de bord avec équipe, "Mes données", et page "Entraînement" :
+> configuration d'un job, suivi de progression en direct (polling), résultat
+> détaillé (métriques, importance SHAP, intervalles conformes CQR) — voir
 > [`../backend/workflow.md`](../backend/workflow.md).
 
 ## Système de design
@@ -60,12 +60,14 @@ frontend/
 │   │   ├── Login.tsx                          ← connexion
 │   │   ├── Register.tsx                         ← inscription (crée une organisation)
 │   │   ├── Dashboard.tsx                          ← profil + équipe + ajout de membre (owner)
-│   │   └── Datasets.tsx                             ← upload, liste, aperçu des datasets
-│   ├── utils/format.ts                                ← formatage taille de fichier / date
+│   │   ├── Datasets.tsx                             ← upload, liste, aperçu des datasets
+│   │   └── Training.tsx                               ← configuration + suivi + historique d'entraînements
+│   ├── components/training/ModelResultModal.tsx        ← métriques, barres SHAP, couverture CQR, fiche modèle
+│   ├── utils/format.ts                                ← formatage taille/date/métriques
 │   └── index.css                                        ← Tailwind + fond dégradé global
 ├── index.html
 ├── package.json
-├── vite.config.ts               ← proxy /api, /auth, /datasets → backend en dev
+├── vite.config.ts               ← proxy /api, /auth, /datasets, /training → backend en dev
 ├── tsconfig*.json
 ├── .env.example
 └── README.md                       ← ce fichier

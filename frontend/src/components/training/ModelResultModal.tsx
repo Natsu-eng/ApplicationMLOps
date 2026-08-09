@@ -1,0 +1,187 @@
+import { useEffect, useState } from "react";
+import { ShieldCheck, Sparkles } from "lucide-react";
+import { ApiError, api, type BootstrapCI, type MLModelDetail, type TrainingJobSummary } from "../../api/client";
+import { Badge } from "../ui/Badge";
+import { Modal } from "../ui/Modal";
+import { formatMetricValue, formatPercent } from "../../utils/format";
+
+function isBootstrapCI(value: unknown): value is BootstrapCI {
+  return typeof value === "object" && value !== null && "ci_low" in value && "ci_high" in value;
+}
+
+/** Cartes de métriques principales — l'ensemble affiché dépend du type de tâche. */
+function MetricCard({
+  label,
+  value,
+  ci,
+}: {
+  label: string;
+  value: number | null | undefined;
+  ci?: BootstrapCI;
+}) {
+  if (value === null || value === undefined) return null;
+  return (
+    <div className="rounded-xl border border-slate-800 bg-slate-950/40 px-4 py-3">
+      <p className="text-xs text-slate-500 mb-1">{label}</p>
+      <p className="text-xl font-semibold text-slate-100 tabular-nums">{formatMetricValue(value)}</p>
+      {ci && (
+        <p className="text-[11px] text-slate-600 mt-0.5 tabular-nums">
+          IC 95 % [{formatMetricValue(ci.ci_low)} – {formatMetricValue(ci.ci_high)}]
+        </p>
+      )}
+    </div>
+  );
+}
+
+function ShapBars({ features }: { features: MLModelDetail["shap_summary"] }) {
+  if (features.length === 0) return null;
+  const max = Math.max(...features.map((f) => f.importance));
+  return (
+    <div className="space-y-2">
+      {features.slice(0, 8).map((f) => (
+        <div key={f.feature} className="flex items-center gap-3">
+          <span className="text-xs text-slate-400 w-40 truncate flex-shrink-0" title={f.feature}>
+            {f.feature}
+          </span>
+          <div className="flex-1 h-2 rounded-full bg-slate-800 overflow-hidden">
+            <div
+              className="h-full rounded-full bg-gradient-to-r from-teal-500/70 to-teal-400"
+              style={{ width: `${(f.importance / max) * 100}%` }}
+            />
+          </div>
+          <span className="text-xs text-slate-500 w-12 text-right tabular-nums">
+            {f.importance.toFixed(2)}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+export default function ModelResultModal({
+  job,
+  onClose,
+}: {
+  job: TrainingJobSummary;
+  onClose: () => void;
+}) {
+  const [model, setModel] = useState<MLModelDetail | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    api.training
+      .getModel(job.id)
+      .then(setModel)
+      .catch((err) => setError(err instanceof ApiError ? err.message : "Résultat indisponible"));
+  }, [job.id]);
+
+  return (
+    <Modal title={`${job.dataset_name ?? "Dataset"} — ${job.target_column}`} onClose={onClose}>
+      {error && <p className="text-sm text-rose-400">{error}</p>}
+      {!model && !error && <p className="text-sm text-slate-500">Chargement…</p>}
+
+      {model && (
+        <div className="space-y-6">
+          <div className="flex items-center gap-2 flex-wrap">
+            <Badge variant="accent">{model.algorithm}</Badge>
+            <Badge variant="neutral">
+              {model.task_type === "regression" ? "Régression" : "Classification"}
+            </Badge>
+            {Boolean(model.model_card.anti_leak_grouping) && (
+              <Badge variant="success">
+                <ShieldCheck size={11} className="mr-1 inline" />
+                Split anti-fuite
+              </Badge>
+            )}
+          </div>
+
+          <section>
+            <p className="text-xs uppercase tracking-wide text-slate-500 mb-2">Performance</p>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              {model.task_type === "regression" ? (
+                <>
+                  <MetricCard
+                    label="R² (test)"
+                    value={model.metrics.r2_test as number}
+                    ci={isBootstrapCI(model.metrics.r2_bootstrap) ? model.metrics.r2_bootstrap : undefined}
+                  />
+                  <MetricCard
+                    label="RMSE"
+                    value={model.metrics.rmse as number}
+                    ci={isBootstrapCI(model.metrics.rmse_bootstrap) ? model.metrics.rmse_bootstrap : undefined}
+                  />
+                  <MetricCard label="MAE" value={model.metrics.mae as number} />
+                  <MetricCard label="Score CV" value={model.metrics.cv_score as number} />
+                </>
+              ) : (
+                <>
+                  <MetricCard
+                    label="Précision globale"
+                    value={model.metrics.accuracy as number}
+                    ci={isBootstrapCI(model.metrics.accuracy_bootstrap) ? model.metrics.accuracy_bootstrap : undefined}
+                  />
+                  <MetricCard label="F1-score" value={model.metrics.f1 as number} />
+                  <MetricCard label="AUC-ROC" value={model.metrics.roc_auc as number} />
+                  <MetricCard label="Score CV" value={model.metrics.cv_score as number} />
+                </>
+              )}
+            </div>
+            {model.task_type === "regression" && typeof model.metrics.delta_r2 === "number" && (
+              <p className="text-xs text-slate-500 mt-2">
+                Écart train/test (R²) : <span className="tabular-nums">{formatMetricValue(model.metrics.delta_r2)}</span>
+                {" — "}
+                {model.metrics.delta_r2 < 0.08 ? "pas de surapprentissage notable" : "surapprentissage à surveiller"}
+              </p>
+            )}
+          </section>
+
+          <section>
+            <p className="text-xs uppercase tracking-wide text-slate-500 mb-2 flex items-center gap-1.5">
+              <Sparkles size={12} className="text-teal-400" />
+              Variables les plus influentes (SHAP)
+            </p>
+            <ShapBars features={model.shap_summary} />
+          </section>
+
+          {model.cqr && (
+            <section>
+              <p className="text-xs uppercase tracking-wide text-slate-500 mb-2">
+                Intervalles de confiance conformes (CQR)
+              </p>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                <MetricCard label="Couverture visée" value={model.cqr.target_coverage} />
+                <MetricCard label="Couverture observée" value={model.cqr.empirical_coverage} />
+                <MetricCard label="Largeur moyenne" value={model.cqr.mean_interval_width} />
+              </div>
+              <p className="text-xs text-slate-500 mt-2">
+                {formatPercent(model.cqr.empirical_coverage)} des valeurs test tombent dans l'intervalle prédit,
+                pour une cible de {formatPercent(model.cqr.target_coverage)} — calibré par {model.cqr.n_strata} strates.
+              </p>
+            </section>
+          )}
+
+          <section>
+            <p className="text-xs uppercase tracking-wide text-slate-500 mb-2">Fiche modèle</p>
+            <dl className="grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-2 text-xs">
+              <Fact label="Échantillons train" value={String(model.model_card.n_train ?? "—")} />
+              <Fact label="Échantillons test" value={String(model.model_card.n_test ?? "—")} />
+              <Fact label="Doublons retirés" value={String(model.model_card.duplicates_removed ?? "—")} />
+              <Fact label="Essais Optuna" value={String(model.model_card.optuna_trials ?? "—")} />
+              <Fact label="Folds de CV" value={String(model.model_card.cv_folds ?? "—")} />
+              <Fact label="Variables" value={String(model.feature_columns.length)} />
+            </dl>
+          </section>
+        </div>
+      )}
+    </Modal>
+  );
+}
+
+function Fact({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <dt className="text-slate-600">{label}</dt>
+      <dd className="text-slate-300 tabular-nums">{value}</dd>
+    </div>
+  );
+}

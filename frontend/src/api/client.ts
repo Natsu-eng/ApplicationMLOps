@@ -182,6 +182,78 @@ export interface PreviewResponse {
   row_count: number | null;
 }
 
+export type TaskType = "classification" | "regression";
+export type JobStatus = "queued" | "running" | "completed" | "failed";
+
+export interface TrainingJobCreatePayload {
+  dataset_id: number;
+  target_column: string;
+  feature_columns?: string[];
+  task_type?: TaskType;
+  group_column?: string;
+  test_size?: number;
+  optuna_trials?: number;
+  cv_folds?: number;
+}
+
+export interface HeadlineMetric {
+  name: string;
+  value: number | null;
+}
+
+export interface TrainingJobSummary {
+  id: number;
+  dataset_id: number;
+  dataset_name: string | null;
+  task_type: TaskType;
+  target_column: string;
+  status: JobStatus;
+  progress_step: string | null;
+  progress_percent: number;
+  error_message: string | null;
+  created_by: string | null;
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+  algorithm: string | null;
+  headline_metric: HeadlineMetric | null;
+}
+
+export interface BootstrapCI {
+  mean: number;
+  ci_low: number;
+  ci_high: number;
+}
+
+export interface CqrResult {
+  alpha: number;
+  target_coverage: number;
+  empirical_coverage: number;
+  mean_interval_width: number;
+  n_strata: number;
+  strata_bounds: (number | null)[];
+  qhat_per_stratum: number[];
+}
+
+export interface ShapFeature {
+  feature: string;
+  importance: number;
+}
+
+export interface MLModelDetail {
+  id: number;
+  training_job_id: number;
+  algorithm: string;
+  task_type: TaskType;
+  target_column: string;
+  feature_columns: string[];
+  metrics: Record<string, number | BootstrapCI | null>;
+  shap_summary: ShapFeature[];
+  cqr: CqrResult | null;
+  model_card: Record<string, unknown>;
+  created_at: string;
+}
+
 // ── API ────────────────────────────────────────────────────────────────────
 
 export const api = {
@@ -219,5 +291,16 @@ export const api = {
     preview: (id: number, limit = 50) =>
       request<PreviewResponse>(`/datasets/${id}/preview?limit=${limit}`),
     remove: (id: number) => request<void>(`/datasets/${id}`, { method: "DELETE" }),
+  },
+
+  training: {
+    createJob: (data: TrainingJobCreatePayload) =>
+      request<TrainingJobSummary>("/training/jobs", {
+        method: "POST",
+        body: JSON.stringify(data),
+      }),
+    listJobs: () => request<TrainingJobSummary[]>("/training/jobs"),
+    getJob: (id: number) => request<TrainingJobSummary>(`/training/jobs/${id}`),
+    getModel: (id: number) => request<MLModelDetail>(`/training/jobs/${id}/model`),
   },
 };

@@ -12,6 +12,7 @@ ENV PYTHONUNBUFFERED=1 \
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     libpq-dev \
+    libgomp1 \
     curl \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
@@ -24,8 +25,9 @@ RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
 
 COPY api/ ./api/
 COPY services/ ./services/
+COPY workers/ ./workers/
 
-RUN mkdir -p database logs storage/datasets && \
+RUN mkdir -p database logs storage/datasets storage/models && \
     useradd -m -u 1000 -s /bin/bash appuser && \
     chown -R appuser:appuser /app
 

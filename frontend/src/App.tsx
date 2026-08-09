@@ -5,6 +5,7 @@ import Dashboard from "./pages/Dashboard";
 import Datasets from "./pages/Datasets";
 import Login from "./pages/Login";
 import Register from "./pages/Register";
+import Training from "./pages/Training";
 
 export default function App() {
   return (
@@ -26,6 +27,14 @@ export default function App() {
             element={
               <ProtectedRoute>
                 <Datasets />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/training"
+            element={
+              <ProtectedRoute>
+                <Training />
               </ProtectedRoute>
             }
           />

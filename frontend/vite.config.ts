@@ -24,6 +24,10 @@ export default defineConfig({
         target: "http://localhost:8000",
         changeOrigin: true,
       },
+      "/training": {
+        target: "http://localhost:8000",
+        changeOrigin: true,
+      },
     },
   },
 });

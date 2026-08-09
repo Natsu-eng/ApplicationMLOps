@@ -55,12 +55,101 @@
 
 **Scope volontairement limité** : upload synchrone en mémoire (limite 200 Mo, configurable) — pas de tâche de fond ni de barre de progression pour l'instant (arrive avec la file de tâches du Lot 3) ; pas de nettoyage/preprocessing dans ce lot (juste upload + catalogage + aperçu) ; pas de support Dask pour les très gros fichiers (identifié comme portable plus tard si besoin réel).
 
+## Lot 3 — Entraînement ML supervisé de bout en bout (livré)
+
+Méthodologie alignée sur un notebook de référence partagé par l'équipe
+(`Notebook_Pipeline_Resistance.ipynb`, lu intégralement puis supprimé du
+dépôt comme convenu — sa méthodologie est documentée ici et dans
+`ARCHITECTURE.md`, pas son contenu métier). Portée volontairement au
+supervisé (classification/régression) ; le clustering (non supervisé
+tabulaire) arrive au Lot 5 avec le catalogue ML complet.
+
+- [x] `api/core/models.py::TrainingJob` (suivi/progression) et `MLModel`
+  (résultat : métriques, SHAP, CQR, fiche modèle)
+- [x] `api/core/job_queue.py` — file RQ + Redis (`training_queue`)
+- [x] `workers/training_worker.py` — fonction exécutée par le worker (process
+  séparé), persiste la progression directement en base à chaque étape
+- [x] `workers/run_worker.py` — point d'entrée `SimpleWorker` +
+  `TimerDeathPenalty` : **RQ utilise par défaut `os.fork()` et
+  `signal.SIGALRM`, tous deux absents sur Windows** — remplacés par une
+  exécution mono-process et un timeout par thread, qui fonctionnent
+  identiquement sur Windows et Linux/Docker (pas un correctif Windows cachée,
+  le même point d'entrée partout)
+- [x] `services/ml_task.py` — détection classification/régression
+- [x] `services/ml_preprocessing.py` — dédoublonnage exact, split anti-fuite
+  (`GroupShuffleSplit`/`GroupKFold` si une colonne de groupe est fournie,
+  avec vérification explicite par assertion), imputation + normalisation/one-hot
+- [x] `services/ml_training.py` — cœur du lot :
+  - 3 algorithmes comparés (LightGBM, XGBoost, CatBoost), recherche
+    d'hyperparamètres **Optuna** (TPE) par algorithme, validation croisée
+    groupée si applicable
+  - **sélection du meilleur modèle sur le score de CV, jamais sur le score
+    test** (le score test n'est qu'une estimation finale rapportée)
+  - métriques + intervalles de confiance par bootstrap (R²/RMSE/MAE en
+    régression, accuracy/F1/precision/recall/AUC en classification), plus
+    ΔR² train-test comme indicateur de surapprentissage
+  - **explicabilité SHAP** (`TreeExplainer`, importance globale par feature)
+  - **CQR (Conformal Quantile Regression), variante Mondrian** en régression :
+    deux régresseurs de quantile, calibration par strate de prédiction (corrige
+    la sous-couverture aux valeurs extrêmes d'un split conformal simple)
+  - fiche modèle (model card) et artefact joblib (modèle + preprocessor + CQR)
+    persistés — base du futur registre de modèles (Lot 9)
+- [x] `api/routers/training.py` : `POST /training/jobs` (lance, enfile sur
+  RQ), `GET /training/jobs` (liste, isolée par organisation), `GET
+  /training/jobs/{id}` (statut/progression, pour le polling), `GET
+  /training/jobs/{id}/model` (résultat complet)
+- [x] `docker-compose.yml` : service `redis` + service `worker` (même image
+  que le backend, `command: python -m workers.run_worker`), volume
+  `backend/storage` partagé entre `backend` et `worker`
+- [x] Frontend : page `Training` (choix dataset/cible/colonne de groupe,
+  curseurs essais Optuna/taille de test, historique avec **progression en
+  temps réel par polling**), `ModelResultModal` (métriques, barres
+  d'importance SHAP, couverture CQR, fiche modèle)
+
+**Vérifié** :
+
+- Service d'entraînement testé en direct (hors file, appel Python direct)
+  sur données synthétiques : régression avec colonne de groupe (doublons
+  volontaires correctement retirés, fuite vérifiée nulle), classification
+  binaire — SHAP retrouve correctement les variables les plus influentes
+  (cohérent avec les coefficients utilisés pour générer les données), CQR
+  atteint une couverture empirique proche de la cible (85 %/80 % puis
+  82,5 %/80 % sur deux runs).
+- **Pipeline asynchrone complet testé via l'API HTTP réelle + un vrai worker
+  RQ séparé** (pas un appel direct) : upload dataset → `POST
+  /training/jobs` → progression visible par polling (`queued` → `running`
+  avec étapes détaillées → `completed`) → résultat complet via `GET
+  .../model`. Isolation confirmée : une organisation B ne voit aucun job ni
+  dataset d'une organisation A (liste vide + 404 sur accès direct par id).
+- Testé sur PostgreSQL réel, avec Redis lancé via Docker (Docker Desktop
+  n'était pas démarré au début du lot — relancé en cours de route).
+- **Deux bugs d'incompatibilité Windows trouvés et corrigés pendant les
+  tests** (RQ est conçu autour de primitives Unix) : `os.fork()` absent →
+  `SimpleWorker` ; `signal.SIGALRM` absent → `TimerDeathPenalty`. Voir
+  `workers/run_worker.py`.
+- Frontend : `npm run build` sans erreur TypeScript ; flux complet (upload →
+  lancement → suivi → résultat) vérifié à travers le proxy Vite réel avec
+  un vrai worker actif en arrière-plan.
+- Non vérifié : rendu visuel réel en navigateur (pas d'outil d'interaction
+  navigateur dans cette session) — les trois processus (API, worker,
+  frontend) sont laissés actifs pour vérification directe.
+
+**Scope volontairement limité** : catalogue restreint à 3 algorithmes de
+gradient boosting (permet SHAP + CQR uniformes et de haute qualité plutôt
+qu'un catalogue large sans profondeur) — le catalogue sklearn complet
+(linéaire, SVM, KNN, SMOTE...) arrive au Lot 5 ; pas d'endpoint de
+prédiction/inférence sur un modèle entraîné (l'artefact est persisté mais
+pas encore servi) ; pas de suppression de job/modèle depuis l'API ; pas de
+WebSocket (polling REST uniquement pour l'instant, suffisant et plus simple
+à fiabiliser) ; pas de clustering (non supervisé tabulaire, Lot 5) ; SHAP
+limité à l'importance globale (dependence/waterfall plots plus riches :
+Lot 4, qui introduit aussi les vraies visualisations Plotly).
+
 ## Prochains lots (résumé — détail complet dans le diagnostic de migration)
 
 | Lot | Contenu | Livrable testable |
 | --- | --- | --- |
-| 3 | Entraînement ML classique de bout en bout (RQ + Redis, suivi de progression) | Un modèle sklearn s'entraîne en tâche de fond, progression visible |
-| 4-5 | Évaluation/visualisation ML classique, catalogue complet | Parité fonctionnelle avec l'app Streamlit historique |
+| 4-5 | Évaluation/visualisation ML classique (Plotly), catalogue complet (sklearn, SMOTE, clustering) | Parité fonctionnelle avec l'app Streamlit historique |
 | 6-8 | Upload / entraînement / évaluation vision (détection d'anomalies) | Parité fonctionnelle côté vision |
 | 9 | Registre de modèles unifié (versioning) | Remplace les 3 mécanismes de persistance de l'app historique |
 | 10 | Durcissement SaaS (erreurs, audit, quotas) | Prêt pour un client pilote |
