@@ -282,6 +282,41 @@ export interface DataQualityResponse {
   warnings: DataWarning[];
 }
 
+/** Fragment de transformation (Lot 4c) — forme volontairement souple (types
+ * différents selon `type`, ex. datetime_decompose vs ratio vs imputation) :
+ * renvoyée telle quelle par une suggestion, échoée telle quelle si approuvée. */
+export type FeatureEngineeringTransformation = Record<string, unknown> & { type: string };
+
+export interface FeatureEngineeringChoice {
+  type: string;
+  options: string[];
+  default: string;
+}
+
+export interface FeatureEngineeringSuggestion {
+  code: string;
+  title: string;
+  explanation: string;
+  action: string;
+  columns: string[];
+  based_on_warning: string | null;
+  transformation: FeatureEngineeringTransformation;
+  choice: FeatureEngineeringChoice | null;
+}
+
+export interface FeatureEngineeringSuggestionsResponse {
+  suggestions: FeatureEngineeringSuggestion[];
+}
+
+export interface FeatureEngineeringSpec {
+  version: number;
+  upstream: FeatureEngineeringTransformation[];
+  pipeline: {
+    frequency_encoding?: string[];
+    imputation?: Record<string, { strategy: string; fill_value?: unknown }>;
+  };
+}
+
 export type TaskType = "classification" | "regression";
 export type JobStatus = "queued" | "running" | "completed" | "failed";
 
@@ -291,6 +326,10 @@ export interface TrainingJobCreatePayload {
   feature_columns?: string[];
   task_type?: TaskType;
   group_column?: string;
+  feature_engineering?: {
+    upstream: FeatureEngineeringTransformation[];
+    pipeline: FeatureEngineeringSpec["pipeline"];
+  };
   test_size?: number;
   optuna_trials?: number;
   cv_folds?: number;
@@ -383,6 +422,7 @@ export interface MLModelDetail {
   cqr: CqrResult | null;
   model_card: Record<string, unknown>;
   evaluation: ModelEvaluation;
+  feature_engineering: FeatureEngineeringSpec | null;
   created_at: string;
 }
 
@@ -451,6 +491,11 @@ export const api = {
     featureByTarget: (id: number, feature: string, target: string) =>
       request<FeatureByTargetResponse>(
         `/datasets/${id}/feature-by-target?feature=${encodeURIComponent(feature)}&target=${encodeURIComponent(target)}`,
+      ),
+    featureEngineeringSuggestions: (id: number, targetColumn: string, groupColumn?: string) =>
+      request<FeatureEngineeringSuggestionsResponse>(
+        `/datasets/${id}/feature-engineering-suggestions?target_column=${encodeURIComponent(targetColumn)}` +
+          (groupColumn ? `&group_column=${encodeURIComponent(groupColumn)}` : ""),
       ),
   },
 
