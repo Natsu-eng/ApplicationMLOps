@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+import pytest
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
 
@@ -16,6 +17,7 @@ from services.ml_preprocessing import split_dataset
 from services.ml_registry import MODEL_REGISTRY
 from services.ml_training import (
     TrainingConfig,
+    _classification_selection_score,
     _compute_cqr,
     _cqr_fit_calib_indices,
     _make_cv,
@@ -256,3 +258,86 @@ def test_cqr_coverage_non_regression_after_fix():
     target = result.cqr["target_coverage"]
     empirical = result.cqr["empirical_coverage"]
     assert empirical >= target - 0.12
+
+
+# ── Lot 5 — score de sélection robuste (classification) ────────────────────
+#
+# `_classification_selection_score` doit rester calculable et comparable
+# (même échelle AUC) quel que soit le type d'estimateur du catalogue — c'est
+# la condition nécessaire pour que "meilleur score CV parmi N modèles
+# hétérogènes" ait un sens (correction 1 du cadrage Lot 5).
+
+
+def _make_binary_df(n=200, seed=1):
+    rng = np.random.default_rng(seed)
+    x1 = rng.normal(size=n)
+    x2 = rng.normal(size=n)
+    y = (2 * x1 - x2 + rng.normal(0, 0.5, n) > 0).astype(int)
+    return pd.DataFrame({"x1": x1, "x2": x2, "cible": y})
+
+
+def test_selection_score_uses_predict_proba_when_available():
+    """Estimateur avec predict_proba (cas standard, ex. RandomForest) : le
+    score de sélection doit être un AUC calculé depuis predict_proba, égal à
+    l'appel manuel équivalent — non un score tronqué ou un repli silencieux."""
+    from sklearn.ensemble import RandomForestClassifier
+    from sklearn.metrics import roc_auc_score
+
+    df = _make_binary_df()
+    X, y = df[["x1", "x2"]].to_numpy(), df["cible"].to_numpy()
+    model = RandomForestClassifier(random_state=42, n_estimators=50).fit(X, y)
+
+    score = _classification_selection_score(model, X, y)
+    expected = roc_auc_score(y, model.predict_proba(X)[:, 1])
+    assert score == pytest.approx(expected)
+
+
+def test_selection_score_falls_back_to_decision_function_without_predict_proba():
+    """SVC construit SANS probability=True (recherche Optuna, Lot 5 —
+    évite la calibration Platt coûteuse à chaque essai) : le score de
+    sélection doit passer par decision_function et rester un AUC comparable
+    à celui des autres candidats, pas planter ni dégénérer en accuracy."""
+    from sklearn.metrics import roc_auc_score
+    from sklearn.svm import SVC
+
+    df = _make_binary_df()
+    X, y = df[["x1", "x2"]].to_numpy(), df["cible"].to_numpy()
+    model = SVC(probability=False, random_state=42).fit(X, y)
+    assert not hasattr(model, "predict_proba") or not model.get_params().get("probability", False)
+
+    score = _classification_selection_score(model, X, y)
+    expected = roc_auc_score(y, model.decision_function(X))
+    assert score == pytest.approx(expected)
+    assert 0.0 <= score <= 1.0
+
+
+def test_selection_score_falls_back_to_accuracy_without_proba_or_decision():
+    """Estimateur sans predict_proba ni decision_function (cas limite,
+    aucun modèle du catalogue actuel n'est dans ce cas — filet de sécurité
+    générique) : repli sur l'accuracy plutôt qu'une exception."""
+
+    class _PredictOnly:
+        def predict(self, X):
+            return np.zeros(len(X), dtype=int)
+
+    df = _make_binary_df()
+    X, y = df[["x1", "x2"]].to_numpy(), (df["cible"].to_numpy() * 0)  # toutes les classes à 0 → accuracy = 1.0
+    score = _classification_selection_score(_PredictOnly(), X, y)
+    assert score == 1.0
+
+
+def test_selection_score_comparable_across_registry_families():
+    """Chaque modèle du registre, une fois fit, produit un score de
+    sélection CALCULABLE (pas d'exception) et dans l'échelle AUC/accuracy
+    [0, 1] — condition de comparabilité entre familles hétérogènes."""
+    from services.ml_registry import models_for_task
+
+    df = _make_binary_df(n=150)
+    split = split_dataset(df, "cible", ["x1", "x2"], "classification", None, 0.2, 42)
+    X_train, y_train = split.X_train.to_numpy(), split.y_train.to_numpy()
+
+    for spec in models_for_task("classification", subset="all"):
+        model = spec.build_estimator("classification", 42, {}, False)
+        model.fit(X_train, y_train)
+        score = _classification_selection_score(model, split.X_test.to_numpy(), split.y_test.to_numpy())
+        assert 0.0 <= score <= 1.0, f"{spec.id} : score hors échelle ({score})"

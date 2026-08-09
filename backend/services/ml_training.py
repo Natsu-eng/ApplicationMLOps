@@ -110,6 +110,40 @@ def _make_cv(task_type: str, cv_folds: int, groups: Optional[np.ndarray]):
     return KFold(n_splits=cv_folds, shuffle=True, random_state=42)
 
 
+def _classification_selection_score(estimator, X, y) -> float:
+    """Score de sélection en classification — AUC (ovr, pondérée par classe)
+    calculée à partir de `predict_proba` quand l'estimateur en dispose,
+    sinon de `decision_function` (ex. SVC construit sans `probability=True`
+    pendant la recherche Optuna — voir `ml_registry._build_svm` : la
+    calibration Platt de `probability=True` est coûteuse et inutile pour un
+    score de comparaison, elle n'est reconstruite que pour le candidat
+    retenu, une seule fois). Repli sur l'accuracy seulement si l'estimateur
+    n'a ni l'un ni l'autre, ou si une classe est absente du fold courant
+    (roc_auc non calculable dans ce cas précis).
+
+    Signature de scorer scikit-learn : `estimator` est déjà FIT sur le fold
+    d'entraînement quand cette fonction est appelée par `cross_val_score`.
+    Utilisée pour TOUS les candidats de classification du catalogue (Lot 5,
+    correction 1) — condition nécessaire pour que "meilleur score CV parmi N
+    modèles hétérogènes" compare des scores sur la même échelle."""
+    y_arr = np.asarray(y)
+    n_classes = len(np.unique(y_arr))
+    try:
+        if hasattr(estimator, "predict_proba"):
+            proba = estimator.predict_proba(X)
+            if n_classes == 2:
+                return float(roc_auc_score(y_arr, proba[:, 1]))
+            return float(roc_auc_score(y_arr, proba, multi_class="ovr", average="weighted"))
+        if hasattr(estimator, "decision_function"):
+            scores = estimator.decision_function(X)
+            if n_classes == 2:
+                return float(roc_auc_score(y_arr, scores))
+            return float(roc_auc_score(y_arr, scores, multi_class="ovr", average="weighted"))
+    except ValueError:
+        pass  # ex. classe absente de ce fold — repli sur accuracy ci-dessous
+    return float(accuracy_score(y_arr, estimator.predict(X)))
+
+
 def _optimize_one_model(
     spec: ModelSpec,
     X_raw: pd.DataFrame,
@@ -135,17 +169,19 @@ def _optimize_one_model(
     besoin de scaling du modèle (Lot 5, Phase 1 : déjà satisfait par
     `build_preprocessor`, aucune branche par famille nécessaire ici)."""
     algo_name = spec.label(task_type)
-    scoring = "r2" if task_type == "regression" else "roc_auc_ovr_weighted"
+    # Régression : "r2", scoring homogène par nature (tous les régresseurs
+    # produisent une valeur continue). Classification : scorer maison
+    # `_classification_selection_score`, robuste à l'absence de
+    # `predict_proba` (Lot 5, correction 1) — gère elle-même son repli, plus
+    # besoin du try/except externe qui existait pour le scorer texte
+    # `"roc_auc_ovr_weighted"` (celui-ci exigeait `predict_proba` sans repli).
+    scoring = "r2" if task_type == "regression" else _classification_selection_score
 
     def objective(trial: optuna.Trial) -> float:
         params = spec.hyperparameter_space(trial)
         model = spec.build_estimator(task_type, config.seed, params, False)
         pipeline = Pipeline([("preprocess", clone(preprocessor_template)), ("model", model)])
-        try:
-            scores = cross_val_score(pipeline, X_raw, y, cv=cv, groups=groups, scoring=scoring, n_jobs=1)
-        except ValueError:
-            # ex: roc_auc_ovr_weighted indisponible (classe absente dans un fold) — repli sur accuracy
-            scores = cross_val_score(pipeline, X_raw, y, cv=cv, groups=groups, scoring="accuracy", n_jobs=1)
+        scores = cross_val_score(pipeline, X_raw, y, cv=cv, groups=groups, scoring=scoring, n_jobs=1)
         return float(np.mean(scores))
 
     def on_trial_end(study: optuna.Study, trial: optuna.trial.FrozenTrial) -> None:
@@ -158,6 +194,10 @@ def _optimize_one_model(
     study = optuna.create_study(direction="maximize", sampler=optuna.samplers.TPESampler(seed=config.seed))
     study.optimize(objective, n_trials=config.optuna_trials, callbacks=[on_trial_end], show_progress_bar=False)
 
+    # `final_fit=True` : configuration de construction complète (ex. SVC
+    # retrouve `probability=True`, nécessaire à `predict_proba` en évaluation
+    # finale/inférence) — un seul objet construit ici, jamais fit tant que ce
+    # candidat n'est pas le gagnant (voir `train_and_evaluate`).
     best_model = spec.build_estimator(task_type, config.seed, study.best_params, True)
     return best_model, study.best_value
 
