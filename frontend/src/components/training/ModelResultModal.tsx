@@ -12,6 +12,18 @@ function isBootstrapCI(value: unknown): value is BootstrapCI {
   return typeof value === "object" && value !== null && "ci_low" in value && "ci_high" in value;
 }
 
+/** Statut d'explicabilité (Lot 5) — "ok" ou "degraded" + message clair.
+ * Doit être AFFICHÉ quand dégradé, jamais une section qui disparaît sans
+ * explication (ex. SVM/KNN sur un jeu de données avec beaucoup de variables). */
+interface ExplainabilityStatus {
+  status: "ok" | "degraded";
+  message: string | null;
+}
+
+function isExplainabilityStatus(value: unknown): value is ExplainabilityStatus {
+  return typeof value === "object" && value !== null && "status" in value;
+}
+
 /** Cartes de métriques principales — l'ensemble affiché dépend du type de tâche. */
 function MetricCard({
   label,
@@ -115,6 +127,9 @@ export default function ModelResultModal({
       .catch((err) => setError(err instanceof ApiError ? err.message : "Résultat indisponible"));
   }, [job.id]);
 
+  const explainability =
+    model && isExplainabilityStatus(model.model_card.explainability) ? model.model_card.explainability : undefined;
+
   return (
     <Modal title={`${job.dataset_name ?? "Dataset"} — ${job.target_column}`} onClose={onClose}>
       {error && <p className="text-sm text-rose-400">{error}</p>}
@@ -188,7 +203,11 @@ export default function ModelResultModal({
                 help="Plus une variable a une barre longue, plus elle pèse dans les décisions du modèle — calculé par la méthode SHAP, standard en explicabilité de modèles ML."
               />
             </p>
-            <ShapBars features={model.shap_summary} />
+            {explainability?.status === "degraded" ? (
+              <p className="text-xs text-slate-500 italic">{explainability.message}</p>
+            ) : (
+              <ShapBars features={model.shap_summary} />
+            )}
           </section>
 
           {model.cqr && (
