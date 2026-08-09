@@ -81,3 +81,33 @@ def test_training_job_isolation_between_organizations(mock_queue, client):
 
     assert client.get("/training/jobs", headers=headers_b).json() == []
     assert client.get(f"/training/jobs/{job['id']}", headers=headers_b).status_code == 404
+
+
+@patch("api.routers.training.training_queue")
+def test_delete_removes_job_from_history(mock_queue, client):
+    mock_queue.enqueue.return_value.id = "fake-rq-id"
+    headers = _register(client)
+    dataset = _upload_dataset(client, headers)
+    job = client.post(
+        "/training/jobs", headers=headers, json={"dataset_id": dataset["id"], "target_column": "cible"}
+    ).json()
+
+    assert client.delete(f"/training/jobs/{job['id']}", headers=headers).status_code == 204
+    assert client.get(f"/training/jobs/{job['id']}", headers=headers).status_code == 404
+    assert client.get("/training/jobs", headers=headers).json() == []
+
+
+@patch("api.routers.training.training_queue")
+def test_delete_rejects_cross_organization(mock_queue, client):
+    mock_queue.enqueue.return_value.id = "fake-rq-id"
+    headers_a = _register(client, "a@bureau-a.fr", "Bureau A")
+    headers_b = _register(client, "b@bureau-b.fr", "Bureau B")
+    dataset = _upload_dataset(client, headers_a)
+    job = client.post(
+        "/training/jobs", headers=headers_a, json={"dataset_id": dataset["id"], "target_column": "cible"}
+    ).json()
+
+    resp = client.delete(f"/training/jobs/{job['id']}", headers=headers_b)
+    assert resp.status_code == 404
+    # toujours là côté organisation A — la tentative de B n'a rien supprimé
+    assert client.get(f"/training/jobs/{job['id']}", headers=headers_a).status_code == 200

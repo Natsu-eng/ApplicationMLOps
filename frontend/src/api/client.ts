@@ -325,5 +325,6 @@ export const api = {
         method: "POST",
         body: JSON.stringify({ data }),
       }),
+    remove: (id: number) => request<void>(`/training/jobs/${id}`, { method: "DELETE" }),
   },
 };

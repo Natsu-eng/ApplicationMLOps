@@ -208,6 +208,23 @@ travail de visualisation (Lot 4b).
   seul avec lui — reconfiguré avec `--restart unless-stopped`.
 - 24/24 tests pytest toujours au vert après ce lot.
 
+### Correctif — suppression d'un entraînement
+
+Signalé en usage réel : l'historique d'entraînements grandit sans limite,
+sans aucun moyen de le nettoyer (ni un job resté bloqué en `queued` faute de
+worker, ni un test qu'on ne veut plus garder).
+
+- [x] `DELETE /training/jobs/{id}` — supprime le job et le modèle associé
+  (cascade DB), efface l'artefact `joblib` du disque, et tente une
+  annulation best-effort du job RQ sous-jacent s'il est encore `queued`/
+  `running` (sans danger si ça échoue : `training_worker.py` gère déjà
+  l'absence du job en base sans planter)
+- [x] Frontend : bouton supprimer sur chaque carte d'entraînement, double
+  clic de confirmation (pas de popup modale intrusive)
+- [x] 2 tests pytest dédiés (suppression + isolation — une organisation ne
+  peut pas supprimer l'entraînement d'une autre), 26/26 sur l'ensemble de
+  la suite
+
 ## Prochains lots (résumé — détail complet dans le diagnostic de migration et les échanges de cadrage)
 
 | Lot | Contenu | Livrable testable |

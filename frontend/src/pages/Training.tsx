@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
-import { AlertCircle, PlayCircle, Sparkles } from "lucide-react";
+import { useCallback, useEffect, useRef, useState, type FormEvent, type MouseEvent } from "react";
+import { AlertCircle, PlayCircle, Sparkles, Trash2 } from "lucide-react";
 import {
   ApiError,
   api,
@@ -104,7 +104,15 @@ export default function Training() {
           ) : (
             <div className="space-y-3">
               {jobs.map((job) => (
-                <JobCard key={job.id} job={job} onView={() => setViewingJob(job)} />
+                <JobCard
+                  key={job.id}
+                  job={job}
+                  onView={() => setViewingJob(job)}
+                  onDelete={async () => {
+                    await api.training.remove(job.id);
+                    loadJobs();
+                  }}
+                />
               ))}
             </div>
           )}
@@ -129,9 +137,33 @@ function statusBadge(job: TrainingJobSummary) {
   }
 }
 
-function JobCard({ job, onView }: { job: TrainingJobSummary; onView: () => void }) {
+function JobCard({
+  job,
+  onView,
+  onDelete,
+}: {
+  job: TrainingJobSummary;
+  onView: () => void;
+  onDelete: () => void;
+}) {
   const isActive = ACTIVE_STATUSES.has(job.status);
   const isCompleted = job.status === "completed";
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+
+  async function handleDelete(event: MouseEvent) {
+    event.stopPropagation();
+    if (!confirming) {
+      setConfirming(true);
+      return;
+    }
+    setIsDeleting(true);
+    try {
+      await onDelete();
+    } finally {
+      setIsDeleting(false);
+    }
+  }
 
   return (
     <Card
@@ -149,7 +181,24 @@ function JobCard({ job, onView }: { job: TrainingJobSummary; onView: () => void 
             {job.created_by ? ` · ${job.created_by}` : ""}
           </p>
         </div>
-        {statusBadge(job)}
+        <div className="flex items-center gap-2 flex-shrink-0">
+          {statusBadge(job)}
+          <button
+            type="button"
+            onClick={handleDelete}
+            onMouseLeave={() => setConfirming(false)}
+            disabled={isDeleting}
+            aria-label={confirming ? "Confirmer la suppression" : "Supprimer"}
+            title={confirming ? "Cliquer à nouveau pour confirmer" : "Supprimer cet entraînement"}
+            className={`p-1 rounded-md transition-colors ${
+              confirming
+                ? "text-rose-300 bg-rose-500/15"
+                : "text-slate-600 hover:text-rose-300 hover:bg-rose-500/10"
+            }`}
+          >
+            <Trash2 size={13} />
+          </button>
+        </div>
       </div>
 
       {isActive && (

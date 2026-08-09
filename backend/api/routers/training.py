@@ -300,3 +300,32 @@ def predict_with_model(
             detail={"code": "PREDICTION_IMPOSSIBLE", "message": str(exc)},
         )
     return PredictionResponse(**result)
+
+
+@router.delete("/jobs/{job_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_training_job(job_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Supprime un entraînement (et le modèle associé, s'il existe).
+
+    Si le job est encore `queued`, on tente d'annuler le job RQ correspondant
+    (best-effort — s'il a déjà été pris en charge par un worker, ça ne
+    l'interrompt pas, mais évite au worker de traiter un job orphelin ; de
+    toute façon `training_worker.py` gère déjà l'absence du job en base sans
+    planter, donc une annulation ratée n'est jamais dangereuse).
+    """
+    job = _get_org_job(job_id, current_user, db)
+
+    if job.status in ("queued", "running") and job.rq_job_id:
+        try:
+            from rq.job import Job as RQJob
+
+            rq_job = RQJob.fetch(job.rq_job_id, connection=training_queue.connection)
+            rq_job.cancel()
+            rq_job.delete()
+        except Exception:
+            pass  # best-effort — la suppression en base reste sûre dans tous les cas
+
+    if job.model and job.model.file_path:
+        Path(job.model.file_path).unlink(missing_ok=True)
+
+    db.delete(job)  # cascade DB vers MLModel (ondelete="CASCADE")
+    db.commit()

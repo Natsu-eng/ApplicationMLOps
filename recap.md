@@ -23,11 +23,13 @@ L'ancienne app Streamlit reste intacte dans le dépôt (`src/`, `ui/`,
 ## Ce qui fonctionne aujourd'hui
 
 ### Lot 0 — Squelette
+
 Backend FastAPI et frontend React/TypeScript qui démarrent et se parlent.
 Aucune fonctionnalité métier — juste la fondation (config, base de données,
 Docker) sur laquelle tout le reste s'appuie.
 
 ### Lot 1 — Comptes et organisations
+
 Un bureau d'études s'inscrit et devient propriétaire (`owner`) de son
 organisation ; il peut y ajouter des collègues (`member`). Chaque
 organisation ne voit **jamais** les données d'une autre — vérifié
@@ -37,12 +39,15 @@ explicitement à chaque lot suivant, pas juste supposé.
 compte individuel isolé (comme CIAM) — cohérent avec un usage en équipe.*
 
 ### Lot 2 — Données
+
 Upload de fichiers tabulaires (CSV, Excel, Parquet, JSON), catalogage
 automatique (nombre de lignes/colonnes, types détectés), aperçu, suppression.
 Interface à cartes modernes avec glisser-déposer.
 
 ### Lot 3 — Entraînement
+
 Le cœur du produit. Sur un dataset et une colonne cible choisis :
+
 - **3 algorithmes comparés automatiquement** (LightGBM, XGBoost, CatBoost),
   chacun optimisé par recherche d'hyperparamètres (Optuna) — l'utilisateur
   n'a jamais à choisir un algorithme lui-même, le meilleur est sélectionné
@@ -63,7 +68,8 @@ Le cœur du produit. Sur un dataset et une colonne cible choisis :
 (lu intégralement puis supprimé du dépôt une fois sa méthodologie extraite
 — voir `backend/workflow.md`).*
 
-### Lot 4a — Prédire avec un modèle entraîné
+### Lot 4a — Prédire avec un modèle entraîné, et gérer l'historique
+
 Jusqu'ici, un modèle entraîné ne servait à rien : impossible de l'utiliser.
 Corrigé : un formulaire généré automatiquement (une case par variable)
 permet de saisir un nouveau cas et d'obtenir une prédiction immédiate, avec
@@ -71,16 +77,19 @@ sa fourchette de confiance ou ses probabilités par classe. Des info-bulles
 expliquent en langage clair chaque métrique affichée (R², SHAP, CQR...)
 pour un utilisateur qui n'est pas data scientist de métier. La sélection
 manuelle des variables d'entraînement (exclure une colonne sans intérêt
-prédictif) est aussi devenue accessible depuis le formulaire.
+prédictif) est aussi devenue accessible depuis le formulaire — et chaque
+entraînement peut désormais être supprimé de l'historique (avec annulation
+du job en file si besoin).
 
 ---
 
 ## Robustesse — pas juste "ça marche chez moi"
 
-- **Tests automatisés** (`backend/tests/`, pytest) : 24 tests qui restent
+- **Tests automatisés** (`backend/tests/`, pytest) : 26 tests qui restent
   dans le dépôt et couvrent l'isolation entre organisations, les
-  permissions, l'entraînement réel (pas mocké), la prédiction.
-- **Deux bugs réels trouvés et corrigés en usage réel**, pas en théorie :
+  permissions, l'entraînement réel (pas mocké), la prédiction, la
+  suppression.
+- **Bugs réels trouvés et corrigés en usage réel**, pas en théorie :
   - SHAP change de format de sortie en classification multiclasse selon la
     version installée — trouvé en testant sur un vrai dataset Iris, corrigé,
     couvert par un test de non-régression.
@@ -88,6 +97,8 @@ prédictif) est aussi devenue accessible depuis le formulaire.
     Windows (`os.fork`, `signal.SIGALRM`) — corrigé une fois pour toutes
     avec un point d'entrée qui fonctionne pareil sur Windows et sur
     Linux/Docker.
+  - Le conteneur Redis de développement ne redémarrait pas automatiquement
+    avec Docker Desktop — reconfiguré pour survivre aux redémarrages.
 - **Migrations de schéma idempotentes** (façon CIAM) plutôt qu'exiger une
   base vierge à chaque évolution du modèle de données.
 - **Isolation vérifiée à chaque lot**, pas supposée : chaque nouvelle
@@ -99,7 +110,7 @@ prédictif) est aussi devenue accessible depuis le formulaire.
 ## Décisions produit prises en cours de route
 
 | Sujet | Décision | Pourquoi |
-|---|---|---|
+| --- | --- | --- |
 | Multi-utilisateurs | Organisation/équipe, pas compte individuel isolé | Usage en équipe dans un bureau d'études |
 | File de tâches | RQ + Redis | CIAM n'en a pas besoin (tâches courtes) ; un entraînement ML, si |
 | Positionnement | Généraliste multi-secteurs | Pas de verrouillage sur un métier particulier dès le départ |
@@ -114,7 +125,7 @@ prédictif) est aussi devenue accessible depuis le formulaire.
 Identifié explicitement en testant le produit, pas oublié :
 
 | Lot | Contenu |
-|---|---|
+| --- | --- |
 | **4b** (en cours) | Exploration de données (EDA) avant l'entraînement — distributions, corrélations, valeurs manquantes ; et graphiques d'évaluation (matrice de confusion, ROC/PR, résidus) |
 | **4c** | Ingénierie de variables — créer des variables dérivées (ratios, transformations) avant l'entraînement |
 | **5** | Catalogue ML complet (RandomForest, régression linéaire/logistique, SVM, KNN, Naive Bayes, + SMOTE, + clustering) comparé automatiquement |
