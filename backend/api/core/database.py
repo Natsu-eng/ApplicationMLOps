@@ -80,6 +80,8 @@ def init_db() -> None:
     Base.metadata.create_all(bind=engine)
     _add_column_if_missing("ml_models", "feature_schema_json", "TEXT")
     _add_column_if_missing("ml_models", "evaluation_json", "TEXT")
+    _add_column_if_missing("ml_models", "feature_engineering_json", "TEXT")
+    _add_column_if_missing("training_jobs", "feature_engineering_json", "TEXT")
     logger.info("[DB] Prête (%s)", "SQLite" if _is_sqlite else "PostgreSQL")
 
 

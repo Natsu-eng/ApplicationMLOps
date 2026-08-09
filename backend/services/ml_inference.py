@@ -14,6 +14,8 @@ import joblib
 import numpy as np
 import pandas as pd
 
+from services.feature_engineering import FeatureEngineeringSpecError, apply_upstream_feature_engineering
+
 
 class InferenceError(ValueError):
     """La donnée fournie ne peut pas être utilisée pour prédire (colonne
@@ -66,8 +68,25 @@ def _cqr_interval(cqr: dict[str, Any], X_proc: np.ndarray, point_prediction: flo
 
 def predict_one(bundle: dict[str, Any], feature_columns: list[str], row: dict[str, Any]) -> dict[str, Any]:
     """Prédit sur une seule observation (dict colonne → valeur brute saisie
-    par l'utilisateur). Retourne un résultat prêt à sérialiser en JSON."""
+    par l'utilisateur). Retourne un résultat prêt à sérialiser en JSON.
+
+    `feature_columns` désigne les colonnes SAISIES par l'utilisateur (ex.
+    "date"), pas les colonnes dérivées vues par le préprocesseur (ex.
+    "date_annee") — voir `workers/training_worker.py`, précision 3 du Lot 4c.
+    Si le bundle porte une spec de feature engineering (Lot 4c), elle est
+    rejouée ici via la MÊME fonction pure que celle utilisée à l'entraînement
+    (`apply_upstream_feature_engineering`), pour produire des colonnes
+    identiques dans les deux contextes."""
     df = _build_input_frame(row, feature_columns)
+
+    feature_engineering_spec = bundle.get("feature_engineering_spec")
+    if feature_engineering_spec:
+        try:
+            df, _ = apply_upstream_feature_engineering(df, feature_columns, feature_engineering_spec)
+        except FeatureEngineeringSpecError as exc:
+            # Refus explicite (précision 2 du cadrage) plutôt qu'une prédiction
+            # calculée sur des colonnes potentiellement incorrectes.
+            raise InferenceError(f"Ingénierie de variables du modèle non rejouable : {exc}") from exc
 
     try:
         X_proc = bundle["preprocessor"].transform(df)

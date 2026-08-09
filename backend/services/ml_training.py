@@ -385,6 +385,7 @@ def _compute_cqr(
     X_test_raw: pd.DataFrame,
     y_test: np.ndarray,
     config: TrainingConfig,
+    feature_engineering_config: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
     """Split Conformal Quantile Regression, variante Mondrian (calibration
     par strate de prédiction) — voir le docstring du module pour la
@@ -410,7 +411,7 @@ def _compute_cqr(
     Xc_raw = X_train_raw.iloc[cal_idx].reset_index(drop=True)
     yf, yc = y_train[fit_idx], y_train[cal_idx]
 
-    cqr_preprocessor = build_preprocessor(Xf_raw)
+    cqr_preprocessor = build_preprocessor(Xf_raw, feature_engineering_config)
     Xf = cqr_preprocessor.fit_transform(Xf_raw)
     Xf = np.asarray(Xf.todense()) if hasattr(Xf, "todense") else np.asarray(Xf)
     Xc = cqr_preprocessor.transform(Xc_raw)
@@ -484,10 +485,20 @@ def train_and_evaluate(
     task_type: str,
     config: TrainingConfig,
     progress_cb: ProgressCallback = _noop_progress,
+    feature_engineering_config: Optional[dict[str, Any]] = None,
 ) -> TrainedModelResult:
     """Point d'entrée principal — compare LightGBM/XGBoost/CatBoost (Optuna),
     sélectionne le meilleur sur la CV, calcule métriques + SHAP + (en
-    régression) CQR, et retourne un résultat prêt à persister."""
+    régression) CQR, et retourne un résultat prêt à persister.
+
+    `feature_engineering_config` (Lot 4c, optionnel) : sous-partie "pipeline"
+    de la spec de feature engineering (`{"frequency_encoding": [...],
+    "imputation": {...}}`), transmise telle quelle à `build_preprocessor` à
+    ses 3 points d'appel (gabarit Optuna, préprocesseur final, préprocesseur
+    CQR) — les transformations déterministes (datetime, ratio) sont déjà
+    appliquées en amont par l'appelant (voir `workers/training_worker.py`),
+    `split` les contient donc déjà. Absent/`None` : comportement strictement
+    inchangé (rétrocompatibilité totale)."""
     progress_cb("Préparation des données", 2)
 
     class_names: Optional[list[str]] = None
@@ -506,7 +517,7 @@ def train_and_evaluate(
     # l'intérieur de chaque fold de CV par `_optimize_one_model`, jamais fit
     # sur tout le train en amont de la validation croisée (Lot A : évite que
     # le préprocesseur ait vu la portion de validation de chaque fold).
-    preprocessor_template = build_preprocessor(split.X_train)
+    preprocessor_template = build_preprocessor(split.X_train, feature_engineering_config)
 
     cv = _make_cv(task_type, config.cv_folds, split.groups_train)
     catalog = _REGRESSORS if task_type == "regression" else _CLASSIFIERS
@@ -532,7 +543,7 @@ def train_and_evaluate(
     # quel modèle final destiné au déploiement (pas de fuite ici, contrairement
     # à la CV — il n'y a plus de portion de validation à préserver une fois le
     # modèle sélectionné).
-    preprocessor = build_preprocessor(split.X_train)
+    preprocessor = build_preprocessor(split.X_train, feature_engineering_config)
     X_train_proc = preprocessor.fit_transform(split.X_train)
     X_test_proc = preprocessor.transform(split.X_test)
     X_train_proc = np.asarray(X_train_proc.todense()) if hasattr(X_train_proc, "todense") else np.asarray(X_train_proc)
@@ -569,7 +580,9 @@ def train_and_evaluate(
     cqr_artifacts: Optional[dict[str, Any]] = None
     if task_type == "regression":
         progress_cb("Calcul des intervalles de confiance (CQR)", 88)
-        cqr_full = _compute_cqr(split.X_train, y_train, split.groups_train, split.X_test, y_test, config)
+        cqr_full = _compute_cqr(
+            split.X_train, y_train, split.groups_train, split.X_test, y_test, config, feature_engineering_config
+        )
         cqr_artifacts = {
             "q_lo": cqr_full.pop("_q_lo_model"),
             "q_hi": cqr_full.pop("_q_hi_model"),
@@ -586,6 +599,7 @@ def train_and_evaluate(
         "n_test": len(split.X_test),
         "duplicates_removed": split.n_duplicates_removed,
         "anti_leak_grouping": split.groups_train is not None,
+        "feature_engineering_active": bool(feature_engineering_config),
         "cv_folds": config.cv_folds,
         "cv_score": float(cv_score),
         "optuna_trials": config.optuna_trials,
