@@ -82,6 +82,80 @@ def test_eda_returns_stats_and_correlations(client):
     assert body["row_count"] == 2
     assert len(body["column_stats"]) == 2
     assert body["correlation_matrix"]["columns"] == ["a", "b"]
+    # Nouveaux champs Lot B toujours présents, même sans target_column
+    assert "categorical_correlation_matrix" in body
+    assert "outlier_summary" in body
+    assert "top_correlated_pairs" in body
+    assert body["target_distribution"] is None
+
+
+def _richer_csv_file():
+    rows = "\n".join(f"{i},{'a' if i % 2 == 0 else 'b'},{i * 2}" for i in range(30))
+    content = f"valeur,categorie,cible\n{rows}\n"
+    return {"file": ("richer.csv", io.BytesIO(content.encode()), "text/csv")}
+
+
+def test_eda_with_target_column_includes_target_distribution(client):
+    headers = _register(client)
+    created = client.post("/datasets", headers=headers, files=_richer_csv_file()).json()
+
+    resp = client.get(
+        f"/datasets/{created['id']}/eda", headers=headers, params={"target_column": "cible"}
+    )
+    assert resp.status_code == 200
+    assert resp.json()["target_distribution"] is not None
+
+
+def test_eda_rejects_unknown_target_column(client):
+    headers = _register(client)
+    created = client.post("/datasets", headers=headers, files=_csv_file()).json()
+
+    resp = client.get(
+        f"/datasets/{created['id']}/eda", headers=headers, params={"target_column": "inexistante"}
+    )
+    assert resp.status_code == 400
+    assert resp.json()["detail"]["code"] == "COLONNE_INTROUVABLE"
+
+
+def test_feature_by_target_returns_groups(client):
+    headers = _register(client)
+    created = client.post("/datasets", headers=headers, files=_richer_csv_file()).json()
+
+    resp = client.get(
+        f"/datasets/{created['id']}/feature-by-target",
+        headers=headers,
+        params={"feature": "valeur", "target": "categorie"},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert {g["class_name"] for g in body["groups"]} == {"a", "b"}
+
+
+def test_feature_by_target_rejects_non_numeric_feature(client):
+    headers = _register(client)
+    created = client.post("/datasets", headers=headers, files=_richer_csv_file()).json()
+
+    resp = client.get(
+        f"/datasets/{created['id']}/feature-by-target",
+        headers=headers,
+        params={"feature": "categorie", "target": "cible"},
+    )
+    assert resp.status_code == 400
+    assert resp.json()["detail"]["code"] == "FEATURE_NON_NUMERIQUE"
+
+
+def test_feature_by_target_isolation_between_organizations(client):
+    headers_a = _register(client, "a@bureau-a.fr", "Bureau A")
+    headers_b = _register(client, "b@bureau-b.fr", "Bureau B")
+
+    created = client.post("/datasets", headers=headers_a, files=_richer_csv_file()).json()
+
+    resp = client.get(
+        f"/datasets/{created['id']}/feature-by-target",
+        headers=headers_b,
+        params={"feature": "valeur", "target": "categorie"},
+    )
+    assert resp.status_code == 404
 
 
 def test_histogram_returns_numeric_bins(client):

@@ -25,10 +25,14 @@ from api.core.storage import dataset_file_path, delete_dataset_file
 from api.routers.auth import get_current_user
 from services.data_quality import analyze_data_quality
 from services.dataset_eda import (
+    compute_categorical_correlation_matrix,
     compute_column_stats,
     compute_correlation_matrix,
+    compute_feature_by_target,
     compute_histogram,
     compute_missing_summary,
+    compute_outlier_boxplots,
+    compute_top_correlated_pairs,
 )
 from services.datasets import (
     DatasetParsingError,
@@ -102,18 +106,62 @@ class CorrelationMatrix(BaseModel):
     matrix: List[List[Optional[float]]]
 
 
-class EdaResponse(BaseModel):
-    row_count: int
-    column_stats: List[ColumnStat]
-    missing_summary: List[MissingSummaryEntry]
-    correlation_matrix: CorrelationMatrix
-
-
 class HistogramResponse(BaseModel):
     kind: str  # "numeric" | "categorical"
     bin_edges: Optional[List[float]] = None
     counts: List[int]
     categories: Optional[List[str]] = None
+
+
+class BoxplotStat(BaseModel):
+    column: str
+    min: Optional[float] = None
+    q1: Optional[float] = None
+    median: Optional[float] = None
+    q3: Optional[float] = None
+    max: Optional[float] = None
+    outliers: List[float] = []
+    n: int
+
+
+class ScatterPoint(BaseModel):
+    x: Optional[float] = None
+    y: Optional[float] = None
+
+
+class ScatterPair(BaseModel):
+    x_column: str
+    y_column: str
+    correlation: Optional[float] = None
+    points: List[ScatterPoint]
+
+
+class FeatureByTargetGroup(BaseModel):
+    class_name: str
+    min: Optional[float] = None
+    q1: Optional[float] = None
+    median: Optional[float] = None
+    q3: Optional[float] = None
+    max: Optional[float] = None
+    outliers: List[float] = []
+    n: int
+
+
+class FeatureByTargetResponse(BaseModel):
+    feature: str
+    target: str
+    groups: List[FeatureByTargetGroup]
+
+
+class EdaResponse(BaseModel):
+    row_count: int
+    column_stats: List[ColumnStat]
+    missing_summary: List[MissingSummaryEntry]
+    correlation_matrix: CorrelationMatrix
+    categorical_correlation_matrix: CorrelationMatrix
+    outlier_summary: List[BoxplotStat]
+    top_correlated_pairs: List[ScatterPair]
+    target_distribution: Optional[HistogramResponse] = None
 
 
 class DataWarning(BaseModel):
@@ -280,11 +328,22 @@ def preview_dataset(
 
 
 @router.get("/{dataset_id}/eda", response_model=EdaResponse)
-def get_dataset_eda(dataset_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    """Exploration de données (EDA) — stats par colonne, corrélations,
-    valeurs manquantes. Calculé à la demande (pas stocké) : un dataset peut
-    changer de statut mais son fichier ne change jamais une fois uploadé,
-    donc pas besoin de mise en cache pour ce volume d'usage."""
+def get_dataset_eda(
+    dataset_id: int,
+    target_column: Optional[str] = None,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Exploration de données (EDA) — stats par colonne, corrélations
+    (numériques ET catégorielles), valeurs manquantes, outliers, paires de
+    features corrélées, et (Lot B) distribution de la cible si
+    `target_column` est fourni. Calculé à la demande (pas stocké) : un
+    dataset peut changer de statut mais son fichier ne change jamais une
+    fois uploadé, donc pas besoin de mise en cache pour ce volume d'usage.
+
+    `target_column` est optionnel et rétrocompatible : sans lui, l'EDA
+    fonctionne comme avant (exploration autonome d'un dataset, sans contexte
+    d'entraînement) — seul `target_distribution` reste absent."""
     dataset = _get_org_dataset(dataset_id, current_user, db)
     if dataset.status != "ready":
         raise HTTPException(
@@ -293,16 +352,26 @@ def get_dataset_eda(dataset_id: int, current_user: User = Depends(get_current_us
         )
     try:
         df = read_dataframe(Path(dataset.file_path), Path(dataset.file_path).suffix)
+        target_distribution = compute_histogram(df, target_column) if target_column else None
     except DatasetParsingError as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={"code": "DATASET_LECTURE_ECHEC", "message": str(exc)},
+        )
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": "COLONNE_INTROUVABLE", "message": str(exc)},
         )
     return EdaResponse(
         row_count=len(df),
         column_stats=[ColumnStat(**c) for c in compute_column_stats(df)],
         missing_summary=[MissingSummaryEntry(**m) for m in compute_missing_summary(df)],
         correlation_matrix=CorrelationMatrix(**compute_correlation_matrix(df)),
+        categorical_correlation_matrix=CorrelationMatrix(**compute_categorical_correlation_matrix(df)),
+        outlier_summary=[BoxplotStat(**b) for b in compute_outlier_boxplots(df)],
+        top_correlated_pairs=[ScatterPair(**p) for p in compute_top_correlated_pairs(df)],
+        target_distribution=HistogramResponse(**target_distribution) if target_distribution else None,
     )
 
 
@@ -371,6 +440,44 @@ def get_dataset_quality_check(
             detail={"code": "COLONNE_INTROUVABLE", "message": str(exc)},
         )
     return DataQualityResponse(warnings=[DataWarning(**w) for w in warnings])
+
+
+@router.get("/{dataset_id}/feature-by-target", response_model=FeatureByTargetResponse)
+def get_dataset_feature_by_target(
+    dataset_id: int,
+    feature: str,
+    target: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Boxplot d'une feature numérique par classe de la cible (Lot B) — à la
+    demande, comme `/histogram`, pour ne pas calculer ce graphique pour
+    toutes les combinaisons feature×cible d'un coup."""
+    dataset = _get_org_dataset(dataset_id, current_user, db)
+    if dataset.status != "ready":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"code": "DATASET_NON_PRET", "message": "Ce dataset n'a pas pu être analysé"},
+        )
+    try:
+        df = read_dataframe(Path(dataset.file_path), Path(dataset.file_path).suffix)
+        result = compute_feature_by_target(df, feature, target)
+    except DatasetParsingError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"code": "DATASET_LECTURE_ECHEC", "message": str(exc)},
+        )
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": "COLONNE_INTROUVABLE", "message": str(exc)},
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": "FEATURE_NON_NUMERIQUE", "message": str(exc)},
+        )
+    return FeatureByTargetResponse(**result)
 
 
 @router.delete("/{dataset_id}", status_code=status.HTTP_204_NO_CONTENT)
