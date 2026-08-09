@@ -11,10 +11,11 @@ détection d'anomalies) sur leurs propres données. Architecture inspirée de
 Ce backend est construit **lot par lot**, chaque lot livrant quelque chose qui
 fonctionne (voir [`workflow.md`](workflow.md) pour le détail).
 
-> **Lot 1 (authentification + organisations) — état actuel.** L'API démarre,
-> expose `GET /api/health`, et propose un cycle d'authentification complet :
-> inscription (crée une organisation), connexion, profil, gestion d'équipe.
-> Datasets et entraînement arrivent aux lots suivants.
+> **Lot 2 (datasets tabulaires) — état actuel.** L'API démarre, expose
+> `GET /api/health`, un cycle d'authentification complet (inscription,
+> connexion, profil, équipe) et l'upload/catalogage de datasets tabulaires
+> (csv/parquet/xlsx/xls/json) isolés par organisation. L'entraînement arrive
+> au Lot 3.
 
 ## Stack
 
@@ -25,6 +26,7 @@ fonctionne (voir [`workflow.md`](workflow.md) pour le détail).
 | Base de données | PostgreSQL (prod) / SQLite (dev, par défaut) | — |
 | Configuration | pydantic-settings (lecture de `.env`) | 2.10.1 |
 | Authentification | JWT HS256 (`python-jose`) + bcrypt | 3.5.0 / 5.0.0 |
+| Datasets | pandas + openpyxl (Excel) + pyarrow (Parquet) | 2.2.2 |
 
 ## Démarrage local
 
@@ -47,10 +49,15 @@ backend/
 │   ├── core/
 │   │   ├── config.py        ← paramètres applicatifs centralisés (pydantic-settings)
 │   │   ├── database.py       ← connexion SQLAlchemy, session, Base ORM
-│   │   ├── models.py          ← Organization, User (multi-tenant)
-│   │   └── security.py         ← JWT (python-jose) + hashing bcrypt
+│   │   ├── models.py          ← Organization, User, Dataset (multi-tenant)
+│   │   ├── security.py         ← JWT (python-jose) + hashing bcrypt
+│   │   └── storage.py           ← chemin des fichiers datasets sur disque
 │   └── routers/
-│       └── auth.py             ← inscription, connexion, profil, gestion d'équipe
+│       ├── auth.py               ← inscription, connexion, profil, gestion d'équipe
+│       └── datasets.py             ← upload, liste, aperçu, suppression de datasets
+├── services/
+│   └── datasets.py             ← lecture/validation pure des fichiers tabulaires
+├── storage/datasets/             ← fichiers uploadés (gitignorés, montés en volume Docker)
 ├── database/                 ← base SQLite de développement (générée au démarrage, gitignorée)
 ├── requirements.txt
 ├── .env.example                ← variables documentées, aucune valeur réelle

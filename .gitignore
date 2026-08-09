@@ -28,6 +28,10 @@ models_output/
 # Bases de données locales (SQLite dev)
 backend/database/*.db
 
+# Datasets uploadés par les utilisateurs (Lot 2) — jamais dans git
+backend/storage/datasets/*
+!backend/storage/datasets/.gitkeep
+
 # Données utilisateur (jeux de données legacy app Streamlit — chemins précis,
 # ne masque plus *.csv/*.json/*.xlsx globalement pour ne pas ignorer par
 # erreur des fichiers de config comme package.json/tsconfig.json)

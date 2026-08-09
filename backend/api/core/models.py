@@ -11,7 +11,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, func
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from api.core.database import Base
@@ -56,3 +56,31 @@ class User(Base):
     def organization_name(self) -> str:
         """Exposé pour les réponses API — évite de sérialiser l'objet Organization entier."""
         return self.organization.name
+
+
+class Dataset(Base):
+    """Un jeu de données tabulaire uploadé — appartient à l'organisation entière
+    (pas seulement à qui l'a uploadé), cohérent avec le principe d'équipe partagée."""
+
+    __tablename__ = "datasets"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    organization_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    uploaded_by_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    file_path: Mapped[str] = mapped_column(String(500), nullable=False)
+    file_size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
+    row_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    column_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    # JSON list [{"name": ..., "dtype": ...}, ...] — évite une table séparée pour Lot 2
+    columns_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="processing")  # processing | ready | error
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+    organization: Mapped["Organization"] = relationship("Organization")
+    uploaded_by: Mapped[Optional["User"]] = relationship("User")

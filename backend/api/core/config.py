@@ -34,6 +34,10 @@ class Settings(BaseSettings):
     #    python -c "import secrets; print(secrets.token_hex(64))"
     jwt_secret_key: str = "changez-cette-cle-en-production"
 
+    # Upload de datasets (Lot 2) — upload synchrone en mémoire, pas encore de
+    # tâche de fond (Lot 3) : garder une limite raisonnable pour rester robuste.
+    max_upload_size_mb: int = 200
+
     # Journalisation
     log_level: str = "INFO"
 

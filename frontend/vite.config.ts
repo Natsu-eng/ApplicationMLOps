@@ -20,6 +20,10 @@ export default defineConfig({
         target: "http://localhost:8000",
         changeOrigin: true,
       },
+      "/datasets": {
+        target: "http://localhost:8000",
+        changeOrigin: true,
+      },
     },
   },
 });

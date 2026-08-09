@@ -3,6 +3,7 @@ __pycache__/
 *.pyc
 .env
 database/*.db
+storage/datasets/*
 logs/
 .pytest_cache/
 .git/

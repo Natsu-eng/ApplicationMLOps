@@ -1,7 +1,7 @@
 # ARCHITECTURE.md — Backend DataLab Pro
 
-> **Lot 1 — authentification + organisations.** Ce document est vivant : il
-> grandit à chaque lot livré. Historique des décisions : voir
+> **Lot 2 — datasets tabulaires.** Ce document est vivant : il grandit à
+> chaque lot livré. Historique des décisions : voir
 > [`workflow.md`](workflow.md).
 
 ## 1. Vue d'ensemble
@@ -20,12 +20,13 @@ Stack choisie par parité avec **CIAM** (`concrete-ai-platform`), déjà
 ordre des lots) est documenté dans le diagnostic de migration présenté et
 validé avant le début du code.
 
-## 2. Schéma des couches (état Lot 1)
+## 2. Schéma des couches (état Lot 2)
 
 ```text
 ┌────────────────────────────────────────────────────┐
 │  FRONTEND  (React — voir ../frontend/)               │
 │    AuthContext (token localStorage) + ProtectedRoute   │
+│    AppShell (navigation) + components/ui/ (design system)│
 └─────────────────────┬────────────────────────────────┘
                        │ HTTP JSON (Bearer JWT sur les routes protégées)
                        ▼
@@ -34,20 +35,22 @@ validé avant le début du code.
 │    lifespan()  : init_db() (non bloquant)               │
 │    CORS        : origines frontend autorisées              │
 │    GET /api/health                                            │
-│    router auth (prefix /auth)                                   │
+│    routers auth (/auth) et datasets (/datasets)                 │
 └─────────────────────┬────────────────────────────────┘
                        ▼
 ┌────────────────────────────────────────────────────┐
-│  api/routers/auth.py                                  │
-│    register/login/me/team ; get_current_user, require_owner │
+│  api/routers/{auth,datasets}.py                       │
+│    get_current_user, require_owner (dépendances communes)│
 └─────────────────────┬────────────────────────────────┘
-                       ▼
-┌────────────────────────────────────────────────────┐
-│  api/core/{security,database,models}.py                │
-│    JWT HS256 + bcrypt · engine/SessionLocal/Base ORM      │
-│    Organization, User (organization_id sur tout le reste)   │
-│    PostgreSQL (DATABASE_URL) ou SQLite (dev)                  │
-└────────────────────────────────────────────────────┘
+              ┌────────┴────────┐
+              ▼                 ▼
+┌───────────────────────┐ ┌───────────────────────────┐
+│ api/core/{security,      │ │ services/datasets.py         │
+│ database,models,storage}  │ │  lecture/validation pure       │
+│  JWT+bcrypt · SQLAlchemy    │ │  (csv/parquet/xlsx/xls/json)    │
+│  Organization,User,Dataset   │ │ api/core/storage.py               │
+│  Postgres (prod)/SQLite (dev)  │ │  disque local, storage/datasets/    │
+└───────────────────────┘ └───────────────────────────┘
 ```
 
 Ce schéma se complète lot par lot :
@@ -55,9 +58,9 @@ Ce schéma se complète lot par lot :
 | Lot | Ajout |
 | --- | --- |
 | 1 (livré) | `api/core/security.py` (JWT + bcrypt), `api/core/models.py` (User, Organization), `api/routers/auth.py` |
-| 2 | `api/routers/datasets.py`, `api/core/storage.py` |
+| 2 (livré) | `api/routers/datasets.py`, `api/core/storage.py`, `services/datasets.py` (première brique de la couche `services/`) |
 | 3 | `api/core/job_queue.py` (RQ + Redis), `workers/`, `api/routers/ws_progress.py` |
-| ≥4 | `services/` — portage de la logique ML pure identifiée dans le diagnostic (catalogue de modèles, preprocessing, orchestrateurs, métriques, visualisations) |
+| ≥4 | `services/` continue de grandir — portage de la logique ML pure identifiée dans le diagnostic (catalogue de modèles, preprocessing, orchestrateurs, métriques, visualisations) |
 
 ## 3. Points d'entrée
 
@@ -75,6 +78,7 @@ Ce schéma se complète lot par lot :
 | `ENVIRONMENT` | `api/core/config.py` | `development` |
 | `LOG_LEVEL` | `api/core/config.py` | `INFO` |
 | `JWT_SECRET_KEY` | `api/core/security.py` | clé de développement codée en dur (avertissement journalisé) |
+| `MAX_UPLOAD_SIZE_MB` | `api/routers/datasets.py` | `200` |
 
 ## 5. Authentification et multi-tenant (Lot 1)
 
@@ -97,7 +101,30 @@ Ce schéma se complète lot par lot :
   distinguer les cas (`AUTH_EMAIL_DEJA_UTILISE`, `AUTH_OWNER_REQUIS`...)
   sans parser le message textuel.
 
-## 6. Conventions reprises de CIAM
+## 6. Datasets tabulaires (Lot 2)
+
+- **Stockage** : disque local, `backend/storage/datasets/{organization_id}/{dataset_id}{extension}`
+  — monté en volume Docker pour persister entre redémarrages
+  (`docker-compose.yml`). Migration vers un stockage objet compatible S3
+  prévue quand le volume de clients l'impose (voir le diagnostic de
+  migration, section D2) — non nécessaire tant qu'on reste sur un seul hôte.
+- **Modèle de données** : `Dataset` appartient à l'organisation entière
+  (`organization_id`), pas seulement à qui l'a uploadé — cohérent avec le
+  principe d'équipe partagée. `columns_json` stocke le schéma (nom + type)
+  calculé une seule fois à l'upload, pour ne pas re-parser le fichier à
+  chaque affichage de la liste.
+- **Upload synchrone, sans tâche de fond** : le fichier est lu entièrement en
+  mémoire (`await file.read()`) puis parsé avant de répondre — acceptable
+  tant qu'il n'y a pas de file de tâches (Lot 3) et que la limite de taille
+  (`MAX_UPLOAD_SIZE_MB`, 200 Mo par défaut) reste raisonnable pour une
+  requête HTTP directe. Au-delà, ou pour une vraie barre de progression, ce
+  sera le même mécanisme que l'entraînement (RQ + Redis).
+- **Isolation en profondeur** : filtrage systématique par
+  `Dataset.organization_id == current_user.organization_id` en base, **et**
+  l'`organization_id` fait partie du chemin sur disque — deux niveaux
+  indépendants, pas un seul point de défaillance.
+
+## 7. Conventions reprises de CIAM
 
 - Un échec d'initialisation non critique (base de données indisponible au
   démarrage) ne bloque jamais le démarrage de l'API : il est journalisé et

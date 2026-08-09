@@ -81,6 +81,21 @@ async function requestForm<T>(path: string, fields: Record<string, string>): Pro
   return res.json() as Promise<T>;
 }
 
+/** Upload multipart — ne jamais fixer Content-Type soi-même : le navigateur
+ * doit poser la boundary multipart lui-même. */
+async function uploadFile<T>(path: string, file: File): Promise<T> {
+  const token = getToken();
+  const formData = new FormData();
+  formData.append("file", file);
+  const res = await fetch(`${BASE_URL}${path}`, {
+    method: "POST",
+    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+    body: formData,
+  });
+  if (!res.ok) throw await extractError(res);
+  return res.json() as Promise<T>;
+}
+
 // ── Types ──────────────────────────────────────────────────────────────────
 
 export interface HealthStatus {
@@ -139,6 +154,34 @@ export interface ChangePasswordPayload {
   new_password_confirm: string;
 }
 
+export interface ColumnSchema {
+  name: string;
+  dtype: string;
+}
+
+export interface DatasetSummary {
+  id: number;
+  name: string;
+  file_size_bytes: number;
+  row_count: number | null;
+  column_count: number | null;
+  status: "processing" | "ready" | "error";
+  error_message: string | null;
+  uploaded_by: string | null;
+  created_at: string;
+}
+
+export interface DatasetDetail extends DatasetSummary {
+  columns: ColumnSchema[];
+}
+
+export interface PreviewResponse {
+  columns: string[];
+  rows: Record<string, unknown>[];
+  sample_size: number;
+  row_count: number | null;
+}
+
 // ── API ────────────────────────────────────────────────────────────────────
 
 export const api = {
@@ -167,5 +210,14 @@ export const api = {
         method: "POST",
         body: JSON.stringify(data),
       }),
+  },
+
+  datasets: {
+    list: () => request<DatasetSummary[]>("/datasets"),
+    upload: (file: File) => uploadFile<DatasetDetail>("/datasets", file),
+    get: (id: number) => request<DatasetDetail>(`/datasets/${id}`),
+    preview: (id: number, limit = 50) =>
+      request<PreviewResponse>(`/datasets/${id}/preview?limit=${limit}`),
+    remove: (id: number) => request<void>(`/datasets/${id}`, { method: "DELETE" }),
   },
 };

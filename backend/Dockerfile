@@ -23,8 +23,9 @@ RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
     pip install --no-cache-dir -r requirements.txt
 
 COPY api/ ./api/
+COPY services/ ./services/
 
-RUN mkdir -p database logs && \
+RUN mkdir -p database logs storage/datasets && \
     useradd -m -u 1000 -s /bin/bash appuser && \
     chown -R appuser:appuser /app
 

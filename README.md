@@ -13,7 +13,7 @@ Le dépôt contient deux choses en parallèle, le temps de la migration :
 
 | | Rôle |
 | --- | --- |
-| **`backend/` + `frontend/`** | Le nouveau SaaS, construit **lot par lot**. État actuel : **Lot 1** — authentification JWT et modèle multi-tenant Organisation/équipe fonctionnels de bout en bout. Voir [`backend/workflow.md`](backend/workflow.md). |
+| **`backend/` + `frontend/`** | Le nouveau SaaS, construit **lot par lot**. État actuel : **Lot 2** — auth + organisations, upload et catalogage de datasets tabulaires. Voir [`backend/workflow.md`](backend/workflow.md). |
 | **`src/`, `ui/`, `helpers/`, `monitoring/`, `orchestrators/`...** | L'application **Streamlit historique**, conservée intacte comme référence pendant le portage progressif de sa logique ML vers `backend/`. Documentation : [`docs/legacy/README.md`](docs/legacy/README.md). |
 
 Rien n'est supprimé de l'application historique tant que sa logique n'a pas
@@ -81,6 +81,6 @@ streamlit run src/app/main.py
 
 ---
 
-**Statut** : migration en cours — Lot 0 (squelette) et Lot 1
-(authentification + organisations) livrés. Voir
+**Statut** : migration en cours — Lot 0 (squelette), Lot 1 (authentification et
+organisations) et Lot 2 (datasets tabulaires) livrés. Voir
 [`backend/workflow.md`](backend/workflow.md) pour la suite.

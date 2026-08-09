@@ -2,6 +2,7 @@ import { Navigate, Route, BrowserRouter as Router, Routes } from "react-router-d
 import ProtectedRoute from "./components/ProtectedRoute";
 import { AuthProvider } from "./contexts/AuthContext";
 import Dashboard from "./pages/Dashboard";
+import Datasets from "./pages/Datasets";
 import Login from "./pages/Login";
 import Register from "./pages/Register";
 
@@ -17,6 +18,14 @@ export default function App() {
             element={
               <ProtectedRoute>
                 <Dashboard />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/datasets"
+            element={
+              <ProtectedRoute>
+                <Datasets />
               </ProtectedRoute>
             }
           />

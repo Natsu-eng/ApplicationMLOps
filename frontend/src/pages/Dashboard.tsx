@@ -1,10 +1,17 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { Users } from "lucide-react";
 import { ApiError, api, type TeamMember } from "../api/client";
 import { useAuth } from "../contexts/AuthContext";
+import AppShell from "../components/AppShell";
+import { Avatar } from "../components/ui/Avatar";
+import { Badge } from "../components/ui/Badge";
+import { Button } from "../components/ui/Button";
+import { Card } from "../components/ui/Card";
+import { Input } from "../components/ui/Input";
 
 /** Page protégée du Lot 1 : profil, équipe de l'organisation, ajout de membre (owner). */
 export default function Dashboard() {
-  const { user, logout } = useAuth();
+  const { user } = useAuth();
 
   const [members, setMembers] = useState<TeamMember[] | null>(null);
   const [membersError, setMembersError] = useState<string | null>(null);
@@ -22,85 +29,91 @@ export default function Dashboard() {
     loadMembers();
   }, [loadMembers]);
 
-  if (!user) return null; // ProtectedRoute garantit déjà un utilisateur connecté
+  if (!user) return null;
 
   return (
-    <main className="min-h-screen bg-slate-950 text-slate-100">
-      <header className="border-b border-slate-800 px-6 py-4 flex items-center justify-between">
-        <div>
-          <p className="text-xs uppercase tracking-widest text-teal-400 font-semibold">
-            DataLab Pro
-          </p>
-          <h1 className="text-lg font-serif">{user.organization_name}</h1>
-        </div>
-        <button
-          onClick={logout}
-          className="text-sm text-slate-400 hover:text-slate-200 border border-slate-800 hover:border-slate-700 rounded-md px-3 py-1.5 transition-colors"
-        >
-          Se déconnecter
-        </button>
-      </header>
+    <AppShell>
+      <div className="mb-8">
+        <p className="text-xs uppercase tracking-widest text-teal-400/90 font-semibold mb-1">
+          Vue d'ensemble
+        </p>
+        <h1 className="text-2xl font-serif text-slate-100">
+          Bonjour, {user.nom.split(" ")[0]}
+        </h1>
+      </div>
 
-      <div className="max-w-3xl mx-auto px-6 py-10 space-y-8">
-        <section className="rounded-lg border border-slate-800 bg-slate-900 p-5">
-          <h2 className="text-sm uppercase tracking-wide text-slate-500 mb-3">Mon compte</h2>
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="font-medium">{user.nom}</p>
-              <p className="text-sm text-slate-500">{user.email}</p>
+      <div className="grid gap-6 lg:grid-cols-3">
+        <Card className="p-5 lg:col-span-1">
+          <div className="flex items-center gap-3 mb-4">
+            <Avatar name={user.nom} />
+            <div className="min-w-0">
+              <p className="font-medium text-slate-100 truncate">{user.nom}</p>
+              <p className="text-xs text-slate-500 truncate">{user.email}</p>
             </div>
-            <RoleBadge role={user.role} />
           </div>
-        </section>
+          <RoleBadge role={user.role} />
+        </Card>
 
-        <section className="rounded-lg border border-slate-800 bg-slate-900 p-5">
-          <h2 className="text-sm uppercase tracking-wide text-slate-500 mb-3">
-            Équipe — {user.organization_name}
-          </h2>
+        <Card className="p-5 lg:col-span-2">
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-2">
+              <Users size={16} className="text-teal-400" />
+              <h2 className="text-sm font-medium text-slate-200">
+                Équipe — {user.organization_name}
+              </h2>
+            </div>
+            {members && (
+              <Badge variant="neutral">
+                {members.length} membre{members.length > 1 ? "s" : ""}
+              </Badge>
+            )}
+          </div>
 
-          {membersError && (
-            <p className="text-sm text-rose-400 bg-rose-950/40 border border-rose-900 rounded-md px-3 py-2 mb-3">
-              {membersError}
-            </p>
-          )}
+          {membersError && <ErrorNote message={membersError} />}
 
           {members === null && !membersError ? (
             <p className="text-sm text-slate-500">Chargement…</p>
           ) : (
-            <ul className="divide-y divide-slate-800">
+            <ul className="divide-y divide-slate-800/70">
               {members?.map((member) => (
                 <li key={member.id} className="py-2.5 flex items-center justify-between">
-                  <div>
-                    <p className="text-sm font-medium">{member.nom}</p>
-                    <p className="text-xs text-slate-500">{member.email}</p>
+                  <div className="flex items-center gap-3 min-w-0">
+                    <Avatar name={member.nom} size="sm" />
+                    <div className="min-w-0">
+                      <p className="text-sm text-slate-200 truncate">{member.nom}</p>
+                      <p className="text-xs text-slate-500 truncate">{member.email}</p>
+                    </div>
                   </div>
                   <RoleBadge role={member.role} />
                 </li>
               ))}
             </ul>
           )}
-        </section>
+        </Card>
 
         {user.role === "owner" && (
-          <AddMemberForm onMemberAdded={loadMembers} />
+          <Card className="p-5 lg:col-span-3">
+            <AddMemberForm onMemberAdded={loadMembers} />
+          </Card>
         )}
       </div>
-    </main>
+    </AppShell>
   );
 }
 
 function RoleBadge({ role }: { role: "owner" | "member" }) {
-  const isOwner = role === "owner";
   return (
-    <span
-      className={`text-xs font-medium px-2 py-0.5 rounded-full ${
-        isOwner
-          ? "bg-teal-500/15 text-teal-300 border border-teal-500/30"
-          : "bg-slate-800 text-slate-400 border border-slate-700"
-      }`}
-    >
-      {isOwner ? "Propriétaire" : "Membre"}
-    </span>
+    <Badge variant={role === "owner" ? "accent" : "neutral"}>
+      {role === "owner" ? "Propriétaire" : "Membre"}
+    </Badge>
+  );
+}
+
+function ErrorNote({ message }: { message: string }) {
+  return (
+    <p className="text-sm text-rose-300 bg-rose-500/10 border border-rose-500/20 rounded-lg px-3 py-2 mb-3">
+      {message}
+    </p>
   );
 }
 
@@ -132,47 +145,38 @@ function AddMemberForm({ onMemberAdded }: { onMemberAdded: () => void }) {
   }
 
   return (
-    <section className="rounded-lg border border-slate-800 bg-slate-900 p-5">
-      <h2 className="text-sm uppercase tracking-wide text-slate-500 mb-3">
-        Ajouter un membre à l'équipe
-      </h2>
+    <>
+      <h2 className="text-sm font-medium text-slate-200 mb-4">Ajouter un membre à l'équipe</h2>
       <form onSubmit={handleSubmit} className="grid sm:grid-cols-3 gap-3 items-start">
-        <input
+        <Input
           type="text"
           placeholder="Nom"
           required
           minLength={2}
           value={nom}
           onChange={(e) => setNom(e.target.value)}
-          className="rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
         />
-        <input
+        <Input
           type="email"
           placeholder="Email"
           required
           value={email}
           onChange={(e) => setEmail(e.target.value)}
-          className="rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
         />
-        <input
+        <Input
           type="password"
           placeholder="Mot de passe temporaire"
           required
           minLength={8}
           value={password}
           onChange={(e) => setPassword(e.target.value)}
-          className="rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
         />
-        <button
-          type="submit"
-          disabled={isSubmitting}
-          className="sm:col-span-3 rounded-md bg-teal-500 hover:bg-teal-400 disabled:opacity-50 disabled:cursor-not-allowed text-slate-950 font-medium py-2 text-sm transition-colors"
-        >
+        <Button type="submit" disabled={isSubmitting} className="sm:col-span-3">
           {isSubmitting ? "Ajout…" : "Ajouter"}
-        </button>
+        </Button>
       </form>
       {error && <p className="text-sm text-rose-400 mt-2">{error}</p>}
       {success && <p className="text-sm text-emerald-400 mt-2">Membre ajouté.</p>}
-    </section>
+    </>
   );
 }
