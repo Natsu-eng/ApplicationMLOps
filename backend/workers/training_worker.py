@@ -20,6 +20,7 @@ from api.core.database import SessionLocal
 from api.core.models import Dataset, MLModel, TrainingJob
 from api.core.storage import model_file_path
 from services.datasets import read_dataframe
+from services.feature_engineering import apply_upstream_feature_engineering
 from services.ml_preprocessing import DataLeakageError, split_dataset
 from services.ml_training import TrainingConfig, train_and_evaluate
 
@@ -58,22 +59,54 @@ def run_training_job(job_id: int) -> None:
 
             df = read_dataframe(Path(dataset.file_path), Path(dataset.file_path).suffix)
 
-            feature_columns = json.loads(job.feature_columns_json)
+            # `raw_feature_columns` : colonnes SAISIES par l'utilisateur (formulaire
+            # de prédiction, feature_columns_json de MLModel) — distinctes des
+            # colonnes VUES par le préprocesseur une fois la spec 4c appliquée
+            # (ex. "date" saisie, mais "date_annee"/"date_mois"/... vues par le
+            # modèle). Ne jamais mélanger les deux listes (Lot 4c, précision 3).
+            raw_feature_columns = json.loads(job.feature_columns_json)
             config_dict = json.loads(job.config_json)
             config = TrainingConfig(**config_dict)
+
+            # Spec de feature engineering (Lot 4c) — absente/NULL : comportement
+            # strictement inchangé (rétrocompatibilité totale).
+            feature_engineering_spec = (
+                json.loads(job.feature_engineering_json) if job.feature_engineering_json else None
+            )
+            if feature_engineering_spec:
+                # Transformations déterministes (datetime, ratio) appliquées UNE
+                # SEULE FOIS ici, en amont du split — même fonction que celle
+                # rejouée à l'inférence (services/ml_inference.py), pour garantir
+                # des colonnes identiques dans les deux contextes.
+                df, effective_feature_columns = apply_upstream_feature_engineering(
+                    df, raw_feature_columns, feature_engineering_spec
+                )
+                pipeline_feature_engineering_config = feature_engineering_spec.get("pipeline")
+            else:
+                effective_feature_columns = raw_feature_columns
+                pipeline_feature_engineering_config = None
 
             progress_cb = _make_progress_callback(db, job)
             split = split_dataset(
                 df=df,
                 target=job.target_column,
-                feature_columns=feature_columns,
+                feature_columns=effective_feature_columns,
                 task_type=job.task_type,
                 group_column=job.group_column,
                 test_size=config.test_size,
                 seed=config.seed,
             )
 
-            result = train_and_evaluate(split, job.task_type, config, progress_cb)
+            result = train_and_evaluate(
+                split, job.task_type, config, progress_cb,
+                feature_engineering_config=pipeline_feature_engineering_config,
+            )
+
+            if feature_engineering_spec:
+                # Persisté dans le bundle joblib — c'est lui, pas la base, que
+                # `ml_inference.py` charge pour rejouer la partie amont à la
+                # prédiction (voir `load_bundle`/`predict_one`).
+                result.pipeline_bundle["feature_engineering_spec"] = feature_engineering_spec
 
             artifact_path = model_file_path(job.organization_id, job.id)
             joblib.dump(result.pipeline_bundle, artifact_path)
@@ -81,8 +114,10 @@ def run_training_job(job_id: int) -> None:
             # Schéma des colonnes d'entrée (nom + type) — dérivé du schéma déjà
             # calculé à l'upload du dataset (Lot 2), pour que le frontend puisse
             # générer un formulaire de prédiction sans redemander le dataset.
+            # Basé sur `raw_feature_columns` : le formulaire de prédiction
+            # demande toujours les colonnes saisies, jamais les dérivées.
             dataset_columns = json.loads(dataset.columns_json or "[]")
-            feature_schema = [c for c in dataset_columns if c["name"] in feature_columns]
+            feature_schema = [c for c in dataset_columns if c["name"] in raw_feature_columns]
 
             ml_model = MLModel(
                 organization_id=job.organization_id,
@@ -90,7 +125,7 @@ def run_training_job(job_id: int) -> None:
                 algorithm=result.algorithm,
                 task_type=job.task_type,
                 target_column=job.target_column,
-                feature_columns_json=json.dumps(feature_columns),
+                feature_columns_json=json.dumps(raw_feature_columns),
                 feature_schema_json=json.dumps(feature_schema),
                 file_path=str(artifact_path),
                 metrics_json=json.dumps(result.metrics),
@@ -98,6 +133,7 @@ def run_training_job(job_id: int) -> None:
                 cqr_json=json.dumps(result.cqr) if result.cqr else None,
                 model_card_json=json.dumps(result.model_card),
                 evaluation_json=json.dumps(result.evaluation),
+                feature_engineering_json=json.dumps(feature_engineering_spec) if feature_engineering_spec else None,
             )
             db.add(ml_model)
 

@@ -5,10 +5,12 @@ import {
   api,
   type ColumnSchema,
   type DatasetSummary,
+  type FeatureEngineeringSpec,
   type TrainingJobSummary,
 } from "../api/client";
 import AppShell from "../components/AppShell";
 import { DataQualityWarnings } from "../components/training/DataQualityWarnings";
+import { FeatureEngineeringSuggestions } from "../components/training/FeatureEngineeringSuggestions";
 import ModelResultModal from "../components/training/ModelResultModal";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
@@ -257,6 +259,10 @@ function TrainingForm({
   const [testSize, setTestSize] = useState(0.2);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [featureEngineering, setFeatureEngineering] = useState<Pick<
+    FeatureEngineeringSpec,
+    "upstream" | "pipeline"
+  > | null>(null);
 
   async function handleDatasetChange(id: string) {
     setError(null);
@@ -290,6 +296,7 @@ function TrainingForm({
         group_column: groupColumn || undefined,
         optuna_trials: optunaTrials,
         test_size: testSize,
+        feature_engineering: featureEngineering ?? undefined,
       });
       onJobCreated();
     } catch (err) {
@@ -396,6 +403,15 @@ function TrainingForm({
                   datasetId={datasetId}
                   targetColumn={targetColumn}
                   groupColumn={groupColumn || undefined}
+                />
+              )}
+
+              {targetColumn && datasetId && (
+                <FeatureEngineeringSuggestions
+                  datasetId={datasetId}
+                  targetColumn={targetColumn}
+                  groupColumn={groupColumn || undefined}
+                  onChange={setFeatureEngineering}
                 />
               )}
 

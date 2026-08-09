@@ -173,6 +173,71 @@ def test_cqr_preprocessor_fit_only_on_fit_portion():
     assert transformed[0, cat_cols].sum() == 0
 
 
+def test_feature_engineering_frequency_encoding_survives_pipeline_wiring(monkeypatch):
+    """Preuve que le Pipeline passé à cross_val_score (donc cloné/refit par
+    fold, Lot A) contient bien l'encodeur de fréquence quand
+    feature_engineering_config est actif — la fold-safety de l'encodeur
+    lui-même est déjà prouvée isolément (test_ml_preprocessing.py) ; ce test
+    prouve le dernier maillon : que ml_training.py le branche réellement au
+    même Pipeline que Lot A garantit refit par fold."""
+    rng = np.random.default_rng(9)
+    n = 200
+    df = pd.DataFrame({
+        "x": rng.normal(size=n),
+        "ville": rng.choice(["paris", "lyon", "marseille"], n),
+        "cible": rng.normal(size=n),
+    })
+    split = split_dataset(df, "cible", ["x", "ville"], "regression", None, 0.2, 42)
+    fe_config = {"frequency_encoding": ["ville"]}
+    preprocessor_template = build_preprocessor(split.X_train, fe_config)
+    cv = _make_cv("regression", 3, None)
+    config = TrainingConfig(optuna_trials=1, cv_folds=3)
+
+    captured: dict = {}
+
+    def fake_cross_val_score(estimator, X, y, cv=None, groups=None, scoring=None, n_jobs=None):
+        captured["estimator"] = estimator
+        return np.array([0.5, 0.5, 0.5])
+
+    monkeypatch.setattr(ml_training_module, "cross_val_score", fake_cross_val_score)
+
+    model_cls, space_fn = ml_training_module._REGRESSORS["LightGBM"]
+    _optimize_one_model(
+        "LightGBM", model_cls, space_fn, split.X_train, split.y_train.to_numpy(dtype=float),
+        "regression", cv, None, preprocessor_template, config, lambda s, p: None, 0, 10,
+    )
+
+    estimator = captured["estimator"]
+    # `.transformers` (pas `.transformers_`, réservé au ColumnTransformer fitté) :
+    # le Pipeline capturé n'a pas encore été fit, cross_val_score étant mocké.
+    freq_step_names = [name for name, _, _ in estimator.named_steps["preprocess"].transformers if name.startswith("freq_")]
+    assert freq_step_names, "l'encodeur de fréquence doit être un step du même ColumnTransformer que Lot A refit par fold"
+
+
+def test_train_and_evaluate_with_feature_engineering_config_end_to_end():
+    rng = np.random.default_rng(15)
+    n = 250
+    ville = rng.choice([f"v{i}" for i in range(40)], n)  # cardinalité excessive
+    x = rng.normal(50, 10, n)
+    df = pd.DataFrame({"x": x, "ville": ville, "cible": 2 * x + rng.normal(0, 3, n)})
+    split = split_dataset(df, "cible", ["x", "ville"], "regression", None, 0.2, 42)
+
+    result = train_and_evaluate(
+        split, "regression", _FAST_CONFIG, lambda s, p: None,
+        feature_engineering_config={"frequency_encoding": ["ville"]},
+    )
+
+    assert result.model_card["feature_engineering_active"] is True
+    assert any(name.endswith("_frequence") for name in result.pipeline_bundle["feature_names"])
+
+
+def test_train_and_evaluate_without_feature_engineering_config_flags_inactive():
+    df = _make_regression_df()
+    split = split_dataset(df, "cible", ["x1", "x2"], "regression", None, 0.2, 42)
+    result = train_and_evaluate(split, "regression", _FAST_CONFIG, lambda s, p: None)
+    assert result.model_card["feature_engineering_active"] is False
+
+
 def test_cqr_coverage_non_regression_after_fix():
     """Non-régression : la couverture empirique du CQR reste proche de la
     cible sur un jeu de données réaliste, même après correction de la fuite

@@ -111,6 +111,10 @@ class TrainingJob(Base):
     feature_columns_json: Mapped[str] = mapped_column(Text, nullable=False)
     group_column: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     config_json: Mapped[str] = mapped_column(Text, nullable=False)
+    # Spec de feature engineering approuvée par l'utilisateur (Lot 4c),
+    # {"version": ..., "upstream": [...], "pipeline": {...}} — voir
+    # services/feature_engineering.py. Absente/NULL : comportement inchangé.
+    feature_engineering_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     # queued | running | completed | failed
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="queued", index=True)
     progress_step: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
@@ -167,6 +171,11 @@ class MLModel(Base):
     # prédit-vs-réel + résidus (régression) — pour les graphiques
     # d'évaluation (Lot 4b), pas pour les métriques brutes déjà dans metrics_json.
     evaluation_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # Copie de la spec de feature engineering appliquée à ce modèle (Lot 4c),
+    # pour affichage en toute transparence dans le résultat — la copie qui
+    # fait foi pour le rejeu à l'inférence est celle du bundle joblib, pas
+    # celle-ci (voir services/ml_inference.py).
+    feature_engineering_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
 
     organization: Mapped["Organization"] = relationship("Organization")

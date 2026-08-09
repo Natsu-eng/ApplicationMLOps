@@ -42,6 +42,7 @@ from services.datasets import (
     sample_rows,
     validate_extension,
 )
+from services.feature_engineering import suggest_feature_engineering
 
 logger = logging.getLogger("datalab.datasets")
 router = APIRouter(prefix="/datasets", tags=["datasets"])
@@ -176,6 +177,21 @@ class DataWarning(BaseModel):
 
 class DataQualityResponse(BaseModel):
     warnings: List[DataWarning]
+
+
+class FeatureEngineeringSuggestion(BaseModel):
+    code: str
+    title: str
+    explanation: str
+    action: str
+    columns: List[str] = []
+    based_on_warning: Optional[str] = None
+    transformation: dict
+    choice: Optional[dict] = None
+
+
+class FeatureEngineeringSuggestionsResponse(BaseModel):
+    suggestions: List[FeatureEngineeringSuggestion]
 
 
 def _to_summary(dataset: Dataset) -> DatasetSummary:
@@ -440,6 +456,43 @@ def get_dataset_quality_check(
             detail={"code": "COLONNE_INTROUVABLE", "message": str(exc)},
         )
     return DataQualityResponse(warnings=[DataWarning(**w) for w in warnings])
+
+
+@router.get("/{dataset_id}/feature-engineering-suggestions", response_model=FeatureEngineeringSuggestionsResponse)
+def get_dataset_feature_engineering_suggestions(
+    dataset_id: int,
+    target_column: str,
+    group_column: Optional[str] = None,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Suggestions d'ingénierie de variables (Lot 4c) — en langage clair,
+    reliées quand c'est pertinent à un garde-fou déjà détecté (Lot B).
+    Jamais bloquant, jamais appliqué automatiquement : l'utilisateur approuve
+    explicitement au moment de lancer l'entraînement
+    (`POST /training/jobs`, champ `feature_engineering`)."""
+    dataset = _get_org_dataset(dataset_id, current_user, db)
+    if dataset.status != "ready":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"code": "DATASET_NON_PRET", "message": "Ce dataset n'a pas pu être analysé"},
+        )
+    try:
+        df = read_dataframe(Path(dataset.file_path), Path(dataset.file_path).suffix)
+        suggestions = suggest_feature_engineering(df, target_column, group_column)
+    except DatasetParsingError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"code": "DATASET_LECTURE_ECHEC", "message": str(exc)},
+        )
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": "COLONNE_INTROUVABLE", "message": str(exc)},
+        )
+    return FeatureEngineeringSuggestionsResponse(
+        suggestions=[FeatureEngineeringSuggestion(**s) for s in suggestions]
+    )
 
 
 @router.get("/{dataset_id}/feature-by-target", response_model=FeatureByTargetResponse)

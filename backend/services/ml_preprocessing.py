@@ -8,16 +8,29 @@ groupe, ex : plusieurs mesures répétées d'un même échantillon) — voir
 """
 from __future__ import annotations
 
+from collections import defaultdict
 from dataclasses import dataclass
-from typing import Optional
+from typing import Any, Optional
 
 import numpy as np
 import pandas as pd
+from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.compose import ColumnTransformer
 from sklearn.impute import SimpleImputer
 from sklearn.model_selection import GroupShuffleSplit, train_test_split
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
+
+# ── Lot 4c — regroupement des modalités rares + encodage de fréquence ──────
+#
+# Seuil FIXE (pas dérivé des fréquences observées) : un seuil qui dépendrait
+# des données comptées sur le fold d'entraînement serait déjà fold-safe en
+# soi, mais fixer sa VALEUR par une règle empirique évite tout raisonnement
+# supplémentaire sur son origine — 1 % est la même intuition que le garde-fou
+# Lot B `CARDINALITY_RATIO_THRESHOLD` (une modalité anecdotique n'apporte
+# rien à un one-hot dédié), appliquée ici à l'échelle d'une seule modalité
+# plutôt qu'à la colonne entière.
+RARE_CATEGORY_FREQUENCY_THRESHOLD = 0.01
 
 
 class DataLeakageError(RuntimeError):
@@ -96,24 +109,139 @@ def split_dataset(
     )
 
 
-def build_preprocessor(X: pd.DataFrame) -> ColumnTransformer:
+class RareCategoryFrequencyEncoder(BaseEstimator, TransformerMixin):
+    """Regroupe les modalités rares (fréquence < `rare_threshold` au fit)
+    sous un bucket "_AUTRE_" implicite, puis encode chaque modalité par sa
+    fréquence d'apparition — Lot 4c, alternative au one-hot pour une colonne
+    à cardinalité excessive (garde-fou Lot B `cardinalite_excessive`).
+
+    Fold-safe par construction : les fréquences ne sont calculées que dans
+    `fit`, jamais recalculées dans `transform` — utilisé comme step de
+    `Pipeline` à l'intérieur d'un `ColumnTransformer`, il est cloné et refit
+    à l'intérieur de chaque fold de validation croisée comme le reste du
+    préprocesseur (voir `ml_training.py`, Lot A), donc il ne voit jamais les
+    fréquences du fold de validation.
+
+    Cas limites explicitement pris en charge (voir tests dédiés) :
+    - Modalité jamais vue au fit (absente du fold d'entraînement, présente en
+      validation ou à l'inférence) → mappée sur la fréquence du bucket
+      "_AUTRE_" (0.0 si aucune modalité rare n'a été regroupée au fit) —
+      jamais un plantage, jamais un NaN silencieux.
+    - Deux modalités de fréquence identique au fit → même valeur encodée.
+      Choix conscient, pas un effet de bord : la fréquence est un résumé
+      légitimement non injectif, acceptable pour des modèles à base d'arbres
+      (seuils sur une valeur continue) qui ne dépendent pas d'un encodage
+      bijectif comme le ferait un modèle linéaire.
+    """
+
+    def __init__(self, rare_threshold: float = RARE_CATEGORY_FREQUENCY_THRESHOLD):
+        self.rare_threshold = rare_threshold
+
+    def fit(self, X, y=None):
+        values = pd.Series(np.asarray(X).ravel())
+        frequencies = values.value_counts(normalize=True, dropna=True)
+        rare_mask = frequencies < self.rare_threshold
+        # Fréquence du bucket "_AUTRE_" — somme des fréquences regroupées, ou
+        # 0.0 si aucune modalité rare n'existait au fit (cas limite : c'est
+        # aussi la valeur de repli pour une modalité totalement inédite au
+        # moment de `transform`, voir docstring de la classe).
+        self.autre_frequency_ = float(frequencies[rare_mask].sum())
+        self.frequency_map_ = frequencies[~rare_mask].to_dict()
+        return self
+
+    def transform(self, X):
+        values = pd.Series(np.asarray(X).ravel())
+        encoded = values.map(self.frequency_map_).fillna(self.autre_frequency_)
+        return encoded.to_numpy(dtype=float).reshape(-1, 1)
+
+    def get_feature_names_out(self, input_features=None):
+        base = str(input_features[0]) if input_features is not None and len(input_features) else "categorie"
+        return np.asarray([f"{base}_frequence"], dtype=object)
+
+
+def _resolve_imputation(col: str, is_numeric: bool, imputation_config: dict[str, Any]) -> tuple[str, Optional[Any]]:
+    """Stratégie d'imputation effective pour une colonne — défaut historique
+    (médiane pour le numérique, mode pour le catégoriel) sauf override
+    explicite de l'utilisateur (Lot 4c, suggestion `imputation_configurable`,
+    branchée sur le garde-fou Lot B `valeurs_manquantes_elevees`)."""
+    override = imputation_config.get(col)
+    if not override:
+        return ("median", None) if is_numeric else ("most_frequent", None)
+    strategy = override.get("strategy") or ("median" if is_numeric else "most_frequent")
+    fill_value = override.get("fill_value") if strategy == "constant" else None
+    return (strategy, fill_value)
+
+
+def _group_by_imputation(
+    cols: list[str], is_numeric: bool, imputation_config: dict[str, Any]
+) -> dict[tuple[str, Optional[Any]], list[str]]:
+    """Regroupe les colonnes partageant la même stratégie d'imputation dans
+    un seul step de `ColumnTransformer` — minimise le nombre d'entrées quand
+    peu de colonnes ont un override (cas courant : seules celles signalées
+    par le garde-fou de valeurs manquantes en ont un)."""
+    groups: dict[tuple[str, Optional[Any]], list[str]] = defaultdict(list)
+    for col in cols:
+        groups[_resolve_imputation(col, is_numeric, imputation_config)].append(col)
+    return groups
+
+
+def build_preprocessor(X: pd.DataFrame, feature_engineering_config: Optional[dict[str, Any]] = None) -> ColumnTransformer:
     """Imputation + normalisation (numérique) / one-hot (catégoriel) — fit
-    uniquement sur le train, jamais sur test (appelé après le split)."""
+    uniquement sur le train, jamais sur test (appelé après le split).
+
+    `feature_engineering_config` (Lot 4c, optionnel) — absent ou vide :
+    comportement STRICTEMENT inchangé (rétrocompatibilité totale, voir test
+    de non-régression structurelle dédié). Fourni, deux clés reconnues :
+    - `frequency_encoding` : colonnes catégorielles à encoder par fréquence
+      (`RareCategoryFrequencyEncoder`, ci-dessus) plutôt qu'en one-hot.
+    - `imputation` : `{colonne: {"strategy": ..., "fill_value": ...}}`,
+      stratégie par colonne (médiane/moyenne/mode/constante) plutôt que le
+      défaut historique.
+    """
     numeric_cols = X.select_dtypes(include="number").columns.tolist()
     categorical_cols = [c for c in X.columns if c not in numeric_cols]
 
-    numeric_pipe = Pipeline([
-        ("impute", SimpleImputer(strategy="median")),
-        ("scale", StandardScaler()),
-    ])
-    categorical_pipe = Pipeline([
-        ("impute", SimpleImputer(strategy="most_frequent")),
-        ("encode", OneHotEncoder(handle_unknown="ignore")),
-    ])
+    if not feature_engineering_config:
+        numeric_pipe = Pipeline([
+            ("impute", SimpleImputer(strategy="median")),
+            ("scale", StandardScaler()),
+        ])
+        categorical_pipe = Pipeline([
+            ("impute", SimpleImputer(strategy="most_frequent")),
+            ("encode", OneHotEncoder(handle_unknown="ignore")),
+        ])
+        transformers = []
+        if numeric_cols:
+            transformers.append(("num", numeric_pipe, numeric_cols))
+        if categorical_cols:
+            transformers.append(("cat", categorical_pipe, categorical_cols))
+        return ColumnTransformer(transformers)
+
+    freq_cols = [c for c in (feature_engineering_config.get("frequency_encoding") or []) if c in categorical_cols]
+    onehot_cols = [c for c in categorical_cols if c not in freq_cols]
+    imputation_config = feature_engineering_config.get("imputation") or {}
 
     transformers = []
-    if numeric_cols:
-        transformers.append(("num", numeric_pipe, numeric_cols))
-    if categorical_cols:
-        transformers.append(("cat", categorical_pipe, categorical_cols))
+    for i, ((strategy, fill_value), cols) in enumerate(_group_by_imputation(numeric_cols, True, imputation_config).items()):
+        pipe = Pipeline([
+            ("impute", SimpleImputer(strategy=strategy, fill_value=fill_value)),
+            ("scale", StandardScaler()),
+        ])
+        transformers.append((f"num_{i}", pipe, cols))
+
+    for i, ((strategy, fill_value), cols) in enumerate(_group_by_imputation(onehot_cols, False, imputation_config).items()):
+        pipe = Pipeline([
+            ("impute", SimpleImputer(strategy=strategy, fill_value=fill_value)),
+            ("encode", OneHotEncoder(handle_unknown="ignore")),
+        ])
+        transformers.append((f"cat_{i}", pipe, cols))
+
+    for i, col in enumerate(freq_cols):
+        strategy, fill_value = _resolve_imputation(col, False, imputation_config)
+        pipe = Pipeline([
+            ("impute", SimpleImputer(strategy=strategy, fill_value=fill_value)),
+            ("freq_encode", RareCategoryFrequencyEncoder()),
+        ])
+        transformers.append((f"freq_{i}", pipe, [col]))
+
     return ColumnTransformer(transformers)

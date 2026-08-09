@@ -40,6 +40,39 @@ function MetricCard({
   );
 }
 
+/** Résumé lisible d'une transformation approuvée (Lot 4c) — transparence sur
+ * le résultat, pas une re-configuration : l'utilisateur ne peut plus la
+ * modifier depuis cet écran. */
+function describeTransformation(t: Record<string, unknown>): string {
+  if (t.type === "datetime_decompose") return `Décomposition de date : ${t.source_column}`;
+  if (t.type === "ratio") return `Ratio : ${t.numerator} / ${t.denominator}`;
+  return JSON.stringify(t);
+}
+
+function FeatureEngineeringSummary({ spec }: { spec: MLModelDetail["feature_engineering"] }) {
+  if (!spec) return null;
+  const items = [
+    ...spec.upstream.map(describeTransformation),
+    ...((spec.pipeline.frequency_encoding as string[] | undefined) ?? []).map(
+      (col) => `Regroupement des rares + fréquence : ${col}`,
+    ),
+    ...Object.entries((spec.pipeline.imputation as Record<string, { strategy: string }> | undefined) ?? {}).map(
+      ([col, cfg]) => `Imputation (${cfg.strategy}) : ${col}`,
+    ),
+  ];
+  if (items.length === 0) return null;
+  return (
+    <section>
+      <p className="text-xs uppercase tracking-wide text-slate-500 mb-2">Ingénierie de variables appliquée</p>
+      <ul className="text-xs text-slate-400 space-y-1 list-disc list-inside">
+        {items.map((item, i) => (
+          <li key={i}>{item}</li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
 function ShapBars({ features }: { features: MLModelDetail["shap_summary"] }) {
   if (features.length === 0) return null;
   const max = Math.max(...features.map((f) => f.importance));
@@ -177,6 +210,8 @@ export default function ModelResultModal({
               </p>
             </section>
           )}
+
+          <FeatureEngineeringSummary spec={model.feature_engineering} />
 
           <PredictionForm jobId={job.id} taskType={model.task_type} featureSchema={model.feature_schema} />
 
