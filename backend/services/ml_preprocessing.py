@@ -32,6 +32,9 @@ class SplitResult:
     y_test: pd.Series
     groups_train: Optional[np.ndarray]
     n_duplicates_removed: int
+    # Exposé uniquement pour vérification indépendante (tests) que train et
+    # test ne partagent aucun groupe — non utilisé par l'entraînement lui-même.
+    groups_test: Optional[np.ndarray] = None
 
 
 def remove_exact_duplicates(df: pd.DataFrame) -> tuple[pd.DataFrame, int]:
@@ -76,6 +79,7 @@ def split_dataset(
             y_test=y.iloc[test_idx].reset_index(drop=True),
             groups_train=groups[train_idx],
             n_duplicates_removed=n_removed,
+            groups_test=groups[test_idx],
         )
 
     stratify = y if task_type == "classification" else None

@@ -143,7 +143,23 @@ pas encore servi) ; pas de suppression de job/modèle depuis l'API ; pas de
 WebSocket (polling REST uniquement pour l'instant, suffisant et plus simple
 à fiabiliser) ; pas de clustering (non supervisé tabulaire, Lot 5) ; SHAP
 limité à l'importance globale (dependence/waterfall plots plus riches :
-Lot 4, qui introduit aussi les vraies visualisations Plotly).
+Lot 4).
+
+### Correctifs post-livraison (trouvés en usage réel par l'utilisateur)
+
+- **Bug SHAP multiclasse** : `explainer.shap_values(X)` renvoie soit une
+  liste d'une matrice par classe (API historique), soit un seul tableau
+  3D `(n_échantillons, n_features, n_classes)` (API unifiée récente) selon
+  la version de SHAP/le backend d'arbre. `_compute_shap_summary` ne gérait
+  que le premier cas — sur un dataset réel à 3 classes (Iris), le second
+  cas produisait `IndexError: only integer scalar arrays can be converted
+  to a scalar index`. Corrigé dans `services/ml_training.py`, testé sur le
+  dataset réel de l'utilisateur (job relancé avec succès) et couvert par
+  `tests/test_ml_training.py::test_multiclass_classification_shap_does_not_crash`.
+- **Suite de tests pytest ajoutée rétroactivement** (`backend/tests/`,
+  22 tests) : jusqu'ici les Lots 1-3 n'étaient vérifiés qu'à la main
+  (curl/scripts jetables) — désormais couverts par des tests qui restent
+  dans le dépôt. Voir la section *Tests* de `backend/README.md`.
 
 ## Prochains lots (résumé — détail complet dans le diagnostic de migration)
 

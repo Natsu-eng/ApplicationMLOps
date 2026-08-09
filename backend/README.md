@@ -82,12 +82,28 @@ backend/
 │   └── training_worker.py          ← fonction exécutée par le worker pour chaque job
 ├── storage/{datasets,models}/      ← fichiers uploadés + artefacts entraînés (gitignorés, volume Docker)
 ├── database/                 ← base SQLite de développement (générée au démarrage, gitignorée)
+├── tests/                     ← pytest — voir section Tests ci-dessous
 ├── requirements.txt
 ├── .env.example                ← variables documentées, aucune valeur réelle
 ├── Dockerfile
 ├── README.md                     ← ce fichier
 ├── ARCHITECTURE.md                ← schéma des couches et conventions techniques
 └── workflow.md                     ← avancement lot par lot, décisions prises
+```
+
+## Tests
+
+Suite pytest, base de données isolée (SQLite temporaire recréée à chaque
+test, jamais la base de dev), pas besoin de backend/frontend démarrés.
+L'entraînement (Lot 3) y est testé sans dépendre de Redis : les fonctions
+pures (`services/ml_training.py`, `services/ml_preprocessing.py`) sont
+appelées directement, et le router `/training/jobs` est testé avec la file
+RQ mockée (voir `tests/test_training_api.py`).
+
+```bash
+cd backend
+pytest                 # tous les tests
+pytest -v tests/test_ml_training.py   # un fichier en particulier
 ```
 
 ## Docker

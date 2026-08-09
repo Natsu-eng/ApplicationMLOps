@@ -249,13 +249,27 @@ def _compute_shap_summary(estimator: Any, X_sample: np.ndarray, feature_names: l
     """Importance globale des features par SHAP (TreeExplainer) — moyenne des
     valeurs absolues sur un échantillon du test. Le détail par observation
     (dependence/waterfall) est laissé pour une itération future de la page
-    d'évaluation (Lot 4)."""
+    d'évaluation (Lot 4).
+
+    La forme de `shap_values` en classification multiclasse dépend de la
+    version de SHAP/du backend : soit une liste d'une matrice
+    (n_échantillons, n_features) par classe (API historique), soit un seul
+    tableau (n_échantillons, n_features, n_classes) (API unifiée récente).
+    Les deux sont gérées — bug réel rencontré en test (classification 3
+    classes) : sans ce second cas, `mean_abs` restait 2D et l'indexation
+    par une ligne entière au lieu d'un scalaire levait
+    `only integer scalar arrays can be converted to a scalar index`.
+    """
     explainer = shap.TreeExplainer(estimator)
     shap_values = explainer.shap_values(X_sample)
-    if isinstance(shap_values, list):  # classification multiclasse : une matrice par classe
+    if isinstance(shap_values, list):
         abs_values = np.mean([np.abs(sv) for sv in shap_values], axis=0)
     else:
-        abs_values = np.abs(shap_values)
+        shap_values = np.asarray(shap_values)
+        if shap_values.ndim == 3:  # (n_échantillons, n_features, n_classes)
+            abs_values = np.abs(shap_values).mean(axis=2)
+        else:
+            abs_values = np.abs(shap_values)
     mean_abs = abs_values.mean(axis=0)
     order = np.argsort(mean_abs)[::-1]
     return [{"feature": feature_names[i], "importance": float(mean_abs[i])} for i in order]
