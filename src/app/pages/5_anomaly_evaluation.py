@@ -21,6 +21,8 @@ from sklearn.metrics import ( # type: ignore
 
 from sklearn.preprocessing import label_binarize
 from sklearn.metrics import roc_curve, auc
+import json
+from datetime import datetime
 
 # Imports métier
 try:
@@ -1396,11 +1398,12 @@ with tabs[4]:
 # TAB 6: MLFLOW
 with tabs[5]:
     st.markdown("### 🔗 Exploration des Runs MLflow")
-    
-    # Récupération des runs depuis le collecteur
+    # ====================================================================
+    # RÉCUPÉRATION ET PRÉPARATION DES DONNÉES
+    # ====================================================================
     try:
         collector = get_mlflow_collector()
-        mlflow_runs = collector.get_runs(limit=50, sort_by='collected_at', reverse=True)
+        mlflow_runs = collector.get_runs(limit=200, sort_by='collected_at', reverse=True)
     except Exception as e:
         logger.warning(f"Erreur récupération runs MLflow: {e}")
         mlflow_runs = []
@@ -1411,278 +1414,513 @@ with tabs[5]:
             <div style="font-size: 4rem; margin-bottom: 1rem;">📭</div>
             <h3 style="color: #495057;">Aucun Run MLflow Disponible</h3>
             <p>Lancez un entraînement depuis la page <strong>Training Computer Vision</strong> pour générer des runs MLflow</p>
-            <p style="margin-top: 1rem; font-size: 0.9rem; color: #868e96;">
-                Les runs MLflow contiennent toutes les informations sur l'entraînement :<br>
-                métriques, paramètres, configuration, et historique complet
-            </p>
         </div>
         """, unsafe_allow_html=True)
     else:
-        st.success(f"**📊 {len(mlflow_runs)} runs MLflow disponibles**")
+        # ====================================================================
+        # MÉTRIQUES GLOBALES
+        # ====================================================================
+        total_runs = len(mlflow_runs)
+        successful_runs = sum(1 for r in mlflow_runs if r.get('status') == 'FINISHED')
+        failed_runs = sum(1 for r in mlflow_runs if r.get('status') == 'FAILED')
+        running_runs = sum(1 for r in mlflow_runs if r.get('status') == 'RUNNING')
         
-        # Filtres
-        col1, col2, col3 = st.columns(3)
+        col_global1, col_global2, col_global3, col_global4 = st.columns(4)
         
-        with col1:
-            # Filtre par statut
-            status_options = sorted(list(set(run.get('status', 'UNKNOWN') for run in mlflow_runs)))
+        with col_global1:
+            st.metric("📊 Total Runs", total_runs)
+        with col_global2:
+            st.metric("✅ Réussis", successful_runs, 
+                     delta=f"{successful_runs/max(total_runs, 1)*100:.1f}%")
+        with col_global3:
+            st.metric("❌ Échoués", failed_runs,
+                     delta=f"{failed_runs/max(total_runs, 1)*100:.1f}%", delta_color="inverse")
+        with col_global4:
+            st.metric("🔄 En cours", running_runs)
+        
+        st.markdown("---")
+        
+        # ====================================================================
+        # FILTRES AVANCÉS
+        # ====================================================================
+        st.markdown("#### 🔍 Recherche et Filtres")
+        
+        col_search1, col_search2 = st.columns([3, 1])
+        
+        with col_search1:
+            search_query = st.text_input(
+                "🔎 Recherche (Run ID, Modèle, Tags...)",
+                placeholder="Exemple: autoencoder, run_123, accuracy>0.9",
+                help="Recherche dans run_id, model_name, tags et métriques"
+            )
+        
+        with col_search2:
+            search_mode = st.selectbox(
+                "Mode",
+                options=["Contient", "Commence par", "Exact"],
+                index=0
+            )
+        
+        col_filter1, col_filter2, col_filter3, col_filter4 = st.columns(4)
+        
+        with col_filter1:
+            # Filtre Statut
+            all_statuses = sorted(list(set(r.get('status', 'UNKNOWN') for r in mlflow_runs)))
             selected_status = st.multiselect(
-                "Filtrer par statut",
-                options=status_options,
-                default=status_options,
-                help="Sélectionnez les statuts à afficher"
+                "📌 Statut",
+                options=all_statuses,
+                default=all_statuses
             )
         
-        with col2:
-            # Filtre par modèle
-            model_options = sorted(list(set(run.get('model_name', 'Unknown') for run in mlflow_runs)))
+        with col_filter2:
+            # Filtre Type
+            all_models = sorted(list(set(r.get('model_name', 'Unknown') for r in mlflow_runs)))
             selected_models = st.multiselect(
-                "Filtrer par modèle",
-                options=model_options,
-                default=model_options,
-                help="Sélectionnez les modèles à afficher"
+                "🤖 Modèle",
+                options=all_models,
+                default=all_models
             )
         
-        with col3:
-            # Filtre par type (Computer Vision spécifique)
-            cv_types = []
-            for run in mlflow_runs:
-                model_name = run.get('model_name', '').lower()
-                if any(x in model_name for x in ['autoencoder', 'vae', 'patch', 'siamese']):
-                    cv_types.append('Anomaly Detection')
-                elif any(x in model_name for x in ['cnn', 'resnet', 'vgg', 'efficientnet']):
-                    cv_types.append('Classification')
-                else:
-                    cv_types.append('Autre')
-            
-            type_options = sorted(list(set(cv_types)))
-            selected_types = st.multiselect(
-                "Filtrer par type",
-                options=type_options,
-                default=type_options,
-                help="Type de modèle Computer Vision"
+        with col_filter3:
+            # Filtre Date
+            date_filter = st.selectbox(
+                "📅 Période",
+                options=["Tous", "Aujourd'hui", "7 derniers jours", "30 derniers jours", "90 derniers jours"],
+                index=0
             )
         
-        # Application des filtres
+        with col_filter4:
+            # Filtre Métrique
+            metric_filter = st.selectbox(
+                "📈 Métrique",
+                options=["Tous", "AUC-ROC > 0.8", "F1 > 0.7", "Accuracy > 0.85", "Loss < 0.1"],
+                index=0
+            )
+        
+        # ====================================================================
+        # APPLICATION DES FILTRES
+        # ====================================================================
+        from datetime import datetime, timedelta
+        
         filtered_runs = []
-        for i, run in enumerate(mlflow_runs):
+        
+        for run in mlflow_runs:
             if not isinstance(run, dict):
                 continue
             
-            status = run.get('status', 'UNKNOWN')
-            model_name = run.get('model_name', 'Unknown')
-            
             # Filtre statut
-            if status not in selected_status:
+            if run.get('status', 'UNKNOWN') not in selected_status:
                 continue
             
             # Filtre modèle
-            if model_name not in selected_models:
+            if run.get('model_name', 'Unknown') not in selected_models:
                 continue
             
-            # Filtre type
-            model_name_lower = model_name.lower()
-            run_type = 'Autre'
-            if any(x in model_name_lower for x in ['autoencoder', 'vae', 'patch', 'siamese']):
-                run_type = 'Anomaly Detection'
-            elif any(x in model_name_lower for x in ['cnn', 'resnet', 'vgg', 'efficientnet']):
-                run_type = 'Classification'
+            # Filtre date
+            if date_filter != "Tous":
+                collected_at = run.get('collected_at')
+                if collected_at:
+                    try:
+                        run_date = datetime.fromisoformat(collected_at.replace('Z', '+00:00'))
+                        now = datetime.now()
+                        
+                        if date_filter == "Aujourd'hui" and (now - run_date).days > 0:
+                            continue
+                        elif date_filter == "7 derniers jours" and (now - run_date).days > 7:
+                            continue
+                        elif date_filter == "30 derniers jours" and (now - run_date).days > 30:
+                            continue
+                        elif date_filter == "90 derniers jours" and (now - run_date).days > 90:
+                            continue
+                    except:
+                        pass
             
-            if run_type not in selected_types:
-                continue
+            # Filtre métrique
+            if metric_filter != "Tous":
+                metrics = run.get('metrics', {})
+                
+                if metric_filter == "AUC-ROC > 0.8":
+                    if metrics.get('auc_roc', 0) <= 0.8:
+                        continue
+                elif metric_filter == "F1 > 0.7":
+                    if metrics.get('f1_score', 0) <= 0.7:
+                        continue
+                elif metric_filter == "Accuracy > 0.85":
+                    if metrics.get('accuracy', 0) <= 0.85:
+                        continue
+                elif metric_filter == "Loss < 0.1":
+                    if metrics.get('loss', float('inf')) >= 0.1:
+                        continue
             
-            filtered_runs.append((i, run))
+            # Filtre recherche
+            if search_query:
+                query_lower = search_query.lower()
+                
+                # Construire texte de recherche
+                search_text = " ".join([
+                    str(run.get('run_id', '')),
+                    str(run.get('model_name', '')),
+                    str(run.get('tags', {})),
+                    str(run.get('metrics', {}))
+                ]).lower()
+                
+                if search_mode == "Contient":
+                    if query_lower not in search_text:
+                        continue
+                elif search_mode == "Commence par":
+                    if not search_text.startswith(query_lower):
+                        continue
+                elif search_mode == "Exact":
+                    if query_lower != run.get('run_id', '').lower() and \
+                       query_lower != run.get('model_name', '').lower():
+                        continue
+            
+            filtered_runs.append(run)
         
-        st.info(f"**{len(filtered_runs)}** runs correspondant aux filtres")
+        # ====================================================================
+        # RÉSULTATS
+        # ====================================================================
+        st.markdown("---")
         
-        # Affichage des runs filtrés
-        if filtered_runs:
-            for idx, (original_idx, run) in enumerate(filtered_runs[:20]):  # Limiter à 20 runs
+        if not filtered_runs:
+            st.warning(f"⚠️ Aucun run correspondant aux critères ({total_runs} runs au total)")
+        else:
+            col_result1, col_result2, col_result3 = st.columns([2, 1, 1])
+            
+            with col_result1:
+                st.info(f"**📊 {len(filtered_runs)} runs** sur {total_runs} au total")
+            
+            with col_result2:
+                # Tri
+                sort_by = st.selectbox(
+                    "🔄 Trier par",
+                    options=["Date (récent)", "Date (ancien)", "Modèle A-Z", "AUC-ROC ↓", "F1-Score ↓"],
+                    index=0
+                )
+            
+            with col_result3:
+                # Nombre par page
+                page_size = st.selectbox(
+                    "📄 Par page",
+                    options=[10, 25, 50, 100],
+                    index=1
+                )
+            
+            # Application du tri
+            if sort_by == "Date (récent)":
+                filtered_runs.sort(key=lambda x: x.get('collected_at', ''), reverse=True)
+            elif sort_by == "Date (ancien)":
+                filtered_runs.sort(key=lambda x: x.get('collected_at', ''))
+            elif sort_by == "Modèle A-Z":
+                filtered_runs.sort(key=lambda x: x.get('model_name', ''))
+            elif sort_by == "AUC-ROC ↓":
+                filtered_runs.sort(key=lambda x: x.get('metrics', {}).get('auc_roc', 0), reverse=True)
+            elif sort_by == "F1-Score ↓":
+                filtered_runs.sort(key=lambda x: x.get('metrics', {}).get('f1_score', 0), reverse=True)
+            
+            # ====================================================================
+            # TABLEAU RÉCAPITULATIF
+            # ====================================================================
+            st.markdown("---")
+            st.markdown("#### 📋 Tableau Récapitulatif")
+            
+            # Création DataFrame
+            table_data = []
+            
+            for run in filtered_runs[:page_size]:
+                metrics = run.get('metrics', {})
+                params = run.get('params', {})
+                
+                row = {
+                    "Run ID": run.get('run_id', 'N/A')[:16] + "...",
+                    "Modèle": run.get('model_name', 'Unknown'),
+                    "Statut": run.get('status', 'UNKNOWN'),
+                    "AUC-ROC": f"{metrics.get('auc_roc', 0):.3f}" if metrics.get('auc_roc') else "N/A",
+                    "F1": f"{metrics.get('f1_score', 0):.3f}" if metrics.get('f1_score') else "N/A",
+                    "Accuracy": f"{metrics.get('accuracy', 0):.3f}" if metrics.get('accuracy') else "N/A",
+                    "Epochs": params.get('epochs', 'N/A'),
+                    "LR": params.get('learning_rate', 'N/A'),
+                    "Date": run.get('collected_at', 'N/A')[:10] if run.get('collected_at') else 'N/A'
+                }
+                
+                table_data.append(row)
+            
+            if table_data:
+                df = pd.DataFrame(table_data)
+                
+                # Coloration conditionnelle
+                def color_status(val):
+                    colors = {
+                        'FINISHED': 'background-color: #d1fae5; color: #065f46;',
+                        'RUNNING': 'background-color: #dbeafe; color: #1e40af;',
+                        'FAILED': 'background-color: #fee2e2; color: #991b1b;',
+                        'KILLED': 'background-color: #fef3c7; color: #92400e;'
+                    }
+                    return colors.get(val, '')
+                
+                styled_df = df.style.applymap(color_status, subset=['Statut'])
+                
+                st.dataframe(styled_df, use_container_width=True, height=400)
+                
+                # Pagination
+                total_pages = (len(filtered_runs) + page_size - 1) // page_size
+                
+                if total_pages > 1:
+                    col_page1, col_page2, col_page3 = st.columns([1, 2, 1])
+                    
+                    with col_page2:
+                        current_page = st.number_input(
+                            "Page",
+                            min_value=1,
+                            max_value=total_pages,
+                            value=1,
+                            step=1
+                        )
+                        st.caption(f"Page {current_page} sur {total_pages}")
+            
+            # ====================================================================
+            # VISUALISATIONS COMPARATIVES
+            # ====================================================================
+            st.markdown("---")
+            st.markdown("#### 📊 Visualisations Comparatives")
+            
+            col_viz1, col_viz2 = st.columns(2)
+            
+            with col_viz1:
+                # Distribution des statuts
+                status_counts = {}
+                for run in filtered_runs:
+                    status = run.get('status', 'UNKNOWN')
+                    status_counts[status] = status_counts.get(status, 0) + 1
+                
+                fig_status = go.Figure(data=[
+                    go.Pie(
+                        labels=list(status_counts.keys()),
+                        values=list(status_counts.values()),
+                        hole=0.4,
+                        marker=dict(
+                            colors=['#10b981', '#3b82f6', '#ef4444', '#f59e0b']
+                        )
+                    )
+                ])
+                
+                fig_status.update_layout(
+                    title="Distribution des Statuts",
+                    height=300
+                )
+                
+                st.plotly_chart(fig_status, use_container_width=True)
+            
+            with col_viz2:
+                # Distribution des modèles
+                model_counts = {}
+                for run in filtered_runs:
+                    model = run.get('model_name', 'Unknown')
+                    model_counts[model] = model_counts.get(model, 0) + 1
+                
+                fig_models = go.Figure(data=[
+                    go.Bar(
+                        x=list(model_counts.keys()),
+                        y=list(model_counts.values()),
+                        marker=dict(color='#6366f1')
+                    )
+                ])
+                
+                fig_models.update_layout(
+                    title="Distribution des Modèles",
+                    xaxis_title="Modèle",
+                    yaxis_title="Nombre de runs",
+                    height=300
+                )
+                
+                st.plotly_chart(fig_models, use_container_width=True)
+            
+            # Timeline des runs
+            if len(filtered_runs) > 1:
+                st.markdown("---")
+                st.markdown("#### 📈 Timeline des Performances")
+                
+                # Extraction données timeline
+                timeline_data = []
+                
+                for run in filtered_runs:
+                    metrics = run.get('metrics', {})
+                    collected_at = run.get('collected_at')
+                    
+                    if collected_at:
+                        try:
+                            dt = datetime.fromisoformat(collected_at.replace('Z', '+00:00'))
+                            
+                            timeline_data.append({
+                                'date': dt,
+                                'model': run.get('model_name', 'Unknown'),
+                                'auc_roc': metrics.get('auc_roc', 0),
+                                'f1_score': metrics.get('f1_score', 0),
+                                'accuracy': metrics.get('accuracy', 0)
+                            })
+                        except:
+                            pass
+                
+                if timeline_data:
+                    timeline_df = pd.DataFrame(timeline_data).sort_values('date')
+                    
+                    fig_timeline = go.Figure()
+                    
+                    fig_timeline.add_trace(go.Scatter(
+                        x=timeline_df['date'],
+                        y=timeline_df['auc_roc'],
+                        mode='lines+markers',
+                        name='AUC-ROC',
+                        line=dict(color='#6366f1', width=2)
+                    ))
+                    
+                    fig_timeline.add_trace(go.Scatter(
+                        x=timeline_df['date'],
+                        y=timeline_df['f1_score'],
+                        mode='lines+markers',
+                        name='F1-Score',
+                        line=dict(color='#10b981', width=2)
+                    ))
+                    
+                    fig_timeline.add_trace(go.Scatter(
+                        x=timeline_df['date'],
+                        y=timeline_df['accuracy'],
+                        mode='lines+markers',
+                        name='Accuracy',
+                        line=dict(color='#f59e0b', width=2)
+                    ))
+                    
+                    fig_timeline.update_layout(
+                        title="Évolution des Métriques",
+                        xaxis_title="Date",
+                        yaxis_title="Score",
+                        height=400,
+                        hovermode='x unified'
+                    )
+                    
+                    st.plotly_chart(fig_timeline, use_container_width=True)
+            
+            # ====================================================================
+            # DÉTAILS PAR RUN (Accordéon compact)
+            # ====================================================================
+            st.markdown("---")
+            st.markdown("#### 🔍 Détails des Runs")
+            
+            for idx, run in enumerate(filtered_runs[:page_size]):
                 run_id = run.get('run_id', 'N/A')
                 model_name = run.get('model_name', 'Unknown')
                 status = run.get('status', 'UNKNOWN')
-                metrics = run.get('metrics', {})
-                params = run.get('params', {})
-                tags = run.get('tags', {})
                 
-                # Détermination du type
-                model_name_lower = model_name.lower()
-                if any(x in model_name_lower for x in ['autoencoder', 'vae', 'patch', 'siamese']):
-                    run_type_badge = "🔍 Anomaly Detection"
-                    run_type_color = "#f5576c"
-                elif any(x in model_name_lower for x in ['cnn', 'resnet', 'vgg', 'efficientnet']):
-                    run_type_badge = "🎯 Classification"
-                    run_type_color = "#4facfe"
-                else:
-                    run_type_badge = "🤖 Autre"
-                    run_type_color = "#6c757d"
-                
-                # Statut coloré
-                status_colors = {
-                    'FINISHED': '#10b981',
-                    'RUNNING': '#3b82f6',
-                    'FAILED': '#ef4444',
-                    'KILLED': '#f59e0b'
+                # Icône statut
+                status_icons = {
+                    'FINISHED': '✅',
+                    'RUNNING': '🔄',
+                    'FAILED': '❌',
+                    'KILLED': '⚠️'
                 }
-                status_color = status_colors.get(status, '#6c757d')
+                status_icon = status_icons.get(status, '❓')
                 
-                with st.expander(
-                    f"{run_type_badge} | {model_name} | {status}",
-                    expanded=(idx == 0)
-                ):
-                    # En-tête avec informations principales
-                    col_header1, col_header2, col_header3 = st.columns([2, 1, 1])
+                with st.expander(f"{status_icon} {model_name} | {run_id[:16]}... | {status}", expanded=(idx == 0)):
+                    col_detail1, col_detail2 = st.columns(2)
                     
-                    with col_header1:
-                        st.markdown(f"""
-                        <div style="padding: 0.5rem; background: #f8f9fa; border-radius: 5px;">
-                            <strong>Run ID:</strong> <code>{run_id[:16]}...</code><br>
-                            <strong>Type:</strong> <span style="color: {run_type_color};">{run_type_badge}</span><br>
-                            <strong>Statut:</strong> <span style="color: {status_color};">{status}</span>
-                        </div>
-                        """, unsafe_allow_html=True)
+                    with col_detail1:
+                        st.markdown("**📊 Métriques**")
+                        
+                        metrics = run.get('metrics', {})
+                        
+                        for key, value in list(metrics.items())[:8]:
+                            if isinstance(value, (int, float)):
+                                st.metric(key.replace('_', ' ').title(), f"{value:.4f}")
                     
-                    with col_header2:
-                        if 'collected_at' in run:
-                            collected_at = run['collected_at']
-                            if isinstance(collected_at, str):
-                                try:
-                                    dt = datetime.fromisoformat(collected_at.replace('Z', '+00:00'))
-                                    st.write(f"**Date:** {dt.strftime('%d/%m/%Y %H:%M')}")
-                                except:
-                                    st.write(f"**Date:** {collected_at[:10]}")
+                    with col_detail2:
+                        st.markdown("**⚙️ Paramètres**")
+                        
+                        params = run.get('params', {})
+                        
+                        for key, value in list(params.items())[:8]:
+                            st.write(f"**{key.replace('_', ' ').title()}:** `{value}`")
                     
-                    with col_header3:
-                        if 'training_time' in metrics:
-                            st.write(f"**Durée:** {metrics['training_time']:.1f}s")
-                        elif 'training_time' in params:
-                            st.write(f"**Durée:** {params['training_time']}s")
-                    
-                    st.markdown("---")
-                    
-                    # Métriques principales
-                    col_metrics1, col_metrics2 = st.columns(2)
-                    
-                    with col_metrics1:
-                        st.markdown("#### 📈 Métriques d'Entraînement")
-                        
-                        # Métriques spécifiques Computer Vision
-                        cv_metrics = {}
-                        standard_metrics = {}
-                        
-                        for key, value in metrics.items():
-                            if any(x in key.lower() for x in ['loss', 'accuracy', 'f1', 'precision', 'recall', 'auc']):
-                                standard_metrics[key] = value
-                            elif any(x in key.lower() for x in ['reconstruction', 'error', 'threshold']):
-                                cv_metrics[key] = value
-                            else:
-                                standard_metrics[key] = value
-                        
-                        # Affichage métriques standard
-                        if standard_metrics:
-                            for metric, value in list(standard_metrics.items())[:5]:
-                                if isinstance(value, (int, float)):
-                                    st.metric(metric.replace('_', ' ').title(), f"{value:.4f}")
-                                else:
-                                    st.write(f"**{metric.replace('_', ' ').title()}:** {value}")
-                        
-                        # Métriques spécifiques CV
-                        if cv_metrics:
-                            st.markdown("**🔍 Métriques Anomaly Detection:**")
-                            for metric, value in list(cv_metrics.items())[:3]:
-                                if isinstance(value, (int, float)):
-                                    st.write(f"- {metric.replace('_', ' ').title()}: `{value:.4f}`")
-                    
-                    with col_metrics2:
-                        st.markdown("#### ⚙️ Paramètres d'Entraînement")
-                        
-                        # Paramètres importants
-                        important_params = [
-                            'epochs', 'batch_size', 'learning_rate', 'optimizer',
-                            'scheduler', 'model_type', 'num_classes'
-                        ]
-                        
-                        displayed_params = {}
-                        for param in important_params:
-                            if param in params:
-                                displayed_params[param] = params[param]
-                        
-                        # Afficher les paramètres importants
-                        for param, value in displayed_params.items():
-                            st.write(f"**{param.replace('_', ' ').title()}:** `{value}`")
-                        
-                        # Afficher autres paramètres (limité)
-                        other_params = {k: v for k, v in params.items() if k not in important_params}
-                        if other_params:
-                            with st.expander(f"Autres paramètres ({len(other_params)})"):
-                                for param, value in list(other_params.items())[:10]:
-                                    st.write(f"- **{param}:** `{value}`")
-                    
-                    st.markdown("---")
-                    
-                    # Tags et métadonnées
-                    if tags:
-                        st.markdown("#### 🏷️ Tags et Métadonnées")
-                        col_tags1, col_tags2 = st.columns(2)
-                        
-                        with col_tags1:
-                            for key, value in list(tags.items())[:5]:
-                                st.write(f"**{key}:** `{value}`")
-                        
-                        with col_tags2:
-                            if len(tags) > 5:
-                                with st.expander(f"Tous les tags ({len(tags)})"):
-                                    for key, value in tags.items():
-                                        st.write(f"- **{key}:** `{value}`")
-                    
-                    # Boutons d'action
+                    # Actions
                     col_action1, col_action2, col_action3 = st.columns(3)
                     
                     with col_action1:
-                        if st.button("📖 Voir Détails Complets", key=f"details_{run_id}", width='stretch'):
-                            st.json({
-                                "run_id": run_id,
-                                "model_name": model_name,
-                                "status": status,
-                                "metrics": metrics,
-                                "params": params,
-                                "tags": tags
-                            })
+                        if st.button("📖 JSON Complet", key=f"json_{run_id}", use_container_width=True):
+                            st.json(run)
                     
                     with col_action2:
-                        # Lien vers MLflow UI si disponible
+                        # Export
+                        export_data = json.dumps(run, indent=2, ensure_ascii=False, default=str)
+                        st.download_button(
+                            "💾 Export",
+                            export_data,
+                            f"run_{run_id[:8]}.json",
+                            "application/json",
+                            key=f"dl_{run_id}",
+                            use_container_width=True
+                        )
+                    
+                    with col_action3:
+                        # Lien MLflow UI
                         try:
                             import mlflow
                             tracking_uri = mlflow.get_tracking_uri()
-                            if tracking_uri and tracking_uri != "file://":
-                                mlflow_url = f"{tracking_uri}/#/experiments/{run.get('experiment_id', '0')}/runs/{run_id}"
-                                st.markdown(f"[🔗 Ouvrir dans MLflow UI]({mlflow_url})")
+                            
+                            if tracking_uri and not tracking_uri.startswith("file://"):
+                                mlflow_url = f"{tracking_uri}/#/experiments/0/runs/{run_id}"
+                                st.markdown(f"[🔗 MLflow UI]({mlflow_url})", unsafe_allow_html=True)
                         except:
                             pass
-                    
-                    with col_action3:
-                        # Export JSON
-                        export_data = {
-                            "run_id": run_id,
-                            "model_name": model_name,
-                            "status": status,
-                            "metrics": metrics,
-                            "params": params,
-                            "tags": tags,
-                            "collected_at": run.get('collected_at', '')
-                        }
-                        json_str = json.dumps(export_data, indent=2, ensure_ascii=False, default=str)
-                        st.download_button(
-                            "💾 Export JSON",
-                            json_str,
-                            f"mlflow_run_{run_id[:8]}_{datetime.now().strftime('%Y%m%d')}.json",
-                            "application/json",
-                            key=f"export_{run_id}",
-                            width='stretch'
-                        )
-        else:
-            st.warning("⚠️ Aucun run ne correspond aux filtres sélectionnés")
-
+            
+            # ====================================================================
+            # EXPORT GLOBAL
+            # ====================================================================
+            st.markdown("---")
+            st.markdown("#### 💾 Export Global")
+            
+            col_export1, col_export2, col_export3 = st.columns(3)
+            
+            with col_export1:
+                # Export JSON tous les runs filtrés
+                all_runs_json = json.dumps(filtered_runs, indent=2, ensure_ascii=False, default=str)
+                st.download_button(
+                    "📥 Export JSON (tous)",
+                    all_runs_json,
+                    f"mlflow_runs_{len(filtered_runs)}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
+                    "application/json",
+                    use_container_width=True
+                )
+            
+            with col_export2:
+                # Export CSV
+                if table_data:
+                    csv_data = pd.DataFrame(table_data).to_csv(index=False)
+                    st.download_button(
+                        "📥 Export CSV",
+                        csv_data,
+                        f"mlflow_runs_{len(filtered_runs)}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                        "text/csv",
+                        use_container_width=True
+                    )
+            
+            with col_export3:
+                # Statistiques résumées
+                summary_stats = {
+                    "total_runs": len(filtered_runs),
+                    "successful": successful_runs,
+                    "failed": failed_runs,
+                    "avg_auc_roc": np.mean([r.get('metrics', {}).get('auc_roc', 0) for r in filtered_runs if r.get('metrics', {}).get('auc_roc')]),
+                    "avg_f1": np.mean([r.get('metrics', {}).get('f1_score', 0) for r in filtered_runs if r.get('metrics', {}).get('f1_score')]),
+                    "models": list(set(r.get('model_name', 'Unknown') for r in filtered_runs))
+                }
+                
+                summary_json = json.dumps(summary_stats, indent=2, default=str)
+                st.download_button(
+                    "📥 Statistiques",
+                    summary_json,
+                    f"mlflow_stats_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
+                    "application/json",
+                    use_container_width=True
+                )
 
 # TAB 7: RAPPORT
 with tabs[6]:

@@ -863,12 +863,47 @@ class ModernDashboard:
                     
                     # AFFICHAGE CORRECT
                     label_idx = d.y[idx]
-                    if label_idx < len(class_names):
-                        label = class_names[label_idx]
+                    # VALIDATION INTELLIGENTE: vérifier que class_names existe ET a assez d'éléments
+                    if class_names and len(class_names) > 0:
+                        # Cas MVTec AD: toujours 2 classes possibles (Normal=0, Anomaly=1)
+                        is_mvtec = (d.task or '').lower() in ['unsupervised', 'anomaly_detection_unsupervised']
+                        
+                        if is_mvtec and label_idx in [0, 1]:
+                            # Pour MVTec AD: forcer les noms corrects même si n_classes=1
+                            if label_idx == 0:
+                                label = "Normal"
+                            else:
+                                label = "Anomaly"
+                            color = "#4facfe" if label_idx == 0 else "#ee5a6f"
+                            icon = "✅" if label_idx == 0 else "⚠️"
+                        
+                        elif label_idx < len(class_names):
+                            # Cas standard: utiliser class_names
+                            label = class_names[label_idx]
+                            
+                            # Couleur selon type
+                            if 'anomaly' in (d.task or '').lower():
+                                color = "#4facfe" if label_idx == 0 else "#ee5a6f"
+                                icon = "✅" if label_idx == 0 else "⚠️"
+                            else:
+                                color = "#667eea"
+                                icon = "🏷️"
+                        
+                        else:
+                            # Hors range: fallback
+                            label = f"Classe {label_idx}"
+                            color = "#6c757d"
+                            icon = "❓"
+                            logger.debug(f"Label {label_idx} hors range class_names (len={len(class_names)})")
+
                     else:
+                        # Aucun class_names disponible: fallback générique
                         label = f"Classe {label_idx}"
-                        logger.warning(f"⚠️ Label {label_idx} hors range")
-                    
+                        color = "#6c757d"
+                        icon = "❓"
+                        logger.warning(f"⚠️ class_names vide ou None, impossible de mapper label {label_idx}")
+
+                    # Résolution image
                     shape_str = f"{img.shape[0]}×{img.shape[1]}" if len(img.shape) >= 2 else "N/A"
                     
                     # Badge couleur selon type

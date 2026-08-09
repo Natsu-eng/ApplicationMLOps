@@ -581,18 +581,39 @@ class StateManager:
                 f"Classes détectées: {d.n_classes}"
             )
             
-            # ✅ VALIDATION FINALE: Vérifier cohérence class_names
+            # VALIDATION FINALE: Vérifier cohérence class_names
             if d.class_names:
-                if len(d.class_names) != d.n_classes:
-                    logger.warning(
-                        f"⚠️ Incohérence class_names: "
-                        f"len(class_names)={len(d.class_names)}, n_classes={d.n_classes}"
-                    )
+                # Cas spécial MVTec AD ou unsupervised
+                is_mvtec = structure.get("is_mvtec", False)
+                is_unsupervised = d.task in ["unsupervised", "anomaly_detection_unsupervised"]
+                
+                if is_mvtec or is_unsupervised:
+                    # Pour MVTec AD: n_classes=1 (train) mais class_names=["Normal", "Anomaly"]
+                    expected_classes = len(d.class_names)  # Utiliser class_names comme référence
+                    
+                    if d.n_classes != expected_classes:
+                        logger.info(
+                            f"✅ MVTec AD détecté: {d.n_classes} classe(s) en train, "
+                            f"{expected_classes} classes au total ({d.class_names})"
+                        )
+                    else:
+                        logger.info(
+                            f"✅ class_names cohérents: {len(d.class_names)} noms pour {d.n_classes} classes\n"
+                            f"   Noms: {d.class_names}"
+                        )
                 else:
-                    logger.info(
-                        f"✅ class_names cohérents: {len(d.class_names)} noms pour {d.n_classes} classes\n"
-                        f"   Noms: {d.class_names}"
-                    )
+                    # Classification standard: n_classes doit matcher class_names
+                    if len(d.class_names) != d.n_classes:
+                        logger.warning(
+                            f"⚠️ Incohérence class_names: "
+                            f"len(class_names)={len(d.class_names)}, n_classes={d.n_classes}\n"
+                            f"   Attendu: {d.n_classes} classes"
+                        )
+                    else:
+                        logger.info(
+                            f"✅ class_names cohérents: {len(d.class_names)} noms pour {d.n_classes} classes\n"
+                            f"   Noms: {d.class_names}"
+                        )
             
             return True
             

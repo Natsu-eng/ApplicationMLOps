@@ -222,7 +222,10 @@ def get_dataset_info(data_dir: str) -> Dict[str, Any]:
                 "balance_ratio": anomaly_count / normal_count if normal_count > 0 else 0,
                 "task_type": "anomaly_detection_unsupervised",
                 "is_mvtec": True,
-                "class_names": ["Normal", "Anomaly"]  # ✅ Noms explicites
+                "class_names": ["Normal", "Anomaly"],  # Noms explicites
+                "n_classes_total": 2,
+                "n_classes_train": 1  # Seulement normal en train
+
             })
             
             logger.info(f"MVTec AD: {normal_count} normal, {anomaly_count} anomalies")

@@ -679,19 +679,57 @@ def filter_models_by_mode(all_models: Dict, mode: str, metadata: Dict) -> Dict:
 # ============================================================================
 
 def analyze_imbalance_by_mode(
-    y_train: np.ndarray,
+    y_train: Optional[np.ndarray],
     mode: str,
     metadata: Dict
 ) -> Dict[str, Any]:
     """
-    Analyse le déséquilibre selon le mode.
+    Analyse le déséquilibre selon le mode avec gestion robuste des cas edge.
+    
+    Args:
+        y_train: Labels (None en mode unsupervised sans labels)
+        mode: "supervised" ou "unsupervised"
+        metadata: Métadonnées du split
     
     Returns:
-        Dict avec métrique d'imbalance et recommandations
+        Dict avec métriques et recommandations
     """
     from collections import Counter
     
+    # ========================================================================
+    # CAS 1: PAS DE LABELS (mode unsupervised strict sans y_train)
+    # ========================================================================
+    if y_train is None or len(y_train) == 0:
+        return {
+            "ratio": 1.0,
+            "level": "N/A (unsupervised)",
+            "color": "#6c757d",
+            "icon": "🔍",
+            "recommendation": "Mode non supervisé: pas de labels, pas de déséquilibre",
+            "use_class_weights": False,
+            "use_smote": False,
+            "counts": {},
+            "mode": mode
+        }
+    
+    # ========================================================================
+    # CAS 2: AVEC LABELS
+    # ========================================================================
     counts = Counter(y_train)
+    
+    if len(counts) == 0:
+        # Edge case: y_train vide ou invalide
+        return {
+            "ratio": 1.0,
+            "level": "erreur",
+            "color": "#dc3545",
+            "icon": "❌",
+            "recommendation": "Aucune classe détectée dans y_train",
+            "use_class_weights": False,
+            "use_smote": False,
+            "counts": {},
+            "mode": mode
+        }
     
     if mode == "supervised":
         # Ratio max/min standard
@@ -733,14 +771,25 @@ def analyze_imbalance_by_mode(
         # Pour anomalies: ratio normal/anomalie
         n_normal = counts.get(0, 0)
         n_anomaly = counts.get(1, 0)
-        ratio = n_normal / n_anomaly if n_anomaly > 0 else float('inf')
+        
+        # ✅ FIX: Gérer cas où une seule classe présente
+        if n_anomaly == 0:
+            ratio = float('inf') if n_normal > 0 else 1.0
+        elif n_normal == 0:
+            ratio = 0.0
+        else:
+            ratio = n_normal / n_anomaly
         
         # IMPORTANT: Ne PAS utiliser class weights pour anomalies
-        level = "normal (anomalies)"
+        level = "normal (autoencoder)"
         color = "#17a2b8"
         icon = "🔍"
         
-        if n_anomaly > n_normal * 0.2:
+        if n_anomaly == 0:
+            recommendation = "✅ Training 100% normal - Idéal pour autoencoders"
+            use_weights = False
+            use_smote = False
+        elif n_anomaly > n_normal * 0.2:
             recommendation = "⚠️ Trop d'anomalies en train (>20%) - Nettoyer le dataset"
             use_weights = False
             use_smote = False
@@ -763,7 +812,7 @@ def analyze_imbalance_by_mode(
 
 
 def render_imbalance_analysis(imbalance_info: Dict, y_train: np.ndarray):
-    """Affiche l'analyse du déséquilibre"""
+    """Affiche l'analyse du déséquilibre - Version corrigée pour graphique"""
     
     # Badge niveau
     st.markdown(
@@ -780,42 +829,127 @@ def render_imbalance_analysis(imbalance_info: Dict, y_train: np.ndarray):
     )
     
     # Graphique distribution
-    st.markdown("### 📊 Distribution des Classes")
+    st.markdown("### 📊 Distribution des Classes (Training)")
     
-    if imbalance_info["mode"] == "supervised":
-        labels = [f"Classe {k}" for k in sorted(imbalance_info["counts"].keys())]
-    else:
-        labels = ['Normal', 'Anomalie']
+    # ========================================================================
+    # GESTION ROBUSTE DES LABELS
+    # ========================================================================
+    counts = imbalance_info.get("counts", {})
+    mode = imbalance_info.get("mode", "supervised")
     
-    values = [imbalance_info["counts"][k] for k in sorted(imbalance_info["counts"].keys())]
+    # ✅ VALIDATION: Vérifier que counts n'est pas vide
+    if not counts:
+        st.warning("⚠️ Aucune donnée à afficher (counts vide)")
+        return
     
+    # Récupérer les clés triées (classes réellement présentes)
+    sorted_keys = sorted(counts.keys())
+    
+    if not sorted_keys:
+        st.warning("⚠️ Aucune classe détectée dans y_train")
+        return
+    
+    # Construction labels/values selon mode
+    if mode == "supervised":
+        labels = [f"Classe {k}" for k in sorted_keys]
+        values = [counts[k] for k in sorted_keys]
+        colors = [f'hsl({(i * 60) % 360}, 70%, 60%)' for i in range(len(sorted_keys))]
+    
+    else:  # unsupervised
+        label_map = {0: 'Normal', 1: 'Anomalie'}
+        
+        labels = []
+        values = []
+        colors = []
+        
+        for key in sorted_keys:
+            labels.append(label_map.get(key, f'Classe {key}'))
+            values.append(counts[key])
+            colors.append('#4facfe' if key == 0 else '#f5576c')
+        
+        # Info contextuelle
+        if len(sorted_keys) == 1 and 0 in counts:
+            st.info("""
+            ℹ️ **Mode Autoencoder**: Seules les images **normales** sont en training.
+            
+            Les anomalies servent uniquement pour validation/test.
+            """)
+    
+    # ========================================================================
+    # VALIDATION FINALE
+    # ========================================================================
+    if len(labels) != len(values):
+        logger.error(
+            f"❌ Mismatch dimensions: labels={len(labels)}, values={len(values)}"
+        )
+        st.error("❌ Erreur dimensions graphique")
+        return
+    
+    if sum(values) == 0:
+        st.warning("⚠️ Aucune image dans le training")
+        return
+    
+    # ========================================================================
+    # GÉNÉRATION GRAPHIQUE (CORRIGÉ)
+    # ========================================================================
     fig = go.Figure(data=[
         go.Bar(
             x=labels,
             y=values,
-            text=[f"{v}<br>({v/sum(values)*100:.1f}%)" for v in values],
+            text=[f"{v:,}<br>({v/sum(values)*100:.1f}%)" for v in values],
             textposition='auto',
-            marker_color=['#4facfe' if i == 0 else '#f5576c' for i in range(len(values))]
+            marker_color=colors,
+            hovertemplate=(
+                '<b>%{x}</b><br>'
+                'Nombre: %{y:,}<br>'
+                '<extra></extra>'
+            )
         )
     ])
     
     fig.update_layout(
-        title="Distribution des Classes en Training",
+        title="Distribution des Classes (Training uniquement)" if mode == "unsupervised" else "Distribution des Classes",
         xaxis_title="Classe",
         yaxis_title="Nombre d'images",
-        height=400
+        height=400,
+        showlegend=False,
+        hovermode='closest'
     )
     
+    # Affichage graphique
     st.plotly_chart(
-        fig, 
+        fig,
+        use_container_width=True, 
         config={
             'displayModeBar': True,
             'displaylogo': False,
             'modeBarButtonsToRemove': ['pan2d', 'lasso2d', 'select2d']
-        },
-        width="stretch"
+        }
     )
-
+    
+    # ========================================================================
+    # ALERTES CONDITIONNELLES (sans tableau détaillé)
+    # ========================================================================
+    if mode == "supervised" and imbalance_info.get("ratio", 1.0) > 10:
+        st.error(f"""
+        🚨 **Déséquilibre Critique** (Ratio {imbalance_info["ratio"]:.1f}:1)
+        
+        **Actions recommandées:**
+        - ✅ Activer **Class Weights** (ci-dessous)
+        - ✅ Activer **SMOTE** si ratio > 15:1
+        - ⚠️ Vérifier équilibre du dataset source
+        """)
+    
+    elif mode == "unsupervised" and 1 in counts:
+        anomaly_pct = counts[1] / sum(values) * 100
+        if anomaly_pct > 20:
+            st.warning(f"""
+            ⚠️ **Trop d'anomalies en Training** ({counts[1]:,} soit {anomaly_pct:.1f}%)
+            
+            **Actions:**
+            - 🧹 Nettoyer le dataset (retirer anomalies du train/)
+            - 📂 Vérifier structure train/ vs test/
+            """)
 
 # ============================================================================
 # EXPORTS
