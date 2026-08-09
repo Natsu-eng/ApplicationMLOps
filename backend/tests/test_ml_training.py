@@ -341,3 +341,108 @@ def test_selection_score_comparable_across_registry_families():
         model.fit(X_train, y_train)
         score = _classification_selection_score(model, split.X_test.to_numpy(), split.y_test.to_numpy())
         assert 0.0 <= score <= 1.0, f"{spec.id} : score hors échelle ({score})"
+
+
+# ── Lot 5 — SHAP par famille (tree/linear/kernel) ───────────────────────────
+
+
+def test_shap_linear_explainer_matches_coefficients_in_processed_space():
+    """Sanity check numérique (correction 2 du cadrage Lot 5) : sur un modèle
+    linéaire connu, les valeurs SHAP doivent égaler coef_ * (x - moyenne du
+    fond) DANS L'ESPACE PRÉPROCESSÉ. Si l'explainer recevait les données
+    brutes (mauvais espace — les coefficients ont été appris sur des données
+    centrées-réduites), cette égalité échouerait silencieusement sans lever
+    d'exception, ce qui est précisément le risque signalé par la correction :
+    une explicabilité fausse mais sans crash. Fond ≤ 100 lignes (paramètre
+    par défaut `max_samples` du masker Independent de SHAP) pour que la
+    moyenne utilisée soit prévisible, sans sous-échantillonnage interne."""
+    from sklearn.linear_model import Ridge
+    from sklearn.preprocessing import StandardScaler
+
+    from services.ml_training import _build_explainer
+
+    rng = np.random.default_rng(5)
+    n = 80
+    X_raw = rng.normal(size=(n, 3))
+    y = 5.0 * X_raw[:, 0] + 0.5 * X_raw[:, 1] - 2.0 * X_raw[:, 2] + rng.normal(0, 0.05, n)
+
+    # Préprocessing minimal explicite (équivalent, pour l'essentiel, à ce que
+    # fait build_preprocessor sur les colonnes numériques) — isole le
+    # comportement de l'explainer du reste du pipeline.
+    X_proc = StandardScaler().fit_transform(X_raw)
+    model = Ridge(alpha=0.01, random_state=42).fit(X_proc, y)
+
+    explainer = _build_explainer("linear", model, X_proc)
+    shap_values = np.asarray(explainer.shap_values(X_proc[:20]))
+
+    expected = model.coef_ * (X_proc[:20] - X_proc.mean(axis=0))
+    assert np.allclose(shap_values, expected, atol=1e-6)
+
+
+def test_shap_kernel_explainer_produces_result_for_small_feature_set():
+    """KernelExplainer (routage 'kernel' — SVM/KNN/Naive Bayes) produit un
+    résultat exploitable pour un petit nombre de variables — une entrée par
+    variable, une importance numérique, pas seulement 'non vide'."""
+    from sklearn.svm import SVC
+
+    from services.ml_training import _compute_shap_summary
+
+    rng = np.random.default_rng(2)
+    n = 60
+    X = rng.normal(size=(n, 3))
+    y = (X[:, 0] + X[:, 1] > 0).astype(int)
+    model = SVC(probability=True, random_state=42).fit(X, y)
+
+    summary = _compute_shap_summary(model, "kernel", X, X[:10], ["f1", "f2", "f3"])
+    assert len(summary) == 3
+    assert all(isinstance(entry["importance"], float) for entry in summary)
+
+
+def test_explainability_degrades_above_kernel_feature_threshold():
+    """Au-delà de _KERNEL_SHAP_MAX_FEATURES variables, l'explicabilité kernel
+    est désactivée avec un statut + message explicite plutôt que de lancer un
+    calcul trop long — jamais une disparition silencieuse (Lot 5)."""
+    from services.ml_training import _KERNEL_SHAP_MAX_FEATURES, _compute_explainability
+
+    n_features = _KERNEL_SHAP_MAX_FEATURES + 5
+    feature_names = [f"f{i}" for i in range(n_features)]
+
+    class _DummyModel:
+        def predict(self, X):
+            return np.zeros(len(X))
+
+    shap_summary, status = _compute_explainability(
+        _DummyModel(), "kernel",
+        np.zeros((10, n_features)), np.zeros((10, n_features)),
+        feature_names, TrainingConfig(),
+    )
+    assert shap_summary == []
+    assert status["status"] == "degraded"
+    assert status["message"]  # message non vide, en langage clair (pas de jargon brut)
+
+
+def test_explainability_degrades_on_unexpected_shap_failure(monkeypatch):
+    """Filet de sécurité générique : si le calcul SHAP échoue pour une raison
+    imprévue, l'entraînement ne doit pas planter — dégradation avec message,
+    pas d'exception qui remonte à l'appelant."""
+
+    def _boom(*args, **kwargs):
+        raise RuntimeError("échec simulé")
+
+    monkeypatch.setattr(ml_training_module, "_compute_shap_summary", _boom)
+
+    shap_summary, status = ml_training_module._compute_explainability(
+        object(), "tree", np.zeros((5, 2)), np.zeros((5, 2)), ["f1", "f2"], TrainingConfig(),
+    )
+    assert shap_summary == []
+    assert status["status"] == "degraded"
+    assert status["message"]
+
+
+def test_model_card_carries_ok_explainability_status_for_tree_models():
+    """Non-régression : les boosters (routage 'tree') restent au statut 'ok'
+    — le chantier SHAP par famille ne dégrade pas ce qui marchait déjà."""
+    df = _make_regression_df()
+    split = split_dataset(df, "cible", ["x1", "x2"], "regression", None, 0.2, 42)
+    result = train_and_evaluate(split, "regression", _FAST_CONFIG, lambda s, p: None)
+    assert result.model_card["explainability"] == {"status": "ok", "message": None}

@@ -250,22 +250,60 @@ def _bootstrap_ci(
     }
 
 
-def _compute_shap_summary(estimator: Any, X_sample: np.ndarray, feature_names: list[str]) -> list[dict[str, Any]]:
-    """Importance globale des features par SHAP (TreeExplainer) — moyenne des
-    valeurs absolues sur un échantillon du test. Le détail par observation
-    (dependence/waterfall) est laissé pour une itération future de la page
-    d'évaluation (Lot 4).
+# ── SHAP par famille (Lot 5) ────────────────────────────────────────────────
+#
+# Bornage de KernelExplainer — le seul des trois explainers dont le coût
+# croît avec (taille du fond × taille de l'échantillon expliqué × nombre de
+# variables) : sans borne, un modèle SVM/KNN/Naive Bayes sur un dataset large
+# rendrait l'explicabilité impraticable. Constantes nommées (pas de valeur en
+# dur perdue dans le code) — voir `_compute_explainability`.
+_KERNEL_SHAP_MAX_FEATURES = 50  # au-delà : SHAP désactivé pour ce modèle, message explicite plutôt qu'un calcul trop long
+_KERNEL_SHAP_BACKGROUND_SIZE = 50  # points de fond résumés par k-means (pas les données brutes)
+_KERNEL_SHAP_SAMPLE_SIZE = 50  # échantillon expliqué — nettement plus bas que shap_sample_size (tree/linear, rapides)
+
+
+def _build_explainer(explainer_kind: str, estimator: Any, X_train_background: np.ndarray):
+    """Construit l'explainer SHAP adapté à la famille du modèle gagnant.
+
+    Point critique (Lot 5, correction 2) : `X_train_background` DOIT être
+    dans le même espace que celui vu par `estimator` — c'est-à-dire déjà
+    passé par le préprocesseur (post-scaling, post-OHE), jamais les données
+    brutes. Un `LinearExplainer`/`KernelExplainer` nourri de données brutes
+    ne lève aucune erreur mais produit des valeurs SHAP fausses (les
+    coefficients du modèle linéaire, eux, ont été appris dans l'espace
+    préprocessé) — l'appelant (`_compute_explainability`) ne passe donc
+    jamais autre chose que `X_train_proc`/`X_test_proc`.
+    """
+    if explainer_kind == "tree":
+        return shap.TreeExplainer(estimator)
+    if explainer_kind == "linear":
+        return shap.LinearExplainer(estimator, X_train_background)
+    background = shap.kmeans(X_train_background, min(_KERNEL_SHAP_BACKGROUND_SIZE, len(X_train_background)))
+    predict_fn = estimator.predict_proba if hasattr(estimator, "predict_proba") else estimator.predict
+    return shap.KernelExplainer(predict_fn, background)
+
+
+def _compute_shap_summary(
+    estimator: Any, explainer_kind: str, X_train_background: np.ndarray, X_sample: np.ndarray, feature_names: list[str]
+) -> list[dict[str, Any]]:
+    """Importance globale des features par SHAP — moyenne des valeurs
+    absolues sur un échantillon du test, quel que soit le type d'explainer
+    routé par `explainer_kind` (Lot 5 : tree/linear/kernel). Le détail par
+    observation (dependence/waterfall) est laissé pour une itération future
+    de la page d'évaluation (Lot 4).
 
     La forme de `shap_values` en classification multiclasse dépend de la
-    version de SHAP/du backend : soit une liste d'une matrice
-    (n_échantillons, n_features) par classe (API historique), soit un seul
-    tableau (n_échantillons, n_features, n_classes) (API unifiée récente).
-    Les deux sont gérées — bug réel rencontré en test (classification 3
-    classes) : sans ce second cas, `mean_abs` restait 2D et l'indexation
-    par une ligne entière au lieu d'un scalaire levait
-    `only integer scalar arrays can be converted to a scalar index`.
+    version de SHAP/du backend et de l'explainer : soit une liste d'une
+    matrice (n_échantillons, n_features) par classe (API historique), soit un
+    seul tableau (n_échantillons, n_features, n_classes) (API unifiée
+    récente) — `KernelExplainer` sur `predict_proba` produit des formes
+    analogues à `TreeExplainer` en multiclasse. Les deux sont gérées — bug
+    réel rencontré en test (classification 3 classes, Lot 3) : sans ce second
+    cas, `mean_abs` restait 2D et l'indexation par une ligne entière au lieu
+    d'un scalaire levait `only integer scalar arrays can be converted to a
+    scalar index`.
     """
-    explainer = shap.TreeExplainer(estimator)
+    explainer = _build_explainer(explainer_kind, estimator, X_train_background)
     shap_values = explainer.shap_values(X_sample)
     if isinstance(shap_values, list):
         abs_values = np.mean([np.abs(sv) for sv in shap_values], axis=0)
@@ -278,6 +316,56 @@ def _compute_shap_summary(estimator: Any, X_sample: np.ndarray, feature_names: l
     mean_abs = abs_values.mean(axis=0)
     order = np.argsort(mean_abs)[::-1]
     return [{"feature": feature_names[i], "importance": float(mean_abs[i])} for i in order]
+
+
+def _compute_explainability(
+    estimator: Any,
+    explainer_kind: str,
+    X_train_proc: np.ndarray,
+    X_test_proc: np.ndarray,
+    feature_names: list[str],
+    config: TrainingConfig,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Calcule le résumé SHAP du modèle gagnant, ou dégrade proprement —
+    jamais de plantage du job et jamais une section qui disparaît sans
+    explication (Lot 5) : `explainability_status` (à afficher côté UI, pas
+    seulement stocké) porte toujours un statut + un message clair en cas de
+    dégradation.
+
+    `KernelExplainer` (routage "kernel" — SVM/KNN/Naive Bayes) est borné
+    (fond et échantillon réduits, voir constantes ci-dessus) et désactivé
+    au-delà de `_KERNEL_SHAP_MAX_FEATURES` variables plutôt que de lancer un
+    calcul trop long. Un dernier filet `try/except` couvre les cas non
+    anticipés (ex. modèle dégénéré sur un petit jeu de données) : dans tous
+    les cas, `train_and_evaluate` continue et produit un modèle utilisable.
+    """
+    n_features = len(feature_names)
+    if explainer_kind == "kernel" and n_features > _KERNEL_SHAP_MAX_FEATURES:
+        return [], {
+            "status": "degraded",
+            "message": (
+                "L'explication détaillée des prédictions n'est pas disponible pour ce type de "
+                f"modèle sur un jeu de données avec autant de variables ({n_features}) — "
+                "le calcul serait trop long pour rester praticable."
+            ),
+        }
+
+    sample_size = _KERNEL_SHAP_SAMPLE_SIZE if explainer_kind == "kernel" else config.shap_sample_size
+    sample_size = min(sample_size, len(X_test_proc))
+    rng = np.random.default_rng(config.seed)
+    sample_idx = rng.choice(len(X_test_proc), size=sample_size, replace=False)
+
+    try:
+        shap_summary = _compute_shap_summary(
+            estimator, explainer_kind, X_train_proc, X_test_proc[sample_idx], feature_names
+        )
+        return shap_summary, {"status": "ok", "message": None}
+    except Exception as exc:  # dernier filet — l'explicabilité ne doit jamais faire échouer l'entraînement
+        logger.warning("[Training] Calcul SHAP dégradé (explainer=%s) : %s", explainer_kind, exc)
+        return [], {
+            "status": "degraded",
+            "message": "L'explication détaillée n'a pas pu être calculée pour ce modèle sur ce jeu de données.",
+        }
 
 
 def _downsample_curve(x: np.ndarray, y: np.ndarray, max_points: int = 100) -> tuple[list[float], list[float]]:
@@ -512,7 +600,7 @@ def train_and_evaluate(
     # cette boucle, qui ne référence déjà plus aucun nom d'algorithme en dur.
     catalog = models_for_task(task_type, subset="all")
 
-    candidates: list[tuple[str, Any, float]] = []
+    candidates: list[tuple[str, ModelSpec, Any, float]] = []
     n_models = len(catalog)
     span_per_model = 65 // n_models  # 5%→70% réparti entre les modèles du catalogue
     for i, spec in enumerate(catalog):
@@ -523,11 +611,14 @@ def train_and_evaluate(
             spec, split.X_train, y_train, task_type, cv, split.groups_train,
             preprocessor_template, config, progress_cb, base, span_per_model,
         )
-        candidates.append((algo_name, best_model, cv_score))
+        candidates.append((algo_name, spec, best_model, cv_score))
         logger.info("[Training] %s — score CV = %.4f", algo_name, cv_score)
 
     # Sélection sur la CV, jamais sur le test (voir docstring du module).
-    algo_name, best_model, cv_score = max(candidates, key=lambda c: c[2])
+    # `winning_spec` conservé pour router l'explainer SHAP sur la bonne
+    # famille (Lot 5) — le reste du pipeline (métriques, CQR) reste
+    # indépendant du type de modèle, comme avant.
+    algo_name, winning_spec, best_model, cv_score = max(candidates, key=lambda c: c[3])
     progress_cb(f"Modèle retenu : {algo_name} — entraînement final", 72)
 
     # Artefact de production : fit sur TOUT le train, comme pour n'importe
@@ -562,10 +653,9 @@ def train_and_evaluate(
         evaluation = _compute_classification_evaluation(y_test, pred_test, proba_test, class_names or [])
 
     progress_cb("Calcul de l'explicabilité (SHAP)", 78)
-    sample_size = min(config.shap_sample_size, len(X_test_proc))
-    rng = np.random.default_rng(config.seed)
-    sample_idx = rng.choice(len(X_test_proc), size=sample_size, replace=False)
-    shap_summary = _compute_shap_summary(best_model, X_test_proc[sample_idx], feature_names)
+    shap_summary, explainability_status = _compute_explainability(
+        best_model, winning_spec.explainer_kind, X_train_proc, X_test_proc, feature_names, config
+    )
 
     cqr_result: Optional[dict[str, Any]] = None
     cqr_artifacts: Optional[dict[str, Any]] = None
@@ -599,6 +689,10 @@ def train_and_evaluate(
         "metrics": metrics,
         "cqr": cqr_result,
         "top_features": shap_summary[:10],
+        # Statut d'explicabilité (Lot 5) — "ok" ou "degraded" + message FR
+        # clair. Doit être AFFICHÉ côté frontend quand dégradé, pas
+        # seulement stocké (voir ModelResultModal.tsx).
+        "explainability": explainability_status,
     }
 
     bundle: dict[str, Any] = {
