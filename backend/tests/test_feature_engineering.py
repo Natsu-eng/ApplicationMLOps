@@ -6,7 +6,9 @@ import pandas as pd
 
 from services.feature_engineering import (
     apply_datetime_decomposition,
+    apply_ratio_features,
     suggest_datetime_columns,
+    suggest_ratio_features,
 )
 
 
@@ -81,3 +83,54 @@ def test_apply_datetime_decomposition_is_deterministic_single_row_vs_batch():
     for part in ("annee", "mois", "jour", "jour_semaine"):
         col = f"date_inscription_{part}"
         assert single_result.loc[0, col] == batch_result.loc[7, col]
+
+
+# ── Ratios / interactions ────────────────────────────────────────────────
+
+
+def _collinearity_warning(c1="surface", c2="consommation", correlation=0.95):
+    return {
+        "level": "info",
+        "code": "collinearite_forte",
+        "title": f"« {c1} » et « {c2} » sont très corrélées",
+        "explanation": "...",
+        "action": "...",
+        "columns": [c1, c2],
+        "details": {"correlation": correlation},
+    }
+
+
+def test_suggest_ratio_features_branches_on_collinearity_warning():
+    warnings = [_collinearity_warning(), {"code": "cardinalite_excessive", "columns": ["x"], "details": None}]
+    suggestions = suggest_ratio_features(warnings)
+    assert len(suggestions) == 1
+    assert suggestions[0]["based_on_warning"] == "collinearite_forte"
+    assert suggestions[0]["transformation"] == {
+        "type": "ratio", "numerator": "surface", "denominator": "consommation",
+    }
+
+
+def test_suggest_ratio_features_ignores_unrelated_warnings():
+    assert suggest_ratio_features([{"code": "valeurs_manquantes_elevees", "columns": ["x"]}]) == []
+
+
+def test_apply_ratio_features_computes_division():
+    df = pd.DataFrame({"a": [10.0, 20.0], "b": [2.0, 4.0]})
+    result, columns = apply_ratio_features(df, ["a", "b"], [{"type": "ratio", "numerator": "a", "denominator": "b"}])
+    assert columns == ["a", "b", "a_sur_b"]
+    assert list(result["a_sur_b"]) == [5.0, 5.0]
+
+
+def test_apply_ratio_features_division_by_zero_becomes_nan_not_inf():
+    df = pd.DataFrame({"a": [10.0], "b": [0.0]})
+    result, _ = apply_ratio_features(df, ["a", "b"], [{"type": "ratio", "numerator": "a", "denominator": "b"}])
+    assert pd.isna(result.loc[0, "a_sur_b"])
+
+
+def test_apply_ratio_features_is_deterministic_single_row_vs_batch():
+    rng = np.random.default_rng(2)
+    df = pd.DataFrame({"a": rng.normal(50, 10, 40), "b": rng.normal(5, 2, 40)})
+    spec = [{"type": "ratio", "numerator": "a", "denominator": "b"}]
+    batch_result, _ = apply_ratio_features(df, ["a", "b"], spec)
+    single_result, _ = apply_ratio_features(df.iloc[[12]].reset_index(drop=True), ["a", "b"], spec)
+    assert single_result.loc[0, "a_sur_b"] == batch_result.loc[12, "a_sur_b"]

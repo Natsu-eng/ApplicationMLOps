@@ -167,3 +167,82 @@ def apply_datetime_decomposition(
             continue
         result, columns = _apply_one_datetime_decomposition(result, columns, transformation)
     return result, columns
+
+
+# ── Ratios / interactions entre colonnes numériques ─────────────────────────
+#
+# Déterministe ligne-à-ligne (un ratio ne dépend d'aucune statistique
+# agrégée) → applicable en amont du split, comme la décomposition datetime.
+# Branché sur l'avertissement Lot B `collinearite_forte` : plutôt que de
+# systématiquement retirer une des deux colonnes très corrélées (l'action
+# actuellement recommandée par le garde-fou), un ratio entre les deux peut
+# capturer une information relative que ni l'une ni l'autre ne porte seule
+# (ex. "consommation / surface" plutôt que "consommation" et "surface" bruts).
+
+RATIO_OUTPUT_SEPARATOR = "_sur_"
+
+
+def _ratio_output_column(numerator: str, denominator: str) -> str:
+    return f"{numerator}{RATIO_OUTPUT_SEPARATOR}{denominator}"
+
+
+def suggest_ratio_features(quality_warnings: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Suggestions de ratio, une par paire de colonnes signalée par le
+    garde-fou Lot B `collinearite_forte` — ne redétecte rien, ne lit que les
+    colonnes déjà remontées par `data_quality.analyze_data_quality`."""
+    suggestions: list[dict[str, Any]] = []
+    for warning in quality_warnings:
+        if warning.get("code") != "collinearite_forte" or len(warning.get("columns", [])) != 2:
+            continue
+        c1, c2 = warning["columns"]
+        output_column = _ratio_output_column(c1, c2)
+        correlation = (warning.get("details") or {}).get("correlation")
+        suggestions.append(_suggestion(
+            code="ratio_colonnes_correlees",
+            title=f"Créer un ratio entre « {c1} » et « {c2} »",
+            explanation=(
+                "Ces deux variables sont très corrélées"
+                + (f" (corrélation {correlation:.2f})" if correlation is not None else "")
+                + ". Plutôt que d'en retirer une, leur ratio peut capturer une "
+                "information relative que ni l'une ni l'autre ne porte seule."
+            ),
+            action=f"Ajouter la variable « {output_column} » (= {c1} / {c2}).",
+            columns=[c1, c2],
+            based_on_warning="collinearite_forte",
+            transformation={"type": "ratio", "numerator": c1, "denominator": c2},
+        ))
+    return suggestions
+
+
+def _apply_one_ratio(
+    df: pd.DataFrame, feature_columns: list[str], transformation: dict[str, Any]
+) -> tuple[pd.DataFrame, list[str]]:
+    numerator, denominator = transformation["numerator"], transformation["denominator"]
+    for col in (numerator, denominator):
+        if col not in df.columns:
+            raise FeatureEngineeringSpecError(f"Colonne '{col}' absente du dataset")
+
+    result = df.copy()
+    output_column = _ratio_output_column(numerator, denominator)
+    # Division par zéro → NaN plutôt qu'un +inf/-inf, pour rester géré par
+    # l'imputation numérique déjà présente dans le préprocesseur en aval —
+    # jamais un plantage ni une valeur numérique aberrante silencieuse.
+    safe_denominator = result[denominator].replace(0, np.nan)
+    result[output_column] = result[numerator].astype(float) / safe_denominator
+
+    new_columns = list(feature_columns) if output_column in feature_columns else [*feature_columns, output_column]
+    return result, new_columns
+
+
+def apply_ratio_features(
+    df: pd.DataFrame, feature_columns: list[str], transformations: list[dict[str, Any]]
+) -> tuple[pd.DataFrame, list[str]]:
+    """Applique, dans l'ordre, tous les ratios approuvés (`type == "ratio"`)
+    de la spec — fonction pure et déterministe, symétrique de
+    `apply_datetime_decomposition`."""
+    result, columns = df, list(feature_columns)
+    for transformation in transformations:
+        if transformation.get("type") != "ratio":
+            continue
+        result, columns = _apply_one_ratio(result, columns, transformation)
+    return result, columns
