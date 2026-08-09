@@ -208,18 +208,78 @@ export interface CorrelationMatrix {
   matrix: (number | null)[][];
 }
 
-export interface EdaResponse {
-  row_count: number;
-  column_stats: ColumnStat[];
-  missing_summary: MissingSummaryEntry[];
-  correlation_matrix: CorrelationMatrix;
-}
-
 export interface HistogramResponse {
   kind: "numeric" | "categorical";
   bin_edges?: number[];
   counts: number[];
   categories?: string[];
+}
+
+export interface BoxplotStat {
+  column: string;
+  min: number | null;
+  q1: number | null;
+  median: number | null;
+  q3: number | null;
+  max: number | null;
+  outliers: number[];
+  n: number;
+}
+
+export interface ScatterPoint {
+  x: number | null;
+  y: number | null;
+}
+
+export interface ScatterPair {
+  x_column: string;
+  y_column: string;
+  correlation: number | null;
+  points: ScatterPoint[];
+}
+
+export interface FeatureByTargetGroup {
+  class_name: string;
+  min: number | null;
+  q1: number | null;
+  median: number | null;
+  q3: number | null;
+  max: number | null;
+  outliers: number[];
+  n: number;
+}
+
+export interface FeatureByTargetResponse {
+  feature: string;
+  target: string;
+  groups: FeatureByTargetGroup[];
+}
+
+export interface EdaResponse {
+  row_count: number;
+  column_stats: ColumnStat[];
+  missing_summary: MissingSummaryEntry[];
+  correlation_matrix: CorrelationMatrix;
+  categorical_correlation_matrix: CorrelationMatrix;
+  outlier_summary: BoxplotStat[];
+  top_correlated_pairs: ScatterPair[];
+  target_distribution: HistogramResponse | null;
+}
+
+export type WarningLevel = "info" | "attention" | "critique";
+
+export interface DataWarning {
+  level: WarningLevel;
+  code: string;
+  title: string;
+  explanation: string;
+  action: string;
+  columns: string[];
+  details: Record<string, unknown> | null;
+}
+
+export interface DataQualityResponse {
+  warnings: DataWarning[];
 }
 
 export type TaskType = "classification" | "regression";
@@ -375,10 +435,22 @@ export const api = {
     preview: (id: number, limit = 50) =>
       request<PreviewResponse>(`/datasets/${id}/preview?limit=${limit}`),
     remove: (id: number) => request<void>(`/datasets/${id}`, { method: "DELETE" }),
-    eda: (id: number) => request<EdaResponse>(`/datasets/${id}/eda`),
+    eda: (id: number, targetColumn?: string) =>
+      request<EdaResponse>(
+        `/datasets/${id}/eda${targetColumn ? `?target_column=${encodeURIComponent(targetColumn)}` : ""}`,
+      ),
     histogram: (id: number, column: string, bins = 20) =>
       request<HistogramResponse>(
         `/datasets/${id}/histogram?column=${encodeURIComponent(column)}&bins=${bins}`,
+      ),
+    qualityCheck: (id: number, targetColumn: string, groupColumn?: string) =>
+      request<DataQualityResponse>(
+        `/datasets/${id}/quality-check?target_column=${encodeURIComponent(targetColumn)}` +
+          (groupColumn ? `&group_column=${encodeURIComponent(groupColumn)}` : ""),
+      ),
+    featureByTarget: (id: number, feature: string, target: string) =>
+      request<FeatureByTargetResponse>(
+        `/datasets/${id}/feature-by-target?feature=${encodeURIComponent(feature)}&target=${encodeURIComponent(target)}`,
       ),
   },
 
