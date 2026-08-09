@@ -52,11 +52,19 @@ def _make_multiclass_df(n_per_class=40, seed=0):
 
 
 def test_regression_pipeline_end_to_end():
+    """Le gagnant peut désormais être n'importe quel modèle du registre
+    supportant la régression (Lot 5 : catalogue élargi au-delà des 3
+    boosters) — l'assertion sur `algorithm` reste dynamique plutôt que
+    figée sur les 3 noms historiques, qui deviendrait fausse dès qu'un
+    autre modèle gagne légitimement (ex. Ridge sur un signal linéaire)."""
+    from services.ml_registry import models_for_task
+
     df = _make_regression_df()
     split = split_dataset(df, "cible", ["x1", "x2"], "regression", None, 0.2, 42)
     result = train_and_evaluate(split, "regression", _FAST_CONFIG, lambda s, p: None)
 
-    assert result.algorithm in ("LightGBM", "XGBoost", "CatBoost")
+    valid_labels = {spec.label("regression") for spec in models_for_task("regression", "all")}
+    assert result.algorithm in valid_labels
     assert result.metrics["r2_test"] > 0.8  # signal fort et peu bruité, doit être bien capté
     assert result.cqr is not None
     assert 0 <= result.cqr["empirical_coverage"] <= 1
@@ -446,3 +454,66 @@ def test_model_card_carries_ok_explainability_status_for_tree_models():
     split = split_dataset(df, "cible", ["x1", "x2"], "regression", None, 0.2, 42)
     result = train_and_evaluate(split, "regression", _FAST_CONFIG, lambda s, p: None)
     assert result.model_card["explainability"] == {"status": "ok", "message": None}
+
+
+# ── Lot 5 — nouveaux modèles du registre (RandomForest/ExtraTrees/linéaire/SVM/KNN/NaiveBayes) ──
+
+
+def test_every_registry_model_fits_and_predicts_end_to_end():
+    """Chaque modèle du registre s'entraîne et prédit sans erreur, pour
+    chacune de ses tâches supportées, via le Pipeline(préprocesseur, modèle)
+    exact utilisé par le moteur — pas un raccourci (Lot 5 : catalogue élargi
+    à 9 modèles, 3 familles)."""
+    from services.ml_registry import models_for_task
+
+    reg_df = _make_regression_df(n=120)
+    reg_split = split_dataset(reg_df, "cible", ["x1", "x2"], "regression", None, 0.2, 42)
+
+    clf_df = _make_binary_df(n=120)
+    clf_split = split_dataset(clf_df, "cible", ["x1", "x2"], "classification", None, 0.2, 42)
+
+    for task_type, split in (("regression", reg_split), ("classification", clf_split)):
+        for spec in models_for_task(task_type, "all"):
+            preprocessor = build_preprocessor(split.X_train)
+            model = spec.build_estimator(task_type, 42, {}, False)
+            pipeline = Pipeline([("preprocess", preprocessor), ("model", model)])
+            pipeline.fit(split.X_train, split.y_train)
+            preds = pipeline.predict(split.X_test)
+            assert len(preds) == len(split.X_test), f"{spec.id}/{task_type} : taille de prédiction incorrecte"
+
+
+def test_cv_estimator_is_pipeline_for_scaling_required_models(monkeypatch):
+    """Même preuve structurelle que Lot A (`test_cv_estimator_is_pipeline_with_preprocessor_first_step`),
+    mais pour des modèles qui EXIGENT le scaling (`requires_scaling=True` —
+    SVM/KNN/régression linéaire) : confirme que le pattern
+    `Pipeline(préprocesseur, modèle)` cloné/refit par fold par
+    `cross_val_score` n'est pas spécifique aux arbres — le scaler de ces
+    modèles est fit DANS le fold, jamais en amont (Lot 5, non-régression de
+    l'anti-fuite Lot A pour les nouveaux modèles)."""
+    captured: dict = {}
+
+    def fake_cross_val_score(estimator, X, y, cv=None, groups=None, scoring=None, n_jobs=None):
+        captured["estimator"] = estimator
+        return np.array([0.7, 0.7, 0.7])
+
+    monkeypatch.setattr(ml_training_module, "cross_val_score", fake_cross_val_score)
+
+    df = _make_regression_df()
+    split = split_dataset(df, "cible", ["x1", "x2"], "regression", None, 0.2, 42)
+    y_train = split.y_train.to_numpy(dtype=float)
+    preprocessor_template = build_preprocessor(split.X_train)
+    cv = _make_cv("regression", 3, None)
+    config = TrainingConfig(optuna_trials=1, cv_folds=3)
+
+    for spec_id in ("svm", "knn", "linear_reg"):
+        spec = MODEL_REGISTRY[spec_id]
+        assert spec.requires_scaling
+        captured.clear()
+        _optimize_one_model(
+            spec, split.X_train, y_train, "regression", cv, split.groups_train,
+            preprocessor_template, config, lambda s, p: None, 0, 10,
+        )
+        estimator = captured["estimator"]
+        assert isinstance(estimator, Pipeline), spec_id
+        assert estimator.steps[0][0] == "preprocess", spec_id
+        assert isinstance(estimator.named_steps["preprocess"], ColumnTransformer), spec_id
