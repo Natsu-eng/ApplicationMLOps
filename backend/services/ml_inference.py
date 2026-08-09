@@ -95,5 +95,12 @@ def predict_one(bundle: dict[str, Any], feature_columns: list[str], row: dict[st
         point = max(point, 0.0)
     result = {"prediction": point}
     if bundle.get("cqr"):
-        result["interval"] = _cqr_interval(bundle["cqr"], X_proc, point)
+        # Le CQR a son propre préprocesseur (fit uniquement sur sa portion
+        # fit, distincte de celle du modèle principal — voir ml_training.py,
+        # Lot A) : on ne peut pas réutiliser X_proc, calculé avec le
+        # préprocesseur du modèle principal, pour les régresseurs de quantile.
+        cqr_preprocessor = bundle["cqr"]["preprocessor"]
+        X_proc_cqr = cqr_preprocessor.transform(df)
+        X_proc_cqr = np.asarray(X_proc_cqr.todense()) if hasattr(X_proc_cqr, "todense") else np.asarray(X_proc_cqr)
+        result["interval"] = _cqr_interval(bundle["cqr"], X_proc_cqr, point)
     return result

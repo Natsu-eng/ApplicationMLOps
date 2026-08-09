@@ -8,9 +8,20 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+from sklearn.compose import ColumnTransformer
+from sklearn.pipeline import Pipeline
 
+import services.ml_training as ml_training_module
 from services.ml_preprocessing import split_dataset
-from services.ml_training import TrainingConfig, train_and_evaluate
+from services.ml_training import (
+    TrainingConfig,
+    _compute_cqr,
+    _cqr_fit_calib_indices,
+    _make_cv,
+    _optimize_one_model,
+    build_preprocessor,
+    train_and_evaluate,
+)
 
 _FAST_CONFIG = TrainingConfig(optuna_trials=3, cv_folds=3)
 
@@ -77,3 +88,105 @@ def test_group_anti_leak_split_reflected_in_model_card():
     split = split_dataset(df, "cible", ["x"], "regression", "groupe", 0.2, 42)
     result = train_and_evaluate(split, "regression", _FAST_CONFIG, lambda s, p: None)
     assert result.model_card["anti_leak_grouping"] is True
+
+
+# ── Lot A — non-fuite préprocesseur/CV et calibration CQR groupée ──
+
+
+def test_cv_estimator_is_pipeline_with_preprocessor_first_step(monkeypatch):
+    """Preuve structurelle : l'estimateur passé à cross_val_score est un
+    Pipeline dont la 1re étape est le préprocesseur — garantit qu'il est
+    cloné et refit à l'intérieur de chaque fold, jamais fit en amont sur
+    tout le train (Lot A, fuite #1)."""
+    captured: dict = {}
+
+    def fake_cross_val_score(estimator, X, y, cv=None, groups=None, scoring=None, n_jobs=None):
+        captured["estimator"] = estimator
+        return np.array([0.5, 0.5, 0.5])
+
+    monkeypatch.setattr(ml_training_module, "cross_val_score", fake_cross_val_score)
+
+    df = _make_regression_df()
+    split = split_dataset(df, "cible", ["x1", "x2"], "regression", None, 0.2, 42)
+    y_train = split.y_train.to_numpy(dtype=float)
+    preprocessor_template = build_preprocessor(split.X_train)
+    cv = _make_cv("regression", 3, None)
+    config = TrainingConfig(optuna_trials=1, cv_folds=3)
+
+    model_cls, space_fn = ml_training_module._REGRESSORS["LightGBM"]
+    _optimize_one_model(
+        "LightGBM", model_cls, space_fn, split.X_train, y_train, "regression", cv, split.groups_train,
+        preprocessor_template, config, lambda s, p: None, 0, 10,
+    )
+
+    estimator = captured["estimator"]
+    assert isinstance(estimator, Pipeline)
+    assert estimator.steps[0][0] == "preprocess"
+    assert isinstance(estimator.named_steps["preprocess"], ColumnTransformer)
+
+
+def test_cqr_fit_calib_split_is_group_disjoint():
+    """Quand une colonne de groupe est fournie, aucun groupe ne doit se
+    retrouver à la fois dans la portion fit et la portion calibration du
+    CQR (Lot A, fuite #2 — échangeabilité Mondrian)."""
+    rng = np.random.default_rng(11)
+    n = 400
+    groups = rng.integers(0, 60, n)
+    fit_idx, cal_idx = _cqr_fit_calib_indices(n, groups, test_size=0.30, seed=42)
+    assert set(groups[fit_idx]).isdisjoint(set(groups[cal_idx]))
+
+
+def test_cqr_preprocessor_fit_only_on_fit_portion():
+    """Preuve comportementale (OHE) : une catégorie présente UNIQUEMENT dans
+    la portion calibration du CQR doit mapper à du tout-zéro (inconnu) après
+    le préprocesseur du CQR — preuve que celui-ci a été fit sur la seule
+    portion fit, pas sur la calibration (Lot A, fuite #2, couplage avec la
+    fuite #1)."""
+    rng = np.random.default_rng(7)
+    n = 300
+    df = pd.DataFrame(
+        {"x": rng.normal(size=n), "cat": rng.choice(["a", "b", "c"], size=n), "cible": 0.0}
+    )
+    df["cible"] = 3 * df["x"] + rng.normal(0, 0.5, n)
+    split = split_dataset(df, "cible", ["x", "cat"], "regression", None, 0.2, 42)
+    y_train = split.y_train.to_numpy(dtype=float)
+    y_test = split.y_test.to_numpy(dtype=float)
+
+    config = TrainingConfig(cqr_alpha=0.2, cqr_n_strata=3, seed=42)
+    fit_idx, cal_idx = _cqr_fit_calib_indices(len(split.X_train), None, test_size=0.30, seed=config.seed)
+
+    # Catégorie qui n'existe nulle part ailleurs dans le train, placée sur
+    # une ligne qui tombera côté calibration.
+    X_train_mod = split.X_train.copy()
+    target_row = int(cal_idx[0])
+    X_train_mod.loc[target_row, "cat"] = "ONLY_IN_CALIB"
+
+    cqr_full = _compute_cqr(X_train_mod, y_train, None, split.X_test, y_test, config)
+    cqr_preprocessor = cqr_full["_preprocessor"]
+
+    row_df = X_train_mod.iloc[[target_row]][["x", "cat"]]
+    transformed = cqr_preprocessor.transform(row_df)
+    transformed = np.asarray(transformed.todense()) if hasattr(transformed, "todense") else np.asarray(transformed)
+
+    feature_names = cqr_preprocessor.get_feature_names_out()
+    cat_cols = [i for i, name in enumerate(feature_names) if name.startswith("cat__")]
+    assert transformed[0, cat_cols].sum() == 0
+
+
+def test_cqr_coverage_non_regression_after_fix():
+    """Non-régression : la couverture empirique du CQR reste proche de la
+    cible sur un jeu de données réaliste, même après correction de la fuite
+    (les scores de CV baissent, mais la couverture CQR — déjà correcte en
+    théorie sur le principe Mondrian — doit rester au niveau attendu)."""
+    rng = np.random.default_rng(123)
+    n = 800
+    x1 = rng.normal(50, 10, n)
+    x2 = rng.normal(20, 5, n)
+    y = 2.5 * x1 - 1.2 * x2 + rng.normal(0, 3, n)
+    df = pd.DataFrame({"x1": x1, "x2": x2, "cible": y})
+    split = split_dataset(df, "cible", ["x1", "x2"], "regression", None, 0.2, 42)
+    result = train_and_evaluate(split, "regression", _FAST_CONFIG, lambda s, p: None)
+
+    target = result.cqr["target_coverage"]
+    empirical = result.cqr["empirical_coverage"]
+    assert empirical >= target - 0.12

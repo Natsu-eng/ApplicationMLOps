@@ -14,9 +14,14 @@ Méthodologie reprise d'un notebook de référence partagé par l'équipe (voir
 - CV/split groupés (`GroupKFold`/`GroupShuffleSplit`) quand une colonne de
   groupe est fournie, pour rester anti-fuite jusque dans la recherche
   d'hyperparamètres.
+- Préprocesseur (imputation, standardisation, one-hot) toujours refit
+  À L'INTÉRIEUR de chaque fold de CV et de la portion fit du CQR — jamais
+  fit sur des données qui serviront à valider ou à calibrer (Lot A).
 - CQR Mondrian : la calibration conforme est faite par strate de prédiction
   plutôt qu'avec un quantile unique, pour corriger la sous-couverture aux
-  valeurs extrêmes (défaut connu du split conformal simple).
+  valeurs extrêmes (défaut connu du split conformal simple). Le split
+  fit/calibration est lui-même groupé (`GroupShuffleSplit`) quand une
+  colonne de groupe est fournie (Lot A).
 
 Le clustering (non supervisé) est hors périmètre de ce module — voir
 `services/ml_task.py`, qui ne détecte que classification/régression ; le
@@ -35,6 +40,7 @@ import shap
 from catboost import CatBoostClassifier, CatBoostRegressor
 from lightgbm import LGBMClassifier, LGBMRegressor
 from sklearn.base import clone
+from sklearn.compose import ColumnTransformer
 from sklearn.metrics import (
     accuracy_score,
     confusion_matrix,
@@ -50,11 +56,13 @@ from sklearn.metrics import (
 )
 from sklearn.model_selection import (
     GroupKFold,
+    GroupShuffleSplit,
     KFold,
     StratifiedKFold,
     cross_val_score,
     train_test_split,
 )
+from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import LabelEncoder, label_binarize
 from xgboost import XGBClassifier, XGBRegressor
 
@@ -163,28 +171,35 @@ def _optimize_one_model(
     algo_name: str,
     model_cls: type,
     space_fn: Callable[[optuna.Trial], dict],
-    X: np.ndarray,
+    X_raw: pd.DataFrame,
     y: np.ndarray,
     task_type: str,
     cv,
     groups: Optional[np.ndarray],
+    preprocessor_template: ColumnTransformer,
     config: TrainingConfig,
     progress_cb: ProgressCallback,
     progress_base: int,
     progress_span: int,
 ) -> tuple[Any, float]:
     """Recherche Optuna (TPE) pour un algorithme — retourne (meilleurs
-    hyperparamètres appliqués à un estimateur non-fit, score de CV moyen)."""
+    hyperparamètres appliqués à un estimateur non-fit, score de CV moyen).
+
+    `X_raw` est le train BRUT (non préprocessé) : chaque essai construit un
+    `Pipeline(préprocesseur, modèle)` non-fit et le passe à `cross_val_score`,
+    qui le clone et le refit à l'intérieur de chaque fold — le préprocesseur
+    ne voit donc jamais la portion de validation du fold (Lot A)."""
     scoring = "r2" if task_type == "regression" else "roc_auc_ovr_weighted"
 
     def objective(trial: optuna.Trial) -> float:
         params = space_fn(trial)
         model = model_cls(random_state=config.seed, **_QUIET_KWARGS[algo_name], **params)
+        pipeline = Pipeline([("preprocess", clone(preprocessor_template)), ("model", model)])
         try:
-            scores = cross_val_score(model, X, y, cv=cv, groups=groups, scoring=scoring, n_jobs=1)
+            scores = cross_val_score(pipeline, X_raw, y, cv=cv, groups=groups, scoring=scoring, n_jobs=1)
         except ValueError:
             # ex: roc_auc_ovr_weighted indisponible (classe absente dans un fold) — repli sur accuracy
-            scores = cross_val_score(model, X, y, cv=cv, groups=groups, scoring="accuracy", n_jobs=1)
+            scores = cross_val_score(pipeline, X_raw, y, cv=cv, groups=groups, scoring="accuracy", n_jobs=1)
         return float(np.mean(scores))
 
     def on_trial_end(study: optuna.Study, trial: optuna.trial.FrozenTrial) -> None:
@@ -344,10 +359,30 @@ def _compute_regression_evaluation(
     }
 
 
+def _cqr_fit_calib_indices(
+    n: int,
+    groups_train: Optional[np.ndarray],
+    test_size: float,
+    seed: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Indices (fit, calibration) pour le split interne au CQR — groupé
+    (`GroupShuffleSplit`) quand une colonne de groupe est fournie, pour
+    qu'aucun groupe ne se retrouve à la fois dans le fit des régresseurs de
+    quantile et dans la calibration conforme (Lot A). Sinon, split aléatoire
+    classique (comportement historique)."""
+    if groups_train is not None:
+        splitter = GroupShuffleSplit(n_splits=1, test_size=test_size, random_state=seed)
+        fit_idx, cal_idx = next(splitter.split(np.zeros(n), groups=groups_train))
+    else:
+        fit_idx, cal_idx = train_test_split(np.arange(n), test_size=test_size, random_state=seed)
+    return fit_idx, cal_idx
+
+
 def _compute_cqr(
-    X_train_proc: np.ndarray,
+    X_train_raw: pd.DataFrame,
     y_train: np.ndarray,
-    X_test_proc: np.ndarray,
+    groups_train: Optional[np.ndarray],
+    X_test_raw: pd.DataFrame,
     y_test: np.ndarray,
     config: TrainingConfig,
 ) -> dict[str, Any]:
@@ -359,9 +394,29 @@ def _compute_cqr(
     l'algorithme gagnant : ce sont des LightGBM dédiés (`objective="quantile"`),
     cohérent avec le fait que l'incertitude est une couche à part, pas une
     propriété de l'algorithme choisi pour la prédiction centrale.
+
+    `X_train_raw`/`X_test_raw` sont BRUTS (non préprocessés) : le split
+    fit/calibration se fait sur les données brutes, puis le préprocesseur du
+    CQR est fit UNIQUEMENT sur la portion fit — jamais sur la portion de
+    calibration ni sur le test (Lot A). Ce préprocesseur est distinct de
+    celui du modèle principal (qui, lui, est fit sur tout le train) et doit
+    être réutilisé tel quel en inférence pour rester cohérent avec les
+    régresseurs de quantile qu'il a servi à alimenter.
     """
     alpha = config.cqr_alpha
-    Xf, Xc, yf, yc = train_test_split(X_train_proc, y_train, test_size=0.30, random_state=config.seed)
+    fit_idx, cal_idx = _cqr_fit_calib_indices(len(X_train_raw), groups_train, test_size=0.30, seed=config.seed)
+
+    Xf_raw = X_train_raw.iloc[fit_idx].reset_index(drop=True)
+    Xc_raw = X_train_raw.iloc[cal_idx].reset_index(drop=True)
+    yf, yc = y_train[fit_idx], y_train[cal_idx]
+
+    cqr_preprocessor = build_preprocessor(Xf_raw)
+    Xf = cqr_preprocessor.fit_transform(Xf_raw)
+    Xf = np.asarray(Xf.todense()) if hasattr(Xf, "todense") else np.asarray(Xf)
+    Xc = cqr_preprocessor.transform(Xc_raw)
+    Xc = np.asarray(Xc.todense()) if hasattr(Xc, "todense") else np.asarray(Xc)
+    X_test_proc = cqr_preprocessor.transform(X_test_raw)
+    X_test_proc = np.asarray(X_test_proc.todense()) if hasattr(X_test_proc, "todense") else np.asarray(X_test_proc)
 
     q_lo = LGBMRegressor(objective="quantile", alpha=alpha / 2, n_estimators=300, verbose=-1, random_state=config.seed).fit(Xf, yf)
     q_hi = LGBMRegressor(objective="quantile", alpha=1 - alpha / 2, n_estimators=300, verbose=-1, random_state=config.seed).fit(Xf, yf)
@@ -414,9 +469,13 @@ def _compute_cqr(
         "strata_bounds": [float(b) for b in bounds],
         "qhat_per_stratum": [float(q) for q in qhat],
         "clip_negative": clip_negative,
-        # Régresseurs persistés dans le bundle joblib pour une inférence future (Lot 4)
+        # Régresseurs + préprocesseur dédié persistés dans le bundle joblib
+        # pour une inférence future (Lot 4) — le préprocesseur DOIT rester
+        # celui-ci (fit sur la seule portion fit) et non celui du modèle
+        # principal, sous peine d'incohérence avec q_lo/q_hi (Lot A).
         "_q_lo_model": q_lo,
         "_q_hi_model": q_hi,
+        "_preprocessor": cqr_preprocessor,
     }
 
 
@@ -442,12 +501,12 @@ def train_and_evaluate(
         y_train = y_train_raw.to_numpy(dtype=float)
         y_test = y_test_raw.to_numpy(dtype=float)
 
-    preprocessor = build_preprocessor(split.X_train)
-    X_train_proc = preprocessor.fit_transform(split.X_train)
-    X_test_proc = preprocessor.transform(split.X_test)
-    X_train_proc = np.asarray(X_train_proc.todense()) if hasattr(X_train_proc, "todense") else np.asarray(X_train_proc)
-    X_test_proc = np.asarray(X_test_proc.todense()) if hasattr(X_test_proc, "todense") else np.asarray(X_test_proc)
-    feature_names = list(preprocessor.get_feature_names_out())
+    # Préprocesseur NON fit à ce stade — seule sa structure (colonnes
+    # numériques/catégorielles) est déterminée ici. Il est cloné et refit à
+    # l'intérieur de chaque fold de CV par `_optimize_one_model`, jamais fit
+    # sur tout le train en amont de la validation croisée (Lot A : évite que
+    # le préprocesseur ait vu la portion de validation de chaque fold).
+    preprocessor_template = build_preprocessor(split.X_train)
 
     cv = _make_cv(task_type, config.cv_folds, split.groups_train)
     catalog = _REGRESSORS if task_type == "regression" else _CLASSIFIERS
@@ -459,8 +518,8 @@ def train_and_evaluate(
         base = 5 + i * span_per_model
         progress_cb(f"Optimisation {algo_name}", base)
         best_model, cv_score = _optimize_one_model(
-            algo_name, model_cls, space_fn, X_train_proc, y_train, task_type, cv, split.groups_train,
-            config, progress_cb, base, span_per_model,
+            algo_name, model_cls, space_fn, split.X_train, y_train, task_type, cv, split.groups_train,
+            preprocessor_template, config, progress_cb, base, span_per_model,
         )
         candidates.append((algo_name, best_model, cv_score))
         logger.info("[Training] %s — score CV = %.4f", algo_name, cv_score)
@@ -468,6 +527,17 @@ def train_and_evaluate(
     # Sélection sur la CV, jamais sur le test (voir docstring du module).
     algo_name, best_model, cv_score = max(candidates, key=lambda c: c[2])
     progress_cb(f"Modèle retenu : {algo_name} — entraînement final", 72)
+
+    # Artefact de production : fit sur TOUT le train, comme pour n'importe
+    # quel modèle final destiné au déploiement (pas de fuite ici, contrairement
+    # à la CV — il n'y a plus de portion de validation à préserver une fois le
+    # modèle sélectionné).
+    preprocessor = build_preprocessor(split.X_train)
+    X_train_proc = preprocessor.fit_transform(split.X_train)
+    X_test_proc = preprocessor.transform(split.X_test)
+    X_train_proc = np.asarray(X_train_proc.todense()) if hasattr(X_train_proc, "todense") else np.asarray(X_train_proc)
+    X_test_proc = np.asarray(X_test_proc.todense()) if hasattr(X_test_proc, "todense") else np.asarray(X_test_proc)
+    feature_names = list(preprocessor.get_feature_names_out())
     best_model.fit(X_train_proc, y_train)
 
     pred_train = best_model.predict(X_train_proc)
@@ -499,8 +569,12 @@ def train_and_evaluate(
     cqr_artifacts: Optional[dict[str, Any]] = None
     if task_type == "regression":
         progress_cb("Calcul des intervalles de confiance (CQR)", 88)
-        cqr_full = _compute_cqr(X_train_proc, y_train, X_test_proc, y_test, config)
-        cqr_artifacts = {"q_lo": cqr_full.pop("_q_lo_model"), "q_hi": cqr_full.pop("_q_hi_model")}
+        cqr_full = _compute_cqr(split.X_train, y_train, split.groups_train, split.X_test, y_test, config)
+        cqr_artifacts = {
+            "q_lo": cqr_full.pop("_q_lo_model"),
+            "q_hi": cqr_full.pop("_q_hi_model"),
+            "preprocessor": cqr_full.pop("_preprocessor"),
+        }
         cqr_result = cqr_full
 
     progress_cb("Constitution de la fiche modèle", 95)
