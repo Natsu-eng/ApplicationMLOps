@@ -6,6 +6,7 @@ import EdaModal from "../components/datasets/EdaModal";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
+import { ColorIconBadge, accentBarClass, accentColorForId } from "../components/ui/ColorIconBadge";
 import { Modal } from "../components/ui/Modal";
 import { formatDate, formatFileSize } from "../utils/format";
 
@@ -66,15 +67,27 @@ export default function Datasets() {
 
   return (
     <AppShell pillarId="supervised">
-      <div className="mb-8">
-        <p className="text-xs uppercase tracking-widest text-teal-600 font-semibold mb-1">
-          Données
-        </p>
-        <h1 className="text-2xl font-serif text-slate-900">Mes données</h1>
+      <div className="mb-6 flex items-end justify-between gap-4">
+        <div>
+          <p className="text-xs uppercase tracking-widest text-teal-600 font-semibold mb-1">
+            Données
+          </p>
+          <h1 className="text-2xl font-serif text-slate-900">Mes données</h1>
+        </div>
+        {datasets && datasets.length > 0 && (
+          <Badge variant="neutral">
+            {datasets.length} dataset{datasets.length > 1 ? "s" : ""}
+          </Badge>
+        )}
       </div>
 
+      {/* Bande d'upload compacte — l'information consultée en permanence,
+          c'est la grille des datasets ci-dessous, pas cette zone (E1-ter :
+          l'upload prenait auparavant la moitié de l'écran et repoussait la
+          grille hors-vue). Le dépôt par glisser-déposer reste actif sur
+          toute la bande. */}
       <Card
-        className={`p-8 mb-8 border-dashed text-center transition-colors ${
+        className={`p-4 mb-6 border-dashed flex items-center gap-4 transition-colors ${
           isDragging ? "border-teal-500/60 bg-teal-500/5" : ""
         }`}
         onDragOver={(e) => {
@@ -91,17 +104,20 @@ export default function Datasets() {
           className="hidden"
           onChange={(e) => handleFiles(e.target.files)}
         />
-        <UploadCloud className="mx-auto mb-3 text-slate-400" size={32} />
-        <p className="text-sm text-slate-600 mb-3">Glissez un fichier ici, ou</p>
+        <UploadCloud className="text-slate-400 flex-shrink-0" size={22} />
+        <div className="min-w-0 flex-1">
+          <p className="text-sm text-slate-600">Glissez un fichier ici, ou parcourez</p>
+          <p className="text-xs text-slate-400">CSV, Parquet, Excel, JSON — 200 Mo max</p>
+        </div>
         <Button
           variant="secondary"
           size="sm"
           onClick={() => fileInputRef.current?.click()}
           disabled={isUploading}
+          className="flex-shrink-0"
         >
           {isUploading ? "Envoi…" : "Parcourir"}
         </Button>
-        <p className="text-xs text-slate-400 mt-3">CSV, Parquet, Excel, JSON — 200 Mo max</p>
       </Card>
 
       {error && (
@@ -121,7 +137,7 @@ export default function Datasets() {
           </p>
         </Card>
       ) : (
-        <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
           {datasets.map((dataset) => (
             <DatasetCard
               key={dataset.id}
@@ -157,41 +173,48 @@ function DatasetCard({
   onExplore: () => void;
   onDelete: () => void;
 }) {
+  const color = accentColorForId(dataset.id);
   return (
-    <Card interactive className="p-5 flex flex-col">
-      <div className="flex items-start justify-between gap-2 mb-3">
-        <div className="min-w-0">
-          <p className="text-sm font-medium text-slate-900 truncate" title={dataset.name}>
-            {dataset.name}
-          </p>
-          <p className="text-xs text-slate-500 mt-0.5">
-            {formatDate(dataset.created_at)}
-            {dataset.uploaded_by ? ` · ${dataset.uploaded_by}` : ""}
-          </p>
+    <Card interactive className="group overflow-hidden flex flex-col">
+      <div className={`h-1.5 ${accentBarClass(color)}`} aria-hidden="true" />
+      <div className="p-5 flex flex-col flex-1">
+        <div className="flex items-start justify-between gap-2 mb-3">
+          <div className="flex items-start gap-3 min-w-0">
+            <ColorIconBadge icon={FileSpreadsheet} color={color} size="sm" />
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-slate-900 truncate" title={dataset.name}>
+                {dataset.name}
+              </p>
+              <p className="text-xs text-slate-500 mt-0.5">
+                {formatDate(dataset.created_at)}
+                {dataset.uploaded_by ? ` · ${dataset.uploaded_by}` : ""}
+              </p>
+            </div>
+          </div>
+          <StatusBadge status={dataset.status} />
         </div>
-        <StatusBadge status={dataset.status} />
-      </div>
 
-      {dataset.status === "error" ? (
-        <p className="text-xs text-rose-600 mb-3 line-clamp-2">{dataset.error_message}</p>
-      ) : (
-        <div className="flex gap-4 text-xs text-slate-500 mb-3 tabular-nums">
-          <span>{dataset.row_count ?? "—"} lignes</span>
-          <span>{dataset.column_count ?? "—"} colonnes</span>
-          <span>{formatFileSize(dataset.file_size_bytes)}</span>
+        {dataset.status === "error" ? (
+          <p className="text-xs text-rose-600 mb-3 line-clamp-2">{dataset.error_message}</p>
+        ) : (
+          <div className="flex gap-4 text-xs text-slate-500 mb-3 tabular-nums">
+            <span>{dataset.row_count ?? "—"} lignes</span>
+            <span>{dataset.column_count ?? "—"} colonnes</span>
+            <span>{formatFileSize(dataset.file_size_bytes)}</span>
+          </div>
+        )}
+
+        <div className="mt-auto flex gap-2 pt-3 border-t border-slate-200">
+          <Button variant="ghost" size="sm" onClick={onPreview} disabled={dataset.status !== "ready"}>
+            <Eye size={14} /> Aperçu
+          </Button>
+          <Button variant="ghost" size="sm" onClick={onExplore} disabled={dataset.status !== "ready"}>
+            <ChartColumn size={14} /> Explorer
+          </Button>
+          <Button variant="danger" size="sm" onClick={onDelete} aria-label="Supprimer">
+            <Trash2 size={14} />
+          </Button>
         </div>
-      )}
-
-      <div className="mt-auto flex gap-2 pt-3 border-t border-slate-200">
-        <Button variant="ghost" size="sm" onClick={onPreview} disabled={dataset.status !== "ready"}>
-          <Eye size={14} /> Aperçu
-        </Button>
-        <Button variant="ghost" size="sm" onClick={onExplore} disabled={dataset.status !== "ready"}>
-          <ChartColumn size={14} /> Explorer
-        </Button>
-        <Button variant="danger" size="sm" onClick={onDelete} aria-label="Supprimer">
-          <Trash2 size={14} />
-        </Button>
       </div>
     </Card>
   );
