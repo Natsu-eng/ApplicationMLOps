@@ -429,6 +429,24 @@ export interface MLModelDetail {
   created_at: string;
 }
 
+// Lot D — leaderboard : tous les modèles comparés par un job, pas
+// seulement le gagnant (déjà porté par MLModelDetail.algorithm/metrics).
+export interface ModelCandidate {
+  algorithm: string;
+  family: string;
+  selection_score: number;
+  is_winner: boolean;
+  rank: number;
+  fold_scores: number[] | null;
+  secondary_metric: number | null;
+  secondary_metric_label: string | null;
+}
+
+export interface LeaderboardResponse {
+  selection_metric_label: string;
+  candidates: ModelCandidate[];
+}
+
 export interface PredictionInterval {
   low: number;
   high: number;
@@ -511,6 +529,7 @@ export const api = {
     listJobs: () => request<TrainingJobSummary[]>("/training/jobs"),
     getJob: (id: number) => request<TrainingJobSummary>(`/training/jobs/${id}`),
     getModel: (id: number) => request<MLModelDetail>(`/training/jobs/${id}/model`),
+    getCandidates: (id: number) => request<LeaderboardResponse>(`/training/jobs/${id}/candidates`),
     predict: (jobId: number, data: Record<string, unknown>) =>
       request<PredictionResult>(`/training/jobs/${jobId}/predict`, {
         method: "POST",

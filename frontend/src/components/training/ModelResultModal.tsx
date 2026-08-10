@@ -1,7 +1,15 @@
 import { useEffect, useState } from "react";
 import { ShieldCheck, Sparkles } from "lucide-react";
-import { ApiError, api, type BootstrapCI, type MLModelDetail, type TrainingJobSummary } from "../../api/client";
+import {
+  ApiError,
+  api,
+  type BootstrapCI,
+  type LeaderboardResponse,
+  type MLModelDetail,
+  type TrainingJobSummary,
+} from "../../api/client";
 import { Badge } from "../ui/Badge";
+import { BoxPlotChart, type BoxPlotDatum } from "../ui/BoxPlot";
 import { Modal } from "../ui/Modal";
 import { LabelWithHelp } from "../ui/Tooltip";
 import { formatMetricValue, formatPercent } from "../../utils/format";
@@ -110,6 +118,113 @@ function ShapBars({ features }: { features: MLModelDetail["shap_summary"] }) {
   );
 }
 
+/** Résumé statistique à 5 chiffres (min/Q1/médiane/Q3/max) à partir des
+ * scores par fold de CV — interpolation linéaire (méthode par défaut de
+ * numpy.percentile côté backend), pour alimenter BoxPlotChart (Lot B)
+ * sans dupliquer un calcul déjà fait ailleurs. */
+function quantile(sorted: number[], q: number): number {
+  const pos = (sorted.length - 1) * q;
+  const base = Math.floor(pos);
+  const rest = pos - base;
+  return sorted[base + 1] !== undefined ? sorted[base] + rest * (sorted[base + 1] - sorted[base]) : sorted[base];
+}
+
+function foldScoresToBoxPlotDatum(name: string, scores: number[]): BoxPlotDatum {
+  const sorted = [...scores].sort((a, b) => a - b);
+  return {
+    name,
+    min: sorted[0],
+    q1: quantile(sorted, 0.25),
+    median: quantile(sorted, 0.5),
+    q3: quantile(sorted, 0.75),
+    max: sorted[sorted.length - 1],
+  };
+}
+
+/** Leaderboard (Lot D) — TOUS les modèles comparés par ce job, pas
+ * seulement le gagnant déjà mis en avant plus haut dans la modale.
+ * Rétrocompatible par absence : un job antérieur à ce lot n'a aucun
+ * candidat persisté, la section ne s'affiche alors simplement pas (le
+ * gagnant reste visible via les sections existantes). */
+function Leaderboard({ jobId }: { jobId: number }) {
+  const [data, setData] = useState<LeaderboardResponse | null>(null);
+
+  useEffect(() => {
+    api.training
+      .getCandidates(jobId)
+      .then(setData)
+      .catch(() => setData(null));
+  }, [jobId]);
+
+  if (!data || data.candidates.length === 0) return null;
+
+  const winner = data.candidates.find((c) => c.is_winner);
+  const runnerUp = data.candidates.find((c) => !c.is_winner);
+  const metricShortName = data.selection_metric_label.split(" (")[0];
+  const boxData = data.candidates
+    .filter((c): c is typeof c & { fold_scores: number[] } => (c.fold_scores?.length ?? 0) > 1)
+    .map((c) => foldScoresToBoxPlotDatum(c.algorithm, c.fold_scores));
+
+  return (
+    <section>
+      <p className="text-xs uppercase tracking-wide text-slate-500 mb-2">
+        <LabelWithHelp
+          label="Modèles comparés"
+          help={`Classement sur ${data.selection_metric_label} — la métrique qui a réellement départagé les candidats pendant l'entraînement, jamais une exactitude brute qui peut être trompeuse sur un dataset déséquilibré.`}
+        />
+      </p>
+
+      {winner && runnerUp && (
+        <p className="text-xs text-slate-400 mb-3">
+          <span className="text-slate-200 font-medium">{winner.algorithm}</span> retenu : meilleur {metricShortName}{" "}
+          en validation croisée, devant {runnerUp.algorithm} de{" "}
+          <span className="tabular-nums text-slate-300">
+            {(winner.selection_score - runnerUp.selection_score).toFixed(3)}
+          </span>{" "}
+          points.
+        </p>
+      )}
+
+      <div className="space-y-1.5">
+        {data.candidates.map((c) => (
+          <div
+            key={c.algorithm}
+            className={`flex items-center justify-between gap-3 rounded-lg border px-3 py-2 ${
+              c.is_winner ? "border-teal-500/30 bg-teal-500/5" : "border-slate-800 bg-slate-950/40"
+            }`}
+          >
+            <div className="flex items-center gap-2 min-w-0">
+              <Badge variant={c.is_winner ? "accent" : "neutral"}>#{c.rank}</Badge>
+              <span className="text-sm text-slate-200 truncate">{c.algorithm}</span>
+            </div>
+            <div className="flex items-center gap-3 flex-shrink-0 text-xs">
+              {c.secondary_metric !== null && (
+                <span className="text-slate-500">
+                  {c.secondary_metric_label} :{" "}
+                  <span className="tabular-nums text-slate-300">{c.secondary_metric.toFixed(2)}</span>
+                </span>
+              )}
+              <span className="tabular-nums text-slate-200 font-medium">{c.selection_score.toFixed(3)}</span>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {boxData.length > 1 && (
+        <div className="mt-3">
+          <p className="text-[11px] text-slate-600 mb-1">
+            <LabelWithHelp
+              label="Variance entre les découpages de validation croisée"
+              help="Chaque modèle est évalué plusieurs fois sur des portions différentes des données d'entraînement — une boîte étroite signifie un score stable d'un découpage à l'autre, une boîte large signifie un score plus sensible aux données vues."
+            />
+          </p>
+          <BoxPlotChart data={boxData} height={180} />
+        </div>
+      )}
+    </section>
+  );
+}
+
 export default function ModelResultModal({
   job,
   onClose,
@@ -192,6 +307,8 @@ export default function ModelResultModal({
               </p>
             )}
           </section>
+
+          <Leaderboard jobId={job.id} />
 
           <EvaluationCharts taskType={model.task_type} evaluation={model.evaluation} />
 
