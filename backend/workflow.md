@@ -666,6 +666,81 @@ structurelle.
   `cross_validate` mockés — inchangés par ce fix (aucun changement à la
   boucle de recherche Optuna elle-même, seulement au fit final/CQR/SHAP).
 
+## Lot E1-ter — Refonte structurelle et design des pages dashboard/données/entraînement/résultats (livré)
+
+Frontend uniquement. Après E1/E1-bis (socle visuel, thème clair, navigation
+par piliers), la STRUCTURE des 4 pages métier restait en dessous du niveau
+attendu — hiérarchie inversée sur Données, formulaire d'entraînement sans
+étapes, et un bug de crédibilité sur le graphe de variance CV. Corrigé en 5
+commits isolés sur `fix-entrainement-memoire-echec-propre`.
+
+- [x] **Bug corrigé en premier, commit séparé** — graphe "Variance entre
+  les découpages de validation croisée" (`ModelResultModal.tsx`) affichant
+  des valeurs à 9 chiffres sur l'axe Y. Diagnostic (reproduit
+  empiriquement via `cross_validate` sur un target quasi-constant) : ce
+  n'est PAS un bug de lecture/parsing — le R² par fold est mathématiquement
+  non borné en dessous et s'effondre légitimement quand la cible d'un fold
+  a une variance quasi nulle (petit `GroupKFold` sur un dataset modeste).
+  Corrigé côté données de graphe uniquement (frontend), sans toucher au
+  moteur ML : `frontend/src/utils/cvScore.ts` (nouveau) borne les scores à
+  [0, 1] pour l'affichage (`clampUnitScore`), appliqué au boxplot et au
+  score affiché par candidat dans le leaderboard — la sélection du modèle
+  côté backend reste sur la valeur brute, inchangée. Vitest ajouté au
+  frontend (absent jusqu'ici) + test reproduisant le fold dégénéré.
+- [x] **Page Dashboard** — vue d'ensemble de l'activité (4 tuiles
+  statistiques : datasets/entraînements/en cours/membres, badges d'icône
+  colorés, compteur animé) au-dessus de la gestion d'équipe (inchangée dans
+  le fond) ; salutation contextuelle à l'heure réelle du navigateur ; deux
+  listes "Derniers entraînements"/"Derniers datasets" (5 plus récents,
+  clic → `ModelResultModal`).
+- [x] **Page Données** — hiérarchie inversée : bande d'upload compacte en
+  tête (glisser-déposer toujours actif), grille de datasets dense en
+  dessous (jusqu'à 4 colonnes), badge de compte à côté du titre.
+- [x] **Page Entraînement** — restructurée en 5 étapes numérotées guidées
+  (sélection des données → contrôle qualité en panneau dédié →
+  améliorations automatiques → réglages avancés repliés par défaut,
+  emplacement réservé au futur Mode Expert E2, non implémenté → lancer).
+  Devenue une **page dédiée sans historique à côté** (sur demande
+  explicite en cours de lot) : configurer, lancer, puis voir la
+  progression (poll automatique) et le résultat EN PLACE sur la même page.
+  `ModelResultView` extrait de `ModelResultModal.tsx` (contenu pur, sans
+  chrome de modale) pour être réutilisé identique dans les deux contextes
+  (modale depuis le dashboard, page pleine largeur ici). L'historique
+  complet vit désormais sur le Dashboard ; suppression d'un entraînement
+  toujours possible depuis la vue résultat/échec (pas de régression
+  fonctionnelle).
+- [x] **Page Résultats** (`ModelResultView`) — nouveau bloc "Interprétation
+  du modèle" en langage clair (pourquoi ce modèle a gagné + variables SHAP
+  dominantes), réutilise uniquement des données déjà calculées (leaderboard,
+  `shap_summary`), aucun nouveau calcul. Courbes ROC/PR multiclasses (6
+  classes emmêlées) : légende cliquable pour isoler une classe, survol pour
+  mettre les autres en retrait (`useSeriesIsolation`/`IsolatableLegend`
+  dans `EvaluationCharts.tsx`). Matrice de confusion (déjà en dégradé teal
+  sur fond clair depuis E1-bis) : vérifiée lisible, pas de changement
+  nécessaire.
+- [x] **Infra partagée** (petit commit dédié, en tête) —
+  `components/ui/ColorIconBadge.tsx` (nouveau) : palette d'accent partagée
+  (bleu/teal/amber/violet, teinte déterministe par id) pour des cartes/
+  listes moins monochromes, sur retour explicite en cours de lot ; logo
+  complet (`public/logo.png`, recadré sur l'icône) remplace le badge "D"
+  texte dans `AppShell` ; fond de page légèrement bleuté
+  (`--color-canvas`), sur demande explicite.
+
+**Vérifié** :
+
+- `tsc -b` et `vite build` verts.
+- Vitest : 5/5 (nouveau, `cvScore.test.ts`).
+- Suite pytest backend intégralement verte (174 tests) — non-régression
+  attendue et confirmée : aucun fichier backend touché par ce lot.
+- Rendu visuel réel **non vérifié** par ce lot — aucun outil d'interaction
+  navigateur disponible dans cet environnement ; revue visuelle page par
+  page à faire par l'utilisateur.
+
+**Scope volontairement limité** (acté en cadrage, à ne pas rouvrir) : mode
+guidé/expert réel (E2, seul l'emplacement est prévu ici), explicabilité
+SHAP locale enrichie, nouveaux graphes d'évaluation avancés — ce lot
+restructure et style l'existant, il ne réinvente pas les fonctionnalités ML.
+
 ## Prochains lots (résumé — détail complet dans le diagnostic de migration et les échanges de cadrage)
 
 | Lot | Contenu | Livrable testable |

@@ -213,6 +213,38 @@ Deux corrections, dont une bien plus large que le seul incident :
 place, enrichi d'un détail chiffré, mais n'est plus la seule protection :
 la vraie cause est désormais réglée à la racine.*
 
+### Lot E1-ter — Refonte structurelle des pages Dashboard / Données / Entraînement / Résultats
+
+Après le socle visuel (palette claire, navigation par piliers, logo),
+la STRUCTURE des 4 pages métier a été revue. Le dashboard ne montrait que
+la gestion d'équipe : il ouvre maintenant sur une vue d'ensemble de
+l'activité (datasets, entraînements récents, statuts). La page Données
+avait sa zone d'upload qui prenait la moitié de l'écran et repoussait les
+datasets hors-vue — inversé : bande d'upload compacte, grille dense en
+dessous. L'entraînement est devenu un **pipeline guidé en 5 étapes
+numérotées** (données → contrôle qualité → améliorations automatiques →
+réglages avancés repliés → lancer), sur une **page dédiée** : on configure,
+on lance, et le résultat s'affiche en place sur la même page — l'historique
+complet des entraînements passés se consulte désormais depuis le tableau de
+bord. La page Résultats gagne un bloc "Interprétation du modèle" en langage
+clair (pourquoi ce modèle a gagné, ce que dit l'analyse des variables) et
+des courbes ROC/précision-rappel multiclasses enfin lisibles (isolation
+d'une classe au clic ou au survol).
+
+**Bug de crédibilité corrigé en premier** : le graphe "Variance entre les
+découpages de validation croisée" affichait des valeurs absurdes (jusqu'à
+9 chiffres) au lieu d'un score entre 0 et 1. Ce n'était pas un bug de
+lecture de données — le R² par fold de validation croisée est
+mathématiquement non borné en dessous, et s'effondre légitimement quand un
+petit découpage a une cible presque constante. Corrigé côté affichage
+(les valeurs sont maintenant bornées pour la lecture, sans jamais toucher
+au calcul qui sert réellement à choisir le modèle), avec un test qui vérifie
+que ce que voit l'utilisateur reste toujours entre 0 et 1.
+
+*Rendu visuel non vérifié en conditions réelles par ce lot — aucun outil de
+navigateur disponible dans cet environnement de travail ; une revue visuelle
+page par page reste à faire.*
+
 ---
 
 ## Robustesse — pas juste "ça marche chez moi"
