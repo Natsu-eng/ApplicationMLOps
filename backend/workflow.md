@@ -593,6 +593,79 @@ de mode guidé/expert, pas de refonte UX globale, pas de nouveaux graphes
 d'évaluation (tout ça = Lot E) — ce lot montre les modèles déjà comparés,
 il ne refond pas l'écran.
 
+## Fix — Échec d'entraînement affiché en stack trace brute ("bad allocation") (livré)
+
+Un entraînement sur `predictive_maintenance.csv` (10 000 lignes, colonne
+`Product ID` quasi-identifiant — 10 000 valeurs uniques) a échoué et affiché
+à l'utilisateur une stack trace Python brute (chemins de fichiers internes
+compris), se terminant par `_catboost.CatBoostError: bad allocation`. Phase
+1 (lecture seule) a d'abord confirmé la cause apparente sur CE dataset
+(one-hot sans garde-fou sur un identifiant), puis une reformulation de
+l'utilisateur a demandé une correction GÉNÉRALISÉE, pas un contournement
+pour un seul fichier — l'investigation a alors trouvé la vraie cause
+structurelle.
+
+- [x] **Cause racine, généralisée (pas spécifique à ce dataset)** :
+  `services/ml_training.py` convertissait explicitement en tableau **dense**
+  (`np.asarray(X.todense())`) le résultat du préprocesseur à 5 endroits (fit
+  final, CQR), alors que les 4 modèles du catalogue par défaut
+  (LightGBM/XGBoost/CatBoost/RandomForest) et `shap.TreeExplainer`
+  acceptent **nativement le sparse** — vérifié empiriquement, pas supposé.
+  Une colonne quasi-identifiant one-hotée reste minuscule en sparse (un seul
+  `1.0` par ligne) mais explose en dense (des centaines de Mo pour un
+  dataset par ailleurs modeste). Densifier était inutile et est la cause
+  structurelle, quel que soit le dataset — pas un bug introduit par un lot
+  récent (le comportement existe depuis le Lot 3, jamais réévalué).
+- [x] `_compute_explainability` densifie désormais UNIQUEMENT quand
+  `explainer_kind` l'exige (`LinearExplainer`/`KernelExplainer`, familles
+  hors catalogue par défaut, réservées au mode expert futur Lot E), et
+  seulement un échantillon BORNÉ (`_KERNEL_SHAP_BACKGROUND_SIZE`), jamais le
+  train complet — sûr même sur un futur modèle de cette famille sur un gros
+  dataset.
+- [x] **Volet A — échouer proprement** : `workers/training_worker.py`,
+  nouvelle fonction `_user_safe_error_message` — whitelist restreinte
+  (mémoire insuffisante, détectée par type `MemoryError` ou motif textuel
+  `"bad allocation"`/`"unable to allocate"`/`"out of memory"`, insensible à
+  la casse) traduite en langage clair et actionnable ; message générique sûr
+  par défaut pour toute autre cause. Le détail technique complet (type,
+  message d'origine, traceback) continue d'aller dans les logs serveur
+  (`logger.error`, inchangé) — jamais affiché à l'utilisateur.
+  `DataLeakageError` (déjà un message français auto-rédigé, sûr) n'est pas
+  affecté par cette traduction.
+- [x] **Volet B — transparence amont, recalibrée** : le garde-fou Lot B
+  `cardinalite_excessive` (`services/data_quality.py::_detect_high_cardinality`)
+  existait déjà et aurait signalé `Product ID` (identifiant, pas de valeur
+  prédictive) — enrichi d'un `n_estimated_onehot_columns` informatif dans
+  `details`. Un détecteur de "risque mémoire" dédié, envisagé dans le
+  cadrage initial, n'a **pas** été ajouté : le fix racine (sparse préservé)
+  neutralise déjà le cas dominant (one-hot sur identifiant) pour tout le
+  catalogue par défaut — en construire un aurait sur-corrigé un risque déjà
+  largement fermé. Le risque résiduel (ex. `GaussianNB`, qui exige du dense,
+  en mode expert futur) est noté mais pas actionnable avant que le Lot E
+  n'expose ces modèles.
+
+**Vérifié** :
+
+- Suite pytest complète verte (165 → 174 tests).
+- **Preuve structurelle, pas seulement fonctionnelle** : un test instrumente
+  `scipy.sparse.csr_matrix.todense` et prouve qu'il n'est JAMAIS appelé
+  pendant un entraînement complet (classification + régression avec CQR) sur
+  un dataset synthétique à colonne quasi-identifiant — la preuve porte sur
+  le mécanisme (aucune densification), pas sur un seuil de taille qui
+  serait, par construction, spécifique à un dataset.
+  Généralisé à N'IMPORTE QUEL dataset avec une colonne à cardinalité
+  élevée.
+- `LinearExplainer` (mode expert futur) reste correct avec le nouveau fond
+  borné, sur une entrée sparse en amont.
+- Message d'échec traduit vérifié bout en bout via le worker réel (pas
+  seulement la fonction de traduction isolée) : jamais de "Traceback",
+  jamais de chemin de fichier (`E:\`), jamais de `.py` dans
+  `job.error_message`, quelle que soit l'exception d'origine.
+- Non-régression : les 174 tests couvrent aussi la suite déséquilibre/Lot D
+  déjà en place, dont plusieurs s'appuyaient sur `cross_val_score`/
+  `cross_validate` mockés — inchangés par ce fix (aucun changement à la
+  boucle de recherche Optuna elle-même, seulement au fit final/CQR/SHAP).
+
 ## Prochains lots (résumé — détail complet dans le diagnostic de migration et les échanges de cadrage)
 
 | Lot | Contenu | Livrable testable |

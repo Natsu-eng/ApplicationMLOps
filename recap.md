@@ -186,11 +186,38 @@ ailleurs, corrigé dans son propre commit.*
 d'un même entraînement) est volontairement reporté à un lot dédié
 (D-bis), pour ne pas bâcler ni l'un ni l'autre.*
 
+### Fix — un entraînement qui échoue ne montre plus jamais de code brut à l'utilisateur
+
+Un entraînement sur un dataset réel (une colonne quasi-identifiant, comme un
+numéro de série) avait fait planter le serveur avec un message d'erreur
+brut — code technique et chemins de fichiers internes affichés tels quels.
+Deux corrections, dont une bien plus large que le seul incident :
+
+- **La vraie cause, corrigée pour de bon, pas juste contournée** : l'outil
+  convertissait inutilement les données encodées en un format "plein"
+  (dense) avant de les donner aux modèles, alors que ceux-ci savent
+  travailler directement avec leur format compact d'origine (sparse) — une
+  colonne comme un identifiant, qui reste minuscule sous sa forme compacte,
+  explosait en centaines de mégaoctets une fois "aplatie" pour rien. Corrigé
+  à la source, dans le moteur d'entraînement : ça ne dépend plus du dataset
+  utilisé, ni de la colonne en cause.
+- **Un entraînement qui échoue quand même** (mémoire insuffisante sur un
+  très gros dataset, par exemple) affiche désormais un message clair et une
+  piste d'action ("essayez de retirer cette colonne, ou de réduire la
+  taille du jeu de données") — jamais plus de code brut. Le détail
+  technique complet reste dans les journaux du serveur, consultables par
+  l'équipe si besoin.
+
+*Le garde-fou qui repère déjà les colonnes ressemblant à un identifiant
+(Lot B) existait avant ce correctif et aurait dû alerter — il reste en
+place, enrichi d'un détail chiffré, mais n'est plus la seule protection :
+la vraie cause est désormais réglée à la racine.*
+
 ---
 
 ## Robustesse — pas juste "ça marche chez moi"
 
-- **Tests automatisés** (`backend/tests/`, pytest) : 165 tests qui restent
+- **Tests automatisés** (`backend/tests/`, pytest) : 174 tests qui restent
   dans le dépôt et couvrent l'isolation entre organisations, les
   permissions, l'entraînement réel (pas mocké, y compris sur les 9 modèles
   du catalogue Lot 5), la prédiction, la suppression, l'exploration de
