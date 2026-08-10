@@ -164,15 +164,38 @@ rappel de la classe minoritaire de 12,5 % à 62,5 %, au prix attendu d'un
 rappel global un peu plus faible — l'arbitrage même que le message affiché
 décrit.*
 
+### Lot D — Leaderboard : voir tous les modèles comparés, pas seulement le gagnant
+
+Jusqu'ici, un entraînement comparait plusieurs modèles en coulisses mais
+seul le gagnant était affiché ("LightGBM, accuracy = 0,947") — le travail
+de comparaison réel de l'outil restait invisible, tout comme la raison du
+choix. Ce lot rend ce travail visible : la fiche de résultat affiche
+désormais **tous** les modèles comparés, classés sur la métrique qui a
+réellement décidé du gagnant (jamais l'exactitude brute, trompeuse sur un
+dataset déséquilibré), avec une phrase en langage clair expliquant
+l'écart ("LightGBM retenu : meilleur ROC-AUC en validation croisée, devant
+CatBoost de 0,023 points"). En régression, l'erreur en unité réelle (RMSE)
+est affichée à côté du R², plus lisible pour un ingénieur BE.
+
+*Corrigé au passage : la carte d'historique d'un entraînement de
+classification affichait l'exactitude brute au lieu de la métrique de
+sélection — même piège que celui que ce lot cherche à éviter partout
+ailleurs, corrigé dans son propre commit.*
+
+*Comparer plusieurs entraînements entre eux (pas seulement les modèles
+d'un même entraînement) est volontairement reporté à un lot dédié
+(D-bis), pour ne pas bâcler ni l'un ni l'autre.*
+
 ---
 
 ## Robustesse — pas juste "ça marche chez moi"
 
-- **Tests automatisés** (`backend/tests/`, pytest) : 152 tests qui restent
+- **Tests automatisés** (`backend/tests/`, pytest) : 165 tests qui restent
   dans le dépôt et couvrent l'isolation entre organisations, les
   permissions, l'entraînement réel (pas mocké, y compris sur les 9 modèles
   du catalogue Lot 5), la prédiction, la suppression, l'exploration de
-  données (EDA) et les données d'évaluation.
+  données (EDA), les données d'évaluation, et la cohérence du leaderboard
+  (Lot D : gagnant ↔ candidat, classement sur le score de sélection).
 - **Bugs réels trouvés et corrigés en usage réel**, pas en théorie :
   - SHAP change de format de sortie en classification multiclasse selon la
     version installée — trouvé en testant sur un vrai dataset Iris, corrigé,
@@ -218,7 +241,8 @@ Identifié explicitement en testant le produit, pas oublié :
 
 | Lot | Contenu |
 | --- | --- |
-| **E** (prochain) | Mode expert — exposer le choix d'activer les modèles hors sous-ensemble par défaut (ExtraTrees, linéaire, SVM, KNN, Naive Bayes) |
+| **D-bis** (prochain) | Comparaison inter-jobs — tri par score, diff de config entre entraînements (reporté du Lot D pour ne pas le bâcler) |
+| **E** | Mode expert — exposer le choix d'activer les modèles hors sous-ensemble par défaut (ExtraTrees, linéaire, SVM, KNN, Naive Bayes) |
 | **6-8** | Vision par ordinateur / détection d'anomalies (l'autre grand pilier de l'app historique, pas encore porté) |
 | **9** | Registre de modèles versionné (l'artefact existe déjà, pas encore le versioning/export) |
 | **10** | Durcissement SaaS : audit, quotas, facturation — prêt pour un client pilote |

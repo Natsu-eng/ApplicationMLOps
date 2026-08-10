@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 import joblib
 
 from api.core.database import SessionLocal
-from api.core.models import Dataset, MLModel, TrainingJob
+from api.core.models import Dataset, MLModel, ModelCandidate, TrainingJob
 from api.core.storage import model_file_path
 from services.datasets import read_dataframe
 from services.feature_engineering import apply_upstream_feature_engineering
@@ -136,6 +136,27 @@ def run_training_job(job_id: int) -> None:
                 feature_engineering_json=json.dumps(feature_engineering_spec) if feature_engineering_spec else None,
             )
             db.add(ml_model)
+
+            # Leaderboard (Lot D) — TOUS les candidats comparés par ce job,
+            # pas seulement le gagnant (déjà ajouté ci-dessus via `ml_model`).
+            # Même transaction que `ml_model`/`job.status` (un seul
+            # `db.commit()` plus bas) : garantit que le candidat
+            # `is_winner=True` et `ml_model` désignent TOUJOURS le même
+            # modèle, par construction (les deux dérivent de `result.algorithm`
+            # / `result.metrics["cv_score"]`, jamais recalculés séparément).
+            for candidate in result.all_candidates:
+                db.add(ModelCandidate(
+                    organization_id=job.organization_id,
+                    training_job_id=job.id,
+                    algorithm=candidate["algorithm"],
+                    family=candidate["family"],
+                    selection_score=candidate["selection_score"],
+                    is_winner=candidate["is_winner"],
+                    rank=candidate["rank"],
+                    fold_scores_json=json.dumps(candidate["fold_scores"]) if candidate["fold_scores"] is not None else None,
+                    secondary_metric=candidate["secondary_metric"],
+                    secondary_metric_label=candidate["secondary_metric_label"],
+                ))
 
             job.status = "completed"
             job.progress_step = "Terminé"

@@ -20,12 +20,13 @@ from sqlalchemy.orm import Session
 from api.core.config import get_settings
 from api.core.database import get_db
 from api.core.job_queue import training_queue
-from api.core.models import Dataset, MLModel, TrainingJob, User
+from api.core.models import Dataset, MLModel, ModelCandidate, TrainingJob, User
 from api.routers.auth import get_current_user
 from services.datasets import DatasetParsingError, read_dataframe
 from services.feature_engineering import CURRENT_SPEC_VERSION
 from services.ml_inference import InferenceError, load_bundle, predict_one
 from services.ml_task import detect_task_type
+from services.ml_training import selection_metric_label
 
 _KNOWN_UPSTREAM_TYPES = {"datetime_decompose", "ratio"}
 
@@ -108,6 +109,26 @@ class MLModelDetail(BaseModel):
     created_at: datetime
 
 
+class ModelCandidateOut(BaseModel):
+    """Un modèle comparé pendant le job — le gagnant ET tous les autres
+    (Lot D, leaderboard). `selection_score` est LA métrique qui a
+    départagé les candidats (voir `LeaderboardResponse.selection_metric_label`
+    pour son libellé humain), jamais l'accuracy brute."""
+    algorithm: str
+    family: str
+    selection_score: float
+    is_winner: bool
+    rank: int
+    fold_scores: Optional[List[float]] = None
+    secondary_metric: Optional[float] = None
+    secondary_metric_label: Optional[str] = None
+
+
+class LeaderboardResponse(BaseModel):
+    selection_metric_label: str
+    candidates: List[ModelCandidateOut]
+
+
 class PredictionRequest(BaseModel):
     data: dict[str, Any]
 
@@ -121,9 +142,17 @@ class PredictionResponse(BaseModel):
 # ── Aides internes ───────────────────────────────────────────────────────────
 
 def _headline_metric(task_type: str, metrics: dict[str, Any]) -> dict[str, Any]:
+    """Métrique mise en avant sur la carte d'historique (`JobCard.tsx`).
+
+    En classification, `accuracy` est trompeuse sur un dataset déséquilibré
+    (un modèle qui ignore la classe rare peut afficher 95 % d'exactitude) —
+    on affiche donc `cv_score`, la métrique RÉELLEMENT utilisée pour
+    départager les candidats (ROC-AUC pondérée, voir
+    `services/ml_training._classification_selection_score`), jamais
+    l'accuracy brute (bug trouvé lors de l'audit leaderboard, Lot D)."""
     if task_type == "regression":
         return {"name": "r2_test", "value": metrics.get("r2_test")}
-    return {"name": "accuracy", "value": metrics.get("accuracy")}
+    return {"name": "cv_score", "value": metrics.get("cv_score")}
 
 
 def _to_summary(job: TrainingJob) -> TrainingJobSummary:
@@ -341,6 +370,41 @@ def get_training_job_model(job_id: int, current_user: User = Depends(get_current
         evaluation=json.loads(model.evaluation_json) if model.evaluation_json else {},
         feature_engineering=json.loads(model.feature_engineering_json) if model.feature_engineering_json else None,
         created_at=model.created_at,
+    )
+
+
+@router.get("/jobs/{job_id}/candidates", response_model=LeaderboardResponse)
+def get_job_candidates(job_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Leaderboard du job (Lot D) — TOUS les modèles comparés, pas seulement
+    le gagnant (déjà exposé par `GET /jobs/{id}/model`).
+
+    Rétrocompatible par absence, jamais par erreur : un job entraîné avant ce
+    lot n'a aucune ligne `ModelCandidate` (jamais recalculée a posteriori,
+    voir `services/ml_training.py`) — `candidates` renvoie alors `[]`, pas un
+    404/409, pour que le frontend affiche proprement le seul gagnant déjà
+    disponible via `GET /jobs/{id}/model`."""
+    job = _get_org_job(job_id, current_user, db)
+    rows = (
+        db.query(ModelCandidate)
+        .filter(ModelCandidate.training_job_id == job.id, ModelCandidate.organization_id == current_user.organization_id)
+        .order_by(ModelCandidate.rank.asc())
+        .all()
+    )
+    return LeaderboardResponse(
+        selection_metric_label=selection_metric_label(job.task_type),
+        candidates=[
+            ModelCandidateOut(
+                algorithm=row.algorithm,
+                family=row.family,
+                selection_score=row.selection_score,
+                is_winner=row.is_winner,
+                rank=row.rank,
+                fold_scores=json.loads(row.fold_scores_json) if row.fold_scores_json else None,
+                secondary_metric=row.secondary_metric,
+                secondary_metric_label=row.secondary_metric_label,
+            )
+            for row in rows
+        ],
     )
 
 

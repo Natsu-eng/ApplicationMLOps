@@ -105,17 +105,17 @@ def test_group_anti_leak_split_reflected_in_model_card():
 
 
 def test_cv_estimator_is_pipeline_with_preprocessor_first_step(monkeypatch):
-    """Preuve structurelle : l'estimateur passé à cross_val_score est un
+    """Preuve structurelle : l'estimateur passé à cross_validate est un
     Pipeline dont la 1re étape est le préprocesseur — garantit qu'il est
     cloné et refit à l'intérieur de chaque fold, jamais fit en amont sur
     tout le train (Lot A, fuite #1)."""
     captured: dict = {}
 
-    def fake_cross_val_score(estimator, X, y, cv=None, groups=None, scoring=None, n_jobs=None, fit_params=None):
+    def fake_cross_validate(estimator, X, y, cv=None, groups=None, scoring=None, n_jobs=None, fit_params=None):
         captured["estimator"] = estimator
-        return np.array([0.5, 0.5, 0.5])
+        return {"test_score": np.array([0.5, 0.5, 0.5])}
 
-    monkeypatch.setattr(ml_training_module, "cross_val_score", fake_cross_val_score)
+    monkeypatch.setattr(ml_training_module, "cross_validate", fake_cross_validate)
 
     df = _make_regression_df()
     split = split_dataset(df, "cible", ["x1", "x2"], "regression", None, 0.2, 42)
@@ -185,7 +185,7 @@ def test_cqr_preprocessor_fit_only_on_fit_portion():
 
 
 def test_feature_engineering_frequency_encoding_survives_pipeline_wiring(monkeypatch):
-    """Preuve que le Pipeline passé à cross_val_score (donc cloné/refit par
+    """Preuve que le Pipeline passé à cross_validate (donc cloné/refit par
     fold, Lot A) contient bien l'encodeur de fréquence quand
     feature_engineering_config est actif — la fold-safety de l'encodeur
     lui-même est déjà prouvée isolément (test_ml_preprocessing.py) ; ce test
@@ -206,11 +206,11 @@ def test_feature_engineering_frequency_encoding_survives_pipeline_wiring(monkeyp
 
     captured: dict = {}
 
-    def fake_cross_val_score(estimator, X, y, cv=None, groups=None, scoring=None, n_jobs=None, fit_params=None):
+    def fake_cross_validate(estimator, X, y, cv=None, groups=None, scoring=None, n_jobs=None, fit_params=None):
         captured["estimator"] = estimator
-        return np.array([0.5, 0.5, 0.5])
+        return {"test_score": np.array([0.5, 0.5, 0.5])}
 
-    monkeypatch.setattr(ml_training_module, "cross_val_score", fake_cross_val_score)
+    monkeypatch.setattr(ml_training_module, "cross_validate", fake_cross_validate)
 
     spec = MODEL_REGISTRY["lightgbm"]
     _optimize_one_model(
@@ -220,7 +220,7 @@ def test_feature_engineering_frequency_encoding_survives_pipeline_wiring(monkeyp
 
     estimator = captured["estimator"]
     # `.transformers` (pas `.transformers_`, réservé au ColumnTransformer fitté) :
-    # le Pipeline capturé n'a pas encore été fit, cross_val_score étant mocké.
+    # le Pipeline capturé n'a pas encore été fit, cross_validate étant mocké.
     freq_step_names = [name for name, _, _ in estimator.named_steps["preprocess"].transformers if name.startswith("freq_")]
     assert freq_step_names, "l'encodeur de fréquence doit être un step du même ColumnTransformer que Lot A refit par fold"
 
@@ -487,16 +487,16 @@ def test_cv_estimator_is_pipeline_for_scaling_required_models(monkeypatch):
     mais pour des modèles qui EXIGENT le scaling (`requires_scaling=True` —
     SVM/KNN/régression linéaire) : confirme que le pattern
     `Pipeline(préprocesseur, modèle)` cloné/refit par fold par
-    `cross_val_score` n'est pas spécifique aux arbres — le scaler de ces
+    `cross_validate` n'est pas spécifique aux arbres — le scaler de ces
     modèles est fit DANS le fold, jamais en amont (Lot 5, non-régression de
     l'anti-fuite Lot A pour les nouveaux modèles)."""
     captured: dict = {}
 
-    def fake_cross_val_score(estimator, X, y, cv=None, groups=None, scoring=None, n_jobs=None, fit_params=None):
+    def fake_cross_validate(estimator, X, y, cv=None, groups=None, scoring=None, n_jobs=None, fit_params=None):
         captured["estimator"] = estimator
-        return np.array([0.7, 0.7, 0.7])
+        return {"test_score": np.array([0.7, 0.7, 0.7])}
 
-    monkeypatch.setattr(ml_training_module, "cross_val_score", fake_cross_val_score)
+    monkeypatch.setattr(ml_training_module, "cross_validate", fake_cross_validate)
 
     df = _make_regression_df()
     split = split_dataset(df, "cible", ["x1", "x2"], "regression", None, 0.2, 42)
@@ -590,15 +590,15 @@ def test_class_rebalancing_disabled_by_default_leaves_model_card_flags_false():
 
 def test_optimize_one_model_routes_sample_weight_for_supporting_model(monkeypatch):
     """Preuve structurelle : le poids par échantillon est bien routé vers
-    `model__sample_weight` de `cross_val_score` pour un modèle qui le
+    `model__sample_weight` de `cross_validate` pour un modèle qui le
     supporte (LightGBM)."""
     captured: dict = {}
 
-    def fake_cross_val_score(estimator, X, y, cv=None, groups=None, scoring=None, n_jobs=None, fit_params=None):
+    def fake_cross_validate(estimator, X, y, cv=None, groups=None, scoring=None, n_jobs=None, fit_params=None):
         captured["fit_params"] = fit_params
-        return np.array([0.5, 0.5, 0.5])
+        return {"test_score": np.array([0.5, 0.5, 0.5])}
 
-    monkeypatch.setattr(ml_training_module, "cross_val_score", fake_cross_val_score)
+    monkeypatch.setattr(ml_training_module, "cross_validate", fake_cross_validate)
 
     df = _make_multiclass_df()
     split = split_dataset(df, "cible", ["f1", "f2"], "classification", None, 0.2, 42)
@@ -627,11 +627,11 @@ def test_optimize_one_model_skips_sample_weight_for_unsupported_model(monkeypatc
     incorrecte à un estimateur qui ne l'accepte pas en `.fit()`."""
     captured: dict = {}
 
-    def fake_cross_val_score(estimator, X, y, cv=None, groups=None, scoring=None, n_jobs=None, fit_params=None):
+    def fake_cross_validate(estimator, X, y, cv=None, groups=None, scoring=None, n_jobs=None, fit_params=None):
         captured["fit_params"] = fit_params
-        return np.array([0.5, 0.5, 0.5])
+        return {"test_score": np.array([0.5, 0.5, 0.5])}
 
-    monkeypatch.setattr(ml_training_module, "cross_val_score", fake_cross_val_score)
+    monkeypatch.setattr(ml_training_module, "cross_validate", fake_cross_validate)
 
     df = _make_multiclass_df()
     split = split_dataset(df, "cible", ["f1", "f2"], "classification", None, 0.2, 42)
@@ -686,3 +686,128 @@ def test_class_rebalancing_improves_minority_recall_on_imbalanced_dataset():
     assert result_off.model_card["class_rebalancing_applied"] is False
     assert result_on.model_card["class_rebalancing_applied"] is True
     assert _minority_class_recall(result_on.evaluation) > _minority_class_recall(result_off.evaluation)
+
+
+# ── Lot D — leaderboard : tous les candidats, score de sélection ───────────
+
+
+def test_optimize_one_model_captures_fold_scores_without_retraining():
+    """Option A du cadrage Lot D : la variance inter-folds est récupérée
+    pendant la MÊME recherche Optuna déjà en cours (`cross_validate` calcule
+    un score par fold de toute façon ; on le garde via `trial.set_user_attr`
+    au lieu de ne conserver que la moyenne) — aucun ré-entraînement
+    supplémentaire. `fold_scores` porte un score par fold pour l'essai
+    gagnant, cohérent avec `cv_score` (leur moyenne)."""
+    df = _make_regression_df()
+    split = split_dataset(df, "cible", ["x1", "x2"], "regression", None, 0.2, 42)
+    y_train = split.y_train.to_numpy(dtype=float)
+    preprocessor_template = build_preprocessor(split.X_train)
+    cv = _make_cv("regression", 3, None)
+    config = TrainingConfig(optuna_trials=3, cv_folds=3)
+
+    spec = MODEL_REGISTRY["lightgbm"]
+    opt = _optimize_one_model(
+        spec, split.X_train, y_train, "regression", cv, split.groups_train,
+        preprocessor_template, config, lambda s, p: None, 0, 10,
+    )
+    assert opt.fold_scores is not None
+    assert len(opt.fold_scores) == 3
+    assert np.mean(opt.fold_scores) == pytest.approx(opt.cv_score, abs=1e-6)
+
+
+def test_optimize_one_model_captures_regression_error_metric():
+    """Lot D précision 1 : le R² seul n'est pas lisible pour un BE — une
+    erreur en unité réelle (RMSE, validation croisée) est capturée par le
+    même `cross_validate` (second scorer évalué sur les prédictions déjà
+    produites par le fit de chaque fold), sans fit supplémentaire."""
+    df = _make_regression_df()
+    split = split_dataset(df, "cible", ["x1", "x2"], "regression", None, 0.2, 42)
+    y_train = split.y_train.to_numpy(dtype=float)
+    preprocessor_template = build_preprocessor(split.X_train)
+    cv = _make_cv("regression", 3, None)
+    config = TrainingConfig(optuna_trials=3, cv_folds=3)
+
+    spec = MODEL_REGISTRY["lightgbm"]
+    opt = _optimize_one_model(
+        spec, split.X_train, y_train, "regression", cv, split.groups_train,
+        preprocessor_template, config, lambda s, p: None, 0, 10,
+    )
+    assert opt.fold_error is not None
+    assert opt.fold_error > 0  # RMSE positif, dans l'unité de la cible
+
+
+def test_optimize_one_model_classification_has_no_secondary_metric():
+    """Le second scorer (erreur en unité réelle) est spécifique à la
+    régression (cadrage Lot D) — jamais calculé en classification, où le
+    score de sélection (AUC) n'a pas d'équivalent "erreur physique"."""
+    df = _make_multiclass_df()
+    split = split_dataset(df, "cible", ["f1", "f2"], "classification", None, 0.2, 42)
+    y_train = split.y_train.to_numpy()
+    preprocessor_template = build_preprocessor(split.X_train)
+    cv = _make_cv("classification", 3, None)
+    config = TrainingConfig(optuna_trials=3, cv_folds=3)
+
+    spec = MODEL_REGISTRY["lightgbm"]
+    opt = _optimize_one_model(
+        spec, split.X_train, y_train, "classification", cv, split.groups_train,
+        preprocessor_template, config, lambda s, p: None, 0, 10,
+    )
+    assert opt.fold_error is None
+    assert opt.fold_scores is not None and len(opt.fold_scores) == 3
+
+
+def test_all_candidates_length_matches_default_catalog_and_exactly_one_winner():
+    """TOUS les candidats du sous-ensemble par défaut sont exposés (pas
+    seulement le gagnant) — condition de base du leaderboard (Lot D)."""
+    from services.ml_registry import models_for_task
+
+    df = _make_regression_df()
+    split = split_dataset(df, "cible", ["x1", "x2"], "regression", None, 0.2, 42)
+    result = train_and_evaluate(split, "regression", _FAST_CONFIG, lambda s, p: None)
+
+    expected_labels = {spec.label("regression") for spec in models_for_task("regression", "default")}
+    assert {c["algorithm"] for c in result.all_candidates} == expected_labels
+    assert sum(c["is_winner"] for c in result.all_candidates) == 1
+    winner_row = [c for c in result.all_candidates if c["is_winner"]][0]
+    assert winner_row["algorithm"] == result.algorithm
+    assert winner_row["selection_score"] == pytest.approx(result.metrics["cv_score"])
+
+
+def test_all_candidates_ranked_by_selection_score_not_accuracy(monkeypatch):
+    """Preuve que le classement du leaderboard (Lot D) suit le score de
+    sélection (cv_score, AUC-based en classification) et non l'accuracy —
+    scénario réaliste sur dataset déséquilibré : un modèle qui prédirait
+    surtout la classe majoritaire afficherait une bonne accuracy mais un
+    score de sélection médiocre (AUC proche du hasard). On force cet écart
+    (cv_score fictif) pour prouver que c'est bien lui qui pilote le rang, et
+    non une autre métrique qu'on aurait pu être tenté d'utiliser."""
+    df = _make_imbalanced_classification_df()
+    split = split_dataset(df, "cible", ["x1", "x2"], "classification", None, 0.2, 42)
+
+    fake_catalog = [MODEL_REGISTRY["lightgbm"], MODEL_REGISTRY["random_forest"]]
+    monkeypatch.setattr(ml_training_module, "models_for_task", lambda task_type, subset="all": fake_catalog)
+
+    # lightgbm "perd" sur le score de sélection alors qu'un classement par
+    # accuracy brute l'aurait placé devant (cas réaliste sur un dataset
+    # déséquilibré : accuracy haute grâce à la classe majoritaire, AUC basse
+    # car il ne distingue pas la classe rare) — random_forest gagne sur le
+    # score de sélection, la seule métrique qui doit compter ici.
+    fake_scores = {"lightgbm": 0.55, "random_forest": 0.91}
+    original = ml_training_module._optimize_one_model
+
+    def fake_optimize(spec, *args, **kwargs):
+        opt = original(spec, *args, **kwargs)
+        opt.cv_score = fake_scores[spec.id]
+        return opt
+
+    monkeypatch.setattr(ml_training_module, "_optimize_one_model", fake_optimize)
+
+    result = train_and_evaluate(split, "classification", _FAST_CONFIG, lambda s, p: None)
+
+    assert result.algorithm == "Forêt aléatoire (Random Forest)"
+    ranks = {c["algorithm"]: c["rank"] for c in result.all_candidates}
+    assert ranks["Forêt aléatoire (Random Forest)"] == 1
+    assert ranks["LightGBM"] == 2
+    winners = [c for c in result.all_candidates if c["is_winner"]]
+    assert len(winners) == 1
+    assert winners[0]["algorithm"] == "Forêt aléatoire (Random Forest)"

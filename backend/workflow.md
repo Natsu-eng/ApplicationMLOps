@@ -511,6 +511,88 @@ branche `lot-desequilibre-class-weight`.
 périmètre (lot expert futur) ; réglage de seuil de décision hors périmètre
 (autre lot) ; pas de mode guidé/expert dédié (Lot E).
 
+## Lot D — Leaderboard : rendre visible le travail de comparaison (livré)
+
+Avant ce lot, un entraînement comparait plusieurs modèles mais seul le
+gagnant était persisté (`MLModel`) — les autres candidats, leurs scores, et
+la raison du choix restaient invisibles (un simple `logger.info`, jamais
+lu). Phase 1 (lecture seule, audit + plan) validée avant implémentation ;
+Phase 2 livrée en 4 commits isolés sur la branche `lot-d-leaderboard`.
+Périmètre Niveau 1 uniquement (leaderboard intra-job) — la comparaison
+inter-jobs (Niveau 2) a été volontairement reportée à un lot D-bis dédié
+pour ne pas bâcler ni l'un ni l'autre.
+
+- [x] **Bug corrigé en premier, dans son propre commit** :
+  `_headline_metric` (`api/routers/training.py`) affichait `accuracy` sur
+  la carte d'historique pour tout job de classification — trompeur sur un
+  dataset déséquilibré (un modèle qui ignore la classe rare peut afficher
+  95 % d'exactitude). Corrigé pour afficher `cv_score`, la métrique qui a
+  réellement départagé les candidats. Régression inchangée (`r2_test`,
+  déjà correct).
+- [x] Nouvelle table `ModelCandidate` (`api/core/models.py`) — un candidat
+  = algorithme, famille, `selection_score` (LA métrique qui a choisi le
+  gagnant : ROC-AUC pondérée en classification, R² en régression, jamais
+  l'accuracy), rang, variance inter-folds, erreur en unité réelle
+  (régression). Table dédiée plutôt qu'un JSON sur `TrainingJob` — le
+  tri/filtre inter-jobs prévu au lot D-bis a besoin de colonnes
+  requêtables. Migration triviale (`create_all` gère les tables
+  manquantes, aucune colonne à ajouter ailleurs) — rétrocompatible **par
+  absence de lignes**, jamais par backfill : les jobs antérieurs à ce lot
+  n'ont simplement aucun candidat persisté.
+- [x] `services/ml_training.py` — `_optimize_one_model` bascule de
+  `cross_val_score` à `cross_validate` : même calcul (un fit par fold,
+  aucun ré-entraînement supplémentaire), mais expose le détail par fold de
+  chaque scorer. La variance inter-folds (score par fold de l'essai
+  Optuna gagnant) est capturée via `trial.set_user_attr` — décision prise
+  après avoir confirmé en Phase 1 qu'elle n'était pas récupérable sans
+  toucher la boucle d'entraînement, mais qu'elle ne coûtait rien de plus à
+  calculer puisque `cross_validate` la produit déjà. En régression, un
+  second scorer (RMSE, `neg_root_mean_squared_error`) est évalué sur les
+  mêmes prédictions déjà produites par chaque fold — le R² seul n'étant
+  pas lisible pour un bureau d'études, l'erreur en unité réelle est
+  affichée à côté, jamais à la place du score de sélection.
+  `TrainedModelResult.all_candidates` porte désormais tous les candidats
+  triés par score de sélection décroissant.
+- [x] `workers/training_worker.py` — persiste une ligne `ModelCandidate`
+  par candidat du catalogue par défaut, dans la **même transaction** que
+  `MLModel`/`job.status` : garantit que le gagnant et la ligne
+  `is_winner=True` désignent toujours le même modèle par construction
+  (mêmes variables sources dans `ml_training.py`, jamais recalculées
+  séparément côté worker) — vérifié par un test dédié plutôt que supposé.
+- [x] `GET /training/jobs/{id}/candidates` — leaderboard du job, même
+  pattern d'isolation `_get_org_job` que le reste du router.
+  Rétrocompatible : `candidates: []` (jamais une erreur) pour un job sans
+  ligne persistée, le frontend se rabat alors sur le seul gagnant déjà
+  disponible via `GET .../model`.
+- [x] Frontend `ModelResultModal.tsx` — section "Modèles comparés" sous la
+  Performance du gagnant : classement sur `selection_metric_label`, phrase
+  en langage clair ("X retenu : meilleur ROC-AUC en validation croisée,
+  devant Y de N points"), `BoxPlotChart` (Lot B) réutilisé tel quel pour la
+  variance inter-folds quand disponible — aucun nouveau composant de
+  graphe créé.
+
+**Vérifié** :
+
+- Suite pytest complète verte (152 → 165 tests).
+- Cohérence gagnant garantie et testée explicitement : le modèle de
+  `MLModel` et la ligne `ModelCandidate.is_winner=True` portent toujours
+  le même algorithme et le même score (`test_worker_winner_consistent_...`).
+- Classement piloté par le score de sélection, pas l'accuracy, prouvé sur
+  un scénario construit où les deux métriques divergent (pas seulement une
+  assertion structurelle sur le code).
+- Rétrocompatibilité vérifiée par requête HTTP réelle sur un job sans
+  candidat persisté (pas seulement en théorie).
+- Isolation multi-tenant vérifiée sur le nouvel endpoint.
+- `tsc -b` (typecheck strict, `noUnusedLocals`/`noUnusedParameters` actifs)
+  vert côté frontend — `eslint` indisponible dans cet environnement
+  (dépendance non installée localement), non vérifié par ce lot.
+
+**Scope volontairement limité** (acté en Phase 1, à ne pas rouvrir) :
+comparaison inter-jobs (tri, diff de config) reportée à un lot D-bis ; pas
+de mode guidé/expert, pas de refonte UX globale, pas de nouveaux graphes
+d'évaluation (tout ça = Lot E) — ce lot montre les modèles déjà comparés,
+il ne refond pas l'écran.
+
 ## Prochains lots (résumé — détail complet dans le diagnostic de migration et les échanges de cadrage)
 
 | Lot | Contenu | Livrable testable |

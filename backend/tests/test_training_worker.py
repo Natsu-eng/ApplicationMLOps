@@ -17,8 +17,9 @@ from pathlib import Path
 import joblib
 import numpy as np
 import pandas as pd
+import pytest
 
-from api.core.models import Dataset, MLModel, Organization, TrainingJob
+from api.core.models import Dataset, MLModel, ModelCandidate, Organization, TrainingJob
 from workers.training_worker import run_training_job
 
 
@@ -108,3 +109,63 @@ def test_worker_without_feature_engineering_spec_behaves_as_before(db_session):
     assert model.feature_engineering_json is None
     bundle = joblib.load(model.file_path)
     assert "feature_engineering_spec" not in bundle
+
+
+# ── Lot D — leaderboard : persistance de TOUS les candidats ─────────────────
+
+
+def test_worker_persists_all_default_catalog_candidates_not_only_winner(db_session):
+    """Avant ce lot, seul le gagnant était persisté (`MLModel`) — le travail
+    de comparaison réel du moteur restait invisible. Le worker doit
+    maintenant persister une ligne `ModelCandidate` par modèle du
+    sous-ensemble par défaut, pas seulement celui retenu."""
+    from services.ml_registry import models_for_task
+
+    job = _make_job(db_session, None, feature_columns=["x"])
+    run_training_job(job.id)
+
+    db_session.expire_all()
+    rows = db_session.query(ModelCandidate).filter(ModelCandidate.training_job_id == job.id).all()
+    expected_labels = {spec.label("regression") for spec in models_for_task("regression", "default")}
+    assert {r.algorithm for r in rows} == expected_labels
+    assert sum(r.is_winner for r in rows) == 1
+
+
+def test_worker_winner_consistent_between_ml_model_and_candidate_row(db_session):
+    """Exigence de cohérence du cadrage Lot D : le gagnant dans `MLModel` et
+    la ligne `ModelCandidate` avec `is_winner=True` désignent TOUJOURS le
+    même modèle (même algorithme, même score de sélection) — les deux sont
+    écrits dans la même transaction, à partir des mêmes valeurs (voir
+    `services/ml_training.py::train_and_evaluate`), jamais recalculés
+    séparément."""
+    job = _make_job(db_session, None, feature_columns=["x"])
+    run_training_job(job.id)
+
+    db_session.expire_all()
+    model = db_session.query(MLModel).filter(MLModel.training_job_id == job.id).first()
+    winners = (
+        db_session.query(ModelCandidate)
+        .filter(ModelCandidate.training_job_id == job.id, ModelCandidate.is_winner.is_(True))
+        .all()
+    )
+    assert len(winners) == 1
+    winner = winners[0]
+    assert winner.algorithm == model.algorithm
+    metrics = json.loads(model.metrics_json)
+    assert winner.selection_score == pytest.approx(metrics["cv_score"])
+
+
+def test_worker_candidates_carry_fold_scores_and_regression_secondary_metric(db_session):
+    """Option A (variance inter-folds) + précision 1 (erreur en unité réelle
+    pour la régression) du cadrage Lot D, bout en bout via le worker."""
+    job = _make_job(db_session, None, feature_columns=["x"])
+    run_training_job(job.id)
+
+    db_session.expire_all()
+    rows = db_session.query(ModelCandidate).filter(ModelCandidate.training_job_id == job.id).all()
+    assert len(rows) > 0
+    for row in rows:
+        assert row.fold_scores_json is not None
+        assert len(json.loads(row.fold_scores_json)) >= 1
+        assert row.secondary_metric is not None  # RMSE — régression uniquement, toujours dispo ici
+        assert row.secondary_metric_label == "RMSE (validation croisée)"
