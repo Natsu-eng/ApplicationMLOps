@@ -811,3 +811,104 @@ def test_all_candidates_ranked_by_selection_score_not_accuracy(monkeypatch):
     winners = [c for c in result.all_candidates if c["is_winner"]]
     assert len(winners) == 1
     assert winners[0]["algorithm"] == "Forêt aléatoire (Random Forest)"
+
+
+# ── Fix "bad allocation" — sparse préservé jusqu'au fit/SHAP ────────────────
+
+
+def _make_high_cardinality_df(n=300, seed=17):
+    """Analogue synthétique, sûr à faire tourner en test, du dataset réel
+    ayant déclenché le diagnostic : une colonne quasi-identifiant (cardinalité
+    ≈ nombre de lignes) qui, densifiée par un one-hot, exploserait en
+    centaines de colonnes — ici bornée à une taille qui reste rapide à tester
+    tout en restant représentative (n colonnes one-hot ≈ n lignes)."""
+    rng = np.random.default_rng(seed)
+    x1 = rng.normal(size=n)
+    x2 = rng.normal(size=n)
+    identifiant = np.array([f"ID{i:05d}" for i in range(n)])  # cardinalité = n (quasi-unique)
+    y = (x1 + x2 > 0).astype(int)
+    return pd.DataFrame({"identifiant": identifiant, "x1": x1, "x2": x2, "cible": y})
+
+
+def test_high_cardinality_categorical_trains_without_densifying(monkeypatch):
+    """Reproduit, en sûr et rapide, le scénario du diagnostic "bad
+    allocation" : une colonne quasi-identifiant one-hotée ne doit JAMAIS
+    déclencher de densification (`.todense()`) nulle part dans le pipeline
+    pour le catalogue par défaut (100% famille "tree") — c'est la
+    densification, pas la cardinalité en elle-même, qui faisait exploser la
+    mémoire. Généralisé à N'IMPORTE QUEL dataset avec une colonne à
+    cardinalité élevée, pas seulement celui du diagnostic."""
+    import scipy.sparse as sp
+
+    calls = {"count": 0}
+    original_todense = sp.csr_matrix.todense
+
+    def _tracking_todense(self, *args, **kwargs):
+        calls["count"] += 1
+        return original_todense(self, *args, **kwargs)
+
+    monkeypatch.setattr(sp.csr_matrix, "todense", _tracking_todense)
+
+    df = _make_high_cardinality_df()
+    split = split_dataset(df, "cible", ["identifiant", "x1", "x2"], "classification", None, 0.2, 42)
+    result = train_and_evaluate(split, "classification", _FAST_CONFIG, lambda s, p: None)
+
+    assert calls["count"] == 0, "todense() appelé — une matrice a été densifiée inutilement (régression du fix)"
+    assert result.algorithm  # l'entraînement a bien produit un résultat exploitable
+    assert len(result.shap_summary) > 0  # SHAP calculé malgré l'entrée sparse (TreeExplainer)
+
+
+def test_high_cardinality_regression_with_cqr_trains_without_densifying(monkeypatch):
+    """Même preuve que ci-dessus, en régression — inclut le CQR (régresseurs
+    de quantile LightGBM dédiés), deuxième point de densification supprimé
+    par le fix."""
+    import scipy.sparse as sp
+
+    calls = {"count": 0}
+    original_todense = sp.csr_matrix.todense
+
+    def _tracking_todense(self, *args, **kwargs):
+        calls["count"] += 1
+        return original_todense(self, *args, **kwargs)
+
+    monkeypatch.setattr(sp.csr_matrix, "todense", _tracking_todense)
+
+    rng = np.random.default_rng(23)
+    n = 300
+    x1 = rng.normal(size=n)
+    identifiant = np.array([f"ID{i:05d}" for i in range(n)])
+    y = 3 * x1 + rng.normal(0, 0.5, n)
+    df = pd.DataFrame({"identifiant": identifiant, "x1": x1, "cible": y})
+
+    split = split_dataset(df, "cible", ["identifiant", "x1"], "regression", None, 0.2, 42)
+    result = train_and_evaluate(split, "regression", _FAST_CONFIG, lambda s, p: None)
+
+    assert calls["count"] == 0, "todense() appelé — une matrice a été densifiée inutilement (régression du fix)"
+    assert result.cqr is not None
+    assert 0 <= result.cqr["empirical_coverage"] <= 1
+
+
+def test_linear_explainer_still_works_with_sparse_upstream_input():
+    """LinearExplainer exige un fond dense (SHAP) — vérifie que le fix (sparse
+    conservé en amont, densifié seulement ici, borné) ne casse pas
+    l'explicabilité pour la famille linéaire (mode expert futur, Lot E)."""
+    from services.ml_training import _compute_explainability
+    from services.ml_registry import MODEL_REGISTRY
+    from sklearn.linear_model import Ridge
+
+    df = _make_high_cardinality_df()
+    df["cible"] = df["x1"] * 2 - df["x2"] + np.random.default_rng(1).normal(0, 0.1, len(df))
+    split = split_dataset(df, "cible", ["identifiant", "x1", "x2"], "regression", None, 0.2, 42)
+
+    preprocessor = build_preprocessor(split.X_train)
+    X_train_proc = preprocessor.fit_transform(split.X_train)
+    X_test_proc = preprocessor.transform(split.X_test)
+    assert hasattr(X_train_proc, "todense")  # bien sparse en amont, condition du test
+
+    model = Ridge(alpha=0.1, random_state=42).fit(X_train_proc, split.y_train.to_numpy(dtype=float))
+    feature_names = list(preprocessor.get_feature_names_out())
+    config = TrainingConfig(shap_sample_size=20)
+
+    summary, status = _compute_explainability(model, "linear", X_train_proc, X_test_proc, feature_names, config)
+    assert status["status"] == "ok"
+    assert len(summary) == len(feature_names)

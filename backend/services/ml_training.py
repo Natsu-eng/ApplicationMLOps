@@ -38,6 +38,17 @@ Méthodologie reprise d'un notebook de référence partagé par l'équipe (voir
   colonne de groupe est fournie (Lot A). Découplé du modèle gagnant (les
   régresseurs de quantile sont toujours des LightGBM dédiés) : fonctionne
   sans adaptation pour tout nouveau modèle de régression du catalogue.
+- Sparse préservé jusqu'au fit/predict/SHAP (diagnostic "bad allocation") :
+  le préprocesseur produit du sparse dès qu'un one-hot est présent — jamais
+  densifié explicitement (plus de `.todense()` systématique) tant que
+  l'estimateur/l'explainer l'accepte nativement, ce qui est le cas de tout
+  le catalogue par défaut (LightGBM/XGBoost/CatBoost/RandomForest,
+  `TreeExplainer`) — vérifié empiriquement. Seuls `LinearExplainer`/
+  `KernelExplainer` (hors catalogue par défaut) exigent du dense ; ils ne
+  reçoivent alors qu'un échantillon BORNÉ, jamais le train complet (voir
+  `_compute_explainability`). Une colonne quasi-identifiant one-hotée, qui
+  transformait un jeu de données modeste en centaines de Mo de tableau
+  dense pour rien, reste désormais de taille négligeable en sparse.
 
 Le clustering (non supervisé) est hors périmètre de ce module — voir
 `services/ml_task.py`, qui ne détecte que classification/régression.
@@ -344,17 +355,25 @@ def _bootstrap_ci(
 
 # ── SHAP par famille (Lot 5) ────────────────────────────────────────────────
 #
-# Bornage de KernelExplainer — le seul des trois explainers dont le coût
-# croît avec (taille du fond × taille de l'échantillon expliqué × nombre de
-# variables) : sans borne, un modèle SVM/KNN/Naive Bayes sur un dataset large
-# rendrait l'explicabilité impraticable. Constantes nommées (pas de valeur en
-# dur perdue dans le code) — voir `_compute_explainability`.
+# Bornage de KernelExplainer — le seul des trois explainers dont le coût de
+# CALCUL croît avec (taille du fond × taille de l'échantillon expliqué ×
+# nombre de variables) : sans borne, un modèle SVM/KNN/Naive Bayes sur un
+# dataset large rendrait l'explicabilité impraticable. Constantes nommées
+# (pas de valeur en dur perdue dans le code) — voir `_compute_explainability`.
+#
+# `_KERNEL_SHAP_BACKGROUND_SIZE` sert aussi à borner le fond DENSIFIÉ de
+# LinearExplainer (diagnostic "bad allocation") : Linear/KernelExplainer sont
+# les deux seuls à exiger un tableau dense — jamais le train complet, même
+# borné à un échantillon, pour rester sûr en mémoire quel que soit le
+# dataset (voir `_compute_explainability`). TreeExplainer (tout le catalogue
+# par défaut) n'est concerné par aucune des deux bornes : il accepte le
+# sparse directement et n'a pas de fond à densifier.
 _KERNEL_SHAP_MAX_FEATURES = 50  # au-delà : SHAP désactivé pour ce modèle, message explicite plutôt qu'un calcul trop long
-_KERNEL_SHAP_BACKGROUND_SIZE = 50  # points de fond résumés par k-means (pas les données brutes)
+_KERNEL_SHAP_BACKGROUND_SIZE = 50  # points de fond (résumés par k-means pour kernel, échantillonnés pour linear)
 _KERNEL_SHAP_SAMPLE_SIZE = 50  # échantillon expliqué — nettement plus bas que shap_sample_size (tree/linear, rapides)
 
 
-def _build_explainer(explainer_kind: str, estimator: Any, X_train_background: np.ndarray):
+def _build_explainer(explainer_kind: str, estimator: Any, X_train_background: Any):
     """Construit l'explainer SHAP adapté à la famille du modèle gagnant.
 
     Point critique (Lot 5, correction 2) : `X_train_background` DOIT être
@@ -365,6 +384,10 @@ def _build_explainer(explainer_kind: str, estimator: Any, X_train_background: np
     coefficients du modèle linéaire, eux, ont été appris dans l'espace
     préprocessé) — l'appelant (`_compute_explainability`) ne passe donc
     jamais autre chose que `X_train_proc`/`X_test_proc`.
+
+    `X_train_background` est sparse pour "tree" (ignoré, TreeExplainer n'en a
+    pas besoin), toujours dense (déjà converti par l'appelant) pour
+    "linear"/"kernel", qui l'exigent.
     """
     if explainer_kind == "tree":
         return shap.TreeExplainer(estimator)
@@ -413,8 +436,8 @@ def _compute_shap_summary(
 def _compute_explainability(
     estimator: Any,
     explainer_kind: str,
-    X_train_proc: np.ndarray,
-    X_test_proc: np.ndarray,
+    X_train_proc: Any,  # ndarray ou scipy.sparse — voir note densification ci-dessous
+    X_test_proc: Any,
     feature_names: list[str],
     config: TrainingConfig,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
@@ -430,6 +453,19 @@ def _compute_explainability(
     calcul trop long. Un dernier filet `try/except` couvre les cas non
     anticipés (ex. modèle dégénéré sur un petit jeu de données) : dans tous
     les cas, `train_and_evaluate` continue et produit un modèle utilisable.
+
+    Densification (diagnostic "bad allocation") : `X_train_proc`/`X_test_proc`
+    arrivent ici SPARSE dès que le préprocesseur contient un one-hot (voir
+    `train_and_evaluate`, qui ne densifie plus par défaut). `TreeExplainer`
+    (routage "tree" — tout le catalogue par défaut) accepte le sparse
+    directement, vérifié empiriquement, donc rien à convertir : c'est le cas
+    le plus courant, celui qui coûtait le plus cher à densifier (une colonne
+    quasi-identifiant one-hotée reste minuscule en sparse, explose en dense).
+    `LinearExplainer`/`KernelExplainer` ("linear"/"kernel" — hors catalogue
+    par défaut, réservés au mode expert futur) exigent un fond dense : on ne
+    densifie alors qu'un ÉCHANTILLON BORNÉ (`_KERNEL_SHAP_BACKGROUND_SIZE`),
+    jamais le train complet, pour rester sûr même sur un futur modèle de
+    cette famille.
     """
     n_features = len(feature_names)
     if explainer_kind == "kernel" and n_features > _KERNEL_SHAP_MAX_FEATURES:
@@ -443,13 +479,22 @@ def _compute_explainability(
         }
 
     sample_size = _KERNEL_SHAP_SAMPLE_SIZE if explainer_kind == "kernel" else config.shap_sample_size
-    sample_size = min(sample_size, len(X_test_proc))
+    sample_size = min(sample_size, X_test_proc.shape[0])
     rng = np.random.default_rng(config.seed)
-    sample_idx = rng.choice(len(X_test_proc), size=sample_size, replace=False)
+    sample_idx = rng.choice(X_test_proc.shape[0], size=sample_size, replace=False)
+    X_sample = X_test_proc[sample_idx]
+
+    X_background = X_train_proc
+    if explainer_kind in ("linear", "kernel"):
+        bg_size = min(_KERNEL_SHAP_BACKGROUND_SIZE, X_train_proc.shape[0])
+        bg_idx = rng.choice(X_train_proc.shape[0], size=bg_size, replace=False)
+        X_background = X_train_proc[bg_idx]
+        X_background = np.asarray(X_background.todense()) if hasattr(X_background, "todense") else np.asarray(X_background)
+        X_sample = np.asarray(X_sample.todense()) if hasattr(X_sample, "todense") else np.asarray(X_sample)
 
     try:
         shap_summary = _compute_shap_summary(
-            estimator, explainer_kind, X_train_proc, X_test_proc[sample_idx], feature_names
+            estimator, explainer_kind, X_background, X_sample, feature_names
         )
         return shap_summary, {"status": "ok", "message": None}
     except Exception as exc:  # dernier filet — l'explicabilité ne doit jamais faire échouer l'entraînement
@@ -577,13 +622,14 @@ def _compute_cqr(
     Xc_raw = X_train_raw.iloc[cal_idx].reset_index(drop=True)
     yf, yc = y_train[fit_idx], y_train[cal_idx]
 
+    # Sparse conservé jusqu'au fit (diagnostic "bad allocation") : LGBMRegressor
+    # accepte nativement le sparse (vérifié empiriquement) — densifier ici
+    # transformait une colonne quasi-identifiant one-hotée en un tableau de
+    # centaines de Mo pour rien, sur CE seul jeu de données de calibration.
     cqr_preprocessor = build_preprocessor(Xf_raw, feature_engineering_config)
     Xf = cqr_preprocessor.fit_transform(Xf_raw)
-    Xf = np.asarray(Xf.todense()) if hasattr(Xf, "todense") else np.asarray(Xf)
     Xc = cqr_preprocessor.transform(Xc_raw)
-    Xc = np.asarray(Xc.todense()) if hasattr(Xc, "todense") else np.asarray(Xc)
     X_test_proc = cqr_preprocessor.transform(X_test_raw)
-    X_test_proc = np.asarray(X_test_proc.todense()) if hasattr(X_test_proc, "todense") else np.asarray(X_test_proc)
 
     q_lo = LGBMRegressor(objective="quantile", alpha=alpha / 2, n_estimators=300, verbose=-1, random_state=config.seed).fit(Xf, yf)
     q_hi = LGBMRegressor(objective="quantile", alpha=1 - alpha / 2, n_estimators=300, verbose=-1, random_state=config.seed).fit(Xf, yf)
@@ -756,11 +802,16 @@ def train_and_evaluate(
     # quel modèle final destiné au déploiement (pas de fuite ici, contrairement
     # à la CV — il n'y a plus de portion de validation à préserver une fois le
     # modèle sélectionné).
+    # Sparse conservé jusqu'au fit/predict (diagnostic "bad allocation") : les
+    # 4 modèles du catalogue par défaut (LightGBM/XGBoost/CatBoost/RandomForest)
+    # ET TreeExplainer (SHAP) acceptent le sparse nativement, vérifié
+    # empiriquement — densifier ici transformait toute colonne quasi-
+    # identifiant one-hotée en un tableau de centaines de Mo pour rien. Seuls
+    # LinearExplainer/KernelExplainer (hors catalogue par défaut) exigent du
+    # dense ; ils le reçoivent, borné, dans `_compute_explainability`.
     preprocessor = build_preprocessor(split.X_train, feature_engineering_config)
     X_train_proc = preprocessor.fit_transform(split.X_train)
     X_test_proc = preprocessor.transform(split.X_test)
-    X_train_proc = np.asarray(X_train_proc.todense()) if hasattr(X_train_proc, "todense") else np.asarray(X_train_proc)
-    X_test_proc = np.asarray(X_test_proc.todense()) if hasattr(X_test_proc, "todense") else np.asarray(X_test_proc)
     feature_names = list(preprocessor.get_feature_names_out())
     # Même règle que pendant la recherche Optuna : pondération appliquée
     # uniquement si demandée ET supportée par le modèle gagnant (`winning_spec`,
