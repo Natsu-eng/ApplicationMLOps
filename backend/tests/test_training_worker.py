@@ -20,7 +20,8 @@ import pandas as pd
 import pytest
 
 from api.core.models import Dataset, MLModel, ModelCandidate, Organization, TrainingJob
-from workers.training_worker import run_training_job
+import workers.training_worker as training_worker_module
+from workers.training_worker import _user_safe_error_message, run_training_job
 
 
 def _write_temp_csv(df: pd.DataFrame) -> str:
@@ -169,3 +170,77 @@ def test_worker_candidates_carry_fold_scores_and_regression_secondary_metric(db_
         assert len(json.loads(row.fold_scores_json)) >= 1
         assert row.secondary_metric is not None  # RMSE — régression uniquement, toujours dispo ici
         assert row.secondary_metric_label == "RMSE (validation croisée)"
+
+
+# ── Volet A — échouer proprement : jamais de trace brute affichée ──────────
+
+
+def _assert_no_raw_technical_leak(message: str) -> None:
+    """Un message d'échec utilisateur ne doit jamais contenir de trace Python
+    ni de chemin de fichier interne — voir diagnostic "bad allocation"."""
+    lowered = message.lower()
+    assert "traceback" not in lowered
+    assert ".py" not in lowered
+    assert "e:\\" not in lowered and "e:/" not in lowered
+    assert "file \"" not in lowered
+
+
+@pytest.mark.parametrize(
+    "exc,expected_substring",
+    [
+        (MemoryError("Unable to allocate 512. MiB for an array"), "mémoire disponible"),
+        (RuntimeError("_catboost.CatBoostError: bad allocation"), "mémoire disponible"),
+        (ValueError("Unable to allocate array"), "mémoire disponible"),
+        (RuntimeError("colonne cible introuvable dans un contexte inattendu"), "raison technique"),
+    ],
+)
+def test_user_safe_error_message_translates_known_causes(exc, expected_substring):
+    message = _user_safe_error_message(exc)
+    assert expected_substring in message
+    _assert_no_raw_technical_leak(message)
+
+
+def test_worker_never_leaks_raw_traceback_on_training_failure(db_session, monkeypatch):
+    """Bout en bout : une exception technique levée pendant l'entraînement
+    (ex. "bad allocation" CatBoost, chemin de fichier réel dans le message
+    d'origine) ne doit jamais atteindre `job.error_message` telle quelle —
+    seul un message traduit, sûr, doit être persisté. Le détail complet
+    reste dans les logs serveur (non vérifié ici, hors périmètre du test)."""
+    raw_exc = RuntimeError(
+        'File "E:\\mlops\\app-analyse\\backend\\.venv\\Lib\\site-packages\\catboost\\core.py", line 5827, '
+        "in fit\n_catboost.CatBoostError: bad allocation"
+    )
+
+    def _raise(*args, **kwargs):
+        raise raw_exc
+
+    monkeypatch.setattr(training_worker_module, "train_and_evaluate", _raise)
+
+    job = _make_job(db_session, None, feature_columns=["x"])
+    run_training_job(job.id)
+
+    db_session.expire_all()
+    refreshed = db_session.query(TrainingJob).filter(TrainingJob.id == job.id).first()
+    assert refreshed.status == "failed"
+    assert "mémoire disponible" in refreshed.error_message
+    _assert_no_raw_technical_leak(refreshed.error_message)
+
+
+def test_worker_data_leakage_message_unaffected_by_safe_translation(db_session, monkeypatch):
+    """`DataLeakageError` porte déjà un message français auto-rédigé, sûr —
+    ce chemin d'exception reste inchangé par la traduction générique du
+    Volet A (pas de sur-correction d'un cas déjà propre)."""
+    from services.ml_preprocessing import DataLeakageError
+
+    def _raise(*args, **kwargs):
+        raise DataLeakageError("Fuite détectée entre train et test sur 3 groupe(s) de la colonne 'groupe'")
+
+    monkeypatch.setattr(training_worker_module, "train_and_evaluate", _raise)
+
+    job = _make_job(db_session, None, feature_columns=["x"])
+    run_training_job(job.id)
+
+    db_session.expire_all()
+    refreshed = db_session.query(TrainingJob).filter(TrainingJob.id == job.id).first()
+    assert refreshed.status == "failed"
+    assert refreshed.error_message == "Fuite détectée entre train et test sur 3 groupe(s) de la colonne 'groupe'"

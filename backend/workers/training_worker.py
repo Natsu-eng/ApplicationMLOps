@@ -27,6 +27,34 @@ from services.ml_training import TrainingConfig, train_and_evaluate
 logger = logging.getLogger("datalab.training_worker")
 
 
+def _user_safe_error_message(exc: Exception) -> str:
+    """Traduit une exception technique en message actionnable, langage clair
+    — jamais une trace brute ni un chemin de fichier interne affiché à
+    l'utilisateur (diagnostic "bad allocation" affiché tel quel en
+    production). Le détail technique complet (type, message d'origine,
+    traceback) reste dans les logs serveur, jamais perdu — voir l'appel à
+    `logger.error` juste après, qui ne change pas.
+
+    Whitelist volontairement restreinte aux causes déjà observées en usage
+    réel : mémoire insuffisante (message générique sûr sinon, pas de
+    tentative de deviner toutes les causes possibles)."""
+    text = str(exc).lower()
+    is_memory_error = (
+        isinstance(exc, MemoryError)
+        or "bad allocation" in text
+        or "unable to allocate" in text
+        or "out of memory" in text
+    )
+    if is_memory_error:
+        return (
+            "L'entraînement a dépassé la mémoire disponible. Cela arrive souvent avec "
+            "une colonne à très grand nombre de valeurs différentes (comme un "
+            "identifiant). Essayez de retirer cette colonne des variables utilisées, "
+            "ou de réduire la taille du jeu de données."
+        )
+    return "L'entraînement a échoué pour une raison technique. Contactez votre administrateur si le problème persiste."
+
+
 def _make_progress_callback(db, job: TrainingJob):
     def callback(step: str, percent: int) -> None:
         job.progress_step = step
@@ -174,9 +202,12 @@ def run_training_job(job_id: int) -> None:
 
         except Exception as exc:  # toute erreur d'entraînement ne doit jamais faire planter le worker
             job.status = "failed"
-            job.error_message = str(exc)
+            job.error_message = _user_safe_error_message(exc)
             job.finished_at = datetime.now(timezone.utc)
             db.commit()
+            # Détail technique complet (type, message brut, traceback) — JAMAIS
+            # renvoyé à l'utilisateur (voir job.error_message ci-dessus), utile
+            # uniquement en journal serveur pour diagnostiquer la cause réelle.
             logger.error("[Training] Job %s échoué : %s\n%s", job_id, exc, traceback.format_exc())
 
     finally:
