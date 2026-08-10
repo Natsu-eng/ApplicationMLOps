@@ -1,5 +1,14 @@
 @import "tailwindcss";
 
+/* Tokens de marque — dégradé bleu → cyan dérivé du logo (le "D"). Usage
+   RÉSERVÉ aux moments de marque (mark du logo, carte pilier active, futurs
+   panneaux vitrine) : l'usage courant (boutons, badges, focus) reste en
+   teal, déjà déployé partout dans l'app — pas de migration globale. */
+@theme {
+  --color-brand-700: #1d4ed8; /* bleu profond — base du dégradé du logo */
+  --color-brand-400: #22d3ee; /* cyan vif — pointe du dégradé du logo */
+}
+
 /* Fond global : léger dégradé radial teal sur fond quasi-noir — donne de la
    profondeur aux cartes translucides (backdrop-blur) du système de design. */
 body {
@@ -9,4 +18,11 @@ body {
     radial-gradient(circle at 88% 15%, rgba(45, 212, 191, 0.06), transparent 38%);
   background-attachment: fixed;
   background-repeat: no-repeat;
+}
+
+/* Dégradé de marque réutilisable — même direction diagonale que le "D" du
+   logo. Source unique : changer les tokens ci-dessus suffit à requalifier
+   tous les usages. */
+.bg-brand-gradient {
+  background-image: linear-gradient(135deg, var(--color-brand-700), var(--color-brand-400));
 }
