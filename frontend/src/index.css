@@ -7,17 +7,14 @@
 @theme {
   --color-brand-700: #1d4ed8; /* bleu profond — base du dégradé du logo */
   --color-brand-400: #22d3ee; /* cyan vif — pointe du dégradé du logo */
+  --color-canvas: #f8fafc; /* fond de page — slate-50, plat, sans dégradé (E1-bis, thème clair) */
 }
 
-/* Fond global : léger dégradé radial teal sur fond quasi-noir — donne de la
-   profondeur aux cartes translucides (backdrop-blur) du système de design. */
+/* Fond global — plat, neutre et calme (thème clair). Pas de dégradé vif en
+   fond : c'est le dégradé de marque (.bg-brand-gradient) qui porte
+   l'identité visuelle, réservé aux moments vitrine. */
 body {
-  background-color: #020617;
-  background-image:
-    radial-gradient(circle at 12% -10%, rgba(45, 212, 191, 0.10), transparent 42%),
-    radial-gradient(circle at 88% 15%, rgba(45, 212, 191, 0.06), transparent 38%);
-  background-attachment: fixed;
-  background-repeat: no-repeat;
+  background-color: var(--color-canvas);
 }
 
 /* Dégradé de marque réutilisable — même direction diagonale que le "D" du
