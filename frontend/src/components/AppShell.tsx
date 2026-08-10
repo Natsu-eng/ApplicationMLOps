@@ -25,8 +25,16 @@ export default function AppShell({ children, pillarId }: { children: ReactNode; 
         <div className="max-w-6xl mx-auto px-6 py-3.5 flex items-center justify-between">
           <div className="flex items-center gap-8">
             <div className="flex items-center gap-2.5">
-              <div className="h-7 w-7 rounded-lg bg-brand-gradient flex items-center justify-center text-white font-bold text-sm">
-                D
+              {/* Logo complet (le "D" avec son pictogramme), pas un badge de
+                  substitution — recadré sur l'icône via overflow+translate,
+                  même technique que `.auth-logo-crop` (index.css) mais à
+                  l'échelle compacte du header. */}
+              <div className="h-7 w-[37px] overflow-hidden flex-shrink-0">
+                <img
+                  src="/logo.png"
+                  alt="DataLab Pro"
+                  className="h-[49px] w-[49px] max-w-none -translate-x-[5.5px] -translate-y-[1.5px]"
+                />
               </div>
               <div className="leading-tight">
                 <p className="text-[10px] uppercase tracking-widest text-teal-600 font-semibold">
