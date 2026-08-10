@@ -1,19 +1,21 @@
 import type { ReactNode } from "react";
 import { Link, useLocation } from "react-router-dom";
-import { BrainCircuit, Database, LayoutDashboard, LogOut } from "lucide-react";
+import { ArrowLeft, LogOut } from "lucide-react";
 import { useAuth } from "../contexts/AuthContext";
 import { Avatar } from "./ui/Avatar";
+import { PILLARS, type PillarId } from "../config/pillars";
 
-const NAV_ITEMS = [
-  { to: "/dashboard", label: "Tableau de bord", icon: LayoutDashboard },
-  { to: "/datasets", label: "Mes données", icon: Database },
-  { to: "/training", label: "Entraînement", icon: BrainCircuit },
-];
-
-/** Coquille commune à toutes les pages protégées : en-tête, navigation, session. */
-export default function AppShell({ children }: { children: ReactNode }) {
+/** Coquille commune à toutes les pages protégées : en-tête, navigation, session.
+ *
+ * `pillarId` détermine les items de nav affichés (lus depuis le registre des
+ * piliers) — omis sur l'écran d'orientation, qui est pilier-agnostique.
+ * Ajouter un futur pilier ne touche pas ce composant : une entrée dans
+ * `config/pillars.ts` suffit. */
+export default function AppShell({ children, pillarId }: { children: ReactNode; pillarId?: PillarId }) {
   const { user, logout } = useAuth();
   const location = useLocation();
+  const pillar = pillarId ? PILLARS.find((p) => p.id === pillarId) : undefined;
+  const navItems = pillar?.navItems ?? [];
 
   if (!user) return null;
 
@@ -34,8 +36,17 @@ export default function AppShell({ children }: { children: ReactNode }) {
               </div>
             </div>
 
-            <nav className="flex gap-1">
-              {NAV_ITEMS.map(({ to, label, icon: Icon }) => {
+            <nav className="flex gap-1 items-center">
+              {pillar && (
+                <Link
+                  to="/"
+                  className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg text-slate-500 hover:text-slate-300 hover:bg-slate-800/50 transition-colors mr-1"
+                >
+                  <ArrowLeft size={15} strokeWidth={2} />
+                  Objectifs
+                </Link>
+              )}
+              {navItems.map(({ to, label, icon: Icon }) => {
                 const active = location.pathname === to;
                 return (
                   <Link
