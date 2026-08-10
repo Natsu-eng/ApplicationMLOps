@@ -10,7 +10,7 @@ import io
 import json
 from unittest.mock import patch
 
-from api.core.models import MLModel, TrainingJob
+from api.core.models import MLModel, ModelCandidate, TrainingJob
 from api.routers.training import _headline_metric
 
 
@@ -176,3 +176,101 @@ def test_headline_metric_regression_unchanged():
     metrics = {"r2_test": 0.87, "cv_score": 0.85}
     headline = _headline_metric("regression", metrics)
     assert headline == {"name": "r2_test", "value": 0.87}
+
+
+# ── Lot D — leaderboard : endpoint GET /jobs/{id}/candidates ───────────────
+
+
+def _complete_job_with_model_and_candidates(db_session, job_id, org_id, add_candidates=True):
+    job = db_session.query(TrainingJob).filter(TrainingJob.id == job_id).first()
+    job.status = "completed"
+    db_session.add(
+        MLModel(
+            organization_id=org_id,
+            training_job_id=job.id,
+            algorithm="LightGBM",
+            task_type="regression",
+            target_column="cible",
+            feature_columns_json=json.dumps(["x1", "x2"]),
+            file_path="unused.joblib",
+            metrics_json=json.dumps({"r2_test": 0.9, "cv_score": 0.88}),
+        )
+    )
+    if add_candidates:
+        db_session.add(ModelCandidate(
+            organization_id=org_id, training_job_id=job.id, algorithm="LightGBM", family="arbre_ensemble",
+            selection_score=0.88, is_winner=True, rank=1,
+            fold_scores_json=json.dumps([0.85, 0.9, 0.89]),
+            secondary_metric=1.2, secondary_metric_label="RMSE (validation croisée)",
+        ))
+        db_session.add(ModelCandidate(
+            organization_id=org_id, training_job_id=job.id, algorithm="CatBoost", family="arbre_ensemble",
+            selection_score=0.80, is_winner=False, rank=2,
+            fold_scores_json=json.dumps([0.78, 0.81, 0.81]),
+            secondary_metric=1.5, secondary_metric_label="RMSE (validation croisée)",
+        ))
+    db_session.commit()
+    return job
+
+
+@patch("api.routers.training.training_queue")
+def test_candidates_endpoint_returns_leaderboard_sorted_by_rank(mock_queue, client, db_session):
+    mock_queue.enqueue.return_value.id = "fake-rq-id"
+    headers = _register(client)
+    dataset = _upload_dataset(client, headers)
+    job = client.post(
+        "/training/jobs", headers=headers, json={"dataset_id": dataset["id"], "target_column": "cible"}
+    ).json()
+
+    job_row = db_session.query(TrainingJob).filter(TrainingJob.id == job["id"]).first()
+    _complete_job_with_model_and_candidates(db_session, job["id"], job_row.organization_id)
+
+    resp = client.get(f"/training/jobs/{job['id']}/candidates", headers=headers)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["selection_metric_label"] == "R² (validation croisée)"
+    assert [c["algorithm"] for c in body["candidates"]] == ["LightGBM", "CatBoost"]
+    assert body["candidates"][0]["is_winner"] is True
+    assert body["candidates"][1]["is_winner"] is False
+    assert body["candidates"][0]["fold_scores"] == [0.85, 0.9, 0.89]
+    assert body["candidates"][0]["secondary_metric_label"] == "RMSE (validation croisée)"
+
+
+@patch("api.routers.training.training_queue")
+def test_candidates_endpoint_backward_compatible_for_pre_lot_jobs(mock_queue, client, db_session):
+    """Rétrocompatibilité (Lot D) : un job terminé avant ce lot n'a aucune
+    ligne `ModelCandidate` — l'endpoint doit renvoyer une liste vide, jamais
+    une erreur, pour que le frontend affiche proprement le seul gagnant déjà
+    disponible via `GET /jobs/{id}/model`."""
+    mock_queue.enqueue.return_value.id = "fake-rq-id"
+    headers = _register(client)
+    dataset = _upload_dataset(client, headers)
+    job = client.post(
+        "/training/jobs", headers=headers, json={"dataset_id": dataset["id"], "target_column": "cible"}
+    ).json()
+
+    job_row = db_session.query(TrainingJob).filter(TrainingJob.id == job["id"]).first()
+    _complete_job_with_model_and_candidates(db_session, job["id"], job_row.organization_id, add_candidates=False)
+
+    resp = client.get(f"/training/jobs/{job['id']}/candidates", headers=headers)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["candidates"] == []
+    assert body["selection_metric_label"] == "R² (validation croisée)"
+
+
+@patch("api.routers.training.training_queue")
+def test_candidates_endpoint_isolated_between_organizations(mock_queue, client, db_session):
+    mock_queue.enqueue.return_value.id = "fake-rq-id"
+    headers_a = _register(client, "a@bureau-a.fr", "Bureau A")
+    headers_b = _register(client, "b@bureau-b.fr", "Bureau B")
+    dataset = _upload_dataset(client, headers_a)
+    job = client.post(
+        "/training/jobs", headers=headers_a, json={"dataset_id": dataset["id"], "target_column": "cible"}
+    ).json()
+
+    job_row = db_session.query(TrainingJob).filter(TrainingJob.id == job["id"]).first()
+    _complete_job_with_model_and_candidates(db_session, job["id"], job_row.organization_id)
+
+    assert client.get(f"/training/jobs/{job['id']}/candidates", headers=headers_b).status_code == 404
+    assert client.get(f"/training/jobs/{job['id']}/candidates", headers=headers_a).status_code == 200
