@@ -1,3 +1,4 @@
+import { useState } from "react";
 import {
   CartesianGrid,
   Legend,
@@ -40,10 +41,55 @@ export default function EvaluationCharts({
   return null;
 }
 
+/** Isolation d'une série de courbe par la légende (Lot E1-ter) — nécessaire
+ * dès qu'il y a plus de 2-3 classes (ROC/PR multiclasse) : les courbes
+ * s'emmêlent sinon. Clic = masquer/réafficher une classe, survol = mettre
+ * les autres en retrait. Un hook par graphe (ROC et PR restent indépendants
+ * : isoler une classe sur l'un n'affecte pas l'autre). */
+function useSeriesIsolation() {
+  const [hidden, setHidden] = useState<Set<string>>(new Set());
+  const [hovered, setHovered] = useState<string | null>(null);
+
+  function toggle(name: string) {
+    setHidden((prev) => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      return next;
+    });
+  }
+
+  return { hidden, hovered, setHovered, toggle };
+}
+
+function IsolatableLegend({ isolation }: { isolation: ReturnType<typeof useSeriesIsolation> }) {
+  return (
+    <Legend
+      wrapperStyle={{ fontSize: 11, cursor: "pointer" }}
+      onClick={(entry) => isolation.toggle(String(entry.value))}
+      onMouseEnter={(entry) => isolation.setHovered(String(entry.value))}
+      onMouseLeave={() => isolation.setHovered(null)}
+      formatter={(value) => (
+        <span
+          style={{
+            opacity: isolation.hidden.has(String(value)) ? 0.35 : 1,
+            textDecoration: isolation.hidden.has(String(value)) ? "line-through" : "none",
+          }}
+        >
+          {value}
+        </span>
+      )}
+    />
+  );
+}
+
 function ClassificationCharts({ evaluation }: { evaluation: ModelEvaluation }) {
   const classNames = evaluation.class_names ?? [];
   const rocData = buildCurveSeries(evaluation.roc_curves, "fpr", "tpr");
   const prData = buildCurveSeries(evaluation.pr_curves, "recall", "precision");
+  const rocIsolation = useSeriesIsolation();
+  const prIsolation = useSeriesIsolation();
+  const manyClasses = classNames.length > 3;
 
   return (
     <>
@@ -70,6 +116,11 @@ function ClassificationCharts({ evaluation }: { evaluation: ModelEvaluation }) {
               help="Plus la courbe se rapproche du coin supérieur gauche, mieux le modèle distingue les classes. La diagonale grise correspond au hasard."
             />
           </p>
+          {manyClasses && (
+            <p className="text-[11px] text-slate-400 mb-1">
+              Survolez ou cliquez une classe dans la légende pour l'isoler.
+            </p>
+          )}
           <ResponsiveContainer width="100%" height={240}>
             <LineChart margin={{ left: 0, right: 12 }}>
               <CartesianGrid strokeDasharray="3 3" stroke={CHART_GRID_STROKE} />
@@ -87,7 +138,7 @@ function ClassificationCharts({ evaluation }: { evaluation: ModelEvaluation }) {
                 label={{ value: "Taux de vrais positifs", angle: -90, position: "insideLeft", ...CHART_TICK_STYLE }}
               />
               <RechartsTooltip {...CHART_TOOLTIP_STYLE} formatter={(v) => Number(v).toFixed(3)} />
-              <Legend wrapperStyle={{ fontSize: 11 }} />
+              <IsolatableLegend isolation={rocIsolation} />
               <ReferenceLine segment={[{ x: 0, y: 0 }, { x: 1, y: 1 }]} stroke={CHART_REFERENCE_STROKE} strokeDasharray="4 4" />
               {rocData.map((series, i) => (
                 <Line
@@ -97,7 +148,14 @@ function ClassificationCharts({ evaluation }: { evaluation: ModelEvaluation }) {
                   name={series.name}
                   stroke={CHART_SERIES_COLORS[i % CHART_SERIES_COLORS.length]}
                   dot={false}
-                  strokeWidth={2}
+                  strokeWidth={rocIsolation.hovered === series.name ? 3 : 2}
+                  strokeOpacity={
+                    rocIsolation.hidden.has(series.name)
+                      ? 0
+                      : rocIsolation.hovered && rocIsolation.hovered !== series.name
+                        ? 0.15
+                        : 1
+                  }
                   isAnimationActive={false}
                 />
               ))}
@@ -114,6 +172,11 @@ function ClassificationCharts({ evaluation }: { evaluation: ModelEvaluation }) {
               help="Utile en complément de la ROC quand les classes sont déséquilibrées — plus la courbe reste haute, mieux le modèle équilibre précision et rappel."
             />
           </p>
+          {manyClasses && (
+            <p className="text-[11px] text-slate-400 mb-1">
+              Survolez ou cliquez une classe dans la légende pour l'isoler.
+            </p>
+          )}
           <ResponsiveContainer width="100%" height={240}>
             <LineChart margin={{ left: 0, right: 12 }}>
               <CartesianGrid strokeDasharray="3 3" stroke={CHART_GRID_STROKE} />
@@ -131,7 +194,7 @@ function ClassificationCharts({ evaluation }: { evaluation: ModelEvaluation }) {
                 label={{ value: "Précision", angle: -90, position: "insideLeft", ...CHART_TICK_STYLE }}
               />
               <RechartsTooltip {...CHART_TOOLTIP_STYLE} formatter={(v) => Number(v).toFixed(3)} />
-              <Legend wrapperStyle={{ fontSize: 11 }} />
+              <IsolatableLegend isolation={prIsolation} />
               {prData.map((series, i) => (
                 <Line
                   key={series.name}
@@ -140,7 +203,14 @@ function ClassificationCharts({ evaluation }: { evaluation: ModelEvaluation }) {
                   name={series.name}
                   stroke={CHART_SERIES_COLORS[i % CHART_SERIES_COLORS.length]}
                   dot={false}
-                  strokeWidth={2}
+                  strokeWidth={prIsolation.hovered === series.name ? 3 : 2}
+                  strokeOpacity={
+                    prIsolation.hidden.has(series.name)
+                      ? 0
+                      : prIsolation.hovered && prIsolation.hovered !== series.name
+                        ? 0.15
+                        : 1
+                  }
                   isAnimationActive={false}
                 />
               ))}

@@ -119,21 +119,72 @@ function ShapBars({ features }: { features: MLModelDetail["shap_summary"] }) {
   );
 }
 
+/** Bloc "Interprétation du modèle" (Lot E1-ter) — langage clair, thèse
+ * transparence : pourquoi ce modèle a été retenu (écart au 2e sur la
+ * métrique de sélection) et ce que dit l'analyse SHAP, sans jargon.
+ * Réutilise uniquement des données déjà calculées ailleurs (leaderboard,
+ * shap_summary) — aucun nouveau calcul côté modèle. */
+function ModelInterpretation({
+  model,
+  leaderboard,
+  explainabilityDegraded,
+}: {
+  model: MLModelDetail;
+  leaderboard: LeaderboardResponse | null;
+  explainabilityDegraded: boolean;
+}) {
+  const winner = leaderboard?.candidates.find((c) => c.is_winner);
+  const runnerUp = leaderboard?.candidates.find((c) => !c.is_winner);
+  const metricShortName = leaderboard?.selection_metric_label.split(" (")[0];
+
+  let whyText: string;
+  if (winner && runnerUp && metricShortName && leaderboard) {
+    const delta = clampUnitScore(winner.selection_score) - clampUnitScore(runnerUp.selection_score);
+    const deltaQualifier =
+      delta < 0.01 ? "un écart faible — les modèles candidats étaient proches" : "un écart net";
+    whyText =
+      `${model.algorithm} a été retenu parmi ${leaderboard.candidates.length} modèles comparés : meilleur ` +
+      `${metricShortName} en validation croisée, devant ${runnerUp.algorithm} de ${delta.toFixed(3)} point` +
+      `${delta >= 0.001 ? "s" : ""} — ${deltaQualifier}.`;
+  } else {
+    whyText = `${model.algorithm} a été retenu sur la base de son score de validation croisée.`;
+  }
+
+  const topFeatures = model.shap_summary.slice(0, 3).map((f) => f.feature);
+  const featuresText =
+    !explainabilityDegraded && topFeatures.length > 0
+      ? topFeatures.length === 1
+        ? `La variable qui pèse le plus dans ses décisions est ${topFeatures[0]}.`
+        : `Les variables qui pèsent le plus dans ses décisions sont, par ordre d'importance : ${topFeatures.join(", ")}.`
+      : null;
+
+  return (
+    <section className="rounded-xl border border-teal-200 bg-teal-50/40 p-4">
+      <p className="text-xs uppercase tracking-wide text-teal-700 mb-2 flex items-center gap-1.5">
+        <Sparkles size={12} />
+        Interprétation du modèle
+      </p>
+      <p className="text-sm text-slate-700 leading-relaxed">{whyText}</p>
+      {featuresText && (
+        <p className="text-sm text-slate-700 leading-relaxed mt-2">
+          {featuresText}{" "}
+          <span className="text-slate-500">
+            Une variable en tête de liste influence davantage la prédiction que les autres — cela ne prouve pas
+            un lien de cause à effet, seulement que le modèle s'appuie fortement dessus.
+          </span>
+        </p>
+      )}
+    </section>
+  );
+}
+
 /** Leaderboard (Lot D) — TOUS les modèles comparés par ce job, pas
- * seulement le gagnant déjà mis en avant plus haut dans la modale.
- * Rétrocompatible par absence : un job antérieur à ce lot n'a aucun
- * candidat persisté, la section ne s'affiche alors simplement pas (le
- * gagnant reste visible via les sections existantes). */
-function Leaderboard({ jobId }: { jobId: number }) {
-  const [data, setData] = useState<LeaderboardResponse | null>(null);
-
-  useEffect(() => {
-    api.training
-      .getCandidates(jobId)
-      .then(setData)
-      .catch(() => setData(null));
-  }, [jobId]);
-
+ * seulement le gagnant déjà mis en avant plus haut. Rétrocompatible par
+ * absence : un job antérieur à ce lot n'a aucun candidat persisté, la
+ * section ne s'affiche alors simplement pas (le gagnant reste visible via
+ * les sections existantes). Reçoit `data` en props (Lot E1-ter) — le fetch
+ * est fait une fois par `ModelResultView`, partagé avec `ModelInterpretation`. */
+function Leaderboard({ data }: { data: LeaderboardResponse | null }) {
   if (!data || data.candidates.length === 0) return null;
 
   const winner = data.candidates.find((c) => c.is_winner);
@@ -205,28 +256,32 @@ function Leaderboard({ jobId }: { jobId: number }) {
   );
 }
 
-export default function ModelResultModal({
-  job,
-  onClose,
-}: {
-  job: TrainingJobSummary;
-  onClose: () => void;
-}) {
+/** Contenu du résultat d'un entraînement — sans chrome de modale, pour être
+ * réutilisable tel quel dans deux contextes (Lot E1-ter) : la modale
+ * (`ModelResultModal`, ouverte depuis le tableau de bord) et la page
+ * Entraînement dédiée, qui l'affiche en place, pleine largeur, une fois le
+ * job terminé. */
+export function ModelResultView({ job }: { job: TrainingJobSummary }) {
   const [model, setModel] = useState<MLModelDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [leaderboard, setLeaderboard] = useState<LeaderboardResponse | null>(null);
 
   useEffect(() => {
     api.training
       .getModel(job.id)
       .then(setModel)
       .catch((err) => setError(err instanceof ApiError ? err.message : "Résultat indisponible"));
+    api.training
+      .getCandidates(job.id)
+      .then(setLeaderboard)
+      .catch(() => setLeaderboard(null));
   }, [job.id]);
 
   const explainability =
     model && isExplainabilityStatus(model.model_card.explainability) ? model.model_card.explainability : undefined;
 
   return (
-    <Modal title={`${job.dataset_name ?? "Dataset"} — ${job.target_column}`} onClose={onClose}>
+    <>
       {error && <p className="text-sm text-rose-600">{error}</p>}
       {!model && !error && <p className="text-sm text-slate-500">Chargement…</p>}
 
@@ -288,7 +343,13 @@ export default function ModelResultModal({
             )}
           </section>
 
-          <Leaderboard jobId={job.id} />
+          <ModelInterpretation
+            model={model}
+            leaderboard={leaderboard}
+            explainabilityDegraded={explainability?.status === "degraded"}
+          />
+
+          <Leaderboard data={leaderboard} />
 
           <EvaluationCharts taskType={model.task_type} evaluation={model.evaluation} />
 
@@ -344,6 +405,20 @@ export default function ModelResultModal({
           </section>
         </div>
       )}
+    </>
+  );
+}
+
+export default function ModelResultModal({
+  job,
+  onClose,
+}: {
+  job: TrainingJobSummary;
+  onClose: () => void;
+}) {
+  return (
+    <Modal title={`${job.dataset_name ?? "Dataset"} — ${job.target_column}`} onClose={onClose}>
+      <ModelResultView job={job} />
     </Modal>
   );
 }
