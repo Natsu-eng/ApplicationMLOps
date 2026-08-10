@@ -23,7 +23,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
         <div className="max-w-6xl mx-auto px-6 py-3.5 flex items-center justify-between">
           <div className="flex items-center gap-8">
             <div className="flex items-center gap-2.5">
-              <div className="h-7 w-7 rounded-lg bg-teal-500 flex items-center justify-center text-slate-950 font-bold text-sm">
+              <div className="h-7 w-7 rounded-lg bg-brand-gradient flex items-center justify-center text-white font-bold text-sm">
                 D
               </div>
               <div className="leading-tight">

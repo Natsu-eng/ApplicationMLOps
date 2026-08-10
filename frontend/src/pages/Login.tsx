@@ -33,7 +33,7 @@ export default function Login() {
     <main className="min-h-screen text-slate-100 flex items-center justify-center px-6">
       <div className="max-w-sm w-full">
         <div className="text-center mb-8">
-          <div className="h-10 w-10 mx-auto mb-4 rounded-xl bg-teal-500 flex items-center justify-center text-slate-950 font-bold">
+          <div className="h-10 w-10 mx-auto mb-4 rounded-xl bg-brand-gradient flex items-center justify-center text-white font-bold">
             D
           </div>
           <p className="text-xs uppercase tracking-widest text-teal-400 font-semibold mb-2">
