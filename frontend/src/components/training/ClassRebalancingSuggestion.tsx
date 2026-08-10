@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { ChevronDown, Scale } from "lucide-react";
-import { ApiError, api, type DataWarning } from "../../api/client";
+import { api, type DataWarning } from "../../api/client";
 import { Badge } from "../ui/Badge";
 
 /** Rééquilibrage des classes (lot déséquilibre) — même pattern d'approbation
