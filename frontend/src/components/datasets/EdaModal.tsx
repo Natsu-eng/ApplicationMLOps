@@ -23,16 +23,16 @@ import { Modal } from "../ui/Modal";
 import { Heatmap } from "../ui/Heatmap";
 import { LabelWithHelp } from "../ui/Tooltip";
 import { BoxPlotChart, type BoxPlotDatum } from "../ui/BoxPlot";
-
-const CHART_TOOLTIP_STYLE = {
-  contentStyle: {
-    backgroundColor: "#0f172a",
-    border: "1px solid #1e293b",
-    borderRadius: 8,
-    fontSize: 12,
-  },
-  labelStyle: { color: "#cbd5e1" },
-};
+import {
+  CHART_COLOR_PRIMARY,
+  CHART_COLOR_SECONDARY,
+  CHART_COLOR_TERTIARY,
+  CHART_GRID_STROKE,
+  CHART_TICK_STYLE,
+  CHART_TICK_STYLE_MUTED,
+  CHART_TICK_STYLE_SM,
+  CHART_TOOLTIP_STYLE,
+} from "../../theme/charts";
 
 /** Convertit une réponse histogramme (bins numériques OU comptage
  * catégoriel) en données Recharts — factorisé car réutilisé pour la
@@ -151,11 +151,11 @@ export default function EdaModal({ dataset, onClose }: { dataset: DatasetSummary
               </p>
               <ResponsiveContainer width="100%" height={200}>
                 <BarChart data={targetDistributionData} margin={{ left: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
-                  <XAxis dataKey="name" tick={{ fill: "#64748b", fontSize: 10 }} angle={-30} textAnchor="end" height={50} />
-                  <YAxis tick={{ fill: "#64748b", fontSize: 11 }} allowDecimals={false} />
+                  <CartesianGrid strokeDasharray="3 3" stroke={CHART_GRID_STROKE} vertical={false} />
+                  <XAxis dataKey="name" tick={CHART_TICK_STYLE_SM} angle={-30} textAnchor="end" height={50} />
+                  <YAxis tick={CHART_TICK_STYLE} allowDecimals={false} />
                   <RechartsTooltip {...CHART_TOOLTIP_STYLE} />
-                  <Bar dataKey="count" fill="#818cf8" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="count" fill={CHART_COLOR_TERTIARY} radius={[4, 4, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             </section>
@@ -195,16 +195,16 @@ export default function EdaModal({ dataset, onClose }: { dataset: DatasetSummary
               </p>
               <ResponsiveContainer width="100%" height={Math.max(80, missingData.length * 28)}>
                 <BarChart data={missingData} layout="vertical" margin={{ left: 8 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" horizontal={false} />
-                  <XAxis type="number" domain={[0, 100]} tick={{ fill: "#64748b", fontSize: 11 }} unit="%" />
+                  <CartesianGrid strokeDasharray="3 3" stroke={CHART_GRID_STROKE} horizontal={false} />
+                  <XAxis type="number" domain={[0, 100]} tick={CHART_TICK_STYLE} unit="%" />
                   <YAxis
                     type="category"
                     dataKey="name"
                     width={100}
-                    tick={{ fill: "#94a3b8", fontSize: 11 }}
+                    tick={CHART_TICK_STYLE_MUTED}
                   />
                   <RechartsTooltip {...CHART_TOOLTIP_STYLE} formatter={(v) => `${Number(v).toFixed(1)} %`} />
-                  <Bar dataKey="pct" fill="#f472b6" radius={[0, 4, 4, 0]} />
+                  <Bar dataKey="pct" fill={CHART_COLOR_SECONDARY} radius={[0, 4, 4, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             </section>
@@ -273,21 +273,21 @@ export default function EdaModal({ dataset, onClose }: { dataset: DatasetSummary
                     </p>
                     <ResponsiveContainer width="100%" height={180}>
                       <ScatterChart margin={{ left: 0, right: 12, bottom: 8 }}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+                        <CartesianGrid strokeDasharray="3 3" stroke={CHART_GRID_STROKE} />
                         <XAxis
                           type="number"
                           dataKey="x"
-                          tick={{ fill: "#64748b", fontSize: 10 }}
+                          tick={CHART_TICK_STYLE_SM}
                           name={pair.x_column}
                         />
                         <YAxis
                           type="number"
                           dataKey="y"
-                          tick={{ fill: "#64748b", fontSize: 10 }}
+                          tick={CHART_TICK_STYLE_SM}
                           name={pair.y_column}
                         />
                         <RechartsTooltip {...CHART_TOOLTIP_STYLE} />
-                        <Scatter data={pair.points} fill="#2dd4bf" fillOpacity={0.6} isAnimationActive={false} />
+                        <Scatter data={pair.points} fill={CHART_COLOR_PRIMARY} fillOpacity={0.6} isAnimationActive={false} />
                       </ScatterChart>
                     </ResponsiveContainer>
                   </div>
@@ -312,17 +312,17 @@ export default function EdaModal({ dataset, onClose }: { dataset: DatasetSummary
             {histogramData.length > 0 && (
               <ResponsiveContainer width="100%" height={220}>
                 <BarChart data={histogramData} margin={{ left: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
+                  <CartesianGrid strokeDasharray="3 3" stroke={CHART_GRID_STROKE} vertical={false} />
                   <XAxis
                     dataKey="name"
-                    tick={{ fill: "#64748b", fontSize: 10 }}
+                    tick={CHART_TICK_STYLE_SM}
                     angle={-30}
                     textAnchor="end"
                     height={50}
                   />
-                  <YAxis tick={{ fill: "#64748b", fontSize: 11 }} allowDecimals={false} />
+                  <YAxis tick={CHART_TICK_STYLE} allowDecimals={false} />
                   <RechartsTooltip {...CHART_TOOLTIP_STYLE} />
-                  <Bar dataKey="count" fill="#2dd4bf" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="count" fill={CHART_COLOR_PRIMARY} radius={[4, 4, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             )}

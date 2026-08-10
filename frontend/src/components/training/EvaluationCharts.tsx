@@ -14,19 +14,15 @@ import {
 import type { ModelEvaluation, TaskType } from "../../api/client";
 import { Heatmap } from "../ui/Heatmap";
 import { LabelWithHelp } from "../ui/Tooltip";
-
-const CHART_TOOLTIP_STYLE = {
-  contentStyle: {
-    backgroundColor: "#0f172a",
-    border: "1px solid #1e293b",
-    borderRadius: 8,
-    fontSize: 12,
-  },
-  labelStyle: { color: "#cbd5e1" },
-};
-
-// Palette discrète pour distinguer les courbes par classe (jusqu'à 6 classes lisibles)
-const SERIES_COLORS = ["#2dd4bf", "#f472b6", "#facc15", "#818cf8", "#34d399", "#fb923c"];
+import {
+  CHART_COLOR_PRIMARY,
+  CHART_COLOR_SECONDARY,
+  CHART_GRID_STROKE,
+  CHART_REFERENCE_STROKE,
+  CHART_SERIES_COLORS,
+  CHART_TICK_STYLE,
+  CHART_TOOLTIP_STYLE,
+} from "../../theme/charts";
 
 export default function EvaluationCharts({
   taskType,
@@ -76,30 +72,30 @@ function ClassificationCharts({ evaluation }: { evaluation: ModelEvaluation }) {
           </p>
           <ResponsiveContainer width="100%" height={240}>
             <LineChart margin={{ left: 0, right: 12 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+              <CartesianGrid strokeDasharray="3 3" stroke={CHART_GRID_STROKE} />
               <XAxis
                 type="number"
                 dataKey="x"
                 domain={[0, 1]}
-                tick={{ fill: "#64748b", fontSize: 11 }}
-                label={{ value: "Taux de faux positifs", position: "insideBottom", offset: -5, fill: "#64748b", fontSize: 11 }}
+                tick={CHART_TICK_STYLE}
+                label={{ value: "Taux de faux positifs", position: "insideBottom", offset: -5, ...CHART_TICK_STYLE }}
               />
               <YAxis
                 type="number"
                 domain={[0, 1]}
-                tick={{ fill: "#64748b", fontSize: 11 }}
-                label={{ value: "Taux de vrais positifs", angle: -90, position: "insideLeft", fill: "#64748b", fontSize: 11 }}
+                tick={CHART_TICK_STYLE}
+                label={{ value: "Taux de vrais positifs", angle: -90, position: "insideLeft", ...CHART_TICK_STYLE }}
               />
               <RechartsTooltip {...CHART_TOOLTIP_STYLE} formatter={(v) => Number(v).toFixed(3)} />
               <Legend wrapperStyle={{ fontSize: 11 }} />
-              <ReferenceLine segment={[{ x: 0, y: 0 }, { x: 1, y: 1 }]} stroke="#475569" strokeDasharray="4 4" />
+              <ReferenceLine segment={[{ x: 0, y: 0 }, { x: 1, y: 1 }]} stroke={CHART_REFERENCE_STROKE} strokeDasharray="4 4" />
               {rocData.map((series, i) => (
                 <Line
                   key={series.name}
                   data={series.points}
                   dataKey="y"
                   name={series.name}
-                  stroke={SERIES_COLORS[i % SERIES_COLORS.length]}
+                  stroke={CHART_SERIES_COLORS[i % CHART_SERIES_COLORS.length]}
                   dot={false}
                   strokeWidth={2}
                   isAnimationActive={false}
@@ -120,19 +116,19 @@ function ClassificationCharts({ evaluation }: { evaluation: ModelEvaluation }) {
           </p>
           <ResponsiveContainer width="100%" height={240}>
             <LineChart margin={{ left: 0, right: 12 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+              <CartesianGrid strokeDasharray="3 3" stroke={CHART_GRID_STROKE} />
               <XAxis
                 type="number"
                 dataKey="x"
                 domain={[0, 1]}
-                tick={{ fill: "#64748b", fontSize: 11 }}
-                label={{ value: "Rappel", position: "insideBottom", offset: -5, fill: "#64748b", fontSize: 11 }}
+                tick={CHART_TICK_STYLE}
+                label={{ value: "Rappel", position: "insideBottom", offset: -5, ...CHART_TICK_STYLE }}
               />
               <YAxis
                 type="number"
                 domain={[0, 1]}
-                tick={{ fill: "#64748b", fontSize: 11 }}
-                label={{ value: "Précision", angle: -90, position: "insideLeft", fill: "#64748b", fontSize: 11 }}
+                tick={CHART_TICK_STYLE}
+                label={{ value: "Précision", angle: -90, position: "insideLeft", ...CHART_TICK_STYLE }}
               />
               <RechartsTooltip {...CHART_TOOLTIP_STYLE} formatter={(v) => Number(v).toFixed(3)} />
               <Legend wrapperStyle={{ fontSize: 11 }} />
@@ -142,7 +138,7 @@ function ClassificationCharts({ evaluation }: { evaluation: ModelEvaluation }) {
                   data={series.points}
                   dataKey="y"
                   name={series.name}
-                  stroke={SERIES_COLORS[i % SERIES_COLORS.length]}
+                  stroke={CHART_SERIES_COLORS[i % CHART_SERIES_COLORS.length]}
                   dot={false}
                   strokeWidth={2}
                   isAnimationActive={false}
@@ -176,28 +172,28 @@ function RegressionCharts({ evaluation }: { evaluation: ModelEvaluation }) {
         </p>
         <ResponsiveContainer width="100%" height={240}>
           <ScatterChart margin={{ left: 0, right: 12, bottom: 8 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+            <CartesianGrid strokeDasharray="3 3" stroke={CHART_GRID_STROKE} />
             <XAxis
               type="number"
               dataKey="actual"
               domain={bounds}
-              tick={{ fill: "#64748b", fontSize: 11 }}
-              label={{ value: "Valeur réelle", position: "insideBottom", offset: -5, fill: "#64748b", fontSize: 11 }}
+              tick={CHART_TICK_STYLE}
+              label={{ value: "Valeur réelle", position: "insideBottom", offset: -5, ...CHART_TICK_STYLE }}
             />
             <YAxis
               type="number"
               dataKey="predicted"
               domain={bounds}
-              tick={{ fill: "#64748b", fontSize: 11 }}
-              label={{ value: "Valeur prédite", angle: -90, position: "insideLeft", fill: "#64748b", fontSize: 11 }}
+              tick={CHART_TICK_STYLE}
+              label={{ value: "Valeur prédite", angle: -90, position: "insideLeft", ...CHART_TICK_STYLE }}
             />
             <RechartsTooltip {...CHART_TOOLTIP_STYLE} />
             <ReferenceLine
               segment={[{ x: bounds[0], y: bounds[0] }, { x: bounds[1], y: bounds[1] }]}
-              stroke="#475569"
+              stroke={CHART_REFERENCE_STROKE}
               strokeDasharray="4 4"
             />
-            <Scatter data={scatterData} fill="#2dd4bf" fillOpacity={0.6} isAnimationActive={false} />
+            <Scatter data={scatterData} fill={CHART_COLOR_PRIMARY} fillOpacity={0.6} isAnimationActive={false} />
           </ScatterChart>
         </ResponsiveContainer>
       </section>
@@ -211,22 +207,22 @@ function RegressionCharts({ evaluation }: { evaluation: ModelEvaluation }) {
         </p>
         <ResponsiveContainer width="100%" height={220}>
           <ScatterChart margin={{ left: 0, right: 12, bottom: 8 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+            <CartesianGrid strokeDasharray="3 3" stroke={CHART_GRID_STROKE} />
             <XAxis
               type="number"
               dataKey="predicted"
-              tick={{ fill: "#64748b", fontSize: 11 }}
-              label={{ value: "Valeur prédite", position: "insideBottom", offset: -5, fill: "#64748b", fontSize: 11 }}
+              tick={CHART_TICK_STYLE}
+              label={{ value: "Valeur prédite", position: "insideBottom", offset: -5, ...CHART_TICK_STYLE }}
             />
             <YAxis
               type="number"
               dataKey="residual"
-              tick={{ fill: "#64748b", fontSize: 11 }}
-              label={{ value: "Résidu", angle: -90, position: "insideLeft", fill: "#64748b", fontSize: 11 }}
+              tick={CHART_TICK_STYLE}
+              label={{ value: "Résidu", angle: -90, position: "insideLeft", ...CHART_TICK_STYLE }}
             />
             <RechartsTooltip {...CHART_TOOLTIP_STYLE} />
-            <ReferenceLine y={0} stroke="#475569" strokeDasharray="4 4" />
-            <Scatter data={residualData} fill="#f472b6" fillOpacity={0.6} isAnimationActive={false} />
+            <ReferenceLine y={0} stroke={CHART_REFERENCE_STROKE} strokeDasharray="4 4" />
+            <Scatter data={residualData} fill={CHART_COLOR_SECONDARY} fillOpacity={0.6} isAnimationActive={false} />
           </ScatterChart>
         </ResponsiveContainer>
       </section>

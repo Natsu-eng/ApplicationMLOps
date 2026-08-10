@@ -8,6 +8,18 @@ import {
   YAxis,
   Bar,
 } from "recharts";
+import {
+  BOXPLOT_FILL,
+  BOXPLOT_MEDIAN_STROKE,
+  BOXPLOT_OUTLIER_FILL,
+  BOXPLOT_STROKE,
+  BOXPLOT_TOOLTIP_CONTENT_STYLE,
+  BOXPLOT_TOOLTIP_TEXT_COLOR,
+  BOXPLOT_TOOLTIP_TITLE_COLOR,
+  BOXPLOT_WHISKER_STROKE,
+  CHART_GRID_STROKE,
+  CHART_TICK_STYLE,
+} from "../../theme/charts";
 
 /** Boxplot (boîte à moustaches) réutilisable, en Recharts PUR — jamais
  * Plotly, jamais de SVG hors-Recharts. Recharts n'a pas de primitive
@@ -31,12 +43,6 @@ export interface BoxPlotDatum {
   max: number;
   outliers?: number[];
 }
-
-const BOX_FILL = "rgba(45, 212, 191, 0.22)"; // teal-400 translucide
-const BOX_STROKE = "#2dd4bf";
-const MEDIAN_STROKE = "#f472b6"; // rose-400 — contraste net avec la boîte teal
-const WHISKER_STROKE = "#64748b"; // slate-500
-const OUTLIER_FILL = "#fbbf24"; // amber-400 — attire l'œil sans alarmer (pas rouge)
 
 function BoxPlotLayer({ data }: { data: BoxPlotDatum[] }) {
   return function renderLayer(props: Record<string, unknown>) {
@@ -68,26 +74,26 @@ function BoxPlotLayer({ data }: { data: BoxPlotDatum[] }) {
 
           return (
             <g key={d.name}>
-              <line x1={centerX} x2={centerX} y1={y} y2={maxY} stroke={WHISKER_STROKE} strokeWidth={1} />
-              <line x1={centerX} x2={centerX} y1={y + height} y2={minY} stroke={WHISKER_STROKE} strokeWidth={1} />
+              <line x1={centerX} x2={centerX} y1={y} y2={maxY} stroke={BOXPLOT_WHISKER_STROKE} strokeWidth={1} />
+              <line x1={centerX} x2={centerX} y1={y + height} y2={minY} stroke={BOXPLOT_WHISKER_STROKE} strokeWidth={1} />
               <line
                 x1={centerX - capHalf} x2={centerX + capHalf} y1={maxY} y2={maxY}
-                stroke={WHISKER_STROKE} strokeWidth={1}
+                stroke={BOXPLOT_WHISKER_STROKE} strokeWidth={1}
               />
               <line
                 x1={centerX - capHalf} x2={centerX + capHalf} y1={minY} y2={minY}
-                stroke={WHISKER_STROKE} strokeWidth={1}
+                stroke={BOXPLOT_WHISKER_STROKE} strokeWidth={1}
               />
               <rect
                 x={centerX - boxWidth / 2} y={y} width={boxWidth} height={height}
-                fill={BOX_FILL} stroke={BOX_STROKE} strokeWidth={1.5} rx={2}
+                fill={BOXPLOT_FILL} stroke={BOXPLOT_STROKE} strokeWidth={1.5} rx={2}
               />
               <line
                 x1={centerX - boxWidth / 2} x2={centerX + boxWidth / 2} y1={medianY} y2={medianY}
-                stroke={MEDIAN_STROKE} strokeWidth={2}
+                stroke={BOXPLOT_MEDIAN_STROKE} strokeWidth={2}
               />
               {(d.outliers ?? []).map((value, i) => (
-                <circle key={i} cx={centerX} cy={yScale(value)} r={2.5} fill={OUTLIER_FILL} fillOpacity={0.8} />
+                <circle key={i} cx={centerX} cy={yScale(value)} r={2.5} fill={BOXPLOT_OUTLIER_FILL} fillOpacity={0.8} />
               ))}
             </g>
           );
@@ -102,23 +108,15 @@ function BoxPlotTooltip({ active, payload }: { active?: boolean; payload?: { pay
   const d = payload[0].payload;
   const outlierCount = d.outliers?.length ?? 0;
   return (
-    <div
-      style={{
-        backgroundColor: "#0f172a",
-        border: "1px solid #1e293b",
-        borderRadius: 8,
-        padding: "8px 10px",
-        fontSize: 12,
-      }}
-    >
-      <p style={{ color: "#e2e8f0", marginBottom: 4, fontWeight: 500 }}>{d.name}</p>
-      <p style={{ color: "#94a3b8" }}>Max : {d.max.toFixed(2)}</p>
-      <p style={{ color: "#94a3b8" }}>Q3 : {d.q3.toFixed(2)}</p>
-      <p style={{ color: "#f472b6" }}>Médiane : {d.median.toFixed(2)}</p>
-      <p style={{ color: "#94a3b8" }}>Q1 : {d.q1.toFixed(2)}</p>
-      <p style={{ color: "#94a3b8" }}>Min : {d.min.toFixed(2)}</p>
+    <div style={BOXPLOT_TOOLTIP_CONTENT_STYLE}>
+      <p style={{ color: BOXPLOT_TOOLTIP_TITLE_COLOR, marginBottom: 4, fontWeight: 500 }}>{d.name}</p>
+      <p style={{ color: BOXPLOT_TOOLTIP_TEXT_COLOR }}>Max : {d.max.toFixed(2)}</p>
+      <p style={{ color: BOXPLOT_TOOLTIP_TEXT_COLOR }}>Q3 : {d.q3.toFixed(2)}</p>
+      <p style={{ color: BOXPLOT_MEDIAN_STROKE }}>Médiane : {d.median.toFixed(2)}</p>
+      <p style={{ color: BOXPLOT_TOOLTIP_TEXT_COLOR }}>Q1 : {d.q1.toFixed(2)}</p>
+      <p style={{ color: BOXPLOT_TOOLTIP_TEXT_COLOR }}>Min : {d.min.toFixed(2)}</p>
       {outlierCount > 0 && (
-        <p style={{ color: "#fbbf24" }}>
+        <p style={{ color: BOXPLOT_OUTLIER_FILL }}>
           {outlierCount} valeur{outlierCount > 1 ? "s" : ""} atypique{outlierCount > 1 ? "s" : ""}
         </p>
       )}
@@ -146,14 +144,14 @@ export function BoxPlotChart({
   return (
     <ResponsiveContainer width="100%" height={height}>
       <ComposedChart data={chartData} margin={{ left: 0, right: 12, bottom: 8 }}>
-        <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
-        <XAxis dataKey="name" tick={{ fill: "#64748b", fontSize: 11 }} />
+        <CartesianGrid strokeDasharray="3 3" stroke={CHART_GRID_STROKE} vertical={false} />
+        <XAxis dataKey="name" tick={CHART_TICK_STYLE} />
         <YAxis
           domain={[lo - margin, hi + margin]}
-          tick={{ fill: "#64748b", fontSize: 11 }}
+          tick={CHART_TICK_STYLE}
           label={
             valueLabel
-              ? { value: valueLabel, angle: -90, position: "insideLeft", fill: "#64748b", fontSize: 11 }
+              ? { value: valueLabel, angle: -90, position: "insideLeft", ...CHART_TICK_STYLE }
               : undefined
           }
         />
