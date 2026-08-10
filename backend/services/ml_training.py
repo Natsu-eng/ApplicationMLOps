@@ -78,6 +78,7 @@ from sklearn.model_selection import (
 )
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import LabelEncoder, label_binarize
+from sklearn.utils.class_weight import compute_sample_weight
 
 from services.ml_preprocessing import SplitResult, build_preprocessor
 from services.ml_registry import ModelSpec, models_for_task
@@ -102,6 +103,12 @@ class TrainingConfig:
     cqr_alpha: float = 0.20
     cqr_n_strata: int = 5
     shap_sample_size: int = 500
+    # Rééquilibrage des classes (lot déséquilibre), PROPOSÉ à l'utilisateur sur
+    # la base du garde-fou Lot B (`services/data_quality.py::_detect_class_imbalance`),
+    # jamais appliqué d'office — voir `train_and_evaluate`. Ignoré en régression
+    # (concept propre à la classification). Absent/`False` : comportement
+    # strictement inchangé (rétrocompatibilité totale).
+    class_rebalancing: bool = False
 
 
 @dataclass
@@ -171,6 +178,7 @@ def _optimize_one_model(
     progress_cb: ProgressCallback,
     progress_base: int,
     progress_span: int,
+    sample_weight: Optional[np.ndarray] = None,
 ) -> tuple[Any, float]:
     """Recherche Optuna (TPE) pour un modèle du registre (Lot 5) — retourne
     (meilleurs hyperparamètres appliqués à un estimateur non-fit, score de CV
@@ -182,7 +190,16 @@ def _optimize_one_model(
     ne voit donc jamais la portion de validation du fold (Lot A). Ce pattern
     est générique à tout `ModelSpec.build_estimator`, indépendamment du
     besoin de scaling du modèle (Lot 5, Phase 1 : déjà satisfait par
-    `build_preprocessor`, aucune branche par famille nécessaire ici)."""
+    `build_preprocessor`, aucune branche par famille nécessaire ici).
+
+    `sample_weight` (lot déséquilibre, optionnel) : poids par échantillon du
+    TRAIN COMPLET (déjà calculé une fois par `train_and_evaluate`), routé vers
+    `model__sample_weight` — `cross_val_score` le découpe lui-même selon les
+    indices de chaque fold (mécanisme natif scikit-learn, vérifié), aucune
+    fuite : c'est la même portion de données que celle vue par le fit, juste
+    pondérée différemment. Ignoré si `spec.supports_rebalancing` est `False`
+    (ex. KNN, voir `ml_registry.py`) — le modèle est alors entraîné sans
+    pondération plutôt que de lever une erreur."""
     algo_name = spec.label(task_type)
     # Régression : "r2", scoring homogène par nature (tous les régresseurs
     # produisent une valeur continue). Classification : scorer maison
@@ -192,11 +209,16 @@ def _optimize_one_model(
     # `"roc_auc_ovr_weighted"` (celui-ci exigeait `predict_proba` sans repli).
     scoring = "r2" if task_type == "regression" else _classification_selection_score
 
+    apply_rebalancing = sample_weight is not None and spec.supports_rebalancing
+    fit_params = {"model__sample_weight": sample_weight} if apply_rebalancing else None
+
     def objective(trial: optuna.Trial) -> float:
         params = spec.hyperparameter_space(trial)
         model = spec.build_estimator(task_type, config.seed, params, False)
         pipeline = Pipeline([("preprocess", clone(preprocessor_template)), ("model", model)])
-        scores = cross_val_score(pipeline, X_raw, y, cv=cv, groups=groups, scoring=scoring, n_jobs=1)
+        scores = cross_val_score(
+            pipeline, X_raw, y, cv=cv, groups=groups, scoring=scoring, n_jobs=1, fit_params=fit_params
+        )
         return float(np.mean(scores))
 
     def on_trial_end(study: optuna.Study, trial: optuna.trial.FrozenTrial) -> None:
@@ -601,6 +623,19 @@ def train_and_evaluate(
         y_train = y_train_raw.to_numpy(dtype=float)
         y_test = y_test_raw.to_numpy(dtype=float)
 
+    # Rééquilibrage des classes (lot déséquilibre) — PROPOSÉ à l'utilisateur
+    # sur la base du garde-fou Lot B, jamais appliqué d'office (voir
+    # `TrainingConfig.class_rebalancing`). Un seul poids par échantillon du
+    # train, calculé une fois ici et réutilisé pour tous les candidats — pas
+    # de rééchantillonnage, pas de modification du split : `sample_weight`
+    # ne fait que repondérer la fonction de perte de chaque modèle pendant
+    # son `.fit()` (Lot A : split train/test/CV strictement inchangé,
+    # confirmé par `test_ml_training.py`). Ignoré en régression, concept
+    # propre à la classification (cohérent avec `_detect_class_imbalance`).
+    sample_weight: Optional[np.ndarray] = None
+    if task_type == "classification" and config.class_rebalancing:
+        sample_weight = compute_sample_weight("balanced", y_train)
+
     # Préprocesseur NON fit à ce stade — seule sa structure (colonnes
     # numériques/catégorielles) est déterminée ici. Il est cloné et refit à
     # l'intérieur de chaque fold de CV par `_optimize_one_model`, jamais fit
@@ -628,6 +663,7 @@ def train_and_evaluate(
         best_model, cv_score = _optimize_one_model(
             spec, split.X_train, y_train, task_type, cv, split.groups_train,
             preprocessor_template, config, progress_cb, base, span_per_model,
+            sample_weight=sample_weight,
         )
         candidates.append((algo_name, spec, best_model, cv_score))
         logger.info("[Training] %s — score CV = %.4f", algo_name, cv_score)
@@ -649,7 +685,15 @@ def train_and_evaluate(
     X_train_proc = np.asarray(X_train_proc.todense()) if hasattr(X_train_proc, "todense") else np.asarray(X_train_proc)
     X_test_proc = np.asarray(X_test_proc.todense()) if hasattr(X_test_proc, "todense") else np.asarray(X_test_proc)
     feature_names = list(preprocessor.get_feature_names_out())
-    best_model.fit(X_train_proc, y_train)
+    # Même règle que pendant la recherche Optuna : pondération appliquée
+    # uniquement si demandée ET supportée par le modèle gagnant (`winning_spec`,
+    # voir `ml_registry.py`) — sinon fit standard, silencieusement, jamais
+    # d'erreur (cas KNN si jamais retenu en mode expert futur).
+    apply_rebalancing = sample_weight is not None and winning_spec.supports_rebalancing
+    if apply_rebalancing:
+        best_model.fit(X_train_proc, y_train, sample_weight=sample_weight)
+    else:
+        best_model.fit(X_train_proc, y_train)
 
     pred_train = best_model.predict(X_train_proc)
     pred_test = best_model.predict(X_test_proc)
@@ -699,6 +743,13 @@ def train_and_evaluate(
         "duplicates_removed": split.n_duplicates_removed,
         "anti_leak_grouping": split.groups_train is not None,
         "feature_engineering_active": bool(feature_engineering_config),
+        # Lot déséquilibre — "requested" reflète le choix utilisateur,
+        # "applied" son effet réel sur le modèle RETENU (peut différer si le
+        # gagnant est un modèle sans support, ex. KNN en mode expert futur :
+        # jamais une désactivation silencieuse, le frontend peut afficher les
+        # deux pour rester transparent, comme `explainability_status`).
+        "class_rebalancing_requested": bool(config.class_rebalancing),
+        "class_rebalancing_applied": bool(apply_rebalancing),
         "cv_folds": config.cv_folds,
         "cv_score": float(cv_score),
         "optuna_trials": config.optuna_trials,

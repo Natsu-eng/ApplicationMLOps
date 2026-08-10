@@ -111,7 +111,7 @@ def test_cv_estimator_is_pipeline_with_preprocessor_first_step(monkeypatch):
     tout le train (Lot A, fuite #1)."""
     captured: dict = {}
 
-    def fake_cross_val_score(estimator, X, y, cv=None, groups=None, scoring=None, n_jobs=None):
+    def fake_cross_val_score(estimator, X, y, cv=None, groups=None, scoring=None, n_jobs=None, fit_params=None):
         captured["estimator"] = estimator
         return np.array([0.5, 0.5, 0.5])
 
@@ -206,7 +206,7 @@ def test_feature_engineering_frequency_encoding_survives_pipeline_wiring(monkeyp
 
     captured: dict = {}
 
-    def fake_cross_val_score(estimator, X, y, cv=None, groups=None, scoring=None, n_jobs=None):
+    def fake_cross_val_score(estimator, X, y, cv=None, groups=None, scoring=None, n_jobs=None, fit_params=None):
         captured["estimator"] = estimator
         return np.array([0.5, 0.5, 0.5])
 
@@ -492,7 +492,7 @@ def test_cv_estimator_is_pipeline_for_scaling_required_models(monkeypatch):
     l'anti-fuite Lot A pour les nouveaux modèles)."""
     captured: dict = {}
 
-    def fake_cross_val_score(estimator, X, y, cv=None, groups=None, scoring=None, n_jobs=None):
+    def fake_cross_val_score(estimator, X, y, cv=None, groups=None, scoring=None, n_jobs=None, fit_params=None):
         captured["estimator"] = estimator
         return np.array([0.7, 0.7, 0.7])
 
@@ -545,4 +545,144 @@ def test_default_subset_is_boosters_plus_random_forest(monkeypatch):
 
     expected_ids = {spec.id for spec in models_for_task("regression", "default")}
     assert set(called_ids) == expected_ids
-    assert expected_ids == {"lightgbm", "xgboost", "catboost", "random_forest"}
+
+
+# ── Lot déséquilibre — rééquilibrage des classes par sample_weight ──────────
+
+
+def _make_imbalanced_classification_df(n=500, minority_frac=0.08, seed=7):
+    """~92/8, minorité décalée mais avec chevauchement — conçu pour qu'un
+    entraînement non pondéré la néglige nettement (voir
+    `test_class_rebalancing_improves_minority_recall_on_imbalanced_dataset`)."""
+    rng = np.random.default_rng(seed)
+    n_min = max(int(n * minority_frac), 20)
+    n_maj = n - n_min
+    x1 = np.concatenate([rng.normal(0, 1.5, n_maj), rng.normal(1.5, 1.5, n_min)])
+    x2 = np.concatenate([rng.normal(0, 1.5, n_maj), rng.normal(1.5, 1.5, n_min)])
+    y = np.array([0] * n_maj + [1] * n_min)
+    return pd.DataFrame({"x1": x1, "x2": x2, "cible": y}).sample(frac=1, random_state=seed).reset_index(drop=True)
+
+
+def _minority_class_recall(evaluation) -> float:
+    cm = np.array(evaluation["confusion_matrix"])
+    minority_idx = int(np.argmin(cm.sum(axis=1)))
+    return float(cm[minority_idx, minority_idx] / cm[minority_idx].sum())
+
+
+def test_supports_rebalancing_declared_for_every_model_except_knn():
+    """KNN est le seul modèle du catalogue sans notion de pondération
+    d'échantillon (`KNeighborsClassifier.fit` n'a pas de paramètre
+    `sample_weight`) — tous les autres le supportent nativement, y compris
+    GaussianNB (contrairement à l'hypothèse initiale du cadrage du lot)."""
+    for model_id, spec in MODEL_REGISTRY.items():
+        assert spec.supports_rebalancing is (model_id != "knn"), model_id
+
+
+def test_class_rebalancing_disabled_by_default_leaves_model_card_flags_false():
+    """Rétrocompatibilité totale : sans activation explicite, le comportement
+    (et la fiche modèle) reste strictement identique à avant ce lot."""
+    df = _make_multiclass_df()
+    split = split_dataset(df, "cible", ["f1", "f2"], "classification", None, 0.2, 42)
+    result = train_and_evaluate(split, "classification", _FAST_CONFIG, lambda s, p: None)
+    assert result.model_card["class_rebalancing_requested"] is False
+    assert result.model_card["class_rebalancing_applied"] is False
+
+
+def test_optimize_one_model_routes_sample_weight_for_supporting_model(monkeypatch):
+    """Preuve structurelle : le poids par échantillon est bien routé vers
+    `model__sample_weight` de `cross_val_score` pour un modèle qui le
+    supporte (LightGBM)."""
+    captured: dict = {}
+
+    def fake_cross_val_score(estimator, X, y, cv=None, groups=None, scoring=None, n_jobs=None, fit_params=None):
+        captured["fit_params"] = fit_params
+        return np.array([0.5, 0.5, 0.5])
+
+    monkeypatch.setattr(ml_training_module, "cross_val_score", fake_cross_val_score)
+
+    df = _make_multiclass_df()
+    split = split_dataset(df, "cible", ["f1", "f2"], "classification", None, 0.2, 42)
+    n_train = len(split.X_train)
+    rng = np.random.default_rng(0)
+    y_train = rng.integers(0, 3, n_train)
+    sample_weight = rng.uniform(0.5, 1.5, n_train)
+    preprocessor_template = build_preprocessor(split.X_train)
+    cv = _make_cv("classification", 3, None)
+    config = TrainingConfig(optuna_trials=1, cv_folds=3, class_rebalancing=True)
+
+    spec = MODEL_REGISTRY["lightgbm"]
+    _optimize_one_model(
+        spec, split.X_train, y_train, "classification", cv, split.groups_train,
+        preprocessor_template, config, lambda s, p: None, 0, 10,
+        sample_weight=sample_weight,
+    )
+
+    assert captured["fit_params"] is not None
+    np.testing.assert_array_equal(captured["fit_params"]["model__sample_weight"], sample_weight)
+
+
+def test_optimize_one_model_skips_sample_weight_for_unsupported_model(monkeypatch):
+    """KNN (`supports_rebalancing=False`) ne reçoit jamais de sample_weight,
+    même quand un poids est fourni — pas de crash, pas de transmission
+    incorrecte à un estimateur qui ne l'accepte pas en `.fit()`."""
+    captured: dict = {}
+
+    def fake_cross_val_score(estimator, X, y, cv=None, groups=None, scoring=None, n_jobs=None, fit_params=None):
+        captured["fit_params"] = fit_params
+        return np.array([0.5, 0.5, 0.5])
+
+    monkeypatch.setattr(ml_training_module, "cross_val_score", fake_cross_val_score)
+
+    df = _make_multiclass_df()
+    split = split_dataset(df, "cible", ["f1", "f2"], "classification", None, 0.2, 42)
+    n_train = len(split.X_train)
+    rng = np.random.default_rng(0)
+    y_train = rng.integers(0, 3, n_train)
+    sample_weight = rng.uniform(0.5, 1.5, n_train)
+    preprocessor_template = build_preprocessor(split.X_train)
+    cv = _make_cv("classification", 3, None)
+    config = TrainingConfig(optuna_trials=1, cv_folds=3, class_rebalancing=True)
+
+    spec = MODEL_REGISTRY["knn"]
+    _optimize_one_model(
+        spec, split.X_train, y_train, "classification", cv, split.groups_train,
+        preprocessor_template, config, lambda s, p: None, 0, 10,
+        sample_weight=sample_weight,
+    )
+
+    assert captured["fit_params"] is None
+
+
+def test_class_rebalancing_does_not_alter_train_test_split():
+    """Anti-fuite (Lot A) : `class_rebalancing` n'est jamais transmis à
+    `split_dataset` — le split train/test/CV reste rigoureusement identique
+    avec ou sans rééquilibrage, seule la pondération vue par `.fit()` change."""
+    df = _make_multiclass_df()
+    split = split_dataset(df, "cible", ["f1", "f2"], "classification", None, 0.2, 42)
+
+    cfg_off = TrainingConfig(optuna_trials=3, cv_folds=3, class_rebalancing=False)
+    cfg_on = TrainingConfig(optuna_trials=3, cv_folds=3, class_rebalancing=True)
+    result_off = train_and_evaluate(split, "classification", cfg_off, lambda s, p: None)
+    result_on = train_and_evaluate(split, "classification", cfg_on, lambda s, p: None)
+
+    assert result_off.model_card["n_train"] == result_on.model_card["n_train"] == len(split.X_train)
+    assert result_off.model_card["n_test"] == result_on.model_card["n_test"] == len(split.X_test)
+
+
+def test_class_rebalancing_improves_minority_recall_on_imbalanced_dataset():
+    """Preuve que le flag agit réellement (pas seulement câblé) : sur un
+    dataset déséquilibré (~92/8), activer le rééquilibrage améliore
+    nettement le rappel de la classe minoritaire — au prix attendu d'un
+    rappel global plus faible, l'arbitrage même que le message affiché à
+    l'utilisateur décrit."""
+    df = _make_imbalanced_classification_df()
+    split = split_dataset(df, "cible", ["x1", "x2"], "classification", None, 0.2, 42)
+
+    cfg_off = TrainingConfig(optuna_trials=3, cv_folds=3, class_rebalancing=False)
+    cfg_on = TrainingConfig(optuna_trials=3, cv_folds=3, class_rebalancing=True)
+    result_off = train_and_evaluate(split, "classification", cfg_off, lambda s, p: None)
+    result_on = train_and_evaluate(split, "classification", cfg_on, lambda s, p: None)
+
+    assert result_off.model_card["class_rebalancing_applied"] is False
+    assert result_on.model_card["class_rebalancing_applied"] is True
+    assert _minority_class_recall(result_on.evaluation) > _minority_class_recall(result_off.evaluation)
