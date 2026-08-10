@@ -1,20 +1,65 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
-import { Users } from "lucide-react";
-import { ApiError, api, type TeamMember } from "../api/client";
+import { Link } from "react-router-dom";
+import { Activity, BrainCircuit, Database, FileSpreadsheet, Users } from "lucide-react";
+import {
+  ApiError,
+  api,
+  type DatasetSummary,
+  type TeamMember,
+  type TrainingJobSummary,
+} from "../api/client";
 import { useAuth } from "../contexts/AuthContext";
 import AppShell from "../components/AppShell";
+import { StatTile, StatTileRow } from "../components/dashboard/StatTile";
+import ModelResultModal from "../components/training/ModelResultModal";
 import { Avatar } from "../components/ui/Avatar";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
+import { ColorIconBadge, accentColorForId } from "../components/ui/ColorIconBadge";
 import { Input } from "../components/ui/Input";
+import { formatDateTime } from "../utils/format";
 
-/** Page protégée du Lot 1 : profil, équipe de l'organisation, ajout de membre (owner). */
+const ACTIVE_STATUSES = new Set(["queued", "running"]);
+
+/** Salutation contextuelle à l'heure réelle du navigateur — jamais un texte
+ * figé. Convention FR usuelle : "Bonjour" en journée, "Bonsoir" le soir/la
+ * nuit (5h–18h / 18h–5h). */
+function greeting(hour: number): string {
+  return hour >= 5 && hour < 18 ? "Bonjour" : "Bonsoir";
+}
+
+function jobStatusBadge(job: TrainingJobSummary) {
+  switch (job.status) {
+    case "completed":
+      return <Badge variant="success">Terminé</Badge>;
+    case "failed":
+      return <Badge variant="danger">Échec</Badge>;
+    case "running":
+      return <Badge variant="warning">En cours</Badge>;
+    default:
+      return <Badge variant="neutral">En file</Badge>;
+  }
+}
+
+function datasetStatusBadge(status: DatasetSummary["status"]) {
+  if (status === "ready") return <Badge variant="success">Prêt</Badge>;
+  if (status === "error") return <Badge variant="danger">Erreur</Badge>;
+  return <Badge variant="warning">Analyse…</Badge>;
+}
+
+/** Page protégée du Lot 1, enrichie au Lot E1-ter : vue d'ensemble de
+ * l'activité (datasets, entraînements récents) au-dessus de la gestion
+ * d'équipe — le dashboard doit d'abord montrer ce qui se passe, pas
+ * seulement qui a accès. */
 export default function Dashboard() {
   const { user } = useAuth();
 
   const [members, setMembers] = useState<TeamMember[] | null>(null);
   const [membersError, setMembersError] = useState<string | null>(null);
+  const [datasets, setDatasets] = useState<DatasetSummary[] | null>(null);
+  const [jobs, setJobs] = useState<TrainingJobSummary[] | null>(null);
+  const [viewingJob, setViewingJob] = useState<TrainingJobSummary | null>(null);
 
   const loadMembers = useCallback(async () => {
     try {
@@ -27,9 +72,15 @@ export default function Dashboard() {
 
   useEffect(() => {
     loadMembers();
+    api.datasets.list().then(setDatasets).catch(() => setDatasets([]));
+    api.training.listJobs().then(setJobs).catch(() => setJobs([]));
   }, [loadMembers]);
 
   if (!user) return null;
+
+  const recentJobs = jobs?.slice(0, 5) ?? [];
+  const recentDatasets = datasets?.slice(0, 5) ?? [];
+  const activeJobsCount = jobs?.filter((j) => ACTIVE_STATUSES.has(j.status)).length ?? 0;
 
   return (
     <AppShell pillarId="supervised">
@@ -38,8 +89,116 @@ export default function Dashboard() {
           Vue d'ensemble
         </p>
         <h1 className="text-2xl font-serif text-slate-900">
-          Bonjour, {user.nom.split(" ")[0]}
+          {greeting(new Date().getHours())}, {user.nom.split(" ")[0]}
         </h1>
+      </div>
+
+      <StatTileRow>
+        <StatTile icon={Database} label="Datasets" value={datasets?.length} color="blue" delayMs={0} />
+        <StatTile icon={BrainCircuit} label="Entraînements" value={jobs?.length} color="teal" delayMs={60} />
+        <StatTile
+          icon={Activity}
+          label="En cours"
+          value={jobs ? activeJobsCount : undefined}
+          color="amber"
+          delayMs={120}
+        />
+        <StatTile icon={Users} label="Membres de l'équipe" value={members?.length} color="violet" delayMs={180} />
+      </StatTileRow>
+
+      <div className="grid gap-6 lg:grid-cols-2 mb-10">
+        <Card className="p-5">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-sm font-medium text-slate-800">Derniers entraînements</h2>
+            <Link to="/training" className="text-xs text-teal-600 hover:text-teal-700">
+              Voir tout
+            </Link>
+          </div>
+
+          {jobs === null ? (
+            <p className="text-sm text-slate-500">Chargement…</p>
+          ) : recentJobs.length === 0 ? (
+            <p className="text-sm text-slate-500">
+              Aucun entraînement pour l'instant — lancez-en un depuis{" "}
+              <Link to="/training" className="text-teal-600 hover:text-teal-700">
+                Entraînement
+              </Link>
+              .
+            </p>
+          ) : (
+            <ul className="divide-y divide-slate-200">
+              {recentJobs.map((job) => {
+                const isCompleted = job.status === "completed";
+                return (
+                  <li
+                    key={job.id}
+                    onClick={() => isCompleted && setViewingJob(job)}
+                    className={`group py-2.5 flex items-center justify-between gap-3 ${
+                      isCompleted ? "cursor-pointer hover:bg-slate-50 -mx-1 px-1 rounded-lg" : ""
+                    }`}
+                  >
+                    <div className="flex items-center gap-3 min-w-0">
+                      <ColorIconBadge icon={BrainCircuit} color={accentColorForId(job.id)} size="sm" />
+                      <div className="min-w-0">
+                        <p className="text-sm text-slate-800 truncate">
+                          {job.dataset_name ?? "Dataset"} <span className="text-slate-400">→</span>{" "}
+                          {job.target_column}
+                        </p>
+                        <p className="text-xs text-slate-500">{formatDateTime(job.created_at)}</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      {isCompleted && job.headline_metric && (
+                        <span className="text-xs text-slate-500 tabular-nums">
+                          {job.headline_metric.name} = {job.headline_metric.value?.toFixed(3) ?? "—"}
+                        </span>
+                      )}
+                      {jobStatusBadge(job)}
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </Card>
+
+        <Card className="p-5">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-sm font-medium text-slate-800">Derniers datasets</h2>
+            <Link to="/datasets" className="text-xs text-teal-600 hover:text-teal-700">
+              Voir tout
+            </Link>
+          </div>
+
+          {datasets === null ? (
+            <p className="text-sm text-slate-500">Chargement…</p>
+          ) : recentDatasets.length === 0 ? (
+            <p className="text-sm text-slate-500">
+              Aucun dataset pour l'instant — importez-en un depuis{" "}
+              <Link to="/datasets" className="text-teal-600 hover:text-teal-700">
+                Mes données
+              </Link>
+              .
+            </p>
+          ) : (
+            <ul className="divide-y divide-slate-200">
+              {recentDatasets.map((dataset) => (
+                <li key={dataset.id} className="group py-2.5 flex items-center justify-between gap-3 hover:bg-slate-50 -mx-1 px-1 rounded-lg transition-colors">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <ColorIconBadge icon={FileSpreadsheet} color={accentColorForId(dataset.id)} size="sm" />
+                    <div className="min-w-0">
+                      <p className="text-sm text-slate-800 truncate">{dataset.name}</p>
+                      <p className="text-xs text-slate-500">
+                        {dataset.row_count ?? "—"} lignes · {dataset.column_count ?? "—"} colonnes
+                      </p>
+                    </div>
+                  </div>
+                  {datasetStatusBadge(dataset.status)}
+                </li>
+              ))}
+            </ul>
+          )}
+        </Card>
       </div>
 
       <div className="grid gap-6 lg:grid-cols-3">
@@ -97,6 +256,8 @@ export default function Dashboard() {
           </Card>
         )}
       </div>
+
+      {viewingJob && <ModelResultModal job={viewingJob} onClose={() => setViewingJob(null)} />}
     </AppShell>
   );
 }
