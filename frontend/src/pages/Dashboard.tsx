@@ -32,7 +32,7 @@ export default function Dashboard() {
   if (!user) return null;
 
   return (
-    <AppShell>
+    <AppShell pillarId="supervised">
       <div className="mb-8">
         <p className="text-xs uppercase tracking-widest text-teal-400/90 font-semibold mb-1">
           Vue d'ensemble

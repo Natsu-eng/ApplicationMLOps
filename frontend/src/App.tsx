@@ -1,9 +1,11 @@
 import { Navigate, Route, BrowserRouter as Router, Routes } from "react-router-dom";
 import ProtectedRoute from "./components/ProtectedRoute";
 import { AuthProvider } from "./contexts/AuthContext";
+import ComingSoon from "./pages/ComingSoon";
 import Dashboard from "./pages/Dashboard";
 import Datasets from "./pages/Datasets";
 import Login from "./pages/Login";
+import Orientation from "./pages/Orientation";
 import Register from "./pages/Register";
 import Training from "./pages/Training";
 
@@ -14,6 +16,14 @@ export default function App() {
         <Routes>
           <Route path="/login" element={<Login />} />
           <Route path="/register" element={<Register />} />
+          <Route
+            path="/"
+            element={
+              <ProtectedRoute>
+                <Orientation />
+              </ProtectedRoute>
+            }
+          />
           <Route
             path="/dashboard"
             element={
@@ -38,8 +48,24 @@ export default function App() {
               </ProtectedRoute>
             }
           />
-          <Route path="/" element={<Navigate to="/dashboard" replace />} />
-          <Route path="*" element={<Navigate to="/dashboard" replace />} />
+          {/* Piliers réservés — non actifs, page de présentation uniquement (voir config/pillars.ts) */}
+          <Route
+            path="/unsupervised"
+            element={
+              <ProtectedRoute>
+                <ComingSoon pillarId="unsupervised" />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/vision"
+            element={
+              <ProtectedRoute>
+                <ComingSoon pillarId="vision" />
+              </ProtectedRoute>
+            }
+          />
+          <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </Router>
     </AuthProvider>

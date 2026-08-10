@@ -23,7 +23,7 @@ export default function Register() {
     setIsSubmitting(true);
     try {
       await register({ organization_name: organizationName, nom, email, password });
-      navigate("/dashboard");
+      navigate("/");
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Inscription impossible");
     } finally {

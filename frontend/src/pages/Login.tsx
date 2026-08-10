@@ -21,7 +21,7 @@ export default function Login() {
     setIsSubmitting(true);
     try {
       await login(email, password);
-      navigate("/dashboard");
+      navigate("/");
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Connexion impossible");
     } finally {
