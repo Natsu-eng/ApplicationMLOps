@@ -20,8 +20,8 @@ export default function AppShell({ children, pillarId }: { children: ReactNode; 
   if (!user) return null;
 
   return (
-    <div className="min-h-screen text-slate-100">
-      <header className="sticky top-0 z-10 border-b border-slate-800/80 bg-slate-950/80 backdrop-blur-md">
+    <div className="min-h-screen text-slate-900">
+      <header className="sticky top-0 z-10 border-b border-slate-200 bg-white/80 backdrop-blur-md">
         <div className="max-w-6xl mx-auto px-6 py-3.5 flex items-center justify-between">
           <div className="flex items-center gap-8">
             <div className="flex items-center gap-2.5">
@@ -29,10 +29,10 @@ export default function AppShell({ children, pillarId }: { children: ReactNode; 
                 D
               </div>
               <div className="leading-tight">
-                <p className="text-[10px] uppercase tracking-widest text-teal-400 font-semibold">
+                <p className="text-[10px] uppercase tracking-widest text-teal-600 font-semibold">
                   DataLab Pro
                 </p>
-                <p className="text-sm text-slate-300 -mt-0.5">{user.organization_name}</p>
+                <p className="text-sm text-slate-600 -mt-0.5">{user.organization_name}</p>
               </div>
             </div>
 
@@ -40,7 +40,7 @@ export default function AppShell({ children, pillarId }: { children: ReactNode; 
               {pillar && (
                 <Link
                   to="/"
-                  className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg text-slate-500 hover:text-slate-300 hover:bg-slate-800/50 transition-colors mr-1"
+                  className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg text-slate-500 hover:text-slate-800 hover:bg-slate-100 transition-colors mr-1"
                 >
                   <ArrowLeft size={15} strokeWidth={2} />
                   Objectifs
@@ -54,8 +54,8 @@ export default function AppShell({ children, pillarId }: { children: ReactNode; 
                     to={to}
                     className={`flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg transition-colors ${
                       active
-                        ? "bg-slate-800 text-slate-100"
-                        : "text-slate-400 hover:text-slate-200 hover:bg-slate-800/50"
+                        ? "bg-slate-100 text-slate-900"
+                        : "text-slate-500 hover:text-slate-800 hover:bg-slate-100"
                     }`}
                   >
                     <Icon size={15} strokeWidth={2} />
@@ -70,7 +70,7 @@ export default function AppShell({ children, pillarId }: { children: ReactNode; 
             <Avatar name={user.nom} size="sm" />
             <button
               onClick={logout}
-              className="flex items-center gap-1.5 text-sm text-slate-400 hover:text-slate-200 border border-slate-800 hover:border-slate-700 rounded-lg px-3 py-1.5 transition-colors"
+              className="flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-800 border border-slate-200 hover:border-slate-300 rounded-lg px-3 py-1.5 transition-colors"
             >
               <LogOut size={14} />
               Déconnexion

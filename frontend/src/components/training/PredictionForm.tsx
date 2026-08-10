@@ -51,7 +51,7 @@ export default function PredictionForm({
   return (
     <section>
       <p className="text-xs uppercase tracking-wide text-slate-500 mb-2 flex items-center gap-1.5">
-        <Wand2 size={12} className="text-teal-400" />
+        <Wand2 size={12} className="text-teal-600" />
         <LabelWithHelp
           label="Tester une prédiction"
           help="Saisissez des valeurs pour les variables utilisées à l'entraînement — le modèle calcule sa prédiction sur ce cas précis, en temps réel."
@@ -61,7 +61,7 @@ export default function PredictionForm({
       <form onSubmit={handleSubmit} className="grid sm:grid-cols-3 gap-3 items-start mb-3">
         {featureSchema.map((field) => (
           <div key={field.name}>
-            <label className="block text-xs text-slate-500 mb-1 truncate" title={field.name}>
+            <label className="block text-xs text-slate-600 mb-1 truncate" title={field.name}>
               {field.name}
             </label>
             <Input
@@ -78,13 +78,13 @@ export default function PredictionForm({
         </Button>
       </form>
 
-      {error && <p className="text-sm text-rose-400">{error}</p>}
+      {error && <p className="text-sm text-rose-600">{error}</p>}
 
       {result && (
-        <div className="rounded-xl border border-teal-500/30 bg-teal-500/5 px-4 py-3">
+        <div className="rounded-xl border border-teal-200 bg-teal-50 px-4 py-3">
           <div className="flex items-center gap-2 mb-1">
-            <Sparkles size={14} className="text-teal-400" />
-            <p className="text-sm text-slate-200">
+            <Sparkles size={14} className="text-teal-600" />
+            <p className="text-sm text-slate-800">
               {taskType === "regression" ? (
                 <>
                   Valeur prédite :{" "}
@@ -113,14 +113,14 @@ export default function PredictionForm({
                 .sort(([, a], [, b]) => b - a)
                 .map(([label, proba]) => (
                   <div key={label} className="flex items-center gap-2">
-                    <span className="text-xs text-slate-400 w-24 truncate">{label}</span>
-                    <div className="flex-1 h-1.5 rounded-full bg-slate-800 overflow-hidden">
+                    <span className="text-xs text-slate-500 w-24 truncate">{label}</span>
+                    <div className="flex-1 h-1.5 rounded-full bg-slate-100 overflow-hidden">
                       <div
-                        className="h-full rounded-full bg-teal-500"
+                        className="h-full rounded-full bg-teal-600"
                         style={{ width: `${proba * 100}%` }}
                       />
                     </div>
-                    <span className="text-xs text-slate-500 w-10 text-right tabular-nums">
+                    <span className="text-xs text-slate-400 w-10 text-right tabular-nums">
                       {(proba * 100).toFixed(0)} %
                     </span>
                   </div>

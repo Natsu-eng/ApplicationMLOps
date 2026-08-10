@@ -46,13 +46,13 @@ function MetricCard({
 }) {
   if (value === null || value === undefined) return null;
   return (
-    <div className="rounded-xl border border-slate-800 bg-slate-950/40 px-4 py-3">
+    <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
       <p className="text-xs text-slate-500 mb-1">
         {help ? <LabelWithHelp label={label} help={help} /> : label}
       </p>
-      <p className="text-xl font-semibold text-slate-100 tabular-nums">{formatMetricValue(value)}</p>
+      <p className="text-xl font-semibold text-slate-900 tabular-nums">{formatMetricValue(value)}</p>
       {ci && (
-        <p className="text-[11px] text-slate-600 mt-0.5 tabular-nums">
+        <p className="text-[11px] text-slate-400 mt-0.5 tabular-nums">
           IC 95 % [{formatMetricValue(ci.ci_low)} – {formatMetricValue(ci.ci_high)}]
         </p>
       )}
@@ -84,7 +84,7 @@ function FeatureEngineeringSummary({ spec }: { spec: MLModelDetail["feature_engi
   return (
     <section>
       <p className="text-xs uppercase tracking-wide text-slate-500 mb-2">Ingénierie de variables appliquée</p>
-      <ul className="text-xs text-slate-400 space-y-1 list-disc list-inside">
+      <ul className="text-xs text-slate-600 space-y-1 list-disc list-inside">
         {items.map((item, i) => (
           <li key={i}>{item}</li>
         ))}
@@ -100,16 +100,16 @@ function ShapBars({ features }: { features: MLModelDetail["shap_summary"] }) {
     <div className="space-y-2">
       {features.slice(0, 8).map((f) => (
         <div key={f.feature} className="flex items-center gap-3">
-          <span className="text-xs text-slate-400 w-40 truncate flex-shrink-0" title={f.feature}>
+          <span className="text-xs text-slate-500 w-40 truncate flex-shrink-0" title={f.feature}>
             {f.feature}
           </span>
-          <div className="flex-1 h-2 rounded-full bg-slate-800 overflow-hidden">
+          <div className="flex-1 h-2 rounded-full bg-slate-100 overflow-hidden">
             <div
-              className="h-full rounded-full bg-gradient-to-r from-teal-500/70 to-teal-400"
+              className="h-full rounded-full bg-gradient-to-r from-teal-600/80 to-teal-500"
               style={{ width: `${(f.importance / max) * 100}%` }}
             />
           </div>
-          <span className="text-xs text-slate-500 w-12 text-right tabular-nums">
+          <span className="text-xs text-slate-400 w-12 text-right tabular-nums">
             {f.importance.toFixed(2)}
           </span>
         </div>
@@ -175,10 +175,10 @@ function Leaderboard({ jobId }: { jobId: number }) {
       </p>
 
       {winner && runnerUp && (
-        <p className="text-xs text-slate-400 mb-3">
-          <span className="text-slate-200 font-medium">{winner.algorithm}</span> retenu : meilleur {metricShortName}{" "}
+        <p className="text-xs text-slate-600 mb-3">
+          <span className="text-slate-800 font-medium">{winner.algorithm}</span> retenu : meilleur {metricShortName}{" "}
           en validation croisée, devant {runnerUp.algorithm} de{" "}
-          <span className="tabular-nums text-slate-300">
+          <span className="tabular-nums text-slate-700">
             {(winner.selection_score - runnerUp.selection_score).toFixed(3)}
           </span>{" "}
           points.
@@ -190,21 +190,21 @@ function Leaderboard({ jobId }: { jobId: number }) {
           <div
             key={c.algorithm}
             className={`flex items-center justify-between gap-3 rounded-lg border px-3 py-2 ${
-              c.is_winner ? "border-teal-500/30 bg-teal-500/5" : "border-slate-800 bg-slate-950/40"
+              c.is_winner ? "border-teal-200 bg-teal-50" : "border-slate-200 bg-slate-50"
             }`}
           >
             <div className="flex items-center gap-2 min-w-0">
               <Badge variant={c.is_winner ? "accent" : "neutral"}>#{c.rank}</Badge>
-              <span className="text-sm text-slate-200 truncate">{c.algorithm}</span>
+              <span className="text-sm text-slate-800 truncate">{c.algorithm}</span>
             </div>
             <div className="flex items-center gap-3 flex-shrink-0 text-xs">
               {c.secondary_metric !== null && (
                 <span className="text-slate-500">
                   {c.secondary_metric_label} :{" "}
-                  <span className="tabular-nums text-slate-300">{c.secondary_metric.toFixed(2)}</span>
+                  <span className="tabular-nums text-slate-700">{c.secondary_metric.toFixed(2)}</span>
                 </span>
               )}
-              <span className="tabular-nums text-slate-200 font-medium">{c.selection_score.toFixed(3)}</span>
+              <span className="tabular-nums text-slate-800 font-medium">{c.selection_score.toFixed(3)}</span>
             </div>
           </div>
         ))}
@@ -212,7 +212,7 @@ function Leaderboard({ jobId }: { jobId: number }) {
 
       {boxData.length > 1 && (
         <div className="mt-3">
-          <p className="text-[11px] text-slate-600 mb-1">
+          <p className="text-[11px] text-slate-400 mb-1">
             <LabelWithHelp
               label="Variance entre les découpages de validation croisée"
               help="Chaque modèle est évalué plusieurs fois sur des portions différentes des données d'entraînement — une boîte étroite signifie un score stable d'un découpage à l'autre, une boîte large signifie un score plus sensible aux données vues."
@@ -247,7 +247,7 @@ export default function ModelResultModal({
 
   return (
     <Modal title={`${job.dataset_name ?? "Dataset"} — ${job.target_column}`} onClose={onClose}>
-      {error && <p className="text-sm text-rose-400">{error}</p>}
+      {error && <p className="text-sm text-rose-600">{error}</p>}
       {!model && !error && <p className="text-sm text-slate-500">Chargement…</p>}
 
       {model && (
@@ -314,7 +314,7 @@ export default function ModelResultModal({
 
           <section>
             <p className="text-xs uppercase tracking-wide text-slate-500 mb-2 flex items-center gap-1.5">
-              <Sparkles size={12} className="text-teal-400" />
+              <Sparkles size={12} className="text-teal-600" />
               <LabelWithHelp
                 label="Variables les plus influentes"
                 help="Plus une variable a une barre longue, plus elle pèse dans les décisions du modèle — calculé par la méthode SHAP, standard en explicabilité de modèles ML."
@@ -371,8 +371,8 @@ export default function ModelResultModal({
 function Fact({ label, value }: { label: string; value: string }) {
   return (
     <div>
-      <dt className="text-slate-600">{label}</dt>
-      <dd className="text-slate-300 tabular-nums">{value}</dd>
+      <dt className="text-slate-500">{label}</dt>
+      <dd className="text-slate-700 tabular-nums">{value}</dd>
     </div>
   );
 }

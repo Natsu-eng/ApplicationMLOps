@@ -34,10 +34,10 @@ export default function Dashboard() {
   return (
     <AppShell pillarId="supervised">
       <div className="mb-8">
-        <p className="text-xs uppercase tracking-widest text-teal-400/90 font-semibold mb-1">
+        <p className="text-xs uppercase tracking-widest text-teal-600 font-semibold mb-1">
           Vue d'ensemble
         </p>
-        <h1 className="text-2xl font-serif text-slate-100">
+        <h1 className="text-2xl font-serif text-slate-900">
           Bonjour, {user.nom.split(" ")[0]}
         </h1>
       </div>
@@ -47,7 +47,7 @@ export default function Dashboard() {
           <div className="flex items-center gap-3 mb-4">
             <Avatar name={user.nom} />
             <div className="min-w-0">
-              <p className="font-medium text-slate-100 truncate">{user.nom}</p>
+              <p className="font-medium text-slate-900 truncate">{user.nom}</p>
               <p className="text-xs text-slate-500 truncate">{user.email}</p>
             </div>
           </div>
@@ -57,8 +57,8 @@ export default function Dashboard() {
         <Card className="p-5 lg:col-span-2">
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-2">
-              <Users size={16} className="text-teal-400" />
-              <h2 className="text-sm font-medium text-slate-200">
+              <Users size={16} className="text-teal-600" />
+              <h2 className="text-sm font-medium text-slate-800">
                 Équipe — {user.organization_name}
               </h2>
             </div>
@@ -74,13 +74,13 @@ export default function Dashboard() {
           {members === null && !membersError ? (
             <p className="text-sm text-slate-500">Chargement…</p>
           ) : (
-            <ul className="divide-y divide-slate-800/70">
+            <ul className="divide-y divide-slate-200">
               {members?.map((member) => (
                 <li key={member.id} className="py-2.5 flex items-center justify-between">
                   <div className="flex items-center gap-3 min-w-0">
                     <Avatar name={member.nom} size="sm" />
                     <div className="min-w-0">
-                      <p className="text-sm text-slate-200 truncate">{member.nom}</p>
+                      <p className="text-sm text-slate-800 truncate">{member.nom}</p>
                       <p className="text-xs text-slate-500 truncate">{member.email}</p>
                     </div>
                   </div>
@@ -111,7 +111,7 @@ function RoleBadge({ role }: { role: "owner" | "member" }) {
 
 function ErrorNote({ message }: { message: string }) {
   return (
-    <p className="text-sm text-rose-300 bg-rose-500/10 border border-rose-500/20 rounded-lg px-3 py-2 mb-3">
+    <p className="text-sm text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2 mb-3">
       {message}
     </p>
   );
@@ -146,7 +146,7 @@ function AddMemberForm({ onMemberAdded }: { onMemberAdded: () => void }) {
 
   return (
     <>
-      <h2 className="text-sm font-medium text-slate-200 mb-4">Ajouter un membre à l'équipe</h2>
+      <h2 className="text-sm font-medium text-slate-800 mb-4">Ajouter un membre à l'équipe</h2>
       <form onSubmit={handleSubmit} className="grid sm:grid-cols-3 gap-3 items-start">
         <Input
           type="text"
@@ -175,8 +175,8 @@ function AddMemberForm({ onMemberAdded }: { onMemberAdded: () => void }) {
           {isSubmitting ? "Ajout…" : "Ajouter"}
         </Button>
       </form>
-      {error && <p className="text-sm text-rose-400 mt-2">{error}</p>}
-      {success && <p className="text-sm text-emerald-400 mt-2">Membre ajouté.</p>}
+      {error && <p className="text-sm text-rose-600 mt-2">{error}</p>}
+      {success && <p className="text-sm text-emerald-600 mt-2">Membre ajouté.</p>}
     </>
   );
 }

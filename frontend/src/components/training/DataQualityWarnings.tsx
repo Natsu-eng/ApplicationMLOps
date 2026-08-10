@@ -13,9 +13,9 @@ const LEVEL_CONFIG: Record<
   DataWarning["level"],
   { badge: "danger" | "warning" | "accent"; icon: typeof ShieldAlert; border: string; iconColor: string }
 > = {
-  critique: { badge: "danger", icon: ShieldAlert, border: "border-rose-500/30", iconColor: "text-rose-400" },
-  attention: { badge: "warning", icon: AlertTriangle, border: "border-amber-500/30", iconColor: "text-amber-400" },
-  info: { badge: "accent", icon: Info, border: "border-teal-500/20", iconColor: "text-teal-400" },
+  critique: { badge: "danger", icon: ShieldAlert, border: "border-rose-200", iconColor: "text-rose-600" },
+  attention: { badge: "warning", icon: AlertTriangle, border: "border-amber-200", iconColor: "text-amber-600" },
+  info: { badge: "accent", icon: Info, border: "border-teal-200", iconColor: "text-teal-600" },
 };
 
 const LEVEL_LABEL: Record<DataWarning["level"], string> = {
@@ -67,10 +67,10 @@ export function DataQualityWarnings({
   return (
     <div className="space-y-2">
       {loading && <p className="text-xs text-slate-500">Analyse des données…</p>}
-      {error && <p className="text-xs text-rose-400">{error}</p>}
+      {error && <p className="text-xs text-rose-600">{error}</p>}
 
       {!loading && !error && warnings && warnings.length === 0 && (
-        <div className="flex items-center gap-2 text-xs text-emerald-300/90 bg-emerald-500/10 border border-emerald-500/20 rounded-lg px-3 py-2">
+        <div className="flex items-center gap-2 text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2">
           <ShieldCheck size={14} className="flex-shrink-0" />
           Aucune alerte détectée sur ce dataset pour cette cible.
         </div>
@@ -87,7 +87,7 @@ export function DataQualityWarnings({
           return (
             <div
               key={`${warning.code}-${warning.columns.join(",")}-${index}`}
-              className={`rounded-lg border ${config.border} bg-slate-900/60 px-3 py-2.5`}
+              className={`rounded-lg border ${config.border} bg-slate-50 px-3 py-2.5`}
             >
               <button
                 type="button"
@@ -98,18 +98,18 @@ export function DataQualityWarnings({
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2 flex-wrap">
                     <Badge variant={config.badge}>{LEVEL_LABEL[warning.level]}</Badge>
-                    <p className="text-sm text-slate-200 font-medium">{warning.title}</p>
+                    <p className="text-sm text-slate-800 font-medium">{warning.title}</p>
                   </div>
                 </div>
                 <ChevronDown
                   size={14}
-                  className={`flex-shrink-0 text-slate-500 transition-transform mt-1 ${isOpen ? "rotate-180" : ""}`}
+                  className={`flex-shrink-0 text-slate-400 transition-transform mt-1 ${isOpen ? "rotate-180" : ""}`}
                 />
               </button>
 
-              {isOpen && <p className="text-xs text-slate-400 mt-2 pl-6">{warning.explanation}</p>}
+              {isOpen && <p className="text-xs text-slate-600 mt-2 pl-6">{warning.explanation}</p>}
 
-              <p className="text-xs text-slate-300 mt-2 pl-6">
+              <p className="text-xs text-slate-600 mt-2 pl-6">
                 <span className="text-slate-500">Action recommandée : </span>
                 {warning.action}
               </p>

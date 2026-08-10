@@ -110,7 +110,7 @@ export default function EdaModal({ dataset, onClose }: { dataset: DatasetSummary
 
   return (
     <Modal title={`${dataset.name} — Exploration`} onClose={onClose}>
-      {error && <p className="text-sm text-rose-400">{error}</p>}
+      {error && <p className="text-sm text-rose-600">{error}</p>}
       {!eda && !error && <p className="text-sm text-slate-500">Chargement…</p>}
 
       {eda && (
@@ -130,7 +130,7 @@ export default function EdaModal({ dataset, onClose }: { dataset: DatasetSummary
                 setTargetColumn(e.target.value);
                 setFeatureForTarget("");
               }}
-              className="w-full rounded-lg border border-slate-700 bg-slate-950/60 px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-teal-500/50"
+              className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-500/40"
             >
               <option value="">Aucune — exploration générale</option>
               {eda.column_stats.map((c) => (
@@ -172,7 +172,7 @@ export default function EdaModal({ dataset, onClose }: { dataset: DatasetSummary
               <select
                 value={featureForTarget}
                 onChange={(e) => setFeatureForTarget(e.target.value)}
-                className="w-full rounded-lg border border-slate-700 bg-slate-950/60 px-3 py-2 text-sm text-slate-100 mb-3 focus:outline-none focus:ring-2 focus:ring-teal-500/50"
+                className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 mb-3 focus:outline-none focus:ring-2 focus:ring-teal-500/40"
               >
                 <option value="">Choisir une variable numérique…</option>
                 {numericFeatureOptions.map((c) => (
@@ -301,7 +301,7 @@ export default function EdaModal({ dataset, onClose }: { dataset: DatasetSummary
             <select
               value={selectedColumn}
               onChange={(e) => setSelectedColumn(e.target.value)}
-              className="w-full rounded-lg border border-slate-700 bg-slate-950/60 px-3 py-2 text-sm text-slate-100 mb-3 focus:outline-none focus:ring-2 focus:ring-teal-500/50"
+              className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 mb-3 focus:outline-none focus:ring-2 focus:ring-teal-500/40"
             >
               {eda.column_stats.map((c) => (
                 <option key={c.name} value={c.name}>
@@ -330,30 +330,30 @@ export default function EdaModal({ dataset, onClose }: { dataset: DatasetSummary
 
           <section>
             <p className="text-xs uppercase tracking-wide text-slate-500 mb-2">Résumé par colonne</p>
-            <div className="overflow-x-auto rounded-lg border border-slate-800">
+            <div className="overflow-x-auto rounded-lg border border-slate-200">
               <table className="min-w-full text-xs">
                 <thead>
-                  <tr className="border-b border-slate-800 bg-slate-900/60">
-                    <th className="text-left px-3 py-2 font-medium text-slate-400">Colonne</th>
-                    <th className="text-left px-3 py-2 font-medium text-slate-400">Type</th>
-                    <th className="text-right px-3 py-2 font-medium text-slate-400">Manquant</th>
-                    <th className="text-left px-3 py-2 font-medium text-slate-400">Résumé</th>
+                  <tr className="border-b border-slate-200 bg-slate-50">
+                    <th className="text-left px-3 py-2 font-medium text-slate-500">Colonne</th>
+                    <th className="text-left px-3 py-2 font-medium text-slate-500">Type</th>
+                    <th className="text-right px-3 py-2 font-medium text-slate-500">Manquant</th>
+                    <th className="text-left px-3 py-2 font-medium text-slate-500">Résumé</th>
                   </tr>
                 </thead>
                 <tbody>
                   {eda.column_stats.map((c) => (
-                    <tr key={c.name} className="border-b border-slate-800/50">
-                      <td className="px-3 py-1.5 text-slate-200">{c.name}</td>
+                    <tr key={c.name} className="border-b border-slate-100">
+                      <td className="px-3 py-1.5 text-slate-800">{c.name}</td>
                       <td className="px-3 py-1.5 text-slate-500">{c.dtype}</td>
                       <td className="px-3 py-1.5 text-right tabular-nums">
                         {c.missing_pct > 30 && (
-                          <AlertTriangle size={11} className="inline mr-1 text-amber-400" />
+                          <AlertTriangle size={11} className="inline mr-1 text-amber-600" />
                         )}
-                        <span className={c.missing_pct > 30 ? "text-amber-400" : "text-slate-500"}>
+                        <span className={c.missing_pct > 30 ? "text-amber-600" : "text-slate-500"}>
                           {c.missing_pct.toFixed(0)}%
                         </span>
                       </td>
-                      <td className="px-3 py-1.5 text-slate-400">
+                      <td className="px-3 py-1.5 text-slate-500">
                         {c.kind === "numeric"
                           ? `moyenne ${c.mean?.toFixed(2)} · écart-type ${c.std?.toFixed(2)}`
                           : `${c.n_unique} valeurs · fréquente : ${c.top_values?.[0]?.value ?? "—"}`}

@@ -70,10 +70,10 @@ export default function Training() {
   return (
     <AppShell pillarId="supervised">
       <div className="mb-8">
-        <p className="text-xs uppercase tracking-widest text-teal-400/90 font-semibold mb-1">
+        <p className="text-xs uppercase tracking-widest text-teal-600 font-semibold mb-1">
           Entraînement
         </p>
-        <h1 className="text-2xl font-serif text-slate-100">Entraîner un modèle</h1>
+        <h1 className="text-2xl font-serif text-slate-900">Entraîner un modèle</h1>
       </div>
 
       <div className="grid gap-6 lg:grid-cols-5">
@@ -92,7 +92,7 @@ export default function Training() {
           </p>
 
           {error && (
-            <div className="flex items-center gap-2 text-sm text-rose-300 bg-rose-500/10 border border-rose-500/20 rounded-lg px-3 py-2 mb-4">
+            <div className="flex items-center gap-2 text-sm text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2 mb-4">
               <AlertCircle size={15} className="flex-shrink-0" />
               {error}
             </div>
@@ -100,7 +100,7 @@ export default function Training() {
 
           {jobs.length === 0 ? (
             <Card className="p-10 text-center">
-              <Sparkles className="mx-auto mb-3 text-slate-700" size={28} />
+              <Sparkles className="mx-auto mb-3 text-slate-300" size={28} />
               <p className="text-sm text-slate-500">
                 Aucun entraînement pour l'instant — configurez-en un à gauche.
               </p>
@@ -183,8 +183,8 @@ function JobCard({
     >
       <div className="flex items-start justify-between gap-3 mb-2">
         <div className="min-w-0">
-          <p className="text-sm font-medium text-slate-100 truncate">
-            {job.dataset_name ?? "Dataset"} <span className="text-slate-600">→</span> {job.target_column}
+          <p className="text-sm font-medium text-slate-900 truncate">
+            {job.dataset_name ?? "Dataset"} <span className="text-slate-400">→</span> {job.target_column}
           </p>
           <p className="text-xs text-slate-500 mt-0.5">
             {job.task_type === "regression" ? "Régression" : "Classification"} · {formatDateTime(job.created_at)}
@@ -202,8 +202,8 @@ function JobCard({
             title={confirming ? "Cliquer à nouveau pour confirmer" : "Supprimer cet entraînement"}
             className={`p-1 rounded-md transition-colors ${
               confirming
-                ? "text-rose-300 bg-rose-500/15"
-                : "text-slate-600 hover:text-rose-300 hover:bg-rose-500/10"
+                ? "text-rose-700 bg-rose-100"
+                : "text-slate-400 hover:text-rose-600 hover:bg-rose-50"
             }`}
           >
             <Trash2 size={13} />
@@ -213,9 +213,9 @@ function JobCard({
 
       {isActive && (
         <div className="mt-3">
-          <div className="h-1.5 rounded-full bg-slate-800 overflow-hidden">
+          <div className="h-1.5 rounded-full bg-slate-100 overflow-hidden">
             <div
-              className="h-full rounded-full bg-teal-500 transition-all duration-500"
+              className="h-full rounded-full bg-teal-600 transition-all duration-500"
               style={{ width: `${Math.max(job.progress_percent, 4)}%` }}
             />
           </div>
@@ -226,17 +226,17 @@ function JobCard({
       )}
 
       {job.status === "failed" && job.error_message && (
-        <p className="text-xs text-rose-400 mt-2">{job.error_message}</p>
+        <p className="text-xs text-rose-600 mt-2">{job.error_message}</p>
       )}
 
       {isCompleted && job.headline_metric && (
-        <p className="text-xs text-slate-400 mt-2">
+        <p className="text-xs text-slate-500 mt-2">
           <Badge variant="accent">{job.algorithm}</Badge>{" "}
           {job.headline_metric.name} ={" "}
-          <span className="tabular-nums text-slate-200">
+          <span className="tabular-nums text-slate-800">
             {job.headline_metric.value?.toFixed(3) ?? "—"}
           </span>
-          <span className="text-slate-600"> · cliquer pour le détail</span>
+          <span className="text-slate-400"> · cliquer pour le détail</span>
         </p>
       )}
     </Card>
@@ -330,21 +330,21 @@ function TrainingForm({
 
   return (
     <Card className="p-5">
-      <h2 className="text-sm font-medium text-slate-200 mb-4">Nouvel entraînement</h2>
+      <h2 className="text-sm font-medium text-slate-800 mb-4">Nouvel entraînement</h2>
 
       {datasets.length === 0 ? (
         <p className="text-sm text-slate-500">
-          Aucun dataset prêt — importez-en un depuis <span className="text-teal-400">Mes données</span>.
+          Aucun dataset prêt — importez-en un depuis <span className="text-teal-600">Mes données</span>.
         </p>
       ) : (
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label className="block text-sm text-slate-400 mb-1">Dataset</label>
+            <label className="block text-sm text-slate-600 mb-1">Dataset</label>
             <select
               value={datasetId}
               onChange={(e) => handleDatasetChange(e.target.value)}
               required
-              className="w-full rounded-lg border border-slate-700 bg-slate-950/60 px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-teal-500/50"
+              className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-500/40"
             >
               <option value="">Choisir un dataset…</option>
               {datasets.map((d) => (
@@ -358,12 +358,12 @@ function TrainingForm({
           {columns.length > 0 && (
             <>
               <div>
-                <label className="block text-sm text-slate-400 mb-1">Colonne cible à prédire</label>
+                <label className="block text-sm text-slate-600 mb-1">Colonne cible à prédire</label>
                 <select
                   value={targetColumn}
                   onChange={(e) => setTargetColumn(e.target.value)}
                   required
-                  className="w-full rounded-lg border border-slate-700 bg-slate-950/60 px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-teal-500/50"
+                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-500/40"
                 >
                   <option value="">Choisir une colonne…</option>
                   {columns.map((c) => (
@@ -372,20 +372,20 @@ function TrainingForm({
                     </option>
                   ))}
                 </select>
-                <p className="text-xs text-slate-600 mt-1">
+                <p className="text-xs text-slate-400 mt-1">
                   Classification ou régression détectée automatiquement selon cette colonne.
                 </p>
               </div>
 
               {targetColumn && (
                 <div>
-                  <label className="block text-sm text-slate-400 mb-1">
-                    Colonne de groupe <span className="text-slate-600">(optionnel — anti-fuite)</span>
+                  <label className="block text-sm text-slate-600 mb-1">
+                    Colonne de groupe <span className="text-slate-400">(optionnel — anti-fuite)</span>
                   </label>
                   <select
                     value={groupColumn}
                     onChange={(e) => setGroupColumn(e.target.value)}
-                    className="w-full rounded-lg border border-slate-700 bg-slate-950/60 px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-teal-500/50"
+                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-500/40"
                   >
                     <option value="">Aucune — split classique</option>
                     {otherColumns.map((c) => (
@@ -394,7 +394,7 @@ function TrainingForm({
                       </option>
                     ))}
                   </select>
-                  <p className="text-xs text-slate-600 mt-1">
+                  <p className="text-xs text-slate-400 mt-1">
                     Si plusieurs lignes partagent un même échantillon (mesures répétées), indiquez la
                     colonne qui les identifie : train et test ne partageront jamais le même groupe.
                   </p>
@@ -432,29 +432,29 @@ function TrainingForm({
                   <button
                     type="button"
                     onClick={() => setShowFeaturePicker((v) => !v)}
-                    className="text-sm text-teal-400 hover:text-teal-300"
+                    className="text-sm text-teal-600 hover:text-teal-700"
                   >
                     {showFeaturePicker ? "Masquer" : "Choisir"} les variables utilisées
-                    <span className="text-slate-600"> ({selectedFeatures.size} sélectionnée{selectedFeatures.size > 1 ? "s" : ""})</span>
+                    <span className="text-slate-400"> ({selectedFeatures.size} sélectionnée{selectedFeatures.size > 1 ? "s" : ""})</span>
                   </button>
                   {showFeaturePicker && (
-                    <div className="mt-2 max-h-40 overflow-y-auto rounded-lg border border-slate-800 bg-slate-950/40 p-2 space-y-1">
+                    <div className="mt-2 max-h-40 overflow-y-auto rounded-lg border border-slate-200 bg-slate-50 p-2 space-y-1">
                       {otherColumns
                         .filter((c) => c.name !== groupColumn)
                         .map((c) => (
-                          <label key={c.name} className="flex items-center gap-2 text-xs text-slate-300 px-1 py-0.5">
+                          <label key={c.name} className="flex items-center gap-2 text-xs text-slate-600 px-1 py-0.5">
                             <input
                               type="checkbox"
                               checked={selectedFeatures.has(c.name)}
                               onChange={() => toggleFeature(c.name)}
                               className="accent-teal-500"
                             />
-                            {c.name} <span className="text-slate-600">({c.dtype})</span>
+                            {c.name} <span className="text-slate-400">({c.dtype})</span>
                           </label>
                         ))}
                     </div>
                   )}
-                  <p className="text-xs text-slate-600 mt-1">
+                  <p className="text-xs text-slate-400 mt-1">
                     Par défaut, toutes les variables sauf la cible sont utilisées — décochez celles à
                     exclure (ex. un identifiant sans valeur prédictive).
                   </p>
@@ -462,7 +462,7 @@ function TrainingForm({
               )}
 
               <div>
-                <label className="block text-sm text-slate-400 mb-1">
+                <label className="block text-sm text-slate-600 mb-1">
                   Recherche d'hyperparamètres — {optunaTrials} essais
                 </label>
                 <input
@@ -474,13 +474,13 @@ function TrainingForm({
                   onChange={(e) => setOptunaTrials(Number(e.target.value))}
                   className="w-full accent-teal-500"
                 />
-                <p className="text-xs text-slate-600 mt-1">
+                <p className="text-xs text-slate-400 mt-1">
                   Plus élevé = recherche plus fine, mais entraînement plus long.
                 </p>
               </div>
 
               <div>
-                <label className="block text-sm text-slate-400 mb-1">
+                <label className="block text-sm text-slate-600 mb-1">
                   Part du jeu de test — {Math.round(testSize * 100)} %
                 </label>
                 <input
@@ -497,7 +497,7 @@ function TrainingForm({
           )}
 
           {error && (
-            <p className="text-sm text-rose-300 bg-rose-500/10 border border-rose-500/20 rounded-lg px-3 py-2">
+            <p className="text-sm text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2">
               {error}
             </p>
           )}

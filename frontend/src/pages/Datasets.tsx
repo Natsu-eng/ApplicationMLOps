@@ -67,10 +67,10 @@ export default function Datasets() {
   return (
     <AppShell pillarId="supervised">
       <div className="mb-8">
-        <p className="text-xs uppercase tracking-widest text-teal-400/90 font-semibold mb-1">
+        <p className="text-xs uppercase tracking-widest text-teal-600 font-semibold mb-1">
           Données
         </p>
-        <h1 className="text-2xl font-serif text-slate-100">Mes données</h1>
+        <h1 className="text-2xl font-serif text-slate-900">Mes données</h1>
       </div>
 
       <Card
@@ -91,8 +91,8 @@ export default function Datasets() {
           className="hidden"
           onChange={(e) => handleFiles(e.target.files)}
         />
-        <UploadCloud className="mx-auto mb-3 text-slate-600" size={32} />
-        <p className="text-sm text-slate-300 mb-3">Glissez un fichier ici, ou</p>
+        <UploadCloud className="mx-auto mb-3 text-slate-400" size={32} />
+        <p className="text-sm text-slate-600 mb-3">Glissez un fichier ici, ou</p>
         <Button
           variant="secondary"
           size="sm"
@@ -101,11 +101,11 @@ export default function Datasets() {
         >
           {isUploading ? "Envoi…" : "Parcourir"}
         </Button>
-        <p className="text-xs text-slate-600 mt-3">CSV, Parquet, Excel, JSON — 200 Mo max</p>
+        <p className="text-xs text-slate-400 mt-3">CSV, Parquet, Excel, JSON — 200 Mo max</p>
       </Card>
 
       {error && (
-        <div className="flex items-center gap-2 text-sm text-rose-300 bg-rose-500/10 border border-rose-500/20 rounded-lg px-3 py-2 mb-6">
+        <div className="flex items-center gap-2 text-sm text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2 mb-6">
           <AlertCircle size={15} className="flex-shrink-0" />
           {error}
         </div>
@@ -115,7 +115,7 @@ export default function Datasets() {
         <p className="text-sm text-slate-500">Chargement…</p>
       ) : datasets.length === 0 ? (
         <Card className="p-10 text-center">
-          <FileSpreadsheet className="mx-auto mb-3 text-slate-700" size={32} />
+          <FileSpreadsheet className="mx-auto mb-3 text-slate-300" size={32} />
           <p className="text-sm text-slate-500">
             Aucun dataset pour l'instant — importez votre premier fichier ci-dessus.
           </p>
@@ -161,7 +161,7 @@ function DatasetCard({
     <Card interactive className="p-5 flex flex-col">
       <div className="flex items-start justify-between gap-2 mb-3">
         <div className="min-w-0">
-          <p className="text-sm font-medium text-slate-100 truncate" title={dataset.name}>
+          <p className="text-sm font-medium text-slate-900 truncate" title={dataset.name}>
             {dataset.name}
           </p>
           <p className="text-xs text-slate-500 mt-0.5">
@@ -173,16 +173,16 @@ function DatasetCard({
       </div>
 
       {dataset.status === "error" ? (
-        <p className="text-xs text-rose-400 mb-3 line-clamp-2">{dataset.error_message}</p>
+        <p className="text-xs text-rose-600 mb-3 line-clamp-2">{dataset.error_message}</p>
       ) : (
-        <div className="flex gap-4 text-xs text-slate-400 mb-3 tabular-nums">
+        <div className="flex gap-4 text-xs text-slate-500 mb-3 tabular-nums">
           <span>{dataset.row_count ?? "—"} lignes</span>
           <span>{dataset.column_count ?? "—"} colonnes</span>
           <span>{formatFileSize(dataset.file_size_bytes)}</span>
         </div>
       )}
 
-      <div className="mt-auto flex gap-2 pt-3 border-t border-slate-800/70">
+      <div className="mt-auto flex gap-2 pt-3 border-t border-slate-200">
         <Button variant="ghost" size="sm" onClick={onPreview} disabled={dataset.status !== "ready"}>
           <Eye size={14} /> Aperçu
         </Button>
@@ -210,17 +210,17 @@ function PreviewModal({ dataset, onClose }: { dataset: DatasetSummary; onClose: 
 
   return (
     <Modal title={dataset.name} onClose={onClose}>
-      {error && <p className="text-sm text-rose-400">{error}</p>}
+      {error && <p className="text-sm text-rose-600">{error}</p>}
       {!data && !error && <p className="text-sm text-slate-500">Chargement…</p>}
       {data && (
         <div>
           <table className="min-w-full text-xs border-collapse">
             <thead>
-              <tr className="border-b border-slate-800">
+              <tr className="border-b border-slate-200">
                 {data.columns.map((col) => (
                   <th
                     key={col}
-                    className="text-left font-medium text-slate-400 px-3 py-2 whitespace-nowrap"
+                    className="text-left font-medium text-slate-500 px-3 py-2 whitespace-nowrap"
                   >
                     {col}
                   </th>
@@ -229,9 +229,9 @@ function PreviewModal({ dataset, onClose }: { dataset: DatasetSummary; onClose: 
             </thead>
             <tbody>
               {data.rows.map((row, i) => (
-                <tr key={i} className="border-b border-slate-800/50">
+                <tr key={i} className="border-b border-slate-100">
                   {data.columns.map((col) => (
-                    <td key={col} className="px-3 py-1.5 text-slate-300 whitespace-nowrap">
+                    <td key={col} className="px-3 py-1.5 text-slate-600 whitespace-nowrap">
                       {row[col] === null || row[col] === undefined ? "—" : String(row[col])}
                     </td>
                   ))}
@@ -239,7 +239,7 @@ function PreviewModal({ dataset, onClose }: { dataset: DatasetSummary; onClose: 
               ))}
             </tbody>
           </table>
-          <p className="text-xs text-slate-600 mt-3">
+          <p className="text-xs text-slate-400 mt-3">
             {data.sample_size} lignes affichées sur {data.row_count ?? "?"}
           </p>
         </div>

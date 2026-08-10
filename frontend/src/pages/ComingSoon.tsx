@@ -16,11 +16,11 @@ export default function ComingSoon({ pillarId }: { pillarId: PillarId }) {
   return (
     <AppShell pillarId={pillarId}>
       <div className="max-w-lg mx-auto text-center py-16">
-        <div className="h-14 w-14 mx-auto mb-5 rounded-2xl bg-slate-800 flex items-center justify-center text-slate-400">
+        <div className="h-14 w-14 mx-auto mb-5 rounded-2xl bg-slate-100 flex items-center justify-center text-slate-400">
           <Icon size={26} strokeWidth={1.75} />
         </div>
-        <h1 className="text-xl font-serif text-slate-100 mb-2">{pillar.title}</h1>
-        <p className="text-sm text-slate-400 mb-6">{pillar.description}</p>
+        <h1 className="text-xl font-serif text-slate-900 mb-2">{pillar.title}</h1>
+        <p className="text-sm text-slate-600 mb-6">{pillar.description}</p>
         <Badge variant="neutral">Bientôt disponible</Badge>
         <p className="text-sm text-slate-500 mt-6">
           Ce pilier n'est pas encore actif. La prédiction (valeur ou catégorie) est disponible

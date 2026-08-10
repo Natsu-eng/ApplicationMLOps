@@ -13,10 +13,10 @@ export default function Orientation() {
   return (
     <AppShell>
       <div className="mb-10 text-center">
-        <p className="text-xs uppercase tracking-widest text-teal-400/90 font-semibold mb-2">
+        <p className="text-xs uppercase tracking-widest text-teal-600 font-semibold mb-2">
           Bonjour, {user.nom.split(" ")[0]}
         </p>
-        <h1 className="text-2xl font-serif text-slate-100 mb-2">Que voulez-vous faire aujourd'hui ?</h1>
+        <h1 className="text-2xl font-serif text-slate-900 mb-2">Que voulez-vous faire aujourd'hui ?</h1>
         <p className="text-sm text-slate-500">Choisissez votre objectif — la méthode s'adapte, pas l'inverse.</p>
       </div>
 
