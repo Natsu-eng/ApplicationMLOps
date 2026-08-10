@@ -11,7 +11,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, func
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from api.core.database import Base
@@ -180,3 +180,53 @@ class MLModel(Base):
 
     organization: Mapped["Organization"] = relationship("Organization")
     training_job: Mapped["TrainingJob"] = relationship("TrainingJob", back_populates="model")
+
+
+class ModelCandidate(Base):
+    """Un modèle comparé pendant un TrainingJob — TOUS les candidats du
+    catalogue par défaut, pas seulement le gagnant (Lot D, leaderboard).
+
+    Avant ce lot, seul le gagnant était persisté (`MLModel`) : le travail de
+    comparaison réel du moteur (`services/ml_training.py::train_and_evaluate`)
+    restait invisible. Table dédiée plutôt qu'un JSON sur `TrainingJob` — le
+    tri/filtre inter-jobs prévu (lot D-bis) a besoin de colonnes requêtables,
+    pas d'un blob à désérialiser à chaque comparaison.
+
+    N'existe QUE pour les jobs entraînés depuis ce lot : aucune ligne pour
+    l'historique antérieur (rétrocompatibilité par absence, pas par
+    backfill — voir `api/routers/training.py::get_job_candidates`)."""
+
+    __tablename__ = "model_candidates"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    organization_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    training_job_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("training_jobs.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    algorithm: Mapped[str] = mapped_column(String(100), nullable=False)  # spec.label(task_type), registre (ml_registry.py)
+    family: Mapped[str] = mapped_column(String(30), nullable=False)  # ModelSpec.family — pour grouper à l'affichage
+    # LA métrique qui a réellement départagé les candidats (ROC-AUC pondérée
+    # en classification, R² en régression — voir
+    # services/ml_training.py::_classification_selection_score et
+    # `scoring="r2"`) — jamais l'accuracy brute, trompeuse sur un dataset
+    # déséquilibré (voir la correction de `_headline_metric`, Lot D 1/4).
+    selection_score: Mapped[float] = mapped_column(Float, nullable=False)
+    is_winner: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    rank: Mapped[int] = mapped_column(Integer, nullable=False)  # 1 = gagnant, pré-trié côté moteur
+    # Score de sélection par fold de validation croisée — variance
+    # inter-folds (option A du cadrage Lot D), capturée pendant la recherche
+    # Optuna déjà en cours (aucun ré-entraînement, voir
+    # `services/ml_training.py::_optimize_one_model`). NULL pour l'historique
+    # antérieur à ce lot (jamais recalculé a posteriori).
+    fold_scores_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # Erreur en unité réelle de la cible (RMSE, validation croisée) —
+    # régression uniquement : le R² seul n'est pas lisible pour un BE. NULL
+    # en classification (pas de "secondaire" pertinent au même sens).
+    secondary_metric: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    secondary_metric_label: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    organization: Mapped["Organization"] = relationship("Organization")
+    training_job: Mapped["TrainingJob"] = relationship("TrainingJob")

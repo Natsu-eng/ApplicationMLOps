@@ -74,6 +74,7 @@ from sklearn.model_selection import (
     KFold,
     StratifiedKFold,
     cross_val_score,
+    cross_validate,
     train_test_split,
 )
 from sklearn.pipeline import Pipeline
@@ -120,6 +121,34 @@ class TrainedModelResult:
     cqr: Optional[dict[str, Any]]
     model_card: dict[str, Any]
     evaluation: dict[str, Any]  # matrice de confusion+ROC/PR (classif) ou prédit-vs-réel+résidus (régression)
+    # TOUS les candidats comparés (Lot D, leaderboard) — pas seulement le
+    # gagnant, triés par score de sélection décroissant. Chaque entrée :
+    # algorithm, family, selection_score, is_winner, rank, fold_scores
+    # (variance inter-folds, option A), secondary_metric/secondary_metric_label
+    # (RMSE en régression, None en classification) — voir `_build_all_candidates`.
+    all_candidates: list[dict[str, Any]]
+
+
+@dataclass
+class OptimizedCandidate:
+    """Résultat de la recherche Optuna pour UN candidat du catalogue —
+    porte, en plus du meilleur estimateur, ce qu'il faut pour l'afficher dans
+    le leaderboard sans ré-entraîner (Lot D) : le score de sélection déjà
+    calculé, la variance inter-folds capturée pendant la même recherche
+    (option A du cadrage — `trial.set_user_attr`, aucun calcul
+    supplémentaire), et l'erreur en unité réelle pour la régression."""
+
+    model: Any
+    cv_score: float
+    fold_scores: Optional[list[float]]  # score de sélection par fold, essai gagnant — None si jamais capturé
+    fold_error: Optional[float]  # RMSE moyen (validation croisée), régression uniquement
+
+
+def selection_metric_label(task_type: str) -> str:
+    """Libellé humain de LA métrique qui départage les candidats (Lot D) —
+    partagé entre le moteur (model_card) et l'API (leaderboard) pour ne
+    jamais afficher un nom incohérent avec le score réellement utilisé."""
+    return "ROC-AUC (validation croisée)" if task_type == "classification" else "R² (validation croisée)"
 
 
 def _make_cv(task_type: str, cv_folds: int, groups: Optional[np.ndarray]):
@@ -179,13 +208,14 @@ def _optimize_one_model(
     progress_base: int,
     progress_span: int,
     sample_weight: Optional[np.ndarray] = None,
-) -> tuple[Any, float]:
+) -> OptimizedCandidate:
     """Recherche Optuna (TPE) pour un modèle du registre (Lot 5) — retourne
-    (meilleurs hyperparamètres appliqués à un estimateur non-fit, score de CV
-    moyen).
+    le meilleur estimateur non-fit accompagné de tout ce qu'il faut pour le
+    leaderboard (Lot D) : score de sélection moyen, variance inter-folds et
+    (régression) erreur en unité réelle — voir `OptimizedCandidate`.
 
     `X_raw` est le train BRUT (non préprocessé) : chaque essai construit un
-    `Pipeline(préprocesseur, modèle)` non-fit et le passe à `cross_val_score`,
+    `Pipeline(préprocesseur, modèle)` non-fit et le passe à `cross_validate`,
     qui le clone et le refit à l'intérieur de chaque fold — le préprocesseur
     ne voit donc jamais la portion de validation du fold (Lot A). Ce pattern
     est générique à tout `ModelSpec.build_estimator`, indépendamment du
@@ -194,20 +224,35 @@ def _optimize_one_model(
 
     `sample_weight` (lot déséquilibre, optionnel) : poids par échantillon du
     TRAIN COMPLET (déjà calculé une fois par `train_and_evaluate`), routé vers
-    `model__sample_weight` — `cross_val_score` le découpe lui-même selon les
+    `model__sample_weight` — `cross_validate` le découpe lui-même selon les
     indices de chaque fold (mécanisme natif scikit-learn, vérifié), aucune
     fuite : c'est la même portion de données que celle vue par le fit, juste
     pondérée différemment. Ignoré si `spec.supports_rebalancing` est `False`
     (ex. KNN, voir `ml_registry.py`) — le modèle est alors entraîné sans
-    pondération plutôt que de lever une erreur."""
+    pondération plutôt que de lever une erreur.
+
+    Variance inter-folds + erreur réelle (Lot D, option A) : `cross_validate`
+    remplace `cross_val_score` — MÊME calcul (un fit par fold, aucun fit
+    supplémentaire), mais expose le détail par fold de chaque scorer au lieu
+    de ne renvoyer que la moyenne. Le tableau par fold du score de sélection
+    est stocké sur l'essai Optuna courant (`trial.set_user_attr`) : après la
+    recherche, on relit celui de l'essai GAGNANT plutôt que de le recalculer
+    (`study.best_trial.user_attrs`) — c'est le même calcul déjà fait pendant
+    la recherche, jamais un ré-entraînement. En régression, un second scorer
+    (RMSE) est évalué sur les MÊMES prédictions déjà produites par le fit de
+    chaque fold — pas de coût supplémentaire non plus."""
     algo_name = spec.label(task_type)
-    # Régression : "r2", scoring homogène par nature (tous les régresseurs
-    # produisent une valeur continue). Classification : scorer maison
+    # Régression : "r2" (score de sélection) + RMSE (erreur en unité réelle,
+    # Lot D précision 1 — le R² seul n'est pas lisible pour un BE) — les deux
+    # scorers sont évalués sur le même modèle fit par fold, sans coût
+    # supplémentaire. Classification : scorer maison
     # `_classification_selection_score`, robuste à l'absence de
-    # `predict_proba` (Lot 5, correction 1) — gère elle-même son repli, plus
-    # besoin du try/except externe qui existait pour le scorer texte
-    # `"roc_auc_ovr_weighted"` (celui-ci exigeait `predict_proba` sans repli).
-    scoring = "r2" if task_type == "regression" else _classification_selection_score
+    # `predict_proba` (Lot 5, correction 1) — pas de second scorer demandé
+    # pour ce type de tâche (Lot D, cadrage).
+    if task_type == "regression":
+        scoring: dict[str, Any] = {"score": "r2", "error": "neg_root_mean_squared_error"}
+    else:
+        scoring = {"score": _classification_selection_score}
 
     apply_rebalancing = sample_weight is not None and spec.supports_rebalancing
     fit_params = {"model__sample_weight": sample_weight} if apply_rebalancing else None
@@ -216,10 +261,14 @@ def _optimize_one_model(
         params = spec.hyperparameter_space(trial)
         model = spec.build_estimator(task_type, config.seed, params, False)
         pipeline = Pipeline([("preprocess", clone(preprocessor_template)), ("model", model)])
-        scores = cross_val_score(
+        cv_results = cross_validate(
             pipeline, X_raw, y, cv=cv, groups=groups, scoring=scoring, n_jobs=1, fit_params=fit_params
         )
-        return float(np.mean(scores))
+        fold_scores = cv_results["test_score"]
+        trial.set_user_attr("fold_scores", [float(s) for s in fold_scores])
+        if "test_error" in cv_results:
+            trial.set_user_attr("fold_error_mean", float(np.mean(-cv_results["test_error"])))
+        return float(np.mean(fold_scores))
 
     def on_trial_end(study: optuna.Study, trial: optuna.trial.FrozenTrial) -> None:
         fraction = (trial.number + 1) / config.optuna_trials
@@ -236,7 +285,13 @@ def _optimize_one_model(
     # finale/inférence) — un seul objet construit ici, jamais fit tant que ce
     # candidat n'est pas le gagnant (voir `train_and_evaluate`).
     best_model = spec.build_estimator(task_type, config.seed, study.best_params, True)
-    return best_model, study.best_value
+    best_attrs = study.best_trial.user_attrs
+    return OptimizedCandidate(
+        model=best_model,
+        cv_score=study.best_value,
+        fold_scores=best_attrs.get("fold_scores"),
+        fold_error=best_attrs.get("fold_error_mean"),
+    )
 
 
 def _regression_metrics(y_train, pred_train, y_test, pred_test) -> dict[str, float]:
@@ -653,27 +708,49 @@ def train_and_evaluate(
     # mécanique que le Lot E n'aura qu'à rendre pilotable depuis l'API/l'UI.
     catalog = models_for_task(task_type, subset="default")
 
-    candidates: list[tuple[str, ModelSpec, Any, float]] = []
+    candidates: list[tuple[str, ModelSpec, OptimizedCandidate]] = []
     n_models = len(catalog)
     span_per_model = 65 // n_models  # 5%→70% réparti entre les modèles du catalogue
     for i, spec in enumerate(catalog):
         algo_name = spec.label(task_type)
         base = 5 + i * span_per_model
         progress_cb(f"Optimisation {algo_name}", base)
-        best_model, cv_score = _optimize_one_model(
+        opt = _optimize_one_model(
             spec, split.X_train, y_train, task_type, cv, split.groups_train,
             preprocessor_template, config, progress_cb, base, span_per_model,
             sample_weight=sample_weight,
         )
-        candidates.append((algo_name, spec, best_model, cv_score))
-        logger.info("[Training] %s — score CV = %.4f", algo_name, cv_score)
+        candidates.append((algo_name, spec, opt))
+        logger.info("[Training] %s — score CV = %.4f", algo_name, opt.cv_score)
 
     # Sélection sur la CV, jamais sur le test (voir docstring du module).
     # `winning_spec` conservé pour router l'explainer SHAP sur la bonne
     # famille (Lot 5) — le reste du pipeline (métriques, CQR) reste
     # indépendant du type de modèle, comme avant.
-    algo_name, winning_spec, best_model, cv_score = max(candidates, key=lambda c: c[3])
+    algo_name, winning_spec, winning_opt = max(candidates, key=lambda c: c[2].cv_score)
+    best_model, cv_score = winning_opt.model, winning_opt.cv_score
     progress_cb(f"Modèle retenu : {algo_name} — entraînement final", 72)
+
+    # Leaderboard (Lot D) — TOUS les candidats, triés par score de sélection
+    # décroissant, jamais par accuracy (voir `_classification_selection_score`
+    # et la correction de `_headline_metric`). Construit ici, avant le fit
+    # final, à partir de ce que `_optimize_one_model` a déjà calculé — aucun
+    # ré-entraînement pour produire ce classement.
+    secondary_label = "RMSE (validation croisée)" if task_type == "regression" else None
+    ranked_candidates = sorted(candidates, key=lambda c: c[2].cv_score, reverse=True)
+    all_candidates = [
+        {
+            "algorithm": name,
+            "family": spec.family,
+            "selection_score": opt.cv_score,
+            "is_winner": name == algo_name,
+            "rank": rank,
+            "fold_scores": opt.fold_scores,
+            "secondary_metric": opt.fold_error,
+            "secondary_metric_label": secondary_label if opt.fold_error is not None else None,
+        }
+        for rank, (name, spec, opt) in enumerate(ranked_candidates, start=1)
+    ]
 
     # Artefact de production : fit sur TOUT le train, comme pour n'importe
     # quel modèle final destiné au déploiement (pas de fuite ici, contrairement
@@ -783,4 +860,5 @@ def train_and_evaluate(
         cqr=cqr_result,
         model_card=model_card,
         evaluation=evaluation,
+        all_candidates=all_candidates,
     )

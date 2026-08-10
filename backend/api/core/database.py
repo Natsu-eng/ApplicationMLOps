@@ -75,7 +75,7 @@ def init_db() -> None:
     puis applique les migrations additives connues (voir `_add_column_if_missing`)."""
     # Import local (et non en tête de module) pour éviter l'import circulaire :
     # api.core.models importe déjà `Base` depuis ce fichier.
-    from api.core.models import Dataset, MLModel, Organization, TrainingJob, User  # noqa: F401
+    from api.core.models import Dataset, MLModel, ModelCandidate, Organization, TrainingJob, User  # noqa: F401
 
     Base.metadata.create_all(bind=engine)
     _add_column_if_missing("ml_models", "feature_schema_json", "TEXT")
