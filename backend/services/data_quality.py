@@ -222,7 +222,16 @@ def _detect_class_imbalance(df: pd.DataFrame, target_column: str, task_type: str
 
 def _detect_high_cardinality(df: pd.DataFrame, features: list[str]) -> list[dict[str, Any]]:
     """Colonnes catégorielles uniquement (l'encodage one-hot ne concerne pas
-    le numérique). Coût : O(n) par colonne (nunique)."""
+    le numérique). Coût : O(n) par colonne (nunique).
+
+    `n_estimated_onehot_columns` (transparence) : nombre de colonnes que
+    produirait un encodage one-hot de cette colonne — informatif seulement.
+    Le moteur (`services/ml_training.py`, diagnostic "bad allocation")
+    préserve désormais le résultat sous forme SPARSE jusqu'au fit/predict
+    pour le catalogue par défaut (100% modèles à arbres), donc un nombre
+    élevé ici n'implique plus une explosion mémoire dense comme avant ce
+    correctif — la recommandation reste de retirer un identifiant, mais pour
+    son absence de valeur prédictive, pas (plus) par crainte de saturation."""
     warnings: list[dict[str, Any]] = []
     for col in features:
         try:
@@ -246,12 +255,14 @@ def _detect_high_cardinality(df: pd.DataFrame, features: list[str]) -> list[dict
                     "qu'à une variable réellement prédictive."
                 ),
                 action=(
-                    "Si c'est bien un identifiant, retirez-le des variables utilisées. "
-                    "Sinon, sachez qu'un encodage classique (one-hot) va créer un très "
-                    "grand nombre de colonnes."
+                    "Si c'est bien un identifiant, retirez-le des variables utilisées : "
+                    "il n'apporte aucune valeur prédictive, quelle que soit sa taille."
                 ),
                 columns=[col],
-                details={"n_unique": n_unique, "n_rows": n, "ratio": round(ratio, 4)},
+                details={
+                    "n_unique": n_unique, "n_rows": n, "ratio": round(ratio, 4),
+                    "n_estimated_onehot_columns": n_unique,
+                },
             ))
         except Exception:
             logger.warning("[DataQuality] Détection de cardinalité échouée pour la colonne '%s'", col, exc_info=True)

@@ -102,6 +102,10 @@ def test_high_cardinality_triggers_on_identifier_like_column():
     card = _warnings_with_code(warnings, "cardinalite_excessive")
     assert len(card) == 1
     assert card[0]["columns"] == ["id_client"]
+    # Transparence (diagnostic "bad allocation") : le nombre de colonnes
+    # qu'un one-hot produirait est exposé, informatif — plus une mise en
+    # garde mémoire depuis que le moteur préserve le sparse (voir ml_training.py).
+    assert card[0]["details"]["n_estimated_onehot_columns"] == n
 
 
 def test_high_cardinality_does_not_trigger_on_low_cardinality_column():
