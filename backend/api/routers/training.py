@@ -121,9 +121,17 @@ class PredictionResponse(BaseModel):
 # ── Aides internes ───────────────────────────────────────────────────────────
 
 def _headline_metric(task_type: str, metrics: dict[str, Any]) -> dict[str, Any]:
+    """Métrique mise en avant sur la carte d'historique (`JobCard.tsx`).
+
+    En classification, `accuracy` est trompeuse sur un dataset déséquilibré
+    (un modèle qui ignore la classe rare peut afficher 95 % d'exactitude) —
+    on affiche donc `cv_score`, la métrique RÉELLEMENT utilisée pour
+    départager les candidats (ROC-AUC pondérée, voir
+    `services/ml_training._classification_selection_score`), jamais
+    l'accuracy brute (bug trouvé lors de l'audit leaderboard, Lot D)."""
     if task_type == "regression":
         return {"name": "r2_test", "value": metrics.get("r2_test")}
-    return {"name": "accuracy", "value": metrics.get("accuracy")}
+    return {"name": "cv_score", "value": metrics.get("cv_score")}
 
 
 def _to_summary(job: TrainingJob) -> TrainingJobSummary:

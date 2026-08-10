@@ -11,6 +11,7 @@ import json
 from unittest.mock import patch
 
 from api.core.models import MLModel, TrainingJob
+from api.routers.training import _headline_metric
 
 
 def _register(client, email="owner@bureau.fr", org="Bureau"):
@@ -152,3 +153,26 @@ def test_delete_rejects_cross_organization(mock_queue, client):
     assert resp.status_code == 404
     # toujours là côté organisation A — la tentative de B n'a rien supprimé
     assert client.get(f"/training/jobs/{job['id']}", headers=headers_a).status_code == 200
+
+
+# ── Lot D — carte d'historique : score de sélection, pas l'accuracy brute ──
+
+
+def test_headline_metric_uses_selection_score_not_accuracy_for_classification():
+    """Bug trouvé lors de l'audit leaderboard (Lot D) : sur un dataset
+    déséquilibré, l'accuracy peut afficher un score flatteur alors que le
+    modèle rate systématiquement la classe rare. La carte d'historique doit
+    afficher `cv_score` (le score qui a réellement départagé les candidats,
+    voir `_classification_selection_score`), jamais `accuracy`."""
+    metrics = {"accuracy": 0.95, "cv_score": 0.61, "roc_auc": 0.60}
+    headline = _headline_metric("classification", metrics)
+    assert headline == {"name": "cv_score", "value": 0.61}
+
+
+def test_headline_metric_regression_unchanged():
+    """Fix isolé à la classification (précision explicite du cadrage) — la
+    régression garde r2_test, déjà la bonne métrique (pas de piège
+    d'accuracy en régression)."""
+    metrics = {"r2_test": 0.87, "cv_score": 0.85}
+    headline = _headline_metric("regression", metrics)
+    assert headline == {"name": "r2_test", "value": 0.87}
