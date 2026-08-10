@@ -333,6 +333,9 @@ export interface TrainingJobCreatePayload {
   test_size?: number;
   optuna_trials?: number;
   cv_folds?: number;
+  // Rééquilibrage des classes (lot déséquilibre) — sibling de
+  // feature_engineering, jamais rejoué à l'inférence (voir client.ts).
+  class_rebalancing?: boolean;
 }
 
 export interface HeadlineMetric {

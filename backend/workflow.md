@@ -453,6 +453,64 @@ rouvrir) : clustering et SMOTE hors périmètre ; sélection expert des modèles
 (UI pour activer ExtraTrees/linéaire/SVM/KNN/Naive Bayes) prévue au Lot E,
 la mécanique (`subset`) est prête côté moteur mais pas exposée en API.
 
+## Lot déséquilibre — rééquilibrage des classes par pondération (livré)
+
+Portée stricte : `class_weight`/`sample_weight` (pondération native aux
+modèles), PROPOSÉ à l'utilisateur, jamais appliqué d'office. SMOTE et tout
+rééchantillonnage synthétique restent hors périmètre (fuite-sensible,
+réservés à un lot expert ultérieur). Phase 1 (lecture seule, audit + plan)
+validée avant implémentation ; Phase 2 livrée en 4 commits isolés sur la
+branche `lot-desequilibre-class-weight`.
+
+- [x] **Découverte clé qui a simplifié le lot** : `class_weight="balanced"`
+  (sklearn) est l'équivalent exact de `sample_weight =
+  compute_sample_weight("balanced", y)` passé à `.fit()` — c'est son
+  implémentation interne. Ce mécanisme unique est supporté nativement par
+  sklearn, LightGBM, XGBoost et CatBoost (vérifié par introspection des
+  signatures réellement installées), binaire et multiclasse, sans branche
+  par librairie. Seul **KNN** n'a aucune notion de pondération d'échantillon
+  (vote par plus proches voisins) — GaussianNB, contrairement à l'hypothèse
+  initiale du cadrage, le supporte bien.
+- [x] `services/ml_registry.py` — `ModelSpec.supports_rebalancing: bool`,
+  déclaratif, `True` partout sauf `knn`.
+- [x] `services/ml_training.py` — `TrainingConfig.class_rebalancing`
+  (défaut `False`). Actif en classification : un poids par échantillon du
+  train calculé une seule fois, routé vers `model__sample_weight` pendant
+  la recherche Optuna (`cross_val_score` le découpe lui-même par fold —
+  vérifié empiriquement, aucune fuite) et pour le refit final du modèle
+  retenu, seulement si `supports_rebalancing`. Ignoré en régression.
+  `model_card` expose `class_rebalancing_requested`/`applied` pour la
+  transparence frontend (même pattern que `explainability_status`, Lot 5).
+- [x] API — `TrainingJobCreate.class_rebalancing`, volontairement **sibling**
+  de `feature_engineering` (pas imbriqué dedans) : contrairement à
+  `feature_engineering_json`, ce choix n'est jamais rejoué à l'inférence
+  (il ne modifie que la pondération vue pendant l'entraînement, pas la
+  forme du pipeline) — il transite par `config_json`, aucune migration DB.
+- [x] Frontend — `ClassRebalancingSuggestion.tsx`, même pattern d'approbation
+  que `FeatureEngineeringSuggestions` (Lot 4c : case à cocher, badge
+  "Garde-fou", explication dépliable), branché sur le garde-fou Lot B
+  existant (`desequilibre_classes`, `GET .../quality-check`) — pas de
+  nouvelle détection, message d'arbitrage en langage clair utilisant le
+  ratio réel du dataset.
+
+**Vérifié** :
+
+- Suite pytest complète verte (146 → 152 tests).
+- Routage du `sample_weight` prouvé structurellement (mock de
+  `cross_val_score`) pour un modèle qui le supporte, et absence de
+  transmission pour KNN (pas de crash).
+- Anti-fuite (Lot A) confirmée : split train/test/CV strictement identique
+  avec ou sans le flag.
+- **Preuve empirique que le rééquilibrage agit réellement** (pas seulement
+  câblé) : sur un dataset synthétique déséquilibré (~92/8), activer le
+  rééquilibrage fait passer le rappel de la classe minoritaire de 0,125 à
+  0,625 — au prix attendu d'un rappel global plus faible, l'arbitrage même
+  que le message affiché à l'utilisateur décrit.
+
+**Scope volontairement limité** : SMOTE/rééchantillonnage synthétique hors
+périmètre (lot expert futur) ; réglage de seuil de décision hors périmètre
+(autre lot) ; pas de mode guidé/expert dédié (Lot E).
+
 ## Prochains lots (résumé — détail complet dans le diagnostic de migration et les échanges de cadrage)
 
 | Lot | Contenu | Livrable testable |

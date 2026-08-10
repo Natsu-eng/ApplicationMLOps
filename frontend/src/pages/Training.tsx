@@ -9,6 +9,7 @@ import {
   type TrainingJobSummary,
 } from "../api/client";
 import AppShell from "../components/AppShell";
+import { ClassRebalancingSuggestion } from "../components/training/ClassRebalancingSuggestion";
 import { DataQualityWarnings } from "../components/training/DataQualityWarnings";
 import { FeatureEngineeringSuggestions } from "../components/training/FeatureEngineeringSuggestions";
 import ModelResultModal from "../components/training/ModelResultModal";
@@ -263,6 +264,7 @@ function TrainingForm({
     FeatureEngineeringSpec,
     "upstream" | "pipeline"
   > | null>(null);
+  const [classRebalancing, setClassRebalancing] = useState(false);
 
   async function handleDatasetChange(id: string) {
     setError(null);
@@ -297,6 +299,7 @@ function TrainingForm({
         optuna_trials: optunaTrials,
         test_size: testSize,
         feature_engineering: featureEngineering ?? undefined,
+        class_rebalancing: classRebalancing,
       });
       onJobCreated();
     } catch (err) {
@@ -403,6 +406,15 @@ function TrainingForm({
                   datasetId={datasetId}
                   targetColumn={targetColumn}
                   groupColumn={groupColumn || undefined}
+                />
+              )}
+
+              {targetColumn && datasetId && (
+                <ClassRebalancingSuggestion
+                  datasetId={datasetId}
+                  targetColumn={targetColumn}
+                  groupColumn={groupColumn || undefined}
+                  onChange={setClassRebalancing}
                 />
               )}
 

@@ -141,11 +141,34 @@ sous-ensemble par défaut est d'environ 7 % sur un entraînement réel — les
 nouveaux modèles sont bon marché à entraîner, le temps reste dominé par la
 recherche d'hyperparamètres des boosters, commune aux deux configurations.*
 
+### Lot déséquilibre — rééquilibrer les classes rares, sans y toucher en silence
+
+Quand une classe est nettement plus rare que les autres (ex. 92 %/8 %), un
+modèle peut afficher une bonne exactitude globale tout en ratant
+systématiquement la classe rare — souvent la plus importante à détecter
+(fraude, panne, défaut...). Ce lot ajoute la possibilité de **donner plus de
+poids à la classe rare pendant l'entraînement**, proposée à l'utilisateur
+avec une explication claire de l'arbitrage (rappel de la classe rare ↑,
+fausses alertes sur la classe majoritaire ↑), jamais activée d'office —
+même principe d'approbation que l'ingénierie de variables du Lot 4c.
+
+Techniquement, un seul mécanisme (pondération par échantillon) couvre 8 des
+9 modèles du catalogue de façon uniforme, sans code différent par
+bibliothèque — seul le plus proche voisin (KNN) n'a structurellement aucune
+notion de pondération. Aucune ligne n'est dupliquée ni supprimée : le split
+train/test et la validation croisée restent identiques, seule la
+pondération vue par le modèle change.
+
+*Vérifié sur un cas construit : activer le rééquilibrage fait passer le
+rappel de la classe minoritaire de 12,5 % à 62,5 %, au prix attendu d'un
+rappel global un peu plus faible — l'arbitrage même que le message affiché
+décrit.*
+
 ---
 
 ## Robustesse — pas juste "ça marche chez moi"
 
-- **Tests automatisés** (`backend/tests/`, pytest) : 146 tests qui restent
+- **Tests automatisés** (`backend/tests/`, pytest) : 152 tests qui restent
   dans le dépôt et couvrent l'isolation entre organisations, les
   permissions, l'entraînement réel (pas mocké, y compris sur les 9 modèles
   du catalogue Lot 5), la prédiction, la suppression, l'exploration de
@@ -183,6 +206,7 @@ recherche d'hyperparamètres des boosters, commune aux deux configurations.*
 | Positionnement | Généraliste multi-secteurs | Pas de verrouillage sur un métier particulier dès le départ |
 | Catalogue Lot 3 | 3 algos de boosting seulement au lancement | Permet SHAP + CQR de qualité uniforme le temps de livrer l'architecture par registre (élargi à 9 modèles au Lot 5) |
 | Sélection par défaut Lot 5 | Seuls boosters + RandomForest tournent automatiquement | Modèles plus lents/sensibles (SVM, KNN...) réservés à un mode expert futur (Lot E), pour garder un temps d'entraînement raisonnable par défaut |
+| Rééquilibrage des classes | Pondération (`class_weight`/`sample_weight`), pas de rééchantillonnage (SMOTE) | Le rééchantillonnage synthétique est sensible aux fuites (doit être fait DANS les folds) — réservé à un lot expert dédié ; la pondération est sans risque et couvre déjà la majorité des besoins |
 | Graphiques | Recharts, pas Plotly | Plus léger, thémable à notre design, déjà éprouvé par CIAM |
 | Progression | Polling REST, pas WebSocket | Plus simple à fiabiliser pour ce volume d'événements |
 

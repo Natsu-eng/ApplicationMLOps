@@ -62,6 +62,14 @@ class ModelSpec:
     explainer_kind: ExplainerKind
     requires_scaling: bool  # déclaratif — build_preprocessor scale déjà tout inconditionnellement (Lot 5, Phase 1)
     is_default: bool  # fait partie du sous-ensemble lancé par défaut (stratégie produit "B")
+    # Rééquilibrage des classes (lot déséquilibre) — déclaratif, un seul mécanisme
+    # pour tout le catalogue : `sample_weight` passé à `.fit()`, mathématiquement
+    # équivalent à `class_weight="balanced"` (c'est son implémentation interne
+    # côté sklearn) mais supporté de façon quasi uniforme par sklearn, LightGBM,
+    # XGBoost et CatBoost — pas besoin d'un paramètre différent par famille. Seul
+    # KNN n'a aucune notion de pondération d'échantillon (vote par plus proches
+    # voisins) : False pour lui uniquement (voir `services/ml_training.py`).
+    supports_rebalancing: bool
 
 
 # ── Famille arbres/ensembles — LightGBM / XGBoost / CatBoost ──────────────
@@ -230,6 +238,7 @@ MODEL_REGISTRY: dict[str, ModelSpec] = {
         explainer_kind="tree",
         requires_scaling=False,
         is_default=True,
+        supports_rebalancing=True,
     ),
     "xgboost": ModelSpec(
         id="xgboost",
@@ -241,6 +250,7 @@ MODEL_REGISTRY: dict[str, ModelSpec] = {
         explainer_kind="tree",
         requires_scaling=False,
         is_default=True,
+        supports_rebalancing=True,
     ),
     "catboost": ModelSpec(
         id="catboost",
@@ -252,6 +262,7 @@ MODEL_REGISTRY: dict[str, ModelSpec] = {
         explainer_kind="tree",
         requires_scaling=False,
         is_default=True,
+        supports_rebalancing=True,
     ),
     "random_forest": ModelSpec(
         id="random_forest",
@@ -263,6 +274,7 @@ MODEL_REGISTRY: dict[str, ModelSpec] = {
         explainer_kind="tree",
         requires_scaling=False,
         is_default=True,  # sous-ensemble par défaut, stratégie produit "B" — boosters + RandomForest
+        supports_rebalancing=True,
     ),
     "extra_trees": ModelSpec(
         id="extra_trees",
@@ -274,6 +286,7 @@ MODEL_REGISTRY: dict[str, ModelSpec] = {
         explainer_kind="tree",
         requires_scaling=False,
         is_default=False,  # disponible, activable en mode expert (Lot E)
+        supports_rebalancing=True,
     ),
     "linear_reg": ModelSpec(
         id="linear_reg",
@@ -285,6 +298,7 @@ MODEL_REGISTRY: dict[str, ModelSpec] = {
         explainer_kind="linear",
         requires_scaling=True,
         is_default=False,
+        supports_rebalancing=True,
     ),
     "svm": ModelSpec(
         id="svm",
@@ -296,6 +310,7 @@ MODEL_REGISTRY: dict[str, ModelSpec] = {
         explainer_kind="kernel",
         requires_scaling=True,
         is_default=False,
+        supports_rebalancing=True,
     ),
     "knn": ModelSpec(
         id="knn",
@@ -307,6 +322,10 @@ MODEL_REGISTRY: dict[str, ModelSpec] = {
         explainer_kind="kernel",
         requires_scaling=True,
         is_default=False,
+        # Seul modèle du catalogue sans notion de pondération d'échantillon : le
+        # vote par plus proches voisins n'a pas de paramètre `sample_weight` en
+        # `.fit()` (contrairement à tous les autres, voir docstring `ModelSpec`).
+        supports_rebalancing=False,
     ),
     "naive_bayes": ModelSpec(
         id="naive_bayes",
@@ -323,6 +342,7 @@ MODEL_REGISTRY: dict[str, ModelSpec] = {
         explainer_kind="kernel",
         requires_scaling=True,
         is_default=False,
+        supports_rebalancing=True,
     ),
 }
 
