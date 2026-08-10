@@ -56,6 +56,16 @@ class TrainingJobCreate(BaseModel):
     optuna_trials: Optional[int] = Field(None, ge=3, le=100)
     cv_folds: Optional[int] = Field(None, ge=2, le=10)
     feature_engineering: Optional[FeatureEngineeringConfig] = None
+    # Rééquilibrage des classes (lot déséquilibre) — PROPOSÉ à l'utilisateur sur
+    # la base du garde-fou Lot B (`desequilibre_classes`), jamais appliqué
+    # d'office. Volontairement SIBLING de `feature_engineering`, pas imbriqué
+    # dedans : contrairement à `feature_engineering_json`, ce choix n'est
+    # jamais rejoué à l'inférence (voir `services/ml_inference.py`) — il ne
+    # modifie que la pondération vue par le modèle pendant l'entraînement, pas
+    # la forme du pipeline. Il vit dans `config_json` (comme `optuna_trials`,
+    # `test_size`...), jamais dans `feature_engineering_json`. Ignoré si la
+    # tâche est une régression (concept propre à la classification).
+    class_rebalancing: bool = False
 
 
 class TrainingJobSummary(BaseModel):
@@ -262,6 +272,7 @@ def create_training_job(
         "cqr_alpha": _settings.cqr_alpha,
         "cqr_n_strata": _settings.cqr_n_strata,
         "shap_sample_size": _settings.shap_sample_size,
+        "class_rebalancing": body.class_rebalancing,
     }
 
     job = TrainingJob(
