@@ -9,10 +9,11 @@ import {
   type TrainingJobSummary,
 } from "../../api/client";
 import { Badge } from "../ui/Badge";
-import { BoxPlotChart, type BoxPlotDatum } from "../ui/BoxPlot";
+import { BoxPlotChart } from "../ui/BoxPlot";
 import { Modal } from "../ui/Modal";
 import { LabelWithHelp } from "../ui/Tooltip";
 import { formatMetricValue, formatPercent } from "../../utils/format";
+import { clampUnitScore, foldScoresToBoxPlotDatum } from "../../utils/cvScore";
 import EvaluationCharts from "./EvaluationCharts";
 import PredictionForm from "./PredictionForm";
 
@@ -118,29 +119,6 @@ function ShapBars({ features }: { features: MLModelDetail["shap_summary"] }) {
   );
 }
 
-/** Résumé statistique à 5 chiffres (min/Q1/médiane/Q3/max) à partir des
- * scores par fold de CV — interpolation linéaire (méthode par défaut de
- * numpy.percentile côté backend), pour alimenter BoxPlotChart (Lot B)
- * sans dupliquer un calcul déjà fait ailleurs. */
-function quantile(sorted: number[], q: number): number {
-  const pos = (sorted.length - 1) * q;
-  const base = Math.floor(pos);
-  const rest = pos - base;
-  return sorted[base + 1] !== undefined ? sorted[base] + rest * (sorted[base + 1] - sorted[base]) : sorted[base];
-}
-
-function foldScoresToBoxPlotDatum(name: string, scores: number[]): BoxPlotDatum {
-  const sorted = [...scores].sort((a, b) => a - b);
-  return {
-    name,
-    min: sorted[0],
-    q1: quantile(sorted, 0.25),
-    median: quantile(sorted, 0.5),
-    q3: quantile(sorted, 0.75),
-    max: sorted[sorted.length - 1],
-  };
-}
-
 /** Leaderboard (Lot D) — TOUS les modèles comparés par ce job, pas
  * seulement le gagnant déjà mis en avant plus haut dans la modale.
  * Rétrocompatible par absence : un job antérieur à ce lot n'a aucun
@@ -204,7 +182,9 @@ function Leaderboard({ jobId }: { jobId: number }) {
                   <span className="tabular-nums text-slate-700">{c.secondary_metric.toFixed(2)}</span>
                 </span>
               )}
-              <span className="tabular-nums text-slate-800 font-medium">{c.selection_score.toFixed(3)}</span>
+              <span className="tabular-nums text-slate-800 font-medium">
+                {clampUnitScore(c.selection_score).toFixed(3)}
+              </span>
             </div>
           </div>
         ))}
