@@ -282,3 +282,126 @@ def test_unknown_target_column_raises_keyerror():
     df = pd.DataFrame({"x": [1, 2, 3]})
     with pytest.raises(KeyError):
         analyze_data_quality(df, "inexistante")
+
+
+# ── Colonnes dupliquées (Lot Nettoyage guidé des variables) ─────────────────
+
+
+def test_duplicate_columns_triggers_attention_on_identical_content():
+    df = pd.DataFrame({"a": range(200), "a_copie": range(200), "cible": range(200)})
+    warnings = analyze_data_quality(df, "cible")
+    dup = _warnings_with_code(warnings, "colonnes_dupliquees")
+    assert len(dup) == 1
+    assert dup[0]["level"] == "attention"
+    assert set(dup[0]["columns"]) == {"a", "a_copie"}
+
+
+def test_duplicate_columns_does_not_trigger_on_merely_correlated_columns():
+    rng = np.random.default_rng(10)
+    n = 300
+    x1 = rng.normal(size=n)
+    df = pd.DataFrame({"x1": x1, "x2": x1 * 2 + rng.normal(0, 1e-6, n), "cible": rng.normal(size=n)})
+    warnings = analyze_data_quality(df, "cible")
+    assert _warnings_with_code(warnings, "colonnes_dupliquees") == []
+
+
+def test_duplicate_columns_handles_categorical_content():
+    values = ["a", "b", "c"] * 50
+    df = pd.DataFrame({"cat1": values, "cat2": values, "cible": range(150)})
+    warnings = analyze_data_quality(df, "cible")
+    dup = _warnings_with_code(warnings, "colonnes_dupliquees")
+    assert set(dup[0]["columns"]) == {"cat1", "cat2"}
+
+
+def test_duplicate_columns_reports_each_pair_once_for_three_identical_columns():
+    df = pd.DataFrame({"a": range(100), "b": range(100), "c": range(100), "cible": range(100)})
+    warnings = analyze_data_quality(df, "cible")
+    dup = _warnings_with_code(warnings, "colonnes_dupliquees")
+    # a/b/c strictement identiques : b et c signalés comme doublons de a,
+    # jamais un doublon de doublon (chaque colonne au plus une fois "reported").
+    reported_columns = {c for w in dup for c in w["columns"] if c != "a"}
+    assert reported_columns == {"b", "c"}
+
+
+# ── Numérique mal typé (Lot Nettoyage guidé des variables) ──────────────────
+
+
+def test_mistyped_numeric_triggers_on_comma_decimal_column():
+    n = 200
+    df = pd.DataFrame({"prix": [f"{1000 + i},{i % 100:02d}" for i in range(n)], "cible": range(n)})
+    warnings = analyze_data_quality(df, "cible")
+    mistyped = _warnings_with_code(warnings, "numerique_mal_type")
+    assert len(mistyped) == 1
+    assert mistyped[0]["columns"] == ["prix"]
+    assert mistyped[0]["level"] == "attention"
+
+
+def test_mistyped_numeric_triggers_on_thousands_separator():
+    n = 200
+    df = pd.DataFrame({"montant": [f"1 {200 + i:03d}" for i in range(n)], "cible": range(n)})
+    warnings = analyze_data_quality(df, "cible")
+    assert _warnings_with_code(warnings, "numerique_mal_type") != []
+
+
+def test_mistyped_numeric_does_not_trigger_on_already_numeric_column():
+    df = pd.DataFrame({"prix": [1000.5 + i for i in range(100)], "cible": range(100)})
+    warnings = analyze_data_quality(df, "cible")
+    assert _warnings_with_code(warnings, "numerique_mal_type") == []
+
+
+def test_mistyped_numeric_does_not_trigger_on_identifier_like_text():
+    """Une colonne d'identifiants (aucun signe de formatage numérique) ne
+    doit jamais être proposée à la conversion, même si elle ne contient que
+    des chiffres (ex. codes postaux à zéro non significatif : "01234")."""
+    n = 200
+    df = pd.DataFrame({"code_postal": [f"{i:05d}" for i in range(n)], "cible": range(n)})
+    warnings = analyze_data_quality(df, "cible")
+    assert _warnings_with_code(warnings, "numerique_mal_type") == []
+
+
+def test_mistyped_numeric_does_not_trigger_on_free_text():
+    df = pd.DataFrame({"commentaire": ["bof", "top produit", "rien à dire", "5 étoiles"] * 30})
+    warnings = analyze_data_quality(pd.concat([df, pd.DataFrame({"cible": range(len(df))})], axis=1), "cible")
+    assert _warnings_with_code(warnings, "numerique_mal_type") == []
+
+
+# ── target_column optionnel (Lot Nettoyage guidé des variables) ─────────────
+
+
+def test_analyze_data_quality_without_target_runs_structural_detections_only():
+    n = 200
+    df = pd.DataFrame({
+        "toujours_pareil": [42] * n,
+        "id_client": [f"C{i}" for i in range(n)],
+        "x": range(n),
+    })
+    warnings = analyze_data_quality(df)
+    assert _warnings_with_code(warnings, "colonne_constante") != []
+    assert _warnings_with_code(warnings, "cardinalite_excessive") != []
+
+
+def test_analyze_data_quality_without_target_never_raises_keyerror():
+    df = pd.DataFrame({"x": range(50)})
+    warnings = analyze_data_quality(df, target_column=None)
+    assert isinstance(warnings, list)
+
+
+def test_analyze_data_quality_without_target_skips_leakage_and_imbalance():
+    rng = np.random.default_rng(11)
+    n = 500
+    target = rng.normal(100, 10, n)
+    df = pd.DataFrame({"cible": target, "copie_bruitee": target + rng.normal(0, 0.01, n)})
+    warnings = analyze_data_quality(df)  # aucune cible fournie
+    assert _warnings_with_code(warnings, "fuite_cible") == []
+    assert _warnings_with_code(warnings, "desequilibre_classes") == []
+
+
+def test_analyze_data_quality_with_target_unchanged_behavior():
+    """Non-régression : fournir `target_column` produit exactement le même
+    résultat qu'avant ce lot (fuite/déséquilibre inclus)."""
+    rng = np.random.default_rng(1)
+    n = 500
+    target = rng.normal(100, 10, n)
+    df = pd.DataFrame({"cible": target, "copie_bruitee": target + rng.normal(0, 0.01, n)})
+    warnings = analyze_data_quality(df, "cible")
+    assert _warnings_with_code(warnings, "fuite_cible") != []
