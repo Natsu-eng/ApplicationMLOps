@@ -132,6 +132,53 @@ def test_worker_persists_all_default_catalog_candidates_not_only_winner(db_sessi
     assert sum(r.is_winner for r in rows) == 1
 
 
+def test_worker_respects_model_ids_from_config_json(db_session):
+    """Mode expert (Lot E2), bout en bout via le worker : `config_json`
+    porte `model_ids` comme n'importe quel autre paramètre existant
+    (`optuna_trials`, `cv_folds`...) — vérifie que `TrainingConfig(**config)`
+    le reçoit bien et que seul le sous-ensemble demandé est comparé."""
+    org = Organization(name="Bureau test")
+    db_session.add(org)
+    db_session.flush()
+
+    rng = np.random.default_rng(11)
+    n = 150
+    df = pd.DataFrame({"x": rng.normal(50, 10, n)})
+    df["cible"] = df["x"] * 2 + rng.normal(0, 3, n)
+    csv_path = _write_temp_csv(df)
+
+    dataset = Dataset(
+        organization_id=org.id, name="d.csv", file_path=csv_path, file_size_bytes=1,
+        status="ready", columns_json=json.dumps([{"name": c, "dtype": str(df[c].dtype)} for c in df.columns]),
+    )
+    db_session.add(dataset)
+    db_session.flush()
+
+    job = TrainingJob(
+        organization_id=org.id,
+        dataset_id=dataset.id,
+        task_type="regression",
+        target_column="cible",
+        feature_columns_json=json.dumps(["x"]),
+        config_json=json.dumps({"optuna_trials": 3, "cv_folds": 3, "model_ids": ["extra_trees"]}),
+        status="queued",
+    )
+    db_session.add(job)
+    db_session.commit()
+    db_session.refresh(job)
+
+    run_training_job(job.id)
+
+    db_session.expire_all()
+    refreshed = db_session.query(TrainingJob).filter(TrainingJob.id == job.id).first()
+    assert refreshed.status == "completed"
+
+    rows = db_session.query(ModelCandidate).filter(ModelCandidate.training_job_id == job.id).all()
+    from services.ml_registry import MODEL_REGISTRY
+
+    assert {r.algorithm for r in rows} == {MODEL_REGISTRY["extra_trees"].label("regression")}
+
+
 def test_worker_winner_consistent_between_ml_model_and_candidate_row(db_session):
     """Exigence de cohérence du cadrage Lot D : le gagnant dans `MLModel` et
     la ligne `ModelCandidate` avec `is_winner=True` désignent TOUJOURS le

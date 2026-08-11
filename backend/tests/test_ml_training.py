@@ -547,6 +547,53 @@ def test_default_subset_is_boosters_plus_random_forest(monkeypatch):
     assert set(called_ids) == expected_ids
 
 
+def test_model_ids_restricts_catalog_to_explicit_selection(monkeypatch):
+    """Mode expert (Lot E2) : `TrainingConfig.model_ids` remplace le
+    sous-ensemble par défaut par une sélection explicite du catalogue complet
+    (`subset="all"`) — ici un seul modèle, hors du sous-ensemble par défaut,
+    pour vérifier que ce n'est pas juste un filtre no-op sur "default"."""
+    called_ids: list[str] = []
+    original = ml_training_module._optimize_one_model
+
+    def _tracking(spec, *args, **kwargs):
+        called_ids.append(spec.id)
+        return original(spec, *args, **kwargs)
+
+    monkeypatch.setattr(ml_training_module, "_optimize_one_model", _tracking)
+
+    df = _make_regression_df()
+    split = split_dataset(df, "cible", ["x1", "x2"], "regression", None, 0.2, 42)
+    config = TrainingConfig(optuna_trials=3, cv_folds=3, model_ids=["extra_trees"])
+    train_and_evaluate(split, "regression", config, lambda s, p: None)
+
+    assert called_ids == ["extra_trees"]
+
+
+def test_model_ids_empty_after_filtering_falls_back_to_default_subset(monkeypatch):
+    """Garde-fou défensif : si `model_ids` ne désigne aucun modèle compatible
+    avec la tâche (ne devrait jamais arriver, l'API filtre déjà — voir
+    `routers/training.py`), le moteur retombe sur le sous-ensemble par défaut
+    plutôt que de comparer un catalogue vide."""
+    from services.ml_registry import models_for_task
+
+    called_ids: list[str] = []
+    original = ml_training_module._optimize_one_model
+
+    def _tracking(spec, *args, **kwargs):
+        called_ids.append(spec.id)
+        return original(spec, *args, **kwargs)
+
+    monkeypatch.setattr(ml_training_module, "_optimize_one_model", _tracking)
+
+    df = _make_regression_df()
+    split = split_dataset(df, "cible", ["x1", "x2"], "regression", None, 0.2, 42)
+    config = TrainingConfig(optuna_trials=3, cv_folds=3, model_ids=["id_inexistant"])
+    train_and_evaluate(split, "regression", config, lambda s, p: None)
+
+    expected_ids = {spec.id for spec in models_for_task("regression", "default")}
+    assert set(called_ids) == expected_ids
+
+
 # ── Lot déséquilibre — rééquilibrage des classes par sample_weight ──────────
 
 

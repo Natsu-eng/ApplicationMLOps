@@ -10,6 +10,7 @@ import io
 import json
 from unittest.mock import patch
 
+from api.core.config import get_settings
 from api.core.models import MLModel, ModelCandidate, TrainingJob
 from api.routers.training import _headline_metric
 
@@ -153,6 +154,107 @@ def test_delete_rejects_cross_organization(mock_queue, client):
     assert resp.status_code == 404
     # toujours là côté organisation A — la tentative de B n'a rien supprimé
     assert client.get(f"/training/jobs/{job['id']}", headers=headers_a).status_code == 200
+
+
+# ── Lot E2 — mode guidé/expert : catalogue de modèles + manettes ───────────
+
+
+def test_models_catalog_lists_all_nine_registry_entries(client):
+    headers = _register(client)
+    resp = client.get("/training/models-catalog", headers=headers)
+    assert resp.status_code == 200
+    models = resp.json()["models"]
+    assert len(models) == 9
+
+    default_ids = {m["id"] for m in models if m["is_default"]}
+    assert default_ids == {"lightgbm", "xgboost", "catboost", "random_forest"}
+
+    slow_ids = {m["id"] for m in models if m["slow"]}
+    assert slow_ids == {"svm", "knn"}
+
+    naive_bayes = next(m for m in models if m["id"] == "naive_bayes")
+    assert naive_bayes["supported_tasks"] == ["classification"]
+
+
+@patch("api.routers.training.training_queue")
+def test_create_job_without_expert_fields_uses_unchanged_server_defaults(mock_queue, client, db_session):
+    """Non-régression (Lot E2) : mode expert OFF (aucun champ expert envoyé)
+    doit produire exactement le `config_json` d'avant ce lot — mêmes défauts
+    serveur, `model_ids` absent (sous-ensemble par défaut, inchangé)."""
+    mock_queue.enqueue.return_value.id = "fake-rq-id"
+    headers = _register(client)
+    dataset = _upload_dataset(client, headers)
+    settings = get_settings()
+
+    job = client.post(
+        "/training/jobs", headers=headers, json={"dataset_id": dataset["id"], "target_column": "cible"}
+    ).json()
+
+    job_row = db_session.query(TrainingJob).filter(TrainingJob.id == job["id"]).first()
+    config = json.loads(job_row.config_json)
+    assert config["seed"] == settings.model_seed
+    assert config["cqr_alpha"] == settings.cqr_alpha
+    assert config["cv_folds"] == settings.cv_folds_default
+    assert config["optuna_trials"] == settings.optuna_trials_default
+    assert config["model_ids"] is None
+
+
+@patch("api.routers.training.training_queue")
+def test_create_job_with_expert_fields_threads_them_into_config(mock_queue, client, db_session):
+    mock_queue.enqueue.return_value.id = "fake-rq-id"
+    headers = _register(client)
+    dataset = _upload_dataset(client, headers)
+
+    job = client.post(
+        "/training/jobs",
+        headers=headers,
+        json={
+            "dataset_id": dataset["id"],
+            "target_column": "cible",
+            "seed": 7,
+            "cqr_alpha": 0.1,
+            "cv_folds": 6,
+            "model_ids": ["lightgbm", "extra_trees"],
+        },
+    ).json()
+
+    job_row = db_session.query(TrainingJob).filter(TrainingJob.id == job["id"]).first()
+    config = json.loads(job_row.config_json)
+    assert config["seed"] == 7
+    assert config["cqr_alpha"] == 0.1
+    assert config["cv_folds"] == 6
+    assert config["model_ids"] == ["lightgbm", "extra_trees"]
+
+
+@patch("api.routers.training.training_queue")
+def test_create_job_rejects_unknown_model_id(mock_queue, client):
+    headers = _register(client)
+    dataset = _upload_dataset(client, headers)
+
+    resp = client.post(
+        "/training/jobs",
+        headers=headers,
+        json={"dataset_id": dataset["id"], "target_column": "cible", "model_ids": ["modele_inexistant"]},
+    )
+    assert resp.status_code == 400
+    assert resp.json()["detail"]["code"] == "MODELES_INCONNUS"
+
+
+@patch("api.routers.training.training_queue")
+def test_create_job_rejects_model_ids_incompatible_with_detected_task(mock_queue, client):
+    """Le dataset de `_upload_dataset` est détecté en régression — Naive
+    Bayes (classification uniquement, voir `ml_registry.MODEL_REGISTRY`)
+    n'est donc compatible avec aucune tâche possible ici."""
+    headers = _register(client)
+    dataset = _upload_dataset(client, headers)
+
+    resp = client.post(
+        "/training/jobs",
+        headers=headers,
+        json={"dataset_id": dataset["id"], "target_column": "cible", "model_ids": ["naive_bayes"]},
+    )
+    assert resp.status_code == 400
+    assert resp.json()["detail"]["code"] == "AUCUN_MODELE_COMPATIBLE"
 
 
 # ── Lot D — carte d'historique : score de sélection, pas l'accuracy brute ──
