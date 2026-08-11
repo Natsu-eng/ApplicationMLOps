@@ -159,6 +159,87 @@ def test_delete_rejects_cross_organization(mock_queue, client):
 # ── Lot E2 — mode guidé/expert : catalogue de modèles + manettes ───────────
 
 
+@patch("api.routers.training.training_queue")
+def test_model_endpoint_exposes_global_explainability_fields(mock_queue, client, db_session):
+    mock_queue.enqueue.return_value.id = "fake-rq-id"
+    """GET /training/jobs/{id}/model (Lot Explicabilité globale) : les 4
+    nouveaux champs (beeswarm/permutation/calibration/learning_curve)
+    traversent bien json.dumps (worker) → colonnes DB → json.loads (API) →
+    réponse HTTP, round-trip jamais testé avant ce lot."""
+    headers = _register(client)
+    dataset = _upload_dataset(client, headers)
+    job_id = client.post(
+        "/training/jobs", headers=headers, json={"dataset_id": dataset["id"], "target_column": "cible"}
+    ).json()["id"]
+
+    job = db_session.query(TrainingJob).filter(TrainingJob.id == job_id).first()
+    job.status = "completed"
+    db_session.add(
+        MLModel(
+            organization_id=job.organization_id,
+            training_job_id=job.id,
+            algorithm="LightGBM",
+            task_type="regression",
+            target_column="cible",
+            feature_columns_json=json.dumps(["x1", "x2"]),
+            file_path="unused.joblib",
+            metrics_json=json.dumps({}),
+            shap_beeswarm_json=json.dumps({"global": [{"feature": "x1", "feature_value": 1.0, "shap_value": 0.5}]}),
+            permutation_importance_json=json.dumps([{"feature": "x1", "importance_mean": 0.1, "importance_std": 0.01}]),
+            calibration_json=None,  # régression : non applicable
+            learning_curve_json=json.dumps({"train_sizes": [10, 20], "metric_label": "R²"}),
+        )
+    )
+    db_session.commit()
+
+    resp = client.get(f"/training/jobs/{job_id}/model", headers=headers)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["shap_beeswarm"] == {"global": [{"feature": "x1", "feature_value": 1.0, "shap_value": 0.5}]}
+    assert body["permutation_importance"] == [{"feature": "x1", "importance_mean": 0.1, "importance_std": 0.01}]
+    assert body["calibration"] is None
+    assert body["learning_curve"]["train_sizes"] == [10, 20]
+
+
+@patch("api.routers.training.training_queue")
+def test_model_endpoint_degrades_cleanly_for_pre_lot_jobs(mock_queue, client, db_session):
+    mock_queue.enqueue.return_value.id = "fake-rq-id"
+    """Rétrocompatibilité : un modèle entraîné avant ce lot n'a aucune de ces
+    4 colonnes (NULL) — l'API doit répondre avec des valeurs par défaut
+    ([]/{}/None), jamais une 500 ou un champ manquant côté frontend."""
+    headers = _register(client)
+    dataset = _upload_dataset(client, headers)
+    job_id = client.post(
+        "/training/jobs", headers=headers, json={"dataset_id": dataset["id"], "target_column": "cible"}
+    ).json()["id"]
+
+    job = db_session.query(TrainingJob).filter(TrainingJob.id == job_id).first()
+    job.status = "completed"
+    db_session.add(
+        MLModel(
+            organization_id=job.organization_id,
+            training_job_id=job.id,
+            algorithm="LightGBM",
+            task_type="regression",
+            target_column="cible",
+            feature_columns_json=json.dumps(["x1", "x2"]),
+            file_path="unused.joblib",
+            metrics_json=json.dumps({}),
+            # shap_beeswarm_json/permutation_importance_json/calibration_json/
+            # learning_curve_json omis — NULL, comme un job pré-lot.
+        )
+    )
+    db_session.commit()
+
+    resp = client.get(f"/training/jobs/{job_id}/model", headers=headers)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["shap_beeswarm"] == {}
+    assert body["permutation_importance"] == []
+    assert body["calibration"] is None
+    assert body["learning_curve"] is None
+
+
 def test_models_catalog_lists_all_nine_registry_entries(client):
     headers = _register(client)
     resp = client.get("/training/models-catalog", headers=headers)

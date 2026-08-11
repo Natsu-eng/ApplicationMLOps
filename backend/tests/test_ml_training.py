@@ -89,6 +89,14 @@ def test_multiclass_classification_shap_does_not_crash():
     assert len(matrix) == 3 and all(len(row) == 3 for row in matrix)  # 3 classes
     assert set(result.evaluation["roc_curves"].keys()) == {"0", "1", "2"}
 
+    # Beeswarm SHAP (Lot Explicabilité globale) : même bug potentiel que le
+    # barres (forme 3D vs liste selon la version SHAP) — une série par
+    # classe, jamais une seule "global" trompeuse en multiclasse.
+    assert set(result.shap_beeswarm.keys()) == {"0", "1", "2"}
+    for points in result.shap_beeswarm.values():
+        assert points
+        assert {"feature", "feature_value", "shap_value"} <= points[0].keys()
+
 
 def test_group_anti_leak_split_reflected_in_model_card():
     rng = np.random.default_rng(3)
@@ -401,9 +409,13 @@ def test_shap_kernel_explainer_produces_result_for_small_feature_set():
     y = (X[:, 0] + X[:, 1] > 0).astype(int)
     model = SVC(probability=True, random_state=42).fit(X, y)
 
-    summary = _compute_shap_summary(model, "kernel", X, X[:10], ["f1", "f2", "f3"])
+    summary, beeswarm = _compute_shap_summary(model, "kernel", X, X[:10], ["f1", "f2", "f3"], None)
     assert len(summary) == 3
     assert all(isinstance(entry["importance"], float) for entry in summary)
+    # Beeswarm (Lot Explicabilité globale) — classe positive seule en binaire
+    # ("global"), un point par observation expliquée pour chaque variable.
+    assert set(beeswarm.keys()) == {"global"}
+    assert len(beeswarm["global"]) == 10 * 3
 
 
 def test_explainability_degrades_above_kernel_feature_threshold():
@@ -419,12 +431,13 @@ def test_explainability_degrades_above_kernel_feature_threshold():
         def predict(self, X):
             return np.zeros(len(X))
 
-    shap_summary, status = _compute_explainability(
+    shap_summary, shap_beeswarm, status = _compute_explainability(
         _DummyModel(), "kernel",
         np.zeros((10, n_features)), np.zeros((10, n_features)),
-        feature_names, TrainingConfig(),
+        feature_names, None, TrainingConfig(),
     )
     assert shap_summary == []
+    assert shap_beeswarm == {}
     assert status["status"] == "degraded"
     assert status["message"]  # message non vide, en langage clair (pas de jargon brut)
 
@@ -439,10 +452,11 @@ def test_explainability_degrades_on_unexpected_shap_failure(monkeypatch):
 
     monkeypatch.setattr(ml_training_module, "_compute_shap_summary", _boom)
 
-    shap_summary, status = ml_training_module._compute_explainability(
-        object(), "tree", np.zeros((5, 2)), np.zeros((5, 2)), ["f1", "f2"], TrainingConfig(),
+    shap_summary, shap_beeswarm, status = ml_training_module._compute_explainability(
+        object(), "tree", np.zeros((5, 2)), np.zeros((5, 2)), ["f1", "f2"], None, TrainingConfig(),
     )
     assert shap_summary == []
+    assert shap_beeswarm == {}
     assert status["status"] == "degraded"
     assert status["message"]
 
@@ -454,6 +468,228 @@ def test_model_card_carries_ok_explainability_status_for_tree_models():
     split = split_dataset(df, "cible", ["x1", "x2"], "regression", None, 0.2, 42)
     result = train_and_evaluate(split, "regression", _FAST_CONFIG, lambda s, p: None)
     assert result.model_card["explainability"] == {"status": "ok", "message": None}
+
+
+# ── Lot Explicabilité globale — beeswarm/permutation/calibration/learning curve ──
+
+
+def test_diagnostic_fields_populated_end_to_end_for_regression():
+    """Régression : permutation + courbe d'apprentissage 'ok', calibration
+    explicitement None (non applicable — pas un statut 'degraded', ce n'est
+    juste pas pertinent pour une tâche sans probabilités)."""
+    df = _make_regression_df()
+    split = split_dataset(df, "cible", ["x1", "x2"], "regression", None, 0.2, 42)
+    result = train_and_evaluate(split, "regression", _FAST_CONFIG, lambda s, p: None)
+
+    assert result.model_card["permutation_importance_status"] == {"status": "ok", "message": None}
+    assert result.model_card["learning_curve_status"] == {"status": "ok", "message": None}
+    assert result.model_card["calibration_status"] is None
+    assert result.calibration == {}
+    assert result.permutation_importance
+    assert all(isinstance(f["importance_mean"], float) for f in result.permutation_importance)
+    assert result.learning_curve["train_sizes"]
+    assert len(result.learning_curve["train_sizes"]) == len(result.learning_curve["val_scores_mean"])
+    # Catalogue par défaut = boosters/RandomForest → routage "tree" → jamais vide.
+    assert result.shap_beeswarm
+
+
+def test_diagnostic_fields_populated_end_to_end_for_classification():
+    """Classification : les 4 diagnostics sont 'ok', calibration non vide
+    cette fois (contrairement à la régression)."""
+    df = _make_binary_df()
+    split = split_dataset(df, "cible", ["x1", "x2"], "classification", None, 0.2, 42)
+    result = train_and_evaluate(split, "classification", _FAST_CONFIG, lambda s, p: None)
+
+    assert result.model_card["permutation_importance_status"] == {"status": "ok", "message": None}
+    assert result.model_card["learning_curve_status"] == {"status": "ok", "message": None}
+    assert result.model_card["calibration_status"] == {"status": "ok", "message": None}
+    assert result.calibration
+    for curve in result.calibration.values():
+        assert curve["mean_predicted"]
+        assert len(curve["mean_predicted"]) == len(curve["fraction_positive"])
+    assert result.permutation_importance
+    assert result.learning_curve["train_sizes"]
+    assert result.shap_beeswarm
+
+
+def test_compute_permutation_importance_degrades_on_failure():
+    """Même filet que `_compute_explainability` (Lot 5) : un estimateur
+    incompatible ne fait jamais planter l'entraînement, juste dégrader avec
+    un message clair."""
+    from services.ml_training import _compute_permutation_importance
+
+    summary, status = _compute_permutation_importance(
+        object(), np.zeros((10, 2)), np.zeros(10), ["f1", "f2"], seed=0
+    )
+    assert summary == []
+    assert status["status"] == "degraded"
+    assert status["message"]
+
+
+def test_compute_permutation_importance_survives_catboost_readonly_side_effect():
+    """Bug réel trouvé en test end-to-end (worker, CatBoost gagnant sur un
+    dataset à une seule variable numérique) : `CatBoostRegressor.predict()`
+    passe le tableau numpy à son `Pool` interne SANS copie et le marque
+    lui-même en lecture seule comme effet de bord (comportement propre à
+    CatBoost, reproduit ici indépendamment du pipeline complet) —
+    `permutation_importance` réutilise le MÊME tableau sur `n_repeats`
+    répétitions : la 1re réussit, la 2e lève `ValueError: assignment
+    destination is read-only`, quel que soit l'état d'origine du tableau
+    passé (recopier en amont ne suffisait donc pas). Corrigé en passant un
+    DataFrame à `permutation_importance` (réaffectation de colonne côté
+    pandas, jamais d'écriture in-place dans le buffer verrouillé par
+    CatBoost) — voir le commentaire dans `_compute_permutation_importance`."""
+    from catboost import CatBoostRegressor
+
+    from services.ml_training import _compute_permutation_importance
+
+    rng = np.random.default_rng(4)
+    n = 100
+    X = rng.normal(size=(n, 1))
+    y = X[:, 0] * 2 + rng.normal(0, 0.1, n)
+    model = CatBoostRegressor(verbose=False, random_state=42, iterations=50).fit(X, y)
+
+    # Sanity check de la prémisse du bug — CatBoost verrouille bien le
+    # tableau qu'on lui passe en predict() (sinon ce test ne prouve rien).
+    probe = X.copy()
+    model.predict(probe)
+    assert not probe.flags.writeable
+
+    summary, status = _compute_permutation_importance(model, X, y, ["x"], seed=0)
+    assert status == {"status": "ok", "message": None}
+    assert len(summary) == 1
+
+
+def test_compute_calibration_binary_produces_one_curve():
+    """Binaire : une seule courbe (classe positive), pas une redondante par
+    classe — même convention que le beeswarm SHAP (Lot Explicabilité
+    globale) pour la même raison (symétrie des deux sorties)."""
+    from services.ml_training import _compute_calibration
+
+    rng = np.random.default_rng(0)
+    n = 300
+    y_test = rng.integers(0, 2, n)
+    # Probabilités corrélées à y_test — évite un jeu dégénéré pour calibration_curve.
+    p_pos = np.clip(y_test * 0.6 + rng.uniform(0, 0.35, n), 0.01, 0.99)
+    proba_test = np.column_stack([1 - p_pos, p_pos])
+
+    curves, status = _compute_calibration(y_test, proba_test, ["neg", "pos"])
+    assert status["status"] == "ok"
+    assert set(curves.keys()) == {"pos"}
+    assert len(curves["pos"]["mean_predicted"]) == len(curves["pos"]["fraction_positive"])
+    assert len(curves["pos"]["mean_predicted"]) > 0
+
+
+def test_compute_calibration_multiclass_produces_one_curve_per_present_class():
+    """Multiclasse : une courbe par classe (un-contre-tous), même motif que
+    les courbes ROC/PR multiclasses déjà affichées (Lot E1-ter)."""
+    from services.ml_training import _compute_calibration
+
+    rng = np.random.default_rng(1)
+    n = 300
+    y_test = rng.integers(0, 3, n)
+    class_names = ["a", "b", "c"]
+    # Probabilités corrélées à la vraie classe (pic sur la bonne colonne + bruit).
+    proba_test = np.zeros((n, 3))
+    for i, cls in enumerate(y_test):
+        proba_test[i] = rng.uniform(0, 0.2, 3)
+        proba_test[i, cls] += 0.7
+    proba_test = proba_test / proba_test.sum(axis=1, keepdims=True)
+
+    curves, status = _compute_calibration(y_test, proba_test, class_names)
+    assert status["status"] == "ok"
+    assert set(curves.keys()) == {"a", "b", "c"}
+
+
+def test_compute_calibration_degrades_on_failure(monkeypatch):
+    """Filet générique — un échec inattendu du binning ne doit jamais faire
+    planter l'entraînement (même motif que SHAP/permutation)."""
+
+    def _boom(*args, **kwargs):
+        raise RuntimeError("échec simulé")
+
+    monkeypatch.setattr(ml_training_module, "calibration_curve", _boom)
+
+    curves, status = ml_training_module._compute_calibration(
+        np.array([0, 1, 0, 1]), np.array([[0.6, 0.4], [0.3, 0.7], [0.8, 0.2], [0.2, 0.8]]), ["neg", "pos"],
+    )
+    assert curves == {}
+    assert status["status"] == "degraded"
+    assert status["message"]
+
+
+def test_learning_curve_pipeline_is_never_prefit(monkeypatch):
+    """Preuve structurelle anti-fuite (même motif que
+    `test_cv_estimator_is_pipeline_with_preprocessor_first_step`, Lot A) : la
+    courbe d'apprentissage passe par un Pipeline (préprocesseur cloné, jamais
+    déjà fit) et des données BRUTES (pas encore préprocessées) à
+    `learning_curve` — sklearn refit ce pipeline dans chaque fold/taille,
+    jamais sur le train complet déjà vu par le modèle final."""
+    from sklearn.linear_model import Ridge
+
+    from services.ml_training import _LEARNING_CURVE_TRAIN_SIZES, _compute_learning_curve
+
+    captured: dict = {}
+
+    def fake_learning_curve(estimator, X, y, cv=None, groups=None, train_sizes=None, scoring=None, n_jobs=None, random_state=None):
+        captured["estimator"] = estimator
+        captured["X"] = X
+        captured["train_sizes"] = train_sizes
+        n = len(train_sizes)
+        return (
+            np.array([10] * n),
+            np.full((n, 3), 0.8),
+            np.full((n, 3), 0.75),
+        )
+
+    monkeypatch.setattr(ml_training_module, "learning_curve", fake_learning_curve)
+
+    df = _make_regression_df()
+    split = split_dataset(df, "cible", ["x1", "x2"], "regression", None, 0.2, 42)
+    y_train = split.y_train.to_numpy(dtype=float)
+    preprocessor_template = build_preprocessor(split.X_train)
+    cv = _make_cv("regression", 3, None)
+    config = TrainingConfig(optuna_trials=1, cv_folds=3)
+
+    result, status = _compute_learning_curve(
+        preprocessor_template, Ridge(alpha=1.0), split.X_train, y_train, cv, None, "regression", config,
+    )
+
+    assert status["status"] == "ok"
+    estimator = captured["estimator"]
+    assert isinstance(estimator, Pipeline)
+    assert estimator.steps[0][0] == "preprocess"
+    assert isinstance(estimator.named_steps["preprocess"], ColumnTransformer)
+    assert isinstance(captured["X"], pd.DataFrame)  # jamais déjà préprocessé sur tout le train
+    np.testing.assert_array_equal(captured["train_sizes"], _LEARNING_CURVE_TRAIN_SIZES)
+    assert result["train_sizes"] == [10] * len(_LEARNING_CURVE_TRAIN_SIZES)
+
+
+def test_learning_curve_degrades_on_failure(monkeypatch):
+    """Même filet que les autres diagnostics du lot : un échec du fit ne
+    doit jamais remonter à l'appelant."""
+    from services.ml_training import _compute_learning_curve
+
+    def _boom(*args, **kwargs):
+        raise RuntimeError("échec simulé")
+
+    monkeypatch.setattr(ml_training_module, "learning_curve", _boom)
+
+    df = _make_regression_df()
+    split = split_dataset(df, "cible", ["x1", "x2"], "regression", None, 0.2, 42)
+    y_train = split.y_train.to_numpy(dtype=float)
+    preprocessor_template = build_preprocessor(split.X_train)
+    cv = _make_cv("regression", 3, None)
+    config = TrainingConfig(optuna_trials=1, cv_folds=3)
+
+    from sklearn.linear_model import Ridge
+
+    result, status = _compute_learning_curve(
+        preprocessor_template, Ridge(alpha=1.0), split.X_train, y_train, cv, None, "regression", config,
+    )
+    assert result == {}
+    assert status["status"] == "degraded"
+    assert status["message"]
 
 
 # ── Lot 5 — nouveaux modèles du registre (RandomForest/ExtraTrees/linéaire/SVM/KNN/NaiveBayes) ──
@@ -956,6 +1192,9 @@ def test_linear_explainer_still_works_with_sparse_upstream_input():
     feature_names = list(preprocessor.get_feature_names_out())
     config = TrainingConfig(shap_sample_size=20)
 
-    summary, status = _compute_explainability(model, "linear", X_train_proc, X_test_proc, feature_names, config)
+    summary, beeswarm, status = _compute_explainability(
+        model, "linear", X_train_proc, X_test_proc, feature_names, None, config
+    )
     assert status["status"] == "ok"
     assert len(summary) == len(feature_names)
+    assert set(beeswarm.keys()) == {"global"}

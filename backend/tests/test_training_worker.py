@@ -112,6 +112,75 @@ def test_worker_without_feature_engineering_spec_behaves_as_before(db_session):
     assert "feature_engineering_spec" not in bundle
 
 
+# ── Lot Explicabilité globale — persistance beeswarm/permutation/calibration/learning curve ──
+
+
+def test_worker_persists_global_explainability_fields_for_regression(db_session):
+    """Le calcul seul ne suffit pas : `train_and_evaluate` produit bien
+    `shap_beeswarm`/`permutation_importance`/`learning_curve`, mais avant ce
+    test rien ne vérifiait que le worker les écrit réellement sur `MLModel`
+    (voir `training_worker.py::run_training_job`). `calibration_json` reste
+    NULL en régression — non applicable, pas un statut dégradé."""
+    job = _make_job(db_session, None, feature_columns=["x"])
+
+    run_training_job(job.id)
+
+    db_session.expire_all()
+    model = db_session.query(MLModel).filter(MLModel.training_job_id == job.id).first()
+    assert model.shap_beeswarm_json is not None
+    assert json.loads(model.shap_beeswarm_json)
+    assert model.permutation_importance_json is not None
+    assert json.loads(model.permutation_importance_json)
+    assert model.learning_curve_json is not None
+    assert json.loads(model.learning_curve_json)["train_sizes"]
+    assert model.calibration_json is None
+
+
+def test_worker_persists_calibration_for_classification(db_session):
+    """Pendant de `test_worker_persists_global_explainability_fields_for_regression`
+    côté classification : la calibration doit être écrite (contrairement à la
+    régression, où elle est structurellement absente)."""
+    org = Organization(name="Bureau test")
+    db_session.add(org)
+    db_session.flush()
+
+    rng = np.random.default_rng(3)
+    n = 200
+    df = pd.DataFrame({"x1": rng.normal(size=n), "x2": rng.normal(size=n)})
+    df["cible"] = (df["x1"] + df["x2"] > 0).astype(int)
+    csv_path = _write_temp_csv(df)
+
+    dataset = Dataset(
+        organization_id=org.id, name="d.csv", file_path=csv_path, file_size_bytes=1,
+        status="ready", columns_json=json.dumps([{"name": c, "dtype": str(df[c].dtype)} for c in df.columns]),
+    )
+    db_session.add(dataset)
+    db_session.flush()
+
+    job = TrainingJob(
+        organization_id=org.id,
+        dataset_id=dataset.id,
+        task_type="classification",
+        target_column="cible",
+        feature_columns_json=json.dumps(["x1", "x2"]),
+        config_json=json.dumps({"optuna_trials": 3, "cv_folds": 3}),
+        status="queued",
+    )
+    db_session.add(job)
+    db_session.commit()
+    db_session.refresh(job)
+
+    run_training_job(job.id)
+
+    db_session.expire_all()
+    refreshed = db_session.query(TrainingJob).filter(TrainingJob.id == job.id).first()
+    assert refreshed.status == "completed"
+
+    model = db_session.query(MLModel).filter(MLModel.training_job_id == job.id).first()
+    assert model.calibration_json is not None
+    assert json.loads(model.calibration_json)
+
+
 # ── Lot D — leaderboard : persistance de TOUS les candidats ─────────────────
 
 
