@@ -142,6 +142,13 @@ class MLModelDetail(BaseModel):
     model_card: dict[str, Any]
     evaluation: dict[str, Any] = {}
     feature_engineering: Optional[dict[str, Any]] = None
+    # Lot Explicabilité globale — absents ([]/{}/None) sur les modèles
+    # entraînés avant ce lot (rétrocompat) : le frontend affiche "réentraînez
+    # pour l'obtenir" plutôt que de planter, voir model_card.*_status.
+    shap_beeswarm: dict[str, List[dict[str, Any]]] = {}
+    permutation_importance: List[dict[str, Any]] = []
+    calibration: Optional[dict[str, Any]] = None
+    learning_curve: Optional[dict[str, Any]] = None
     created_at: datetime
 
 
@@ -458,6 +465,10 @@ def get_training_job_model(job_id: int, current_user: User = Depends(get_current
         model_card=json.loads(model.model_card_json) if model.model_card_json else {},
         evaluation=json.loads(model.evaluation_json) if model.evaluation_json else {},
         feature_engineering=json.loads(model.feature_engineering_json) if model.feature_engineering_json else None,
+        shap_beeswarm=json.loads(model.shap_beeswarm_json) if model.shap_beeswarm_json else {},
+        permutation_importance=json.loads(model.permutation_importance_json) if model.permutation_importance_json else [],
+        calibration=json.loads(model.calibration_json) if model.calibration_json else None,
+        learning_curve=json.loads(model.learning_curve_json) if model.learning_curve_json else None,
         created_at=model.created_at,
     )
 

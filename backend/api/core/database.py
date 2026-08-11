@@ -82,6 +82,14 @@ def init_db() -> None:
     _add_column_if_missing("ml_models", "evaluation_json", "TEXT")
     _add_column_if_missing("ml_models", "feature_engineering_json", "TEXT")
     _add_column_if_missing("training_jobs", "feature_engineering_json", "TEXT")
+    # Lot Explicabilité globale — beeswarm SHAP, importance par permutation,
+    # calibration, courbe d'apprentissage. NULL sur les modèles déjà
+    # entraînés (rétrocompat) : le frontend affiche "réentraînez pour
+    # l'obtenir" plutôt que de planter.
+    _add_column_if_missing("ml_models", "shap_beeswarm_json", "TEXT")
+    _add_column_if_missing("ml_models", "permutation_importance_json", "TEXT")
+    _add_column_if_missing("ml_models", "calibration_json", "TEXT")
+    _add_column_if_missing("ml_models", "learning_curve_json", "TEXT")
     logger.info("[DB] Prête (%s)", "SQLite" if _is_sqlite else "PostgreSQL")
 
 

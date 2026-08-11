@@ -176,6 +176,20 @@ class MLModel(Base):
     # fait foi pour le rejeu à l'inférence est celle du bundle joblib, pas
     # celle-ci (voir services/ml_inference.py).
     feature_engineering_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # Explicabilité globale enrichie (Lot Explicabilité globale) — dict
+    # clé=classe ("global" en régression/binaire) → points {feature,
+    # feature_value, shap_value}, réutilisés depuis le même calcul SHAP que
+    # shap_summary_json (pas un second appel à l'explainer).
+    shap_beeswarm_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # Importance par permutation — mesure alternative au SHAP, indépendante
+    # du type de modèle, pour recouper shap_summary_json.
+    permutation_importance_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # Courbe de calibration (reliability diagram) — classification
+    # uniquement, NULL en régression (non applicable, pas dégradé).
+    calibration_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # Courbe d'apprentissage (train-size vs score) — diagnostic de
+    # sur/sous-apprentissage complémentaire à delta_r2/accuracy train-test.
+    learning_curve_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
 
     organization: Mapped["Organization"] = relationship("Organization")

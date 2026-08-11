@@ -162,6 +162,13 @@ def run_training_job(job_id: int) -> None:
                 model_card_json=json.dumps(result.model_card),
                 evaluation_json=json.dumps(result.evaluation),
                 feature_engineering_json=json.dumps(feature_engineering_spec) if feature_engineering_spec else None,
+                # Lot Explicabilité globale — beeswarm/permutation toujours des
+                # dict/list (éventuellement vides si dégradés) ; calibration
+                # peut être None en régression (non applicable, pas dégradé).
+                shap_beeswarm_json=json.dumps(result.shap_beeswarm),
+                permutation_importance_json=json.dumps(result.permutation_importance),
+                calibration_json=json.dumps(result.calibration) if result.calibration else None,
+                learning_curve_json=json.dumps(result.learning_curve) if result.learning_curve else None,
             )
             db.add(ml_model)
 
