@@ -353,6 +353,18 @@ function TrainingForm({
     });
   }
 
+  // Approuver une suggestion d'exclusion (contrôle qualité, étape 2) doit
+  // toujours RETIRER la colonne — jamais un toggle : ré-approuver la même
+  // suggestion (ou "Tout exclure" appelé deux fois) reste sans effet, jamais
+  // une réintégration accidentelle.
+  function excludeFeatures(names: string[]) {
+    setSelectedFeatures((prev) => {
+      const next = new Set(prev);
+      names.forEach((name) => next.delete(name));
+      return next;
+    });
+  }
+
   const selectedDataset = datasets.find((d) => d.id === datasetId);
   const step1Valid = Boolean(datasetId && targetColumn && selectedFeatures.size > 0);
 
@@ -488,7 +500,13 @@ function TrainingForm({
             title="Qualité des données"
             description="Nous avons analysé vos colonnes. Voici ce qu'il faut savoir avant d'entraîner — expliqué simplement."
           >
-            <DataQualityWarnings datasetId={datasetId} targetColumn={targetColumn} groupColumn={groupColumn || undefined} />
+            <DataQualityWarnings
+              datasetId={datasetId}
+              targetColumn={targetColumn}
+              groupColumn={groupColumn || undefined}
+              selectedFeatures={selectedFeatures}
+              onExcludeColumns={excludeFeatures}
+            />
           </StepContent>
         )}
 
