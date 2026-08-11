@@ -44,11 +44,26 @@
   --color-chart-4: oklch(0.72 0.16 65);
   --color-chart-5: oklch(0.58 0.21 25);
 
-  --color-sidebar: oklch(0.99 0.002 260);
-  --color-sidebar-foreground: oklch(0.21 0.03 260);
-  --color-sidebar-accent: oklch(0.955 0.015 250);
-  --color-sidebar-accent-foreground: oklch(0.4 0.09 258);
-  --color-sidebar-border: oklch(0.923 0.006 260);
+  /* Sidebar — fond profond dérivé du bleu de marque (pas un simple gris
+     sombre neutre), plutôt que le blanc quasi invisible d'avant cette refonte
+     (0.99 de luminosité, confondu avec le fond de page --color-canvas juste à
+     côté) : donne à la navigation une vraie identité, cohérente avec le
+     dégradé de marque du logo/auth sans repeindre toute l'app en bleu — seule
+     la colonne de navigation porte la couleur forte, le contenu reste clair.
+     Teinte (258) identique à --color-primary/--color-brand-700, seule la
+     luminosité change : la sidebar est un bleu de marque assombri, pas une
+     couleur concurrente. */
+  --color-sidebar: oklch(0.26 0.05 258);
+  --color-sidebar-foreground: oklch(0.95 0.01 260);
+  --color-sidebar-muted-foreground: oklch(0.72 0.035 258);
+  --color-sidebar-accent: oklch(0.38 0.09 258);
+  --color-sidebar-accent-foreground: oklch(0.98 0.01 260);
+  --color-sidebar-border: oklch(0.34 0.06 258);
+  /* Teinte cyan de marque (pointe du dégradé du logo) réservée aux petits
+     accents de la sidebar (libellé de pilier actif) — pop davantage sur fond
+     sombre qu'un bleu profond, sans devenir un troisième accent concurrent
+     ailleurs dans l'app (usage strictement limité à la sidebar). */
+  --color-sidebar-highlight: oklch(0.83 0.14 200);
 }
 
 /* Fond global — plat, neutre et calme (thème clair). Pas de dégradé vif en

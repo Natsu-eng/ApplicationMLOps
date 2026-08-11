@@ -36,7 +36,7 @@ export default function AppShell({ children, pillarId }: { children: ReactNode; 
             />
           </div>
           <div className="leading-tight min-w-0">
-            <p className="text-[10px] uppercase tracking-widest text-primary font-semibold truncate">DataLab Pro</p>
+            <p className="text-[10px] uppercase tracking-widest text-sidebar-highlight font-semibold truncate">DataLab Pro</p>
             <p className="text-sm text-sidebar-foreground/70 truncate">{user.organization_name}</p>
           </div>
         </Link>
@@ -48,8 +48,8 @@ export default function AppShell({ children, pillarId }: { children: ReactNode; 
           onClick={() => setMobileNavOpen(false)}
           className={`flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
             location.pathname === "/"
-              ? "bg-accent text-accent-foreground"
-              : "text-muted-foreground hover:bg-muted hover:text-foreground"
+              ? "bg-sidebar-accent text-sidebar-accent-foreground"
+              : "text-sidebar-muted-foreground hover:bg-sidebar-accent/50 hover:text-sidebar-foreground"
           }`}
         >
           <Target size={16} strokeWidth={2} className="flex-shrink-0" />
@@ -61,7 +61,7 @@ export default function AppShell({ children, pillarId }: { children: ReactNode; 
             <div className="flex items-center justify-between px-3 pt-5 pb-1.5">
               <span
                 className={`text-[11px] font-semibold tracking-wide uppercase ${
-                  pillar.id === pillarId ? "text-primary" : "text-muted-foreground/80"
+                  pillar.id === pillarId ? "text-sidebar-highlight" : "text-sidebar-muted-foreground/80"
                 }`}
               >
                 {pillar.id === "supervised" ? "ML supervisé" : pillar.id === "unsupervised" ? "ML non supervisé" : "Vision"}
@@ -81,8 +81,8 @@ export default function AppShell({ children, pillarId }: { children: ReactNode; 
                       onClick={() => setMobileNavOpen(false)}
                       className={`flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
                         active
-                          ? "bg-accent text-accent-foreground"
-                          : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                          ? "bg-sidebar-accent text-sidebar-accent-foreground"
+                          : "text-sidebar-muted-foreground hover:bg-sidebar-accent/50 hover:text-sidebar-foreground"
                       }`}
                     >
                       <Icon size={16} strokeWidth={2} className="flex-shrink-0" />
@@ -94,7 +94,7 @@ export default function AppShell({ children, pillarId }: { children: ReactNode; 
                 <Link
                   to={pillar.route}
                   onClick={() => setMobileNavOpen(false)}
-                  className="flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm font-medium text-muted-foreground/60 hover:bg-muted hover:text-muted-foreground transition-colors"
+                  className="flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm font-medium text-sidebar-muted-foreground/50 hover:bg-sidebar-accent/30 hover:text-sidebar-muted-foreground transition-colors"
                 >
                   <pillar.icon size={16} strokeWidth={2} className="flex-shrink-0" />
                   {pillar.title}
@@ -110,13 +110,13 @@ export default function AppShell({ children, pillarId }: { children: ReactNode; 
           <Avatar name={user.nom} size="sm" />
           <div className="flex min-w-0 flex-1 flex-col leading-tight">
             <span className="truncate text-sm font-medium text-sidebar-foreground">{user.nom}</span>
-            <span className="truncate text-xs text-muted-foreground">{user.organization_name}</span>
+            <span className="truncate text-xs text-sidebar-muted-foreground">{user.organization_name}</span>
           </div>
           <button
             onClick={logout}
             aria-label="Déconnexion"
             title="Déconnexion"
-            className="flex-shrink-0 flex items-center justify-center h-7 w-7 rounded-md text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+            className="flex-shrink-0 flex items-center justify-center h-7 w-7 rounded-md text-sidebar-muted-foreground hover:bg-sidebar-accent/50 hover:text-sidebar-foreground transition-colors"
           >
             <LogOut size={14} />
           </button>
