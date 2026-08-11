@@ -25,10 +25,19 @@ from api.routers.auth import get_current_user
 from services.datasets import DatasetParsingError, read_dataframe
 from services.feature_engineering import CURRENT_SPEC_VERSION
 from services.ml_inference import InferenceError, load_bundle, predict_one
+from services.ml_registry import MODEL_REGISTRY
 from services.ml_task import detect_task_type
 from services.ml_training import selection_metric_label
 
 _KNOWN_UPSTREAM_TYPES = {"datetime_decompose", "ratio"}
+
+# Mode expert (Lot E2) : modèles signalés comme lents dans le sélecteur —
+# pas une propriété du registre (`ml_registry.ModelSpec`, purement une
+# question de capacité), simple repère UX. SVC recalcule sa calibration de
+# probabilité au fit final (voir `ml_registry._build_svm`) et KNN doit
+# parcourir tout le jeu d'entraînement à chaque prédiction : les deux
+# ralentissent nettement sur un gros dataset (mesuré au Lot 5).
+_SLOW_MODEL_IDS = frozenset({"svm", "knn"})
 
 router = APIRouter(prefix="/training", tags=["training"])
 _settings = get_settings()
@@ -56,6 +65,15 @@ class TrainingJobCreate(BaseModel):
     test_size: float = Field(0.2, gt=0.05, lt=0.5)
     optuna_trials: Optional[int] = Field(None, ge=3, le=100)
     cv_folds: Optional[int] = Field(None, ge=2, le=10)
+    # Mode expert (Lot E2) — reproductibilité (graine aléatoire) et niveau de
+    # confiance des intervalles CQR (régression uniquement, ignoré sinon).
+    # Absents : comportement strictement inchangé (défauts serveur ci-dessous).
+    seed: Optional[int] = Field(None, ge=0, le=99_999)
+    cqr_alpha: Optional[float] = Field(None, gt=0.0, lt=1.0)
+    # Mode expert (Lot E2) — sous-ensemble du catalogue à comparer (voir
+    # `services/ml_registry.MODEL_REGISTRY`). `None` : sous-ensemble par
+    # défaut (stratégie produit "B"), comportement strictement inchangé.
+    model_ids: Optional[List[str]] = None
     feature_engineering: Optional[FeatureEngineeringConfig] = None
     # Rééquilibrage des classes (lot déséquilibre) — PROPOSÉ à l'utilisateur sur
     # la base du garde-fou Lot B (`desequilibre_classes`), jamais appliqué
@@ -67,6 +85,24 @@ class TrainingJobCreate(BaseModel):
     # `test_size`...), jamais dans `feature_engineering_json`. Ignoré si la
     # tâche est une régression (concept propre à la classification).
     class_rebalancing: bool = False
+
+
+class ModelCatalogEntry(BaseModel):
+    """Une entrée du catalogue de modèles (Lot 5) exposée au mode expert
+    (Lot E2) — `label` régularise Ridge/LogisticRegression et SVR/SVC (même
+    `id` de registre, nom différent selon la tâche) en un seul libellé
+    lisible sans que le frontend ait besoin de connaître la tâche détectée."""
+    id: str
+    label: str
+    family: str
+    is_default: bool
+    supports_rebalancing: bool
+    supported_tasks: List[str]
+    slow: bool
+
+
+class ModelCatalogResponse(BaseModel):
+    models: List[ModelCatalogEntry]
 
 
 class TrainingJobSummary(BaseModel):
@@ -234,6 +270,31 @@ def _get_org_job(job_id: int, current_user: User, db: Session) -> TrainingJob:
 
 # ── Endpoints ────────────────────────────────────────────────────────────────
 
+@router.get("/models-catalog", response_model=ModelCatalogResponse)
+def get_models_catalog(current_user: User = Depends(get_current_user)):
+    """Catalogue complet des 9 modèles du registre (Lot 5), pour le sélecteur
+    du mode expert (Lot E2) — lecture pure du registre, aucun accès dataset :
+    ce n'est pas la tâche (classification/régression) qui filtre ici, elle
+    n'est connue qu'à la création du job (`supported_tasks` permet au
+    frontend de signaler les modèles à usage restreint, ex. Naive Bayes)."""
+    entries = []
+    for spec in MODEL_REGISTRY.values():
+        tasks = sorted(spec.supported_tasks)
+        labels = list(dict.fromkeys(spec.label(t) for t in tasks))
+        entries.append(
+            ModelCatalogEntry(
+                id=spec.id,
+                label=" / ".join(labels),
+                family=spec.family,
+                is_default=spec.is_default,
+                supports_rebalancing=spec.supports_rebalancing,
+                supported_tasks=tasks,
+                slow=spec.id in _SLOW_MODEL_IDS,
+            )
+        )
+    return ModelCatalogResponse(models=entries)
+
+
 @router.post("/jobs", response_model=TrainingJobSummary, status_code=status.HTTP_201_CREATED)
 def create_training_job(
     body: TrainingJobCreate,
@@ -276,6 +337,17 @@ def create_training_job(
             detail={"code": "COLONNE_GROUPE_INTROUVABLE", "message": f"Colonne de groupe '{body.group_column}' absente du dataset"},
         )
 
+    if body.model_ids is not None:
+        unknown_models = set(body.model_ids) - set(MODEL_REGISTRY.keys())
+        if unknown_models:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "code": "MODELES_INCONNUS",
+                    "message": f"Modèles inconnus : {', '.join(sorted(unknown_models))}",
+                },
+            )
+
     feature_engineering_json = _validate_and_serialize_feature_engineering(body.feature_engineering, schema_columns)
 
     try:
@@ -293,15 +365,32 @@ def create_training_job(
             detail={"code": "TACHE_NON_SUPPORTEE", "message": "Seuls classification et régression sont supportés (Lot 3)"},
         )
 
+    # Mode expert (Lot E2) : intersection avec les modèles compatibles avec la
+    # tâche détectée (ex. Naive Bayes est classification uniquement) — la
+    # sélection est faite en amont dans l'UI mais le serveur ne fait jamais
+    # confiance à cette cohérence côté client.
+    selected_model_ids: Optional[List[str]] = None
+    if body.model_ids is not None:
+        selected_model_ids = [m for m in body.model_ids if task_type in MODEL_REGISTRY[m].supported_tasks]
+        if not selected_model_ids:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "code": "AUCUN_MODELE_COMPATIBLE",
+                    "message": f"Aucun des modèles sélectionnés ne supporte cette tâche ({task_type})",
+                },
+            )
+
     config = {
         "test_size": body.test_size,
-        "seed": _settings.model_seed,
+        "seed": body.seed if body.seed is not None else _settings.model_seed,
         "optuna_trials": body.optuna_trials or _settings.optuna_trials_default,
         "cv_folds": body.cv_folds or _settings.cv_folds_default,
-        "cqr_alpha": _settings.cqr_alpha,
+        "cqr_alpha": body.cqr_alpha if body.cqr_alpha is not None else _settings.cqr_alpha,
         "cqr_n_strata": _settings.cqr_n_strata,
         "shap_sample_size": _settings.shap_sample_size,
         "class_rebalancing": body.class_rebalancing,
+        "model_ids": selected_model_ids,
     }
 
     job = TrainingJob(

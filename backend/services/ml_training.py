@@ -121,6 +121,12 @@ class TrainingConfig:
     # (concept propre à la classification). Absent/`False` : comportement
     # strictement inchangé (rétrocompatibilité totale).
     class_rebalancing: bool = False
+    # Mode expert (Lot E2) : identifiants du registre (`ml_registry.MODEL_REGISTRY`)
+    # à comparer, choisis par l'utilisateur dans le catalogue complet. `None` :
+    # comportement strictement inchangé — sous-ensemble par défaut (stratégie
+    # produit "B", `ModelSpec.is_default`), voir `train_and_evaluate`. Validé
+    # et filtré selon la tâche par l'API avant d'arriver ici (`routers/training.py`).
+    model_ids: Optional[list[str]] = None
 
 
 @dataclass
@@ -748,11 +754,19 @@ def train_and_evaluate(
     # Stratégie produit "B" (Lot 5) : par défaut, seul le sous-ensemble
     # robuste/rapide tourne (boosters + RandomForest, `ModelSpec.is_default`)
     # — les modèles sensibles/lents (SVM, KNN, linéaire, Naive Bayes) restent
-    # dans le registre, disponibles mais pas lancés tant que le mode expert
-    # (Lot E) n'expose pas leur activation. Câblé ici en un seul mot
-    # ("default" → "all") sans toucher au reste de la boucle : c'est la
-    # mécanique que le Lot E n'aura qu'à rendre pilotable depuis l'API/l'UI.
-    catalog = models_for_task(task_type, subset="default")
+    # dans le registre, disponibles mais pas lancés sauf activation explicite.
+    # Lot E2 : le mode expert rend ce choix pilotable depuis l'API/l'UI via
+    # `config.model_ids` — absent, comportement strictement inchangé.
+    if config.model_ids:
+        selected_ids = set(config.model_ids)
+        catalog = [spec for spec in models_for_task(task_type, subset="all") if spec.id in selected_ids]
+        if not catalog:
+            # Garde-fou défensif seulement — l'API valide déjà la compatibilité
+            # tâche/modèles avant d'enfiler le job (routers/training.py) ; ce
+            # cas ne devrait jamais se produire en pratique.
+            catalog = models_for_task(task_type, subset="default")
+    else:
+        catalog = models_for_task(task_type, subset="default")
 
     candidates: list[tuple[str, ModelSpec, OptimizedCandidate]] = []
     n_models = len(catalog)
