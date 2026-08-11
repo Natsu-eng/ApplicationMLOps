@@ -13,6 +13,7 @@ import {
   YAxis,
 } from "recharts";
 import type { ModelEvaluation, TaskType } from "../../api/client";
+import { Card } from "../ui/Card";
 import { Heatmap } from "../ui/Heatmap";
 import { LabelWithHelp } from "../ui/Tooltip";
 import {
@@ -46,7 +47,7 @@ export default function EvaluationCharts({
  * s'emmêlent sinon. Clic = masquer/réafficher une classe, survol = mettre
  * les autres en retrait. Un hook par graphe (ROC et PR restent indépendants
  * : isoler une classe sur l'un n'affecte pas l'autre). */
-function useSeriesIsolation() {
+export function useSeriesIsolation() {
   const [hidden, setHidden] = useState<Set<string>>(new Set());
   const [hovered, setHovered] = useState<string | null>(null);
 
@@ -62,7 +63,7 @@ function useSeriesIsolation() {
   return { hidden, hovered, setHovered, toggle };
 }
 
-function IsolatableLegend({ isolation }: { isolation: ReturnType<typeof useSeriesIsolation> }) {
+export function IsolatableLegend({ isolation }: { isolation: ReturnType<typeof useSeriesIsolation> }) {
   return (
     <Legend
       wrapperStyle={{ fontSize: 11, cursor: "pointer" }}
@@ -93,7 +94,7 @@ function ClassificationCharts({ evaluation }: { evaluation: ModelEvaluation }) {
 
   return (
     <>
-      <section>
+      <Card className="p-4">
         <p className="text-xs uppercase tracking-wide text-slate-500 mb-2">
           <LabelWithHelp
             label="Matrice de confusion"
@@ -106,10 +107,10 @@ function ClassificationCharts({ evaluation }: { evaluation: ModelEvaluation }) {
           matrix={evaluation.confusion_matrix ?? []}
           variant="sequential"
         />
-      </section>
+      </Card>
 
       {rocData.length > 0 && (
-        <section>
+        <Card className="p-4">
           <p className="text-xs uppercase tracking-wide text-slate-500 mb-2">
             <LabelWithHelp
               label="Courbe ROC"
@@ -161,11 +162,11 @@ function ClassificationCharts({ evaluation }: { evaluation: ModelEvaluation }) {
               ))}
             </LineChart>
           </ResponsiveContainer>
-        </section>
+        </Card>
       )}
 
       {prData.length > 0 && (
-        <section>
+        <Card className="p-4">
           <p className="text-xs uppercase tracking-wide text-slate-500 mb-2">
             <LabelWithHelp
               label="Courbe précision-rappel"
@@ -216,7 +217,7 @@ function ClassificationCharts({ evaluation }: { evaluation: ModelEvaluation }) {
               ))}
             </LineChart>
           </ResponsiveContainer>
-        </section>
+        </Card>
       )}
     </>
   );
@@ -233,7 +234,7 @@ function RegressionCharts({ evaluation }: { evaluation: ModelEvaluation }) {
 
   return (
     <>
-      <section>
+      <Card className="p-4">
         <p className="text-xs uppercase tracking-wide text-slate-500 mb-2">
           <LabelWithHelp
             label="Prédit vs réel"
@@ -266,9 +267,9 @@ function RegressionCharts({ evaluation }: { evaluation: ModelEvaluation }) {
             <Scatter data={scatterData} fill={CHART_COLOR_PRIMARY} fillOpacity={0.6} isAnimationActive={false} />
           </ScatterChart>
         </ResponsiveContainer>
-      </section>
+      </Card>
 
-      <section>
+      <Card className="p-4">
         <p className="text-xs uppercase tracking-wide text-slate-500 mb-2">
           <LabelWithHelp
             label="Résidus"
@@ -295,7 +296,7 @@ function RegressionCharts({ evaluation }: { evaluation: ModelEvaluation }) {
             <Scatter data={residualData} fill={CHART_COLOR_SECONDARY} fillOpacity={0.6} isAnimationActive={false} />
           </ScatterChart>
         </ResponsiveContainer>
-      </section>
+      </Card>
     </>
   );
 }

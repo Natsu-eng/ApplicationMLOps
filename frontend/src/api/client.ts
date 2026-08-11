@@ -430,6 +430,41 @@ export interface RegressionEvaluation {
 
 export type ModelEvaluation = Partial<ClassificationEvaluation & RegressionEvaluation>;
 
+// Lot Explicabilité globale — un point du beeswarm SHAP : signe + ampleur
+// (shap_value) ET valeur de la variable (feature_value, sert à colorer le
+// point côté frontend) pour une même observation du test.
+export interface ShapBeeswarmPoint {
+  feature: string;
+  feature_value: number;
+  shap_value: number;
+}
+
+// clé = nom de classe ("global" en régression/binaire, une clé par classe en multiclasse)
+export type ShapBeeswarm = Record<string, ShapBeeswarmPoint[]>;
+
+export interface PermutationImportanceFeature {
+  feature: string;
+  importance_mean: number;
+  importance_std: number;
+}
+
+export interface CalibrationCurveData {
+  mean_predicted: number[];
+  fraction_positive: number[];
+}
+
+// clé = nom de classe (une seule clé en binaire, une par classe en multiclasse)
+export type Calibration = Record<string, CalibrationCurveData>;
+
+export interface LearningCurveData {
+  train_sizes: number[];
+  train_scores_mean: number[];
+  train_scores_std: number[];
+  val_scores_mean: number[];
+  val_scores_std: number[];
+  metric_label: string;
+}
+
 export interface MLModelDetail {
   id: number;
   training_job_id: number;
@@ -444,6 +479,12 @@ export interface MLModelDetail {
   model_card: Record<string, unknown>;
   evaluation: ModelEvaluation;
   feature_engineering: FeatureEngineeringSpec | null;
+  // Lot Explicabilité globale — {}/[]/null sur les modèles entraînés avant
+  // ce lot (rétrocompat), jamais absent grâce aux défauts Pydantic côté API.
+  shap_beeswarm: ShapBeeswarm;
+  permutation_importance: PermutationImportanceFeature[];
+  calibration: Calibration | null;
+  learning_curve: LearningCurveData | null;
   created_at: string;
 }
 
