@@ -16,6 +16,9 @@ __pycache__/
 .idea/
 .history/
 
+# Config locale Claude Code — outil, pas code projet
+.claude/
+
 # Streamlit (app historique)
 .streamlit/
 
