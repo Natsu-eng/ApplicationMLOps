@@ -426,7 +426,7 @@ def get_dataset_histogram(
 @router.get("/{dataset_id}/quality-check", response_model=DataQualityResponse)
 def get_dataset_quality_check(
     dataset_id: int,
-    target_column: str,
+    target_column: Optional[str] = None,
     group_column: Optional[str] = None,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -435,7 +435,14 @@ def get_dataset_quality_check(
     dataset par rapport à la colonne cible choisie (fuite, déséquilibre,
     cardinalité...). Calculé à la demande, au moment du choix dataset+cible,
     avant le lancement de l'entraînement — jamais bloquant : on informe,
-    on n'empêche pas."""
+    on n'empêche pas.
+
+    `target_column` optionnel (Lot Nettoyage guidé des variables) : absent,
+    seules les détections structurelles (colonnes constantes, cardinalité
+    excessive, doublons exacts, numérique mal typé, valeurs manquantes,
+    colinéarité) sont renvoyées — permet d'appeler cet endpoint dès
+    l'exploration d'un dataset (page Données/EDA), avant même de choisir une
+    cible pour un entraînement."""
     dataset = _get_org_dataset(dataset_id, current_user, db)
     if dataset.status != "ready":
         raise HTTPException(

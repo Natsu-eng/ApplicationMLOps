@@ -24,7 +24,7 @@ from typing import Any, Optional
 import numpy as np
 import pandas as pd
 
-from services.data_quality import analyze_data_quality
+from services.data_quality import analyze_data_quality, _try_parse_numeric_text
 from services.stats_utils import sample_if_large
 
 CURRENT_SPEC_VERSION = 1
@@ -35,12 +35,20 @@ CURRENT_SPEC_VERSION = 1
 # `validate_spec_version`), jamais une interprétation best-effort qui
 # produirait une prédiction fausse silencieusement.
 
-_UPSTREAM_TRANSFORMATION_TYPES = {"datetime_decompose", "ratio"}
+_UPSTREAM_TRANSFORMATION_TYPES = {"datetime_decompose", "ratio", "numeric_coerce"}
 # Transformations déterministes (ne dépendent d'aucune statistique agrégée) —
 # seules celles-ci sont rejouées par `apply_upstream_feature_engineering`.
 # Les autres types de transformation (`frequency_encoding`, `imputation`)
 # vivent dans `spec["pipeline"]`, consommé par
 # `ml_preprocessing.build_preprocessor`, pas par ce module.
+#
+# `exclude_column` (Lot Nettoyage guidé des variables) n'y figure PAS : ce
+# n'est pas une transformation de pipeline mais un pur repère UI (voir
+# `_suggest_column_exclusion` plus bas) — approuver cette suggestion revient
+# à décocher la colonne dans `TrainingJobCreate.feature_columns`, jamais à
+# l'envoyer dans `spec["upstream"]`. Si elle y apparaissait quand même,
+# `apply_upstream_feature_engineering` lèverait `FeatureEngineeringSpecError`
+# (type inconnu) plutôt que de l'ignorer silencieusement.
 
 # ── Constantes nommées ──────────────────────────────────────────────────────
 
@@ -264,6 +272,118 @@ def apply_ratio_features(
     return result, columns
 
 
+# ── Conversion numérique (Lot Nettoyage guidé des variables) ────────────────
+#
+# Déterministe ligne-à-ligne (chaque valeur est reparsée indépendamment des
+# autres, aucune statistique agrégée) → applicable en amont du split, comme
+# la décomposition datetime et les ratios. Branché sur l'avertissement Lot B
+# `numerique_mal_type` (`services/data_quality.py`) : réutilise EXACTEMENT le
+# même parseur (`_try_parse_numeric_text`) que celui qui a servi à détecter
+# la colonne, pour que la suggestion affichée et la conversion réellement
+# appliquée ne puissent jamais diverger.
+
+
+def suggest_numeric_coercion(quality_warnings: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Suggestions de conversion, une par colonne signalée par le garde-fou
+    Lot B `numerique_mal_type` — ne redétecte rien, ne lit que les colonnes
+    déjà remontées par `data_quality.analyze_data_quality`."""
+    suggestions: list[dict[str, Any]] = []
+    for warning in quality_warnings:
+        if warning.get("code") != "numerique_mal_type" or not warning.get("columns"):
+            continue
+        col = warning["columns"][0]
+        suggestions.append(_suggestion(
+            code="conversion_numerique",
+            title=f"Convertir « {col} » en variable numérique",
+            explanation=(
+                "Cette colonne contient des nombres écrits avec une virgule décimale "
+                "ou un séparateur de milliers, donc traités comme du texte. La "
+                "convertir en nombre lui permet d'être exploitée comme une vraie "
+                "variable numérique plutôt qu'une catégorie sans rapport d'ordre."
+            ),
+            action=f"Convertir « {col} » en nombre.",
+            columns=[col],
+            based_on_warning="numerique_mal_type",
+            transformation={"type": "numeric_coerce", "column": col},
+        ))
+    return suggestions
+
+
+def _apply_one_numeric_coercion(
+    df: pd.DataFrame, feature_columns: list[str], transformation: dict[str, Any]
+) -> tuple[pd.DataFrame, list[str]]:
+    col = transformation["column"]
+    if col not in df.columns:
+        raise FeatureEngineeringSpecError(f"Colonne '{col}' absente du dataset")
+
+    result = df.copy()
+    # Remplace la colonne EN PLACE (même nom, même position dans
+    # `feature_columns`) — contrairement à la décomposition datetime/ratio,
+    # qui créent de nouvelles colonnes : convertir un texte en nombre ne
+    # change pas ce que la colonne représente, seulement son type. Une valeur
+    # qui ne parse pas devient NaN, jamais une exception — reprise ensuite
+    # par l'imputation déjà présente dans le préprocesseur en aval, comme
+    # toute autre valeur manquante.
+    result[col] = result[col].map(lambda v: _try_parse_numeric_text(str(v)) if pd.notna(v) else np.nan)
+    return result, list(feature_columns)
+
+
+def apply_numeric_coercion(
+    df: pd.DataFrame, feature_columns: list[str], transformations: list[dict[str, Any]]
+) -> tuple[pd.DataFrame, list[str]]:
+    """Applique, dans l'ordre, toutes les conversions numériques approuvées
+    (`type == "numeric_coerce"`) de la spec — fonction pure et déterministe,
+    même patron que `apply_datetime_decomposition`/`apply_ratio_features`."""
+    result, columns = df, list(feature_columns)
+    for transformation in transformations:
+        if transformation.get("type") != "numeric_coerce":
+            continue
+        result, columns = _apply_one_numeric_coercion(result, columns, transformation)
+    return result, columns
+
+
+# ── Exclusion de variables — suggestion uniquement, jamais une transformation
+#
+# Contrairement à tout ce qui précède, exclure une colonne ne modifie aucune
+# donnée : c'est une suggestion UI pure, consommée en décochant la colonne
+# dans `TrainingJobCreate.feature_columns` (mécanisme qui existe depuis le
+# Lot 3). Son `transformation` (`{"type": "exclude_column", ...}`) n'apparaît
+# donc JAMAIS dans `spec["upstream"]` — voir la note sur
+# `_UPSTREAM_TRANSFORMATION_TYPES` en tête de module.
+
+_EXCLUSION_WARNING_CODES = {"colonne_constante", "cardinalite_excessive", "colonnes_dupliquees"}
+
+
+def _suggest_column_exclusion(quality_warnings: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Suggestions d'exclusion — une par colonne signalée comme sans valeur
+    prédictive (constante/quasi-constante, cardinalité d'identifiant, ou
+    doublon exact d'une autre colonne, Lot B). Répond à une lacune identifiée
+    à l'usage : ces trois garde-fous recommandaient déjà textuellement de
+    retirer la colonne, sans qu'aucune suggestion actionnable ne relie cette
+    recommandation à la sélection de variables du formulaire d'entraînement."""
+    suggestions: list[dict[str, Any]] = []
+    for warning in quality_warnings:
+        code = warning.get("code")
+        if code not in _EXCLUSION_WARNING_CODES:
+            continue
+        columns = warning.get("columns") or []
+        # Doublon exact : ne suggérer d'exclure que la SECONDE des deux
+        # colonnes (garder au moins une des deux, contenu strictement
+        # identique) — les deux autres codes ne portent qu'une seule colonne.
+        target_cols = columns[1:] if code == "colonnes_dupliquees" and len(columns) == 2 else columns
+        for col in target_cols:
+            suggestions.append(_suggestion(
+                code="exclusion_variable",
+                title=f"Exclure « {col} » des variables utilisées",
+                explanation=warning.get("explanation", ""),
+                action=f"Ne pas utiliser « {col} » pour l'entraînement — elle n'apporte aucune valeur prédictive.",
+                columns=[col],
+                based_on_warning=code,
+                transformation={"type": "exclude_column", "column": col},
+            ))
+    return suggestions
+
+
 # ── Regroupement de fréquence & imputation — suggestions uniquement ─────────
 #
 # Les transformations elles-mêmes (step de `Pipeline` fold-safe) vivent dans
@@ -338,7 +458,9 @@ def suggest_feature_engineering(
     feature_df = df[[c for c in df.columns if c not in excluded]]
 
     suggestions: list[dict[str, Any]] = []
+    suggestions += _suggest_column_exclusion(quality_warnings)
     suggestions += suggest_datetime_columns(feature_df)
+    suggestions += suggest_numeric_coercion(quality_warnings)
     suggestions += suggest_ratio_features(quality_warnings)
     suggestions += _suggest_frequency_encoding(quality_warnings)
     suggestions += _suggest_imputation(quality_warnings, df)
@@ -379,6 +501,10 @@ def apply_upstream_feature_engineering(
     if unknown_types:
         raise FeatureEngineeringSpecError(f"Type(s) de transformation amont inconnu(s) : {sorted(unknown_types)}")
 
-    result, columns = apply_datetime_decomposition(df, feature_columns, upstream)
+    # Coercion numérique appliquée EN PREMIER : un ratio ou une décomposition
+    # datetime référençant une colonne "numérique mal typée" doit voir sa
+    # forme déjà convertie, jamais le texte brut d'origine.
+    result, columns = apply_numeric_coercion(df, feature_columns, upstream)
+    result, columns = apply_datetime_decomposition(result, columns, upstream)
     result, columns = apply_ratio_features(result, columns, upstream)
     return result, columns
