@@ -65,7 +65,9 @@ import pandas as pd
 import shap
 from lightgbm import LGBMRegressor
 from sklearn.base import clone
+from sklearn.calibration import calibration_curve
 from sklearn.compose import ColumnTransformer
+from sklearn.inspection import permutation_importance
 from sklearn.metrics import (
     accuracy_score,
     confusion_matrix,
@@ -86,6 +88,7 @@ from sklearn.model_selection import (
     StratifiedKFold,
     cross_val_score,
     cross_validate,
+    learning_curve,
     train_test_split,
 )
 from sklearn.pipeline import Pipeline
@@ -135,6 +138,14 @@ class TrainedModelResult:
     pipeline_bundle: dict[str, Any]  # tout ce qu'il faut pour ré-inférer : model, preprocessor, cqr, features
     metrics: dict[str, Any]
     shap_summary: list[dict[str, Any]]
+    # Beeswarm SHAP (Lot Explicabilité globale) — dict clé=classe ("global" en
+    # régression/binaire), valeur=liste de points {feature, feature_value,
+    # shap_value}, réutilisés depuis le même calcul que `shap_summary`.
+    shap_beeswarm: dict[str, list[dict[str, Any]]]
+    permutation_importance: list[dict[str, Any]]
+    # Courbe de calibration (classification uniquement) — {} en régression.
+    calibration: dict[str, dict[str, list[float]]]
+    learning_curve: dict[str, Any]
     cqr: Optional[dict[str, Any]]
     model_card: dict[str, Any]
     evaluation: dict[str, Any]  # matrice de confusion+ROC/PR (classif) ou prédit-vs-réel+résidus (régression)
@@ -378,6 +389,41 @@ _KERNEL_SHAP_MAX_FEATURES = 50  # au-delà : SHAP désactivé pour ce modèle, m
 _KERNEL_SHAP_BACKGROUND_SIZE = 50  # points de fond (résumés par k-means pour kernel, échantillonnés pour linear)
 _KERNEL_SHAP_SAMPLE_SIZE = 50  # échantillon expliqué — nettement plus bas que shap_sample_size (tree/linear, rapides)
 
+# ── Beeswarm SHAP (Lot Explicabilité globale) ───────────────────────────────
+# Le beeswarm RÉUTILISE l'explainer et les shap_values déjà calculés par
+# `_compute_shap_summary` pour la barre d'importance — aucun second appel à
+# l'explainer, seulement un sous-échantillonnage des valeurs déjà obtenues
+# (borné en variables ET en points pour garder un payload JSON raisonnable,
+# même sur un `shap_sample_size` de 500).
+_BEESWARM_MAX_FEATURES = 10  # les N variables les plus importantes seulement (même N que top_features)
+_BEESWARM_MAX_SAMPLES = 200  # sous-échantillon du sample déjà expliqué par SHAP, pas un nouveau calcul
+
+# ── Importance par permutation (Lot Explicabilité globale) ─────────────────
+# Mesure alternative à SHAP, indépendante du type de modèle (mesure la chute
+# de score quand une variable est mélangée aléatoirement) — sert à recouper
+# le SHAP, pas à le remplacer. Bornée en coût : sous-échantillon du test et
+# nombre de répétitions limité (le coût croît en n_repeats × n_variables ×
+# taille de l'échantillon).
+_PERMUTATION_MAX_SAMPLES = 500
+_PERMUTATION_N_REPEATS = 5
+
+# ── Courbe de calibration (Lot Explicabilité globale) ───────────────────────
+# Réutilise `proba_test`/`y_test` déjà calculés pour les métriques et les
+# courbes ROC/PR — aucun nouveau calcul de prédiction, seulement un
+# binning. Classification uniquement (nécessite predict_proba).
+_CALIBRATION_N_BINS = 10
+
+# ── Courbe d'apprentissage (Lot Explicabilité globale) ──────────────────────
+# Seul nouveau calcul réellement coûteux de ce lot : refit du modèle gagnant
+# (hyperparamètres déjà figés par Optuna, aucune nouvelle recherche) sur des
+# tailles de train croissantes, avec la MÊME validation croisée (groupée si
+# applicable, Lot A) que celle utilisée pour la sélection du modèle — jamais
+# sur le train complet vu par le modèle final. Coût borné à
+# len(_LEARNING_CURVE_TRAIN_SIZES) × cv_folds fits d'UN SEUL modèle déjà
+# paramétré — nettement moins cher que la recherche Optuna (cv_folds ×
+# optuna_trials × n_modèles), qui domine déjà le temps d'entraînement.
+_LEARNING_CURVE_TRAIN_SIZES = np.linspace(0.2, 1.0, 5)
+
 
 def _build_explainer(explainer_kind: str, estimator: Any, X_train_background: Any):
     """Construit l'explainer SHAP adapté à la famille du modèle gagnant.
@@ -404,39 +450,109 @@ def _build_explainer(explainer_kind: str, estimator: Any, X_train_background: An
     return shap.KernelExplainer(predict_fn, background)
 
 
-def _compute_shap_summary(
-    estimator: Any, explainer_kind: str, X_train_background: np.ndarray, X_sample: np.ndarray, feature_names: list[str]
-) -> list[dict[str, Any]]:
-    """Importance globale des features par SHAP — moyenne des valeurs
-    absolues sur un échantillon du test, quel que soit le type d'explainer
-    routé par `explainer_kind` (Lot 5 : tree/linear/kernel). Le détail par
-    observation (dependence/waterfall) est laissé pour une itération future
-    de la page d'évaluation (Lot 4).
+def _shap_values_per_class(shap_values: Any) -> list[np.ndarray] | np.ndarray:
+    """Normalise la sortie brute de `explainer.shap_values` en une liste de
+    matrices `(n_échantillons, n_features)` (une par classe), ou une matrice
+    2D unique en régression/sortie unique — factorisé depuis
+    `_compute_shap_summary` (Lot 3/5) pour être réutilisé par le beeswarm
+    (Lot Explicabilité globale) sans dupliquer la logique de forme.
 
-    La forme de `shap_values` en classification multiclasse dépend de la
-    version de SHAP/du backend et de l'explainer : soit une liste d'une
-    matrice (n_échantillons, n_features) par classe (API historique), soit un
-    seul tableau (n_échantillons, n_features, n_classes) (API unifiée
-    récente) — `KernelExplainer` sur `predict_proba` produit des formes
-    analogues à `TreeExplainer` en multiclasse. Les deux sont gérées — bug
-    réel rencontré en test (classification 3 classes, Lot 3) : sans ce second
-    cas, `mean_abs` restait 2D et l'indexation par une ligne entière au lieu
-    d'un scalaire levait `only integer scalar arrays can be converted to a
-    scalar index`.
-    """
+    La forme dépend de la version de SHAP/du backend et de l'explainer :
+    soit une liste d'une matrice par classe (API historique), soit un seul
+    tableau `(n_échantillons, n_features, n_classes)` (API unifiée récente)
+    — bug réel rencontré en test (classification 3 classes, Lot 3) sans
+    cette normalisation."""
+    if isinstance(shap_values, list):
+        return [np.asarray(sv) for sv in shap_values]
+    arr = np.asarray(shap_values)
+    if arr.ndim == 3:  # (n_échantillons, n_features, n_classes)
+        return [arr[:, :, k] for k in range(arr.shape[2])]
+    return arr  # 2D — régression ou classification à une seule sortie
+
+
+def _build_beeswarm(
+    class_matrices: list[np.ndarray] | np.ndarray,
+    X_sample: Any,  # même échantillon (espace préprocessé) que celui passé à l'explainer
+    feature_names: list[str],
+    class_names: Optional[list[str]],
+    importance_order: np.ndarray,
+) -> dict[str, list[dict[str, Any]]]:
+    """Construit les points du beeswarm à partir des shap_values DÉJÀ
+    calculés par `_compute_shap_summary` — aucun second appel à l'explainer.
+    Un point = (variable, valeur de la variable, valeur SHAP) : le signe et
+    l'ampleur de `shap_value` donnent la direction et la force de l'effet, la
+    couleur front-end de `feature_value` (normalisée par variable) montre si
+    c'est une valeur basse ou haute qui pousse dans ce sens — c'est ce que le
+    barres (moyenne des |valeurs|) ne montre pas.
+
+    Bornée à `_BEESWARM_MAX_FEATURES` variables (les plus importantes) et
+    `_BEESWARM_MAX_SAMPLES` points par variable (sous-échantillon de
+    l'échantillon SHAP déjà borné par `config.shap_sample_size`/
+    `_KERNEL_SHAP_SAMPLE_SIZE`) — garde un payload JSON raisonnable même à
+    500 points × 10 variables.
+
+    Classification binaire : les deux sorties d'une liste à 2 classes sont
+    exactement opposées (SHAP(classe 0) = -SHAP(classe 1)) — ne garder que la
+    classe positive (`global`) évite une section redondante. Multiclasse
+    (>2 classes) : un beeswarm par classe (dict, même motif que
+    `roc_curves`/`pr_curves`), le frontend propose un sélecteur."""
+    top_idx = importance_order[:_BEESWARM_MAX_FEATURES]
+    X_top = X_sample[:, top_idx]
+    X_top = X_top.toarray() if hasattr(X_top, "toarray") else np.asarray(X_top)
+
+    n_samples = X_top.shape[0]
+    if n_samples > _BEESWARM_MAX_SAMPLES:
+        row_idx = np.random.default_rng(0).choice(n_samples, _BEESWARM_MAX_SAMPLES, replace=False)
+    else:
+        row_idx = np.arange(n_samples)
+
+    def series_for(matrix: np.ndarray) -> list[dict[str, Any]]:
+        matrix_top = matrix[:, top_idx]
+        points: list[dict[str, Any]] = []
+        for col_pos, j in enumerate(top_idx):
+            feature = feature_names[j]
+            for row in row_idx:
+                points.append({
+                    "feature": feature,
+                    "feature_value": float(X_top[row, col_pos]),
+                    "shap_value": float(matrix_top[row, col_pos]),
+                })
+        return points
+
+    if isinstance(class_matrices, list) and len(class_matrices) > 2:
+        names = class_names or [str(i) for i in range(len(class_matrices))]
+        return {name: series_for(mat) for name, mat in zip(names, class_matrices)}
+    if isinstance(class_matrices, list):
+        return {"global": series_for(class_matrices[-1])}  # binaire : classe positive seulement
+    return {"global": series_for(class_matrices)}
+
+
+def _compute_shap_summary(
+    estimator: Any,
+    explainer_kind: str,
+    X_train_background: np.ndarray,
+    X_sample: np.ndarray,
+    feature_names: list[str],
+    class_names: Optional[list[str]],
+) -> tuple[list[dict[str, Any]], dict[str, list[dict[str, Any]]]]:
+    """Importance globale des features par SHAP : barres (moyenne des
+    valeurs absolues, Lot 3/5) ET beeswarm (distribution signée, Lot
+    Explicabilité globale) — calculés à partir du MÊME appel à l'explainer,
+    quel que soit le type routé par `explainer_kind` (tree/linear/kernel).
+    Le détail par observation individuelle (waterfall) est laissé pour
+    l'explicabilité LOCALE, un lot dédié séparé."""
     explainer = _build_explainer(explainer_kind, estimator, X_train_background)
     shap_values = explainer.shap_values(X_sample)
-    if isinstance(shap_values, list):
-        abs_values = np.mean([np.abs(sv) for sv in shap_values], axis=0)
+    class_matrices = _shap_values_per_class(shap_values)
+    if isinstance(class_matrices, list):
+        abs_values = np.mean([np.abs(m) for m in class_matrices], axis=0)
     else:
-        shap_values = np.asarray(shap_values)
-        if shap_values.ndim == 3:  # (n_échantillons, n_features, n_classes)
-            abs_values = np.abs(shap_values).mean(axis=2)
-        else:
-            abs_values = np.abs(shap_values)
+        abs_values = np.abs(class_matrices)
     mean_abs = abs_values.mean(axis=0)
     order = np.argsort(mean_abs)[::-1]
-    return [{"feature": feature_names[i], "importance": float(mean_abs[i])} for i in order]
+    bar_summary = [{"feature": feature_names[i], "importance": float(mean_abs[i])} for i in order]
+    beeswarm = _build_beeswarm(class_matrices, X_sample, feature_names, class_names, order)
+    return bar_summary, beeswarm
 
 
 def _compute_explainability(
@@ -445,13 +561,15 @@ def _compute_explainability(
     X_train_proc: Any,  # ndarray ou scipy.sparse — voir note densification ci-dessous
     X_test_proc: Any,
     feature_names: list[str],
+    class_names: Optional[list[str]],
     config: TrainingConfig,
-) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    """Calcule le résumé SHAP du modèle gagnant, ou dégrade proprement —
-    jamais de plantage du job et jamais une section qui disparaît sans
-    explication (Lot 5) : `explainability_status` (à afficher côté UI, pas
-    seulement stocké) porte toujours un statut + un message clair en cas de
-    dégradation.
+) -> tuple[list[dict[str, Any]], dict[str, list[dict[str, Any]]], dict[str, Any]]:
+    """Calcule le résumé SHAP (barres + beeswarm) du modèle gagnant, ou
+    dégrade proprement — jamais de plantage du job et jamais une section qui
+    disparaît sans explication (Lot 5) : `explainability_status` (à afficher
+    côté UI, pas seulement stocké) porte toujours un statut + un message
+    clair en cas de dégradation, PARTAGÉ par les deux visualisations (même
+    cause, même explainer).
 
     `KernelExplainer` (routage "kernel" — SVM/KNN/Naive Bayes) est borné
     (fond et échantillon réduits, voir constantes ci-dessus) et désactivé
@@ -475,7 +593,7 @@ def _compute_explainability(
     """
     n_features = len(feature_names)
     if explainer_kind == "kernel" and n_features > _KERNEL_SHAP_MAX_FEATURES:
-        return [], {
+        return [], {}, {
             "status": "degraded",
             "message": (
                 "L'explication détaillée des prédictions n'est pas disponible pour ce type de "
@@ -499,15 +617,167 @@ def _compute_explainability(
         X_sample = np.asarray(X_sample.todense()) if hasattr(X_sample, "todense") else np.asarray(X_sample)
 
     try:
-        shap_summary = _compute_shap_summary(
-            estimator, explainer_kind, X_background, X_sample, feature_names
+        shap_summary, shap_beeswarm = _compute_shap_summary(
+            estimator, explainer_kind, X_background, X_sample, feature_names, class_names
         )
-        return shap_summary, {"status": "ok", "message": None}
+        return shap_summary, shap_beeswarm, {"status": "ok", "message": None}
     except Exception as exc:  # dernier filet — l'explicabilité ne doit jamais faire échouer l'entraînement
         logger.warning("[Training] Calcul SHAP dégradé (explainer=%s) : %s", explainer_kind, exc)
-        return [], {
+        return [], {}, {
             "status": "degraded",
             "message": "L'explication détaillée n'a pas pu être calculée pour ce modèle sur ce jeu de données.",
+        }
+
+
+def _compute_permutation_importance(
+    estimator: Any, X_test_proc: Any, y_test: np.ndarray, feature_names: list[str], seed: int
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Importance par permutation — mesure alternative au SHAP, indépendante
+    du type de modèle (mesure la chute du score de l'estimateur quand une
+    variable est mélangée aléatoirement dans le jeu de test). `scoring=None`
+    utilise `estimator.score` (accuracy en classification, R² en régression
+    — cohérent avec les métriques déjà affichées). Bornée en coût
+    (`_PERMUTATION_MAX_SAMPLES`/`_PERMUTATION_N_REPEATS`) : dégrade proprement
+    plutôt que de faire échouer l'entraînement (même filet que SHAP)."""
+    try:
+        n = X_test_proc.shape[0]
+        rng = np.random.default_rng(seed)
+        idx = rng.choice(n, size=min(_PERMUTATION_MAX_SAMPLES, n), replace=False)
+        X_sub = X_test_proc[idx]
+        X_sub = X_sub.toarray() if hasattr(X_sub, "toarray") else np.asarray(X_sub)
+        # `permutation_importance` mélange une colonne PUIS restaure l'originale
+        # en réassignant dans le MÊME tableau numpy, réutilisé sur les
+        # `n_repeats` répétitions. Bug réel trouvé en test (CatBoost gagnant,
+        # dataset à une seule variable) : `CatBoostRegressor.predict()` passe
+        # le tableau numpy à son `Pool` interne SANS copie et le marque
+        # lui-même en lecture seule comme effet de bord — la 1re répétition
+        # réussit, la 2e lève `ValueError: assignment destination is
+        # read-only`, quel que soit l'état d'origine de `X_test_proc`
+        # (recopier en amont ne suffit donc pas). Passer un DataFrame évite le
+        # problème à la racine : la branche pandas de sklearn réaffecte une
+        # COLONNE (nouveau bloc interne), jamais une écriture in-place dans le
+        # buffer numpy que CatBoost a verrouillé.
+        X_sub = pd.DataFrame(X_sub, columns=feature_names)
+        y_sub = np.asarray(y_test)[idx]
+        result = permutation_importance(
+            estimator, X_sub, y_sub, n_repeats=_PERMUTATION_N_REPEATS, random_state=seed, n_jobs=1
+        )
+        order = np.argsort(result.importances_mean)[::-1]
+        summary = [
+            {
+                "feature": feature_names[i],
+                "importance_mean": float(result.importances_mean[i]),
+                "importance_std": float(result.importances_std[i]),
+            }
+            for i in order
+        ]
+        return summary, {"status": "ok", "message": None}
+    except Exception as exc:
+        logger.warning("[Training] Importance par permutation dégradée : %s", exc)
+        return [], {
+            "status": "degraded",
+            "message": "L'importance par permutation n'a pas pu être calculée pour ce modèle sur ce jeu de données.",
+        }
+
+
+def _compute_calibration(
+    y_test: np.ndarray, proba_test: np.ndarray, class_names: list[str]
+) -> tuple[dict[str, dict[str, list[float]]], dict[str, Any]]:
+    """Courbe de calibration (reliability diagram) — le modèle est-il "sûr à
+    raison" ? Compare la probabilité prédite moyenne par tranche à la
+    fréquence réelle observée dans cette tranche. RÉUTILISE `proba_test`/
+    `y_test` déjà calculés pour les métriques et les courbes ROC/PR — le
+    jeu de test n'a jamais été vu par le modèle pendant l'entraînement,
+    aucun risque de fuite propre à ce calcul.
+
+    `strategy="quantile"` (tranches à effectif égal) plutôt que `"uniform"` :
+    évite les tranches vides quand les probabilités prédites sont
+    concentrées, courant sur un modèle déjà bien discriminant. Multiclasse :
+    une courbe par classe, en un-contre-tous — même motif que
+    `_compute_classification_evaluation` (ROC/PR)."""
+    try:
+        curves: dict[str, dict[str, list[float]]] = {}
+        if len(class_names) == 2:
+            frac_pos, mean_pred = calibration_curve(
+                y_test, proba_test[:, 1], n_bins=_CALIBRATION_N_BINS, strategy="quantile"
+            )
+            curves[class_names[1]] = {"mean_predicted": mean_pred.tolist(), "fraction_positive": frac_pos.tolist()}
+        else:
+            labels = list(range(len(class_names)))
+            y_bin = label_binarize(y_test, classes=labels)
+            for i, name in enumerate(class_names):
+                if y_bin[:, i].sum() == 0:  # classe absente du test (jeu de test réduit) — pas de courbe pour elle
+                    continue
+                frac_pos, mean_pred = calibration_curve(
+                    y_bin[:, i], proba_test[:, i], n_bins=_CALIBRATION_N_BINS, strategy="quantile"
+                )
+                curves[name] = {"mean_predicted": mean_pred.tolist(), "fraction_positive": frac_pos.tolist()}
+        return curves, {"status": "ok", "message": None}
+    except Exception as exc:
+        logger.warning("[Training] Courbe de calibration dégradée : %s", exc)
+        return {}, {
+            "status": "degraded",
+            "message": "La courbe de calibration n'a pas pu être calculée pour ce modèle sur ce jeu de données.",
+        }
+
+
+def _compute_learning_curve(
+    preprocessor_template: ColumnTransformer,
+    best_model: Any,
+    X_train_raw: pd.DataFrame,
+    y_train: np.ndarray,
+    cv: Any,
+    groups_train: Optional[np.ndarray],
+    task_type: str,
+    config: TrainingConfig,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Courbe d'apprentissage (train-size vs score) — le modèle
+    bénéficierait-il de plus de données ? Diagnostic de sur/sous-
+    apprentissage complémentaire à `delta_r2`/`accuracy` train-test : ici,
+    plusieurs TAILLES de train, chacune évaluée par la MÊME validation
+    croisée (groupée si applicable, Lot A) que celle utilisée pour la
+    sélection du modèle — jamais le train complet vu par le modèle final.
+
+    `clone(best_model)` : les hyperparamètres du modèle gagnant sont déjà
+    figés par Optuna, aucune nouvelle recherche ici — seul le nombre de fits
+    (`_LEARNING_CURVE_TRAIN_SIZES` × `cv_folds`) est nouveau, d'UN SEUL
+    modèle déjà paramétré (borné, voir la constante). Le préprocesseur est
+    cloné à l'intérieur du pipeline, donc refit à chaque taille/fold — jamais
+    fit en amont (même garantie anti-fuite que `_optimize_one_model`).
+
+    Classification : `scoring=_classification_selection_score`, le même
+    scorer que celui qui a choisi le modèle (cohérent avec `cv_score`).
+    Régression : `scoring=None` → `estimator.score` (R²), cohérent avec
+    `r2_test`. Le rééquilibrage des classes (`sample_weight`) n'est pas
+    reproduit ici — diagnostic de variance/volume de données, pas une
+    reproduction exacte de l'entraînement final."""
+    try:
+        pipeline = Pipeline([("preprocess", clone(preprocessor_template)), ("model", clone(best_model))])
+        scorer = _classification_selection_score if task_type == "classification" else None
+        train_sizes_abs, train_scores, val_scores = learning_curve(
+            pipeline,
+            X_train_raw,
+            y_train,
+            cv=cv,
+            groups=groups_train,
+            train_sizes=_LEARNING_CURVE_TRAIN_SIZES,
+            scoring=scorer,
+            n_jobs=1,
+            random_state=config.seed,
+        )
+        return {
+            "train_sizes": [int(n) for n in train_sizes_abs],
+            "train_scores_mean": train_scores.mean(axis=1).tolist(),
+            "train_scores_std": train_scores.std(axis=1).tolist(),
+            "val_scores_mean": val_scores.mean(axis=1).tolist(),
+            "val_scores_std": val_scores.std(axis=1).tolist(),
+            "metric_label": selection_metric_label(task_type),
+        }, {"status": "ok", "message": None}
+    except Exception as exc:
+        logger.warning("[Training] Courbe d'apprentissage dégradée : %s", exc)
+        return {}, {
+            "status": "degraded",
+            "message": "La courbe d'apprentissage n'a pas pu être calculée pour ce modèle sur ce jeu de données.",
         }
 
 
@@ -857,8 +1127,24 @@ def train_and_evaluate(
         evaluation = _compute_classification_evaluation(y_test, pred_test, proba_test, class_names or [])
 
     progress_cb("Calcul de l'explicabilité (SHAP)", 78)
-    shap_summary, explainability_status = _compute_explainability(
-        best_model, winning_spec.explainer_kind, X_train_proc, X_test_proc, feature_names, config
+    shap_summary, shap_beeswarm, explainability_status = _compute_explainability(
+        best_model, winning_spec.explainer_kind, X_train_proc, X_test_proc, feature_names, class_names, config
+    )
+
+    progress_cb("Importance par permutation", 82)
+    permutation_summary, permutation_status = _compute_permutation_importance(
+        best_model, X_test_proc, y_test, feature_names, config.seed
+    )
+
+    calibration: dict[str, dict[str, list[float]]] = {}
+    calibration_status: Optional[dict[str, Any]] = None
+    if task_type == "classification":
+        progress_cb("Courbe de calibration", 85)
+        calibration, calibration_status = _compute_calibration(y_test, proba_test, class_names or [])
+
+    progress_cb("Courbe d'apprentissage", 87)
+    learning_curve_result, learning_curve_status = _compute_learning_curve(
+        preprocessor_template, best_model, split.X_train, y_train, cv, split.groups_train, task_type, config
     )
 
     cqr_result: Optional[dict[str, Any]] = None
@@ -902,8 +1188,18 @@ def train_and_evaluate(
         "top_features": shap_summary[:10],
         # Statut d'explicabilité (Lot 5) — "ok" ou "degraded" + message FR
         # clair. Doit être AFFICHÉ côté frontend quand dégradé, pas
-        # seulement stocké (voir ModelResultModal.tsx).
+        # seulement stocké (voir ModelResultModal.tsx). Partagé par le
+        # barres ET le beeswarm (Lot Explicabilité globale) — même calcul,
+        # même cause de dégradation éventuelle.
         "explainability": explainability_status,
+        # Lot Explicabilité globale — chaque nouveau diagnostic porte son
+        # propre statut ("ok"/"degraded" + message FR), même motif que
+        # `explainability`. Absence de clé (job antérieur à ce lot) : le
+        # frontend affiche "réentraînez pour l'obtenir", jamais un crash
+        # (voir `isExplainabilityStatus` côté ModelResultModal.tsx).
+        "permutation_importance_status": permutation_status,
+        "calibration_status": calibration_status,  # None en régression (non applicable, pas dégradé)
+        "learning_curve_status": learning_curve_status,
     }
 
     bundle: dict[str, Any] = {
@@ -922,6 +1218,10 @@ def train_and_evaluate(
         pipeline_bundle=bundle,
         metrics=metrics,
         shap_summary=shap_summary,
+        shap_beeswarm=shap_beeswarm,
+        permutation_importance=permutation_summary,
+        calibration=calibration,
+        learning_curve=learning_curve_result,
         cqr=cqr_result,
         model_card=model_card,
         evaluation=evaluation,
