@@ -245,6 +245,43 @@ que ce que voit l'utilisateur reste toujours entre 0 et 1.
 navigateur disponible dans cet environnement de travail ; une revue visuelle
 page par page reste à faire.*
 
+### Lot E2 — Mode guidé / mode expert
+
+Le Lot 5 avait construit un catalogue de 9 modèles et des paramètres
+(nombre de blocs de validation croisée, graine aléatoire, niveau de
+confiance des intervalles) déjà fonctionnels côté moteur, mais jamais
+accessibles depuis l'écran d'entraînement — soit non exposés en interface,
+soit tapés côté client sans jamais être envoyés au serveur. Ce lot les
+rend pilotables, sans jamais imposer cette complexité à l'utilisateur
+courant :
+
+- **Mode guidé (toujours le défaut)** : rien ne change. Un clic sur
+  "Lancer" utilise exactement les mêmes réglages qu'avant ce lot.
+- **Mode expert (activation volontaire, repliée)** : un interrupteur dans
+  l'étape "Réglages avancés" du pipeline guidé déplie des manettes
+  supplémentaires, chacune expliquée en langage clair (pas de jargon nu) :
+  - **Modèles comparés** — cases à cocher sur le catalogue complet des 9
+    modèles (regroupés par famille), sous-ensemble par défaut pré-coché ;
+    les modèles plus lents (SVM, KNN) sont signalés par un avertissement.
+  - **Recherche d'hyperparamètres** (nombre d'essais Optuna) — déplacée
+    du formulaire guidé vers le mode expert, où elle a plus sa place.
+  - **Validation croisée** (nombre de blocs), **graine aléatoire**
+    (reproductibilité) et **confiance des intervalles** (régression) —
+    branchés sur des paramètres du moteur qui existaient déjà mais
+    n'étaient jusqu'ici jamais transmis par le formulaire.
+  - **Rééquilibrage des classes** — la suggestion automatique existante
+    reste en mode guidé ; le mode expert permet en plus de la forcer ou de
+    l'annuler manuellement.
+
+Chaque manette experte démarre à la valeur par défaut du mode guidé :
+activer le mode expert sans rien changer produit exactement le même
+entraînement — vérifié par un test dédié, côté frontend (construction du
+payload) et côté backend (le serveur retombe sur son sous-ensemble par
+défaut dès que rien n'est envoyé).
+
+*Rendu visuel non vérifié en conditions réelles par ce lot, comme pour
+E1-ter — aucun outil de navigateur disponible dans cet environnement.*
+
 ---
 
 ## Robustesse — pas juste "ça marche chez moi"
@@ -287,7 +324,7 @@ page par page reste à faire.*
 | File de tâches | RQ + Redis | CIAM n'en a pas besoin (tâches courtes) ; un entraînement ML, si |
 | Positionnement | Généraliste multi-secteurs | Pas de verrouillage sur un métier particulier dès le départ |
 | Catalogue Lot 3 | 3 algos de boosting seulement au lancement | Permet SHAP + CQR de qualité uniforme le temps de livrer l'architecture par registre (élargi à 9 modèles au Lot 5) |
-| Sélection par défaut Lot 5 | Seuls boosters + RandomForest tournent automatiquement | Modèles plus lents/sensibles (SVM, KNN...) réservés à un mode expert futur (Lot E), pour garder un temps d'entraînement raisonnable par défaut |
+| Sélection par défaut Lot 5 | Seuls boosters + RandomForest tournent automatiquement | Modèles plus lents/sensibles (SVM, KNN...) réservés au mode expert (Lot E2), pour garder un temps d'entraînement raisonnable par défaut |
 | Rééquilibrage des classes | Pondération (`class_weight`/`sample_weight`), pas de rééchantillonnage (SMOTE) | Le rééchantillonnage synthétique est sensible aux fuites (doit être fait DANS les folds) — réservé à un lot expert dédié ; la pondération est sans risque et couvre déjà la majorité des besoins |
 | Graphiques | Recharts, pas Plotly | Plus léger, thémable à notre design, déjà éprouvé par CIAM |
 | Progression | Polling REST, pas WebSocket | Plus simple à fiabiliser pour ce volume d'événements |
@@ -301,7 +338,6 @@ Identifié explicitement en testant le produit, pas oublié :
 | Lot | Contenu |
 | --- | --- |
 | **D-bis** (prochain) | Comparaison inter-jobs — tri par score, diff de config entre entraînements (reporté du Lot D pour ne pas le bâcler) |
-| **E** | Mode expert — exposer le choix d'activer les modèles hors sous-ensemble par défaut (ExtraTrees, linéaire, SVM, KNN, Naive Bayes) |
 | **6-8** | Vision par ordinateur / détection d'anomalies (l'autre grand pilier de l'app historique, pas encore porté) |
 | **9** | Registre de modèles versionné (l'artefact existe déjà, pas encore le versioning/export) |
 | **10** | Durcissement SaaS : audit, quotas, facturation — prêt pour un client pilote |

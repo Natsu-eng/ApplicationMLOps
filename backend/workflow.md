@@ -741,11 +741,89 @@ guidé/expert réel (E2, seul l'emplacement est prévu ici), explicabilité
 SHAP locale enrichie, nouveaux graphes d'évaluation avancés — ce lot
 restructure et style l'existant, il ne réinvente pas les fonctionnalités ML.
 
+## Lot E2 — Mode guidé / mode expert (livré)
+
+Backend + frontend. Le moteur supervisé (Lot 5) exposait déjà `subset`
+(`services/ml_registry.models_for_task`) et plusieurs paramètres de
+`TrainingConfig` (`cv_folds`, `cqr_alpha`), mais deux problèmes distincts :
+`subset` était câblé en dur sur `"default"` dans `train_and_evaluate`
+(jamais piloté par l'appelant), et `cv_folds`/`seed`/`cqr_alpha` n'étaient
+soit jamais transmis par le frontend (typés côté client, ignorés), soit
+jamais lisibles depuis le corps de la requête côté API (forcés depuis
+`Settings`). Ce lot corrige les deux, puis expose le tout dans un panneau
+"Mode expert" replié par défaut — le mode guidé (défaut) reste strictement
+inchangé.
+
+- [x] **`services/ml_training.py`** — `TrainingConfig.model_ids:
+  Optional[list[str]]` (nouveau, défaut `None`). Dans `train_and_evaluate`,
+  le catalogue comparé devient : si `model_ids` fourni, intersection avec
+  `models_for_task(task_type, subset="all")` (filtré par id) ; sinon,
+  comportement strictement inchangé (`subset="default"`). Garde-fou
+  défensif si l'intersection est vide (ne devrait jamais arriver, l'API
+  valide déjà en amont) : repli sur le sous-ensemble par défaut plutôt
+  qu'un catalogue vide.
+- [x] **`api/routers/training.py`** — `TrainingJobCreate` gagne
+  `model_ids`, `seed`, `cqr_alpha` (tous optionnels, `None` = comportement
+  d'avant ce lot). Validation en deux temps : ids inconnus du registre →
+  400 `MODELES_INCONNUS` (avant lecture du dataset, fail-fast) ; puis,
+  une fois la tâche détectée, intersection avec les modèles compatibles
+  avec cette tâche (ex. Naive Bayes = classification uniquement) → 400
+  `AUCUN_MODELE_COMPATIBLE` si l'intersection est vide. Le serveur ne fait
+  jamais confiance au filtrage déjà fait côté UI. `seed`/`cqr_alpha` du
+  corps de requête priment sur les défauts `Settings` quand fournis (avant
+  ce lot : toujours forcés depuis `Settings`, champ absent du schéma).
+  Nouvel endpoint `GET /training/models-catalog` (lecture pure du
+  registre, aucun accès dataset) : les 9 modèles avec libellé lisible
+  (régularise Ridge/LogisticRegression et SVR/SVC en un seul `label`),
+  famille, `is_default`, `supported_tasks`, et un indicateur `slow` (SVM,
+  KNN — surcoût mesuré au Lot 5) porté par une constante du router, pas du
+  registre (question d'UX, pas de capacité du modèle).
+- [x] **Frontend, `components/training/ExpertModePanel.tsx`** (nouveau) —
+  interrupteur "Mode expert" (défaut OFF) + manettes, chacune avec un
+  libellé clair et une aide en langage courant (`LabelWithHelp`, motif déjà
+  utilisé ailleurs dans l'app) : essais Optuna (déplacé hors du formulaire
+  guidé), blocs de validation croisée, graine aléatoire, confiance des
+  intervalles CQR, rééquilibrage des classes (force/annule manuellement la
+  suggestion automatique existante), et sélecteur de modèles (cases à
+  cocher groupées par famille, catalogue chargé à la demande — un
+  utilisateur qui n'ouvre jamais le mode expert ne déclenche aucun appel
+  réseau supplémentaire). Modèles lents signalés par un badge
+  d'avertissement.
+- [x] **Frontend, `utils/trainingPayload.ts`** (nouveau) — construction du
+  payload extraite de `TrainingForm` en fonction pure testable (pas
+  d'infra de test de composants React dans ce dépôt) : `model_ids` n'est
+  envoyé que si le mode expert est actif ET qu'une sélection existe —
+  sinon toujours omis, comme avant ce lot.
+- [x] **Rétrocompatibilité vérifiée par construction** : chaque manette
+  experte démarre à la même valeur que le mode guidé (`DEFAULT_CV_FOLDS`,
+  `DEFAULT_SEED`, `DEFAULT_CQR_ALPHA` dans `ExpertModePanel.tsx`, alignées
+  sur `Settings.cv_folds_default`/`model_seed`/`cqr_alpha`) — activer le
+  mode expert sans rien changer produit exactement le même payload que le
+  mode guidé, testé explicitement.
+
+**Vérifié** :
+
+- Backend : suite pytest intégralement verte (182 tests, dont 8 nouveaux
+  pour ce lot — 2 dans `test_ml_training.py::test_model_ids_*`, 5 dans
+  `test_training_api.py::test_models_catalog_*`/`test_create_job_*`, 1 dans
+  `test_training_worker.py::test_worker_respects_model_ids_from_config_json`).
+- Frontend : `tsc -b`, `vite build` et `vitest run` verts (10 tests, dont 5
+  nouveaux — `utils/trainingPayload.test.ts`, incluant le test "expert ON
+  sans modification == guidé").
+- Rendu visuel réel **non vérifié** par ce lot — aucun outil d'interaction
+  navigateur disponible dans cet environnement ; revue visuelle à faire.
+
+**Scope volontairement limité** (acté en cadrage) : `shap_sample_size` non
+exposé (laissé au défaut serveur, jugé non nécessaire) ; pas de
+détection du type de tâche avant soumission côté UI (le catalogue affiche
+`supported_tasks` par modèle à titre informatif, mais le filtrage réel
+tâche/modèle reste fait côté serveur à la création du job) ; explicabilité
+SHAP locale enrichie et refonte visuelle fine hors périmètre.
+
 ## Prochains lots (résumé — détail complet dans le diagnostic de migration et les échanges de cadrage)
 
 | Lot | Contenu | Livrable testable |
 | --- | --- | --- |
-| E | Sélection expert des modèles (exposer `subset`/activation individuelle en API + UI) | Un utilisateur avancé choisit d'activer SVM/KNN/linéaire/ExtraTrees/Naive Bayes |
 | 6-8 | Upload / entraînement / évaluation vision (détection d'anomalies) | Parité fonctionnelle côté vision |
 | 9 | Registre de modèles unifié (versioning, export) | Remplace les 3 mécanismes de persistance de l'app historique |
 | 10 | Durcissement SaaS (erreurs, audit, quotas) | Prêt pour un client pilote |
