@@ -12,11 +12,20 @@ import {
 import AppShell from "../components/AppShell";
 import { ClassRebalancingSuggestion } from "../components/training/ClassRebalancingSuggestion";
 import { DataQualityWarnings } from "../components/training/DataQualityWarnings";
+import {
+  DEFAULT_CQR_ALPHA,
+  DEFAULT_CV_FOLDS,
+  DEFAULT_SEED,
+  ExpertModePanel,
+} from "../components/training/ExpertModePanel";
 import { FeatureEngineeringSuggestions } from "../components/training/FeatureEngineeringSuggestions";
 import { ModelResultView } from "../components/training/ModelResultModal";
 import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
 import { formatDateTime } from "../utils/format";
+import { buildTrainingJobPayload } from "../utils/trainingPayload";
+
+const DEFAULT_OPTUNA_TRIALS = 20; // `api.core.config.Settings.optuna_trials_default`
 
 const ACTIVE_STATUSES = new Set(["queued", "running"]);
 const POLL_INTERVAL_MS = 3000;
@@ -219,7 +228,7 @@ function TrainingForm({
   const [groupColumn, setGroupColumn] = useState("");
   const [selectedFeatures, setSelectedFeatures] = useState<Set<string>>(new Set());
   const [showFeaturePicker, setShowFeaturePicker] = useState(false);
-  const [optunaTrials, setOptunaTrials] = useState(20);
+  const [optunaTrials, setOptunaTrials] = useState(DEFAULT_OPTUNA_TRIALS);
   const [testSize, setTestSize] = useState(0.2);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -228,6 +237,15 @@ function TrainingForm({
     "upstream" | "pipeline"
   > | null>(null);
   const [classRebalancing, setClassRebalancing] = useState(false);
+
+  // Mode expert (Lot E2) — replié par défaut ; chaque manette démarre à la
+  // même valeur que le mode guidé (voir ExpertModePanel), donc l'activer
+  // sans rien changer ne modifie aucun résultat.
+  const [expertMode, setExpertMode] = useState(false);
+  const [cvFolds, setCvFolds] = useState(DEFAULT_CV_FOLDS);
+  const [seed, setSeed] = useState(DEFAULT_SEED);
+  const [cqrAlpha, setCqrAlpha] = useState(DEFAULT_CQR_ALPHA);
+  const [selectedModelIds, setSelectedModelIds] = useState<Set<string>>(new Set());
 
   async function handleDatasetChange(id: string) {
     setError(null);
@@ -254,16 +272,23 @@ function TrainingForm({
     setError(null);
     setIsSubmitting(true);
     try {
-      const job = await api.training.createJob({
-        dataset_id: datasetId,
-        target_column: targetColumn,
-        feature_columns: Array.from(selectedFeatures),
-        group_column: groupColumn || undefined,
-        optuna_trials: optunaTrials,
-        test_size: testSize,
-        feature_engineering: featureEngineering ?? undefined,
-        class_rebalancing: classRebalancing,
-      });
+      const job = await api.training.createJob(
+        buildTrainingJobPayload({
+          datasetId,
+          targetColumn,
+          featureColumns: Array.from(selectedFeatures),
+          groupColumn,
+          optunaTrials,
+          cvFolds,
+          testSize,
+          seed,
+          cqrAlpha,
+          featureEngineering,
+          classRebalancing,
+          expertMode,
+          selectedModelIds,
+        }),
+      );
       onJobCreated(job);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Impossible de lancer l'entraînement");
@@ -451,33 +476,12 @@ function TrainingForm({
 
             {targetColumn && (
               <Step number={4} title="Réglages avancés" optional>
-                {/* Emplacement réservé au futur Mode Expert (Lot E2) : ce
-                    <details> accueillera le choix guidé/expert par pilier —
-                    non implémenté ici, uniquement l'emplacement. */}
                 <details className="group rounded-xl border border-slate-200">
                   <summary className="flex items-center justify-between cursor-pointer list-none px-3 py-2.5 text-sm text-slate-600">
-                    Essais d'optimisation, jeu de test
+                    Jeu de test, mode expert
                     <ChevronDown size={14} className="text-slate-400 transition-transform group-open:rotate-180" />
                   </summary>
                   <div className="px-3 pb-3 pt-3 space-y-4 border-t border-slate-200">
-                    <div>
-                      <label className="block text-sm text-slate-600 mb-1">
-                        Recherche d'hyperparamètres — {optunaTrials} essais
-                      </label>
-                      <input
-                        type="range"
-                        min={5}
-                        max={60}
-                        step={5}
-                        value={optunaTrials}
-                        onChange={(e) => setOptunaTrials(Number(e.target.value))}
-                        className="w-full accent-teal-500"
-                      />
-                      <p className="text-xs text-slate-400 mt-1">
-                        Plus élevé = recherche plus fine, mais entraînement plus long.
-                      </p>
-                    </div>
-
                     <div>
                       <label className="block text-sm text-slate-600 mb-1">
                         Part du jeu de test — {Math.round(testSize * 100)} %
@@ -492,6 +496,23 @@ function TrainingForm({
                         className="w-full accent-teal-500"
                       />
                     </div>
+
+                    <ExpertModePanel
+                      expertMode={expertMode}
+                      onExpertModeChange={setExpertMode}
+                      optunaTrials={optunaTrials}
+                      onOptunaTrialsChange={setOptunaTrials}
+                      cvFolds={cvFolds}
+                      onCvFoldsChange={setCvFolds}
+                      seed={seed}
+                      onSeedChange={setSeed}
+                      cqrAlpha={cqrAlpha}
+                      onCqrAlphaChange={setCqrAlpha}
+                      selectedModelIds={selectedModelIds}
+                      onSelectedModelIdsChange={setSelectedModelIds}
+                      classRebalancing={classRebalancing}
+                      onClassRebalancingChange={setClassRebalancing}
+                    />
                   </div>
                 </details>
               </Step>

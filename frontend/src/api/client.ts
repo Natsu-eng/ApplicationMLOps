@@ -336,6 +336,24 @@ export interface TrainingJobCreatePayload {
   // Rééquilibrage des classes (lot déséquilibre) — sibling de
   // feature_engineering, jamais rejoué à l'inférence (voir client.ts).
   class_rebalancing?: boolean;
+  // Mode expert (Lot E2) — reproductibilité, niveau de confiance des
+  // intervalles CQR (régression uniquement) et sous-ensemble du catalogue de
+  // modèles à comparer. Absents : mêmes défauts que le mode guidé aujourd'hui.
+  seed?: number;
+  cqr_alpha?: number;
+  model_ids?: string[];
+}
+
+/** Une entrée du catalogue de modèles (Lot 5), exposée au mode expert
+ * (Lot E2) — voir `GET /training/models-catalog`. */
+export interface ModelCatalogEntry {
+  id: string;
+  label: string;
+  family: string;
+  is_default: boolean;
+  supports_rebalancing: boolean;
+  supported_tasks: TaskType[];
+  slow: boolean;
 }
 
 export interface HeadlineMetric {
@@ -526,6 +544,7 @@ export const api = {
         method: "POST",
         body: JSON.stringify(data),
       }),
+    modelsCatalog: () => request<{ models: ModelCatalogEntry[] }>("/training/models-catalog"),
     listJobs: () => request<TrainingJobSummary[]>("/training/jobs"),
     getJob: (id: number) => request<TrainingJobSummary>(`/training/jobs/${id}`),
     getModel: (id: number) => request<MLModelDetail>(`/training/jobs/${id}/model`),
