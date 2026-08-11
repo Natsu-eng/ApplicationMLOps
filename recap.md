@@ -282,6 +282,50 @@ défaut dès que rien n'est envoyé).
 *Rendu visuel non vérifié en conditions réelles par ce lot, comme pour
 E1-ter — aucun outil de navigateur disponible dans cet environnement.*
 
+*Entre ce lot et le suivant, une session parallèle a livré le Lot
+Explicabilité globale (beeswarm SHAP, importance par permutation, courbe de
+calibration, courbe d'apprentissage) et une refonte du design system
+(tokens OKLCH, sidebar) — voir `backend/workflow.md` pour le détail de ce
+qui est directement constaté dans le code plutôt que documenté ici a
+posteriori.*
+
+### Audit backend + Lot Nettoyage guidé des variables, refonte Résultats/Datasets
+
+Un audit expert du backend (lecture seule, rapport validé avant tout code)
+a confirmé un pipeline ML supervisé déjà solide (anti-fuite bout en bout,
+sélection sur la validation croisée, explicabilité multi-famille) et
+identifié une lacune concrète, signalée par l'utilisateur : les garde-fous
+détectaient déjà les colonnes sans valeur prédictive (identifiants,
+constantes) avec une recommandation textuelle, mais rien ne permettait de
+les exclure en un clic — il fallait lire l'alerte puis décocher la colonne
+à la main, ailleurs dans le formulaire. Corrigé, avec deux détections
+supplémentaires dans le même esprit :
+
+- **Colonnes dupliquées** (contenu strictement identique sous un autre nom)
+  et **variables numériques mal typées en texte** (virgule décimale,
+  séparateur de milliers — invisibles jusqu'ici, traitées à tort comme des
+  catégories) viennent compléter les détections déjà en place (constantes,
+  identifiants).
+- **Action "Exclure" directement sur l'alerte**, plus un bouton "Tout
+  exclure" — approuver une suggestion retire vraiment la colonne du
+  formulaire, sans aller-retour manuel. La conversion numérique suit le
+  même principe d'approbation explicite que l'ingénierie de variables du
+  Lot 4c.
+- **Analyse de qualité utilisable dès l'exploration d'un dataset**, avant
+  même de choisir une cible pour un entraînement (auparavant réservée au
+  formulaire d'entraînement).
+
+*Ce même passage a aussi fait évoluer le design des deux écrans identifiés
+comme les moins aboutis malgré un contenu déjà riche : la page d'exploration
+de données (9 analyses jusque-là empilées verticalement, sans hiérarchie)
+et la page de résultat d'un entraînement (10+ sections dans la même
+situation) sont désormais organisées en onglets thématiques, avec des
+en-têtes de section identifiables (icône colorée) plutôt qu'une liste de
+libellés gris uniformes ; la sidebar est passée d'un blanc quasi invisible
+à un fond bleu de marque assombri, pour une identité visuelle plus nette.
+Rendu réel non vérifié dans un navigateur (aucun outil disponible dans cet
+environnement) — revue visuelle à faire.*
+
 ---
 
 ## Robustesse — pas juste "ça marche chez moi"

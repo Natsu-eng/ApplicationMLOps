@@ -820,6 +820,125 @@ détection du type de tâche avant soumission côté UI (le catalogue affiche
 tâche/modèle reste fait côté serveur à la création du job) ; explicabilité
 SHAP locale enrichie et refonte visuelle fine hors périmètre.
 
+## Note — lots livrés par une session parallèle, non détaillés ici
+
+Entre le Lot E2 ci-dessus et le lot suivant, deux lots sont apparus dans le
+dépôt (`git log`) sans être documentés dans ce fichier — livrés par une autre
+session Claude Code tournant en parallèle sur le même dépôt (voir la mémoire
+`project_parallel_sessions` pour le contexte de cette pratique côté
+utilisateur) : **Lot Explicabilité globale** (backend : beeswarm SHAP,
+importance par permutation, courbe de calibration, courbe d'apprentissage —
+persistance DB/API, tests ; frontend : composants + intégration) et
+**Refonte UI : design system moderne** (tokens sémantiques OKLCH, sidebar
+fixe, recolorisation des composants de base). Le lot ci-dessous s'appuie sur
+ce code réel tel que lu au moment de l'audit, pas sur un état mémorisé.
+
+## Lot Nettoyage guidé des variables — détecter et exclure les colonnes inutiles (livré)
+
+Déclenché par un audit expert du backend (lecture seule, validé avant tout
+code) : les garde-fous Lot B détectaient déjà les colonnes constantes/quasi-
+constantes et à cardinalité excessive avec une action textuelle ("retirez
+cette colonne"), mais rien ne reliait cette recommandation à une action
+concrète côté formulaire d'entraînement — l'utilisateur devait lire l'alerte
+puis décocher la colonne manuellement, sans lien visuel entre les deux.
+L'EDA autonome (avant choix d'une cible) n'exécutait en outre aucune de ces
+détections. Deux lacunes supplémentaires identifiées au même audit :
+colonnes dupliquées noyées dans l'alerte générique de colinéarité, et
+colonnes numériques mal typées en texte (virgule décimale, séparateur de
+milliers) totalement invisibles.
+
+- [x] **`services/data_quality.py`** — `target_column` devient optionnel
+  dans `analyze_data_quality()` : absent, les détections structurelles
+  (constantes, cardinalité, doublons, numérique mal typé, valeurs
+  manquantes, colinéarité, dataset trop petit) restent actives, seules
+  fuite/déséquilibre (qui exigent une cible) sont omises — rétrocompatible,
+  comportement inchangé quand une cible est fournie. Deux nouveaux
+  détecteurs : `_detect_duplicate_columns` (hash `pandas.util.
+  hash_pandas_object` puis `Series.equals` seulement entre colonnes de même
+  hash — évite une comparaison O(k²) systématique sur un dataset à beaucoup
+  de colonnes), niveau "attention" (contenu strictement identique, sans
+  ambiguïté, contrairement à la colinéarité ≥0.9 restée en "info") ;
+  `_detect_mistyped_numeric` (`_try_parse_numeric_text`/
+  `_has_numeric_format_signal`), avec un garde-fou explicite avant tout
+  parsing — une part suffisante de l'échantillon doit porter un signe de
+  formatage numérique (virgule, séparateur de milliers) avant d'être
+  considérée candidate, pour ne jamais confondre une colonne d'identifiants
+  (ex. codes postaux à zéro non significatif) avec du numérique mal typé.
+- [x] **`services/feature_engineering.py`** — `_suggest_column_exclusion`
+  (nouveau, branché sur `colonne_constante`/`cardinalite_excessive`/
+  `colonnes_dupliquees`) : suggestion d'exclusion, mais PAS une
+  transformation de pipeline — son `transformation` (`{"type":
+  "exclude_column", ...}`) n'entre jamais dans `spec["upstream"]` (absent de
+  `_UPSTREAM_TRANSFORMATION_TYPES` par construction, lèverait une erreur
+  explicite s'il y apparaissait), approuver cette suggestion revient
+  simplement à décocher la colonne dans `TrainingJobCreate.feature_columns`,
+  mécanisme qui existe depuis le Lot 3. `suggest_numeric_coercion` +
+  `apply_numeric_coercion` (nouveau type upstream `numeric_coerce`,
+  déterministe ligne à ligne comme `datetime_decompose`/`ratio`) : réutilise
+  EXACTEMENT le même parseur que la détection, pour que suggestion affichée
+  et conversion appliquée ne divergent jamais. Appliqué EN PREMIER dans
+  `apply_upstream_feature_engineering` (avant décomposition datetime et
+  ratio) : un ratio référençant une colonne mal typée doit voir sa forme
+  déjà convertie.
+- [x] **`api/routers/datasets.py`** — `GET /datasets/{id}/quality-check` :
+  `target_column` devient optionnel, permet un appel dès l'exploration d'un
+  dataset (page Données/EDA), avant même de choisir une cible pour un
+  entraînement.
+- [x] **`api/routers/training.py`** — `_KNOWN_UPSTREAM_TYPES` +
+  `numeric_coerce`, validation de la colonne référencée par cette
+  transformation au même titre que `datetime_decompose`/`ratio`.
+- [x] **Frontend, `DataQualityWarnings.tsx`** — action "Exclure « colonne »"
+  par alerte excluable (miroir de `_EXCLUSION_WARNING_CODES` côté backend,
+  sans appel réseau supplémentaire : lit directement `warning.columns`) +
+  bouton "Tout exclure" groupé ; devient utilisable sans cible (EDA) via
+  `targetColumn` optionnel. `Training.tsx` : `excludeFeatures()` (retrait
+  explicite, jamais un toggle — approuver deux fois la même suggestion reste
+  sans effet) câblé sur la sélection de variables de l'étape 1.
+  `FeatureEngineeringSuggestions.tsx` : filtre `exclusion_variable` (déjà
+  proposée, plus utilement, dans le panneau qualité — l'afficher aussi ici
+  aurait été un cul-de-sac, sa transformation n'étant jamais une entrée de
+  pipeline) ; ajoute la branche manquante `numeric_coerce` dans la
+  construction du payload (absente, une suggestion de conversion approuvée
+  n'aurait silencieusement rien fait).
+- [x] **Refonte visuelle associée** (au-delà du périmètre initial, cadrée en
+  cours de session) : sidebar recolorisée (fond bleu de marque assombri,
+  `--color-sidebar*` en OKLCH, teinte 258 cohérente avec `--color-primary` —
+  remplace un blanc quasi invisible confondu avec le fond de page) ;
+  `EdaModal.tsx` restructuré en onglets (Vue d'ensemble/Qualité des
+  données/Corrélations/Distributions/Relation à la cible) avec bande de
+  statistiques (`StatTile`, réutilisé du dashboard) — remplace un
+  empilement vertical de 9 cartes identiques ; panneau qualité (ce lot)
+  intégré comme onglet dédié. `ModelResultModal.tsx`/`ModelResultView`
+  restructuré en onglets (Performance/Explicabilité/Fiabilité/Prédire/
+  Détails), nouveau composant partagé `components/ui/SectionHeader.tsx`
+  (icône colorée + titre, remplace les libellés gris uniformes dans les deux
+  écrans). `Modal.tsx` gagne un prop `size` (`"md"`/`"xl"`, défaut inchangé)
+  pour ces deux contenus riches.
+
+**Vérifié** :
+
+- Suite pytest complète verte (218/218, 26 nouveaux tests : détecteurs
+  data_quality, target_column optionnel, suggestions d'exclusion/coercion,
+  endpoints API).
+- Frontend : `tsc -b`, `vite build` et `vitest run` verts (13/13).
+- Non-régression structurelle : un job/dataset qui ne déclenche aucun des
+  nouveaux garde-fous produit exactement les mêmes suggestions qu'avant ce
+  lot (assertions de codes mises à jour uniquement là où un dataset de test
+  déclenche réellement une nouvelle détection, ex. cardinalité excessive sur
+  "ville").
+- Rendu visuel réel **non vérifié** en conditions réelles — aucun outil
+  d'interaction navigateur disponible dans cet environnement de travail ;
+  revue visuelle à faire par l'utilisateur avant de considérer la refonte
+  définitive.
+
+**Scope volontairement limité** : pas de détection de colonnes numériques
+mal typées AU-DELÀ de la virgule/séparateur de milliers (ex. devises avec
+symbole, pourcentages en texte — non rencontrés dans les datasets réels de
+l'utilisateur à ce jour) ; pas de comparaison inter-jobs (Lot D-bis,
+toujours en attente) ; pas de registre de modèles versionné (Lot 9) ; pas de
+durcissement SaaS (Lot 10, quotas de jobs concurrents notamment) — ces trois
+derniers points restent priorisés dans l'audit backend qui a précédé ce lot.
+
 ## Prochains lots (résumé — détail complet dans le diagnostic de migration et les échanges de cadrage)
 
 | Lot | Contenu | Livrable testable |
