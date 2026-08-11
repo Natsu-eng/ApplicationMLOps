@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
-import { Activity, BrainCircuit, Database, FileSpreadsheet, Users } from "lucide-react";
+import { Activity, BrainCircuit, Database, FileSpreadsheet, Trash2, Users } from "lucide-react";
 import {
   ApiError,
   api,
@@ -32,20 +32,20 @@ function greeting(hour: number): string {
 function jobStatusBadge(job: TrainingJobSummary) {
   switch (job.status) {
     case "completed":
-      return <Badge variant="success">Terminé</Badge>;
+      return <Badge variant="success" dot>Terminé</Badge>;
     case "failed":
-      return <Badge variant="danger">Échec</Badge>;
+      return <Badge variant="danger" dot>Échec</Badge>;
     case "running":
-      return <Badge variant="warning">En cours</Badge>;
+      return <Badge variant="primary" dot pulse>En cours</Badge>;
     default:
-      return <Badge variant="neutral">En file</Badge>;
+      return <Badge variant="neutral" dot>En file</Badge>;
   }
 }
 
 function datasetStatusBadge(status: DatasetSummary["status"]) {
-  if (status === "ready") return <Badge variant="success">Prêt</Badge>;
-  if (status === "error") return <Badge variant="danger">Erreur</Badge>;
-  return <Badge variant="warning">Analyse…</Badge>;
+  if (status === "ready") return <Badge variant="success" dot>Prêt</Badge>;
+  if (status === "error") return <Badge variant="danger" dot>Erreur</Badge>;
+  return <Badge variant="primary" dot pulse>Analyse…</Badge>;
 }
 
 /** Page protégée du Lot 1, enrichie au Lot E1-ter : vue d'ensemble de
@@ -60,6 +60,7 @@ export default function Dashboard() {
   const [datasets, setDatasets] = useState<DatasetSummary[] | null>(null);
   const [jobs, setJobs] = useState<TrainingJobSummary[] | null>(null);
   const [viewingJob, setViewingJob] = useState<TrainingJobSummary | null>(null);
+  const [confirmingDeleteJobId, setConfirmingDeleteJobId] = useState<number | null>(null);
 
   const loadMembers = useCallback(async () => {
     try {
@@ -70,11 +71,31 @@ export default function Dashboard() {
     }
   }, []);
 
+  const loadJobs = useCallback(() => {
+    api.training.listJobs().then(setJobs).catch(() => setJobs([]));
+  }, []);
+
   useEffect(() => {
     loadMembers();
     api.datasets.list().then(setDatasets).catch(() => setDatasets([]));
-    api.training.listJobs().then(setJobs).catch(() => setJobs([]));
-  }, [loadMembers]);
+    loadJobs();
+  }, [loadMembers, loadJobs]);
+
+  // Deux clics pour confirmer (même motif que la page Entraînement) — pas de
+  // window.confirm natif, pour rester cohérent avec le reste de l'app.
+  async function handleDeleteJob(id: number) {
+    if (confirmingDeleteJobId !== id) {
+      setConfirmingDeleteJobId(id);
+      return;
+    }
+    setConfirmingDeleteJobId(null);
+    try {
+      await api.training.remove(id);
+      loadJobs();
+    } catch {
+      // best-effort — la liste se resynchronisera au prochain chargement
+    }
+  }
 
   if (!user) return null;
 
@@ -84,13 +105,21 @@ export default function Dashboard() {
 
   return (
     <AppShell pillarId="supervised">
-      <div className="mb-8">
-        <p className="text-xs uppercase tracking-widest text-teal-600 font-semibold mb-1">
-          Vue d'ensemble
-        </p>
-        <h1 className="text-2xl font-serif text-slate-900">
-          {greeting(new Date().getHours())}, {user.nom.split(" ")[0]}
-        </h1>
+      <div className="mb-8 flex items-center justify-between flex-wrap gap-4">
+        <div>
+          <p className="text-xs uppercase tracking-widest text-primary font-semibold mb-1">
+            Vue d'ensemble
+          </p>
+          <h1 className="text-2xl font-serif text-slate-900">
+            {greeting(new Date().getHours())}, {user.nom.split(" ")[0]}
+          </h1>
+        </div>
+        <Link to="/training">
+          <Button>
+            <BrainCircuit size={15} />
+            Nouvel entraînement
+          </Button>
+        </Link>
       </div>
 
       <StatTileRow>
@@ -110,7 +139,7 @@ export default function Dashboard() {
         <Card className="p-5">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-sm font-medium text-slate-800">Derniers entraînements</h2>
-            <Link to="/training" className="text-xs text-teal-600 hover:text-teal-700">
+            <Link to="/training" className="text-xs text-primary hover:text-primary/80">
               Voir tout
             </Link>
           </div>
@@ -120,7 +149,7 @@ export default function Dashboard() {
           ) : recentJobs.length === 0 ? (
             <p className="text-sm text-slate-500">
               Aucun entraînement pour l'instant — lancez-en un depuis{" "}
-              <Link to="/training" className="text-teal-600 hover:text-teal-700">
+              <Link to="/training" className="text-primary hover:text-primary/80">
                 Entraînement
               </Link>
               .
@@ -154,6 +183,29 @@ export default function Dashboard() {
                         </span>
                       )}
                       {jobStatusBadge(job)}
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDeleteJob(job.id);
+                        }}
+                        onMouseLeave={() => setConfirmingDeleteJobId((id) => (id === job.id ? null : id))}
+                        aria-label={
+                          confirmingDeleteJobId === job.id ? "Confirmer la suppression" : "Supprimer cet entraînement"
+                        }
+                        title={
+                          confirmingDeleteJobId === job.id
+                            ? "Cliquer à nouveau pour confirmer"
+                            : "Supprimer cet entraînement"
+                        }
+                        className={`flex-shrink-0 h-7 w-7 flex items-center justify-center rounded-md transition-colors ${
+                          confirmingDeleteJobId === job.id
+                            ? "text-rose-700 bg-rose-100"
+                            : "text-slate-300 hover:text-rose-600 hover:bg-rose-50"
+                        }`}
+                      >
+                        <Trash2 size={13} />
+                      </button>
                     </div>
                   </li>
                 );
@@ -165,7 +217,7 @@ export default function Dashboard() {
         <Card className="p-5">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-sm font-medium text-slate-800">Derniers datasets</h2>
-            <Link to="/datasets" className="text-xs text-teal-600 hover:text-teal-700">
+            <Link to="/datasets" className="text-xs text-primary hover:text-primary/80">
               Voir tout
             </Link>
           </div>
@@ -175,7 +227,7 @@ export default function Dashboard() {
           ) : recentDatasets.length === 0 ? (
             <p className="text-sm text-slate-500">
               Aucun dataset pour l'instant — importez-en un depuis{" "}
-              <Link to="/datasets" className="text-teal-600 hover:text-teal-700">
+              <Link to="/datasets" className="text-primary hover:text-primary/80">
                 Mes données
               </Link>
               .
@@ -216,7 +268,7 @@ export default function Dashboard() {
         <Card className="p-5 lg:col-span-2">
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-2">
-              <Users size={16} className="text-teal-600" />
+              <Users size={16} className="text-primary" />
               <h2 className="text-sm font-medium text-slate-800">
                 Équipe — {user.organization_name}
               </h2>

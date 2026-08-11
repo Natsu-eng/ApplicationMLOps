@@ -105,7 +105,7 @@ export function ExpertModePanel({
           aria-label="Activer le mode expert"
           onClick={() => onExpertModeChange(!expertMode)}
           className={`relative inline-flex h-6 w-11 flex-shrink-0 items-center rounded-full transition-colors ${
-            expertMode ? "bg-teal-600" : "bg-slate-300"
+            expertMode ? "bg-primary" : "bg-slate-300"
           }`}
         >
           <span
@@ -117,7 +117,7 @@ export function ExpertModePanel({
       </div>
 
       {expertMode && (
-        <div className="space-y-5 rounded-lg border border-teal-200 bg-teal-50/40 p-3.5">
+        <div className="space-y-5 rounded-lg border border-primary/20 bg-primary/5 p-3.5">
           <div>
             <label className="block text-sm text-slate-600 mb-1">
               <LabelWithHelp
@@ -132,7 +132,7 @@ export function ExpertModePanel({
               step={5}
               value={optunaTrials}
               onChange={(e) => onOptunaTrialsChange(Number(e.target.value))}
-              className="w-full accent-teal-500"
+              className="w-full accent-primary"
             />
           </div>
 
@@ -150,7 +150,7 @@ export function ExpertModePanel({
               step={1}
               value={cvFolds}
               onChange={(e) => onCvFoldsChange(Number(e.target.value))}
-              className="w-full accent-teal-500"
+              className="w-full accent-primary"
             />
           </div>
 
@@ -168,7 +168,7 @@ export function ExpertModePanel({
                 max={99999}
                 value={seed}
                 onChange={(e) => onSeedChange(Number(e.target.value))}
-                className="w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-500/40"
+                className="w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-primary/40"
               />
             </div>
 
@@ -186,7 +186,7 @@ export function ExpertModePanel({
                 step={0.05}
                 value={cqrAlpha}
                 onChange={(e) => onCqrAlphaChange(Number(e.target.value))}
-                className="w-full accent-teal-500"
+                className="w-full accent-primary"
               />
             </div>
           </div>
@@ -195,7 +195,7 @@ export function ExpertModePanel({
             <label className="flex items-center gap-2 text-sm text-slate-700">
               <input
                 type="checkbox"
-                className="accent-teal-500"
+                className="accent-primary"
                 checked={classRebalancing}
                 onChange={() => onClassRebalancingChange(!classRebalancing)}
               />
@@ -217,37 +217,44 @@ export function ExpertModePanel({
             <div className="space-y-3">
               {families.map((family) => (
                 <div key={family}>
-                  <p className="text-xs uppercase tracking-wide text-slate-400 mb-1">
+                  <p className="text-xs uppercase tracking-wide text-slate-400 mb-1.5">
                     {FAMILY_LABELS[family] ?? family}
                   </p>
-                  <div className="space-y-1">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
                     {catalog
                       .filter((m) => m.family === family)
-                      .map((model) => (
-                        <label
-                          key={model.id}
-                          className="flex items-center gap-2 text-xs text-slate-700 px-1 py-0.5"
-                        >
+                      .map((model) => {
+                        const checked = selectedModelIds.has(model.id);
+                        return (
+                          <label
+                            key={model.id}
+                            className={`flex items-center gap-2 text-xs rounded-lg border px-2.5 py-2 cursor-pointer transition-colors ${
+                              checked
+                                ? "border-primary/40 bg-primary/10 text-primary"
+                                : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"
+                            }`}
+                          >
                           <input
                             type="checkbox"
-                            className="accent-teal-500"
-                            checked={selectedModelIds.has(model.id)}
+                            className="accent-primary"
+                            checked={checked}
                             onChange={() => toggleModel(model.id)}
                           />
-                          {model.label}
+                          <span className="flex-1 min-w-0">{model.label}</span>
                           {model.slow && (
                             <Badge variant="warning">
                               <AlertTriangle size={10} className="mr-0.5" />
-                              Plus lent sur les gros jeux de données
+                              Lent
                             </Badge>
                           )}
                           {model.supported_tasks.length === 1 && (
                             <Badge variant="neutral">
-                              {model.supported_tasks[0] === "classification" ? "Classification uniquement" : "Régression uniquement"}
+                              {model.supported_tasks[0] === "classification" ? "Classif." : "Régression"}
                             </Badge>
                           )}
-                        </label>
-                      ))}
+                          </label>
+                        );
+                      })}
                   </div>
                 </div>
               ))}

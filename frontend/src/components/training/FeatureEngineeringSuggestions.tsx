@@ -119,7 +119,7 @@ export function FeatureEngineeringSuggestions({
   return (
     <div className="space-y-2">
       <p className="text-xs uppercase tracking-wide text-slate-500 flex items-center gap-1.5">
-        <Wand2 size={12} className="text-teal-600" />
+        <Wand2 size={12} className="text-primary" />
         Ingénierie de variables suggérée
         {approvedCount > 0 && (
           <span className="text-slate-400">
@@ -147,13 +147,13 @@ export function FeatureEngineeringSuggestions({
             <div
               key={`${suggestion.code}-${suggestion.columns.join(",")}-${index}`}
               className={`rounded-lg border px-3 py-2.5 bg-slate-50 ${
-                isApproved ? "border-teal-300" : "border-slate-200"
+                isApproved ? "border-primary/40" : "border-slate-200"
               }`}
             >
               <div className="flex items-start gap-2">
                 <input
                   type="checkbox"
-                  className="accent-teal-600 mt-1"
+                  className="accent-primary mt-1"
                   checked={isApproved}
                   onChange={() => toggleApproved(index)}
                   aria-label={`Approuver : ${suggestion.title}`}
@@ -163,7 +163,7 @@ export function FeatureEngineeringSuggestions({
                   onClick={() => toggleExpanded(index)}
                   className="flex-1 flex items-start gap-2 text-left min-w-0"
                 >
-                  <Sparkles size={14} className="flex-shrink-0 mt-0.5 text-teal-600" />
+                  <Sparkles size={14} className="flex-shrink-0 mt-0.5 text-primary" />
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2 flex-wrap">
                       {suggestion.based_on_warning && <Badge variant="accent">Garde-fou</Badge>}
@@ -185,7 +185,7 @@ export function FeatureEngineeringSuggestions({
                   <select
                     value={currentStrategy}
                     onChange={(e) => setStrategies((prev) => ({ ...prev, [index]: e.target.value }))}
-                    className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-500/40"
+                    className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-primary/40"
                   >
                     {suggestion.choice.options.map((opt) => (
                       <option key={opt} value={opt}>
@@ -199,7 +199,7 @@ export function FeatureEngineeringSuggestions({
                       placeholder="Valeur"
                       value={fillValues[index] ?? ""}
                       onChange={(e) => setFillValues((prev) => ({ ...prev, [index]: e.target.value }))}
-                      className="w-24 rounded-md border border-slate-300 bg-white px-2 py-1 text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-500/40"
+                      className="w-24 rounded-md border border-slate-300 bg-white px-2 py-1 text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-primary/40"
                     />
                   )}
                 </div>

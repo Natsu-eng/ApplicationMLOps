@@ -19,6 +19,7 @@ import {
   type FeatureByTargetResponse,
   type HistogramResponse,
 } from "../../api/client";
+import { Card } from "../ui/Card";
 import { Modal } from "../ui/Modal";
 import { Heatmap } from "../ui/Heatmap";
 import { LabelWithHelp } from "../ui/Tooltip";
@@ -34,6 +35,15 @@ import {
   CHART_TOOLTIP_STYLE,
 } from "../../theme/charts";
 
+/** Bornes de bin lisibles : pas de décimale inutile sur de grandes valeurs
+ * (ex. "5001" plutôt que "5001.0"), une décimale seulement pour les petites
+ * valeurs où elle reste informative — évite les libellés à rallonge qui se
+ * chevauchaient en axe pivoté (bug réel constaté sur un histogramme à
+ * grandes valeurs, ex. UDI 1–10000). */
+function formatBinEdge(value: number): string {
+  return Math.abs(value) >= 10 ? Math.round(value).toLocaleString("fr-FR") : value.toFixed(1);
+}
+
 /** Convertit une réponse histogramme (bins numériques OU comptage
  * catégoriel) en données Recharts — factorisé car réutilisé pour la
  * distribution d'une variable choisie ET pour la distribution de la cible. */
@@ -41,7 +51,7 @@ function histogramToChartData(histogram: HistogramResponse | null) {
   if (!histogram) return [];
   return histogram.kind === "numeric"
     ? histogram.counts.map((count, i) => ({
-        name: `${histogram.bin_edges![i].toFixed(1)}–${histogram.bin_edges![i + 1].toFixed(1)}`,
+        name: `${formatBinEdge(histogram.bin_edges![i])}–${formatBinEdge(histogram.bin_edges![i + 1])}`,
         count,
       }))
     : (histogram.categories ?? []).map((cat, i) => ({ name: cat, count: histogram.counts[i] }));
@@ -117,7 +127,7 @@ export default function EdaModal({ dataset, onClose }: { dataset: DatasetSummary
         <div className="space-y-6">
           <p className="text-xs text-slate-500">{eda.row_count} lignes analysées</p>
 
-          <section>
+          <Card className="p-4">
             <p className="text-xs uppercase tracking-wide text-slate-500 mb-2">
               <LabelWithHelp
                 label="Analyser par rapport à une cible"
@@ -130,7 +140,7 @@ export default function EdaModal({ dataset, onClose }: { dataset: DatasetSummary
                 setTargetColumn(e.target.value);
                 setFeatureForTarget("");
               }}
-              className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-500/40"
+              className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-primary/40"
             >
               <option value="">Aucune — exploration générale</option>
               {eda.column_stats.map((c) => (
@@ -139,10 +149,10 @@ export default function EdaModal({ dataset, onClose }: { dataset: DatasetSummary
                 </option>
               ))}
             </select>
-          </section>
+          </Card>
 
           {targetColumn && targetDistributionData.length > 0 && (
-            <section>
+            <Card className="p-4">
               <p className="text-xs uppercase tracking-wide text-slate-500 mb-2">
                 <LabelWithHelp
                   label={`Distribution de « ${targetColumn} »`}
@@ -158,11 +168,11 @@ export default function EdaModal({ dataset, onClose }: { dataset: DatasetSummary
                   <Bar dataKey="count" fill={CHART_COLOR_TERTIARY} radius={[4, 4, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
-            </section>
+            </Card>
           )}
 
           {targetColumn && numericFeatureOptions.length > 0 && (
-            <section>
+            <Card className="p-4">
               <p className="text-xs uppercase tracking-wide text-slate-500 mb-2">
                 <LabelWithHelp
                   label="Pouvoir discriminant d'une variable"
@@ -172,7 +182,7 @@ export default function EdaModal({ dataset, onClose }: { dataset: DatasetSummary
               <select
                 value={featureForTarget}
                 onChange={(e) => setFeatureForTarget(e.target.value)}
-                className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 mb-3 focus:outline-none focus:ring-2 focus:ring-teal-500/40"
+                className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 mb-3 focus:outline-none focus:ring-2 focus:ring-primary/40"
               >
                 <option value="">Choisir une variable numérique…</option>
                 {numericFeatureOptions.map((c) => (
@@ -182,11 +192,11 @@ export default function EdaModal({ dataset, onClose }: { dataset: DatasetSummary
                 ))}
               </select>
               {featureByTargetBoxData.length > 0 && <BoxPlotChart data={featureByTargetBoxData} height={220} />}
-            </section>
+            </Card>
           )}
 
           {missingData.length > 0 && (
-            <section>
+            <Card className="p-4">
               <p className="text-xs uppercase tracking-wide text-slate-500 mb-2">
                 <LabelWithHelp
                   label="Valeurs manquantes"
@@ -207,11 +217,11 @@ export default function EdaModal({ dataset, onClose }: { dataset: DatasetSummary
                   <Bar dataKey="pct" fill={CHART_COLOR_SECONDARY} radius={[0, 4, 4, 0]} />
                 </BarChart>
               </ResponsiveContainer>
-            </section>
+            </Card>
           )}
 
           {eda.correlation_matrix.columns.length >= 2 && (
-            <section>
+            <Card className="p-4">
               <p className="text-xs uppercase tracking-wide text-slate-500 mb-2">
                 <LabelWithHelp
                   label="Corrélations numériques"
@@ -224,11 +234,11 @@ export default function EdaModal({ dataset, onClose }: { dataset: DatasetSummary
                 matrix={eda.correlation_matrix.matrix}
                 variant="diverging"
               />
-            </section>
+            </Card>
           )}
 
           {eda.categorical_correlation_matrix.columns.length >= 2 && (
-            <section>
+            <Card className="p-4">
               <p className="text-xs uppercase tracking-wide text-slate-500 mb-2">
                 <LabelWithHelp
                   label="Corrélations catégorielles"
@@ -241,11 +251,11 @@ export default function EdaModal({ dataset, onClose }: { dataset: DatasetSummary
                 matrix={eda.categorical_correlation_matrix.matrix}
                 variant="sequential"
               />
-            </section>
+            </Card>
           )}
 
           {outlierBoxData.length > 0 && (
-            <section>
+            <Card className="p-4">
               <p className="text-xs uppercase tracking-wide text-slate-500 mb-2">
                 <LabelWithHelp
                   label="Détection d'outliers"
@@ -253,11 +263,11 @@ export default function EdaModal({ dataset, onClose }: { dataset: DatasetSummary
                 />
               </p>
               <BoxPlotChart data={outlierBoxData} height={240} />
-            </section>
+            </Card>
           )}
 
           {eda.top_correlated_pairs.length > 0 && (
-            <section>
+            <Card className="p-4">
               <p className="text-xs uppercase tracking-wide text-slate-500 mb-2">
                 <LabelWithHelp
                   label="Paires de variables les plus corrélées"
@@ -265,43 +275,57 @@ export default function EdaModal({ dataset, onClose }: { dataset: DatasetSummary
                 />
               </p>
               <div className="space-y-4">
-                {eda.top_correlated_pairs.map((pair) => (
-                  <div key={`${pair.x_column}-${pair.y_column}`}>
-                    <p className="text-xs text-slate-500 mb-1">
-                      {pair.x_column} × {pair.y_column}{" "}
-                      <span className="text-slate-600">(r = {pair.correlation?.toFixed(2) ?? "—"})</span>
-                    </p>
-                    <ResponsiveContainer width="100%" height={180}>
-                      <ScatterChart margin={{ left: 0, right: 12, bottom: 8 }}>
-                        <CartesianGrid strokeDasharray="3 3" stroke={CHART_GRID_STROKE} />
-                        <XAxis
-                          type="number"
-                          dataKey="x"
-                          tick={CHART_TICK_STYLE_SM}
-                          name={pair.x_column}
-                        />
-                        <YAxis
-                          type="number"
-                          dataKey="y"
-                          tick={CHART_TICK_STYLE_SM}
-                          name={pair.y_column}
-                        />
-                        <RechartsTooltip {...CHART_TOOLTIP_STYLE} />
-                        <Scatter data={pair.points} fill={CHART_COLOR_PRIMARY} fillOpacity={0.6} isAnimationActive={false} />
-                      </ScatterChart>
-                    </ResponsiveContainer>
-                  </div>
-                ))}
+                {eda.top_correlated_pairs.map((pair) => {
+                  // Points à valeur manquante (null) exclus AVANT de les
+                  // passer à Recharts — bug réel constaté : un axe "number"
+                  // avec domaine auto traite un null comme 0, ce qui fausse
+                  // le calcul du domaine (nuage écrasé dans un coin, échelle
+                  // aberrante) même quand la grande majorité des points sont
+                  // valides.
+                  const points = pair.points.filter(
+                    (p): p is { x: number; y: number } => p.x !== null && p.y !== null,
+                  );
+                  if (points.length === 0) return null;
+                  return (
+                    <div key={`${pair.x_column}-${pair.y_column}`}>
+                      <p className="text-xs text-slate-500 mb-1">
+                        {pair.x_column} × {pair.y_column}{" "}
+                        <span className="text-slate-600">(r = {pair.correlation?.toFixed(2) ?? "—"})</span>
+                      </p>
+                      <ResponsiveContainer width="100%" height={180}>
+                        <ScatterChart margin={{ left: 0, right: 12, bottom: 8 }}>
+                          <CartesianGrid strokeDasharray="3 3" stroke={CHART_GRID_STROKE} />
+                          <XAxis
+                            type="number"
+                            dataKey="x"
+                            domain={["auto", "auto"]}
+                            tick={CHART_TICK_STYLE_SM}
+                            name={pair.x_column}
+                          />
+                          <YAxis
+                            type="number"
+                            dataKey="y"
+                            domain={["auto", "auto"]}
+                            tick={CHART_TICK_STYLE_SM}
+                            name={pair.y_column}
+                          />
+                          <RechartsTooltip {...CHART_TOOLTIP_STYLE} />
+                          <Scatter data={points} fill={CHART_COLOR_PRIMARY} fillOpacity={0.6} isAnimationActive={false} />
+                        </ScatterChart>
+                      </ResponsiveContainer>
+                    </div>
+                  );
+                })}
               </div>
-            </section>
+            </Card>
           )}
 
-          <section>
+          <Card className="p-4">
             <p className="text-xs uppercase tracking-wide text-slate-500 mb-2">Distribution d'une variable</p>
             <select
               value={selectedColumn}
               onChange={(e) => setSelectedColumn(e.target.value)}
-              className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 mb-3 focus:outline-none focus:ring-2 focus:ring-teal-500/40"
+              className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 mb-3 focus:outline-none focus:ring-2 focus:ring-primary/40"
             >
               {eda.column_stats.map((c) => (
                 <option key={c.name} value={c.name}>
@@ -311,24 +335,26 @@ export default function EdaModal({ dataset, onClose }: { dataset: DatasetSummary
             </select>
             {histogramData.length > 0 && (
               <ResponsiveContainer width="100%" height={220}>
-                <BarChart data={histogramData} margin={{ left: 0 }}>
+                <BarChart data={histogramData} margin={{ left: 0, bottom: 8 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke={CHART_GRID_STROKE} vertical={false} />
                   <XAxis
                     dataKey="name"
                     tick={CHART_TICK_STYLE_SM}
-                    angle={-30}
+                    angle={-45}
                     textAnchor="end"
-                    height={50}
+                    height={62}
+                    interval="preserveStartEnd"
+                    minTickGap={12}
                   />
                   <YAxis tick={CHART_TICK_STYLE} allowDecimals={false} />
                   <RechartsTooltip {...CHART_TOOLTIP_STYLE} />
-                  <Bar dataKey="count" fill={CHART_COLOR_PRIMARY} radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="count" fill={CHART_COLOR_PRIMARY} radius={[4, 4, 0, 0]} isAnimationActive={false} />
                 </BarChart>
               </ResponsiveContainer>
             )}
-          </section>
+          </Card>
 
-          <section>
+          <Card className="p-4">
             <p className="text-xs uppercase tracking-wide text-slate-500 mb-2">Résumé par colonne</p>
             <div className="overflow-x-auto rounded-lg border border-slate-200">
               <table className="min-w-full text-xs">
@@ -363,7 +389,7 @@ export default function EdaModal({ dataset, onClose }: { dataset: DatasetSummary
                 </tbody>
               </table>
             </div>
-          </section>
+          </Card>
         </div>
       )}
     </Modal>

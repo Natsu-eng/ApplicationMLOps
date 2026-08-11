@@ -24,7 +24,11 @@ export function Modal({
             <X size={18} />
           </button>
         </div>
-        <div className="overflow-auto p-5">{children}</div>
+        {/* Fond gris pâle (pas blanc) : les cartes internes (Card, blanches
+            + bordure) ressortent nettement plutôt que de se fondre dans un
+            modal tout blanc — même contraste canevas/carte que le reste de
+            l'app (index.css --color-canvas). */}
+        <div className="overflow-auto p-5 bg-slate-50">{children}</div>
       </div>
     </div>
   );

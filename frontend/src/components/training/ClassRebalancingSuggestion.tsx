@@ -61,19 +61,19 @@ export function ClassRebalancingSuggestion({
   return (
     <div className="space-y-2">
       <p className="text-xs uppercase tracking-wide text-slate-500 flex items-center gap-1.5">
-        <Scale size={12} className="text-teal-600" />
+        <Scale size={12} className="text-primary" />
         Rééquilibrage des classes suggéré
       </p>
 
       <div
         className={`rounded-lg border px-3 py-2.5 bg-slate-50 ${
-          approved ? "border-teal-300" : "border-slate-200"
+          approved ? "border-primary/40" : "border-slate-200"
         }`}
       >
         <div className="flex items-start gap-2">
           <input
             type="checkbox"
-            className="accent-teal-500 mt-1"
+            className="accent-primary mt-1"
             checked={approved}
             onChange={() => setApproved((v) => !v)}
             aria-label="Approuver le rééquilibrage des classes"

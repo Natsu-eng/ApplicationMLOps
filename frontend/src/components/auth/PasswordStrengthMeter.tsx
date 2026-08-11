@@ -27,13 +27,13 @@ const STRENGTH_BAR: Record<Strength, string> = {
   weak: "bg-rose-500",
   medium: "bg-amber-500",
   strong: "bg-emerald-500",
-  veryStrong: "bg-teal-600",
+  veryStrong: "bg-primary",
 };
 const STRENGTH_TEXT: Record<Strength, string> = {
   weak: "text-rose-600",
   medium: "text-amber-600",
   strong: "text-emerald-600",
-  veryStrong: "text-teal-600",
+  veryStrong: "text-primary",
 };
 
 export function PasswordStrengthMeter({ password }: { password: string }) {

@@ -17,7 +17,7 @@ export function Tooltip({ text }: { text: string }) {
       <button
         type="button"
         aria-label="Aide"
-        className="text-slate-400 hover:text-teal-600 transition-colors"
+        className="text-slate-400 hover:text-primary transition-colors"
       >
         <Info size={12} />
       </button>

@@ -89,7 +89,7 @@ export default function Login() {
 
           <p className="text-center text-sm text-slate-500 mt-4">
             Pas encore de compte ?{" "}
-            <Link to="/register" className="text-teal-600 hover:text-teal-700 font-medium">
+            <Link to="/register" className="text-primary hover:text-primary/80 font-medium">
               Créer mon bureau d'études
             </Link>
           </p>

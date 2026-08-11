@@ -9,10 +9,14 @@ interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 }
 
 const VARIANT_CLASSES: Record<Variant, string> = {
-  primary: "bg-teal-600 hover:bg-teal-700 text-white shadow-sm shadow-teal-600/20",
-  secondary: "bg-slate-100 hover:bg-slate-200 text-slate-900 border border-slate-200",
-  ghost: "bg-transparent hover:bg-slate-100 text-slate-600 border border-slate-200",
-  danger: "bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200",
+  // Dégradé de marque (pas un bleu plat) — même traitement que les CTA de
+  // l'auth (.bg-brand-gradient) : cohérence visuelle bout en bout sur le
+  // bouton d'action principal, qu'il s'agisse de se connecter ou de lancer
+  // un entraînement.
+  primary: "bg-brand-gradient hover:brightness-110 text-white shadow-sm shadow-primary/25 transition-[filter]",
+  secondary: "bg-secondary hover:bg-muted text-secondary-foreground border border-border",
+  ghost: "bg-transparent hover:bg-muted text-muted-foreground border border-border",
+  danger: "bg-destructive/10 hover:bg-destructive/15 text-destructive border border-destructive/20",
 };
 
 const SIZE_CLASSES: Record<Size, string> = {

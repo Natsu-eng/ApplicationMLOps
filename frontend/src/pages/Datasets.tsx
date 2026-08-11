@@ -69,7 +69,7 @@ export default function Datasets() {
     <AppShell pillarId="supervised">
       <div className="mb-6 flex items-end justify-between gap-4">
         <div>
-          <p className="text-xs uppercase tracking-widest text-teal-600 font-semibold mb-1">
+          <p className="text-xs uppercase tracking-widest text-primary font-semibold mb-1">
             Données
           </p>
           <h1 className="text-2xl font-serif text-slate-900">Mes données</h1>
@@ -88,7 +88,7 @@ export default function Datasets() {
           toute la bande. */}
       <Card
         className={`p-4 mb-6 border-dashed flex items-center gap-4 transition-colors ${
-          isDragging ? "border-teal-500/60 bg-teal-500/5" : ""
+          isDragging ? "border-primary/60 bg-primary/5" : ""
         }`}
         onDragOver={(e) => {
           e.preventDefault();
@@ -137,7 +137,10 @@ export default function Datasets() {
           </p>
         </Card>
       ) : (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+        // Plafonné à 3 colonnes (pas 4) — au-delà, la carte devient trop
+        // étroite pour les 3 boutons d'action (Aperçu/Explorer/Supprimer),
+        // qui se tronquent ou débordent (bug réel signalé en usage).
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
           {datasets.map((dataset) => (
             <DatasetCard
               key={dataset.id}
@@ -157,9 +160,9 @@ export default function Datasets() {
 }
 
 function StatusBadge({ status }: { status: string }) {
-  if (status === "ready") return <Badge variant="success">Prêt</Badge>;
-  if (status === "error") return <Badge variant="danger">Erreur</Badge>;
-  return <Badge variant="warning">Analyse…</Badge>;
+  if (status === "ready") return <Badge variant="success" dot>Prêt</Badge>;
+  if (status === "error") return <Badge variant="danger" dot>Erreur</Badge>;
+  return <Badge variant="primary" dot pulse>Analyse…</Badge>;
 }
 
 function DatasetCard({
@@ -204,14 +207,37 @@ function DatasetCard({
           </div>
         )}
 
-        <div className="mt-auto flex gap-2 pt-3 border-t border-slate-200">
-          <Button variant="ghost" size="sm" onClick={onPreview} disabled={dataset.status !== "ready"}>
-            <Eye size={14} /> Aperçu
+        {/* flex-1 + min-w-0 sur Aperçu/Explorer : ces deux boutons se
+            partagent l'espace et rétrécissent (texte tronqué) plutôt que de
+            pousser le bouton Supprimer hors de la carte — bug réel constaté
+            sur une grille à 4 colonnes (carte étroite), où le bouton
+            Supprimer se retrouvait coupé par overflow-hidden. */}
+        <div className="mt-auto flex items-center gap-1.5 pt-3 border-t border-slate-200">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={onPreview}
+            disabled={dataset.status !== "ready"}
+            className="flex-1 min-w-0"
+          >
+            <Eye size={14} className="flex-shrink-0" /> <span className="truncate">Aperçu</span>
           </Button>
-          <Button variant="ghost" size="sm" onClick={onExplore} disabled={dataset.status !== "ready"}>
-            <ChartColumn size={14} /> Explorer
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={onExplore}
+            disabled={dataset.status !== "ready"}
+            className="flex-1 min-w-0"
+          >
+            <ChartColumn size={14} className="flex-shrink-0" /> <span className="truncate">Explorer</span>
           </Button>
-          <Button variant="danger" size="sm" onClick={onDelete} aria-label="Supprimer">
+          <Button
+            variant="danger"
+            size="sm"
+            onClick={onDelete}
+            aria-label="Supprimer"
+            className="flex-shrink-0"
+          >
             <Trash2 size={14} />
           </Button>
         </div>
@@ -236,7 +262,7 @@ function PreviewModal({ dataset, onClose }: { dataset: DatasetSummary; onClose: 
       {error && <p className="text-sm text-rose-600">{error}</p>}
       {!data && !error && <p className="text-sm text-slate-500">Chargement…</p>}
       {data && (
-        <div>
+        <Card className="p-4 overflow-x-auto">
           <table className="min-w-full text-xs border-collapse">
             <thead>
               <tr className="border-b border-slate-200">
@@ -265,7 +291,7 @@ function PreviewModal({ dataset, onClose }: { dataset: DatasetSummary; onClose: 
           <p className="text-xs text-slate-400 mt-3">
             {data.sample_size} lignes affichées sur {data.row_count ?? "?"}
           </p>
-        </div>
+        </Card>
       )}
     </Modal>
   );

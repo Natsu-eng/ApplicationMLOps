@@ -15,7 +15,7 @@ const LEVEL_CONFIG: Record<
 > = {
   critique: { badge: "danger", icon: ShieldAlert, border: "border-rose-200", iconColor: "text-rose-600" },
   attention: { badge: "warning", icon: AlertTriangle, border: "border-amber-200", iconColor: "text-amber-600" },
-  info: { badge: "accent", icon: Info, border: "border-teal-200", iconColor: "text-teal-600" },
+  info: { badge: "accent", icon: Info, border: "border-primary/20", iconColor: "text-primary" },
 };
 
 const LEVEL_LABEL: Record<DataWarning["level"], string> = {

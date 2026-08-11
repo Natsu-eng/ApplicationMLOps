@@ -16,7 +16,7 @@ export function PillarCard({ pillar }: { pillar: Pillar }) {
   return (
     <Link
       to={pillar.route}
-      className="block h-full rounded-2xl focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-500/50"
+      className="block h-full rounded-2xl focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
     >
       <Card interactive={isActive} className={`p-6 h-full flex flex-col ${isActive ? "" : "opacity-70"}`}>
         <div
@@ -30,7 +30,7 @@ export function PillarCard({ pillar }: { pillar: Pillar }) {
         <p className="text-sm text-slate-600 leading-relaxed flex-1">{pillar.description}</p>
         <div className="mt-5">
           {isActive ? (
-            <span className="inline-flex items-center gap-1.5 text-sm font-medium text-teal-600">
+            <span className="inline-flex items-center gap-1.5 text-sm font-medium text-primary">
               Commencer <ArrowRight size={15} />
             </span>
           ) : (

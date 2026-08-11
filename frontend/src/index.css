@@ -1,13 +1,54 @@
 @import "tailwindcss";
 
-/* Tokens de marque — dégradé bleu → cyan dérivé du logo (le "D"). Usage
-   RÉSERVÉ aux moments de marque (mark du logo, carte pilier active, futurs
-   panneaux vitrine) : l'usage courant (boutons, badges, focus) reste en
-   teal, déjà déployé partout dans l'app — pas de migration globale. */
+/* Tokens de marque — dégradé bleu → cyan dérivé du logo (le "D"). */
 @theme {
   --color-brand-700: #1d4ed8; /* bleu profond — base du dégradé du logo */
   --color-brand-400: #22d3ee; /* cyan vif — pointe du dégradé du logo */
   --color-canvas: #eef2fb; /* fond de page — bleu très pâle dérivé de la marque, plat, sans dégradé (E1-ter, sur demande) */
+
+  /* Système de tokens sémantiques (Lot refonte UI) — remplace l'usage ad hoc
+     des teintes teal, emerald, amber, rose dispersées composant par composant :
+     une seule source pour primary/success/warning/destructive/accent, en
+     OKLCH pour une teinte perceptuellement cohérente entre les nuances et
+     les variantes d'opacité (ex. bg-primary/10). Calqué sur la maquette
+     v0 (design de référence fourni) — primary passe du teal au bleu de
+     marque, pour une identité visuelle unifiée avec le dégradé du logo/auth
+     plutôt que deux accents concurrents. */
+  --color-primary: oklch(0.48 0.17 258);
+  --color-primary-foreground: oklch(0.99 0.005 260);
+  --color-secondary: oklch(0.968 0.005 260);
+  --color-secondary-foreground: oklch(0.3 0.03 260);
+  --color-muted: oklch(0.968 0.005 260);
+  --color-muted-foreground: oklch(0.53 0.02 260);
+  --color-accent: oklch(0.955 0.015 250);
+  --color-accent-foreground: oklch(0.4 0.09 258);
+  --color-destructive: oklch(0.58 0.21 25);
+  --color-destructive-foreground: oklch(0.99 0.005 260);
+  --color-warning: oklch(0.72 0.16 65);
+  --color-warning-foreground: oklch(0.32 0.09 65);
+  --color-success: oklch(0.62 0.15 155);
+  --color-success-foreground: oklch(0.99 0.005 260);
+  --color-border: oklch(0.923 0.006 260);
+  --color-input: oklch(0.923 0.006 260);
+  --color-ring: oklch(0.48 0.17 258);
+  --color-card: oklch(1 0 0);
+  --color-card-foreground: oklch(0.21 0.03 260);
+  --color-background: oklch(0.985 0.002 260);
+  --color-foreground: oklch(0.21 0.03 260);
+
+  /* Palette de graphes (théme/charts.ts la consomme via les mêmes valeurs
+     hex dérivées — voir ce fichier pour le détail par usage). */
+  --color-chart-1: oklch(0.48 0.17 258);
+  --color-chart-2: oklch(0.72 0.12 200);
+  --color-chart-3: oklch(0.62 0.15 155);
+  --color-chart-4: oklch(0.72 0.16 65);
+  --color-chart-5: oklch(0.58 0.21 25);
+
+  --color-sidebar: oklch(0.99 0.002 260);
+  --color-sidebar-foreground: oklch(0.21 0.03 260);
+  --color-sidebar-accent: oklch(0.955 0.015 250);
+  --color-sidebar-accent-foreground: oklch(0.4 0.09 258);
+  --color-sidebar-border: oklch(0.923 0.006 260);
 }
 
 /* Fond global — plat, neutre et calme (thème clair). Pas de dégradé vif en

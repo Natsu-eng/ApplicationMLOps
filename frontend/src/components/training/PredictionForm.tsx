@@ -2,6 +2,7 @@ import { useState, type FormEvent } from "react";
 import { Sparkles, Wand2 } from "lucide-react";
 import { ApiError, api, type FeatureSchemaEntry, type PredictionResult, type TaskType } from "../../api/client";
 import { Button } from "../ui/Button";
+import { Card } from "../ui/Card";
 import { Input } from "../ui/Input";
 import { LabelWithHelp } from "../ui/Tooltip";
 import { formatMetricValue } from "../../utils/format";
@@ -49,9 +50,9 @@ export default function PredictionForm({
   if (featureSchema.length === 0) return null;
 
   return (
-    <section>
+    <Card className="p-5">
       <p className="text-xs uppercase tracking-wide text-slate-500 mb-2 flex items-center gap-1.5">
-        <Wand2 size={12} className="text-teal-600" />
+        <Wand2 size={12} className="text-primary" />
         <LabelWithHelp
           label="Tester une prédiction"
           help="Saisissez des valeurs pour les variables utilisées à l'entraînement — le modèle calcule sa prédiction sur ce cas précis, en temps réel."
@@ -81,9 +82,9 @@ export default function PredictionForm({
       {error && <p className="text-sm text-rose-600">{error}</p>}
 
       {result && (
-        <div className="rounded-xl border border-teal-200 bg-teal-50 px-4 py-3">
+        <div className="rounded-xl border border-primary/20 bg-primary/10 px-4 py-3">
           <div className="flex items-center gap-2 mb-1">
-            <Sparkles size={14} className="text-teal-600" />
+            <Sparkles size={14} className="text-primary" />
             <p className="text-sm text-slate-800">
               {taskType === "regression" ? (
                 <>
@@ -116,7 +117,7 @@ export default function PredictionForm({
                     <span className="text-xs text-slate-500 w-24 truncate">{label}</span>
                     <div className="flex-1 h-1.5 rounded-full bg-slate-100 overflow-hidden">
                       <div
-                        className="h-full rounded-full bg-teal-600"
+                        className="h-full rounded-full bg-primary"
                         style={{ width: `${proba * 100}%` }}
                       />
                     </div>
@@ -129,6 +130,6 @@ export default function PredictionForm({
           )}
         </div>
       )}
-    </section>
+    </Card>
   );
 }
