@@ -512,10 +512,28 @@ export interface PredictionInterval {
   confidence: number;
 }
 
+// Lot Explicabilité locale — pourquoi CETTE prédiction précise (waterfall),
+// complémentaire à l'explicabilité globale (importance moyenne) déjà
+// affichée sur la page Résultats.
+export interface LocalContribution {
+  feature: string;
+  value: number;
+  contribution: number;
+}
+
+export interface LocalExplanation {
+  status: "ok" | "degraded";
+  message: string | null;
+  base_value: number | null;
+  contributions: LocalContribution[];
+  other_contribution: number | null;
+}
+
 export interface PredictionResult {
   prediction: number | string;
   probabilities?: Record<string, number>;
   interval?: PredictionInterval;
+  explanation?: LocalExplanation;
 }
 
 // ── API ────────────────────────────────────────────────────────────────────
