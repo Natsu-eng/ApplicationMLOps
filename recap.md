@@ -282,12 +282,37 @@ défaut dès que rien n'est envoyé).
 *Rendu visuel non vérifié en conditions réelles par ce lot, comme pour
 E1-ter — aucun outil de navigateur disponible dans cet environnement.*
 
-*Entre ce lot et le suivant, une session parallèle a livré le Lot
-Explicabilité globale (beeswarm SHAP, importance par permutation, courbe de
-calibration, courbe d'apprentissage) et une refonte du design system
-(tokens OKLCH, sidebar) — voir `backend/workflow.md` pour le détail de ce
-qui est directement constaté dans le code plutôt que documenté ici a
-posteriori.*
+### Lot Explicabilité globale — comprendre le modèle au-delà des chiffres
+
+Le SHAP du Lot 5 disait déjà quelles variables comptaient en moyenne
+(barres), jamais dans quel sens ni pour quel cas précis. Ce lot ajoute trois
+angles complémentaires sur le modèle retenu : un **nuage de points (beeswarm)**
+qui montre, observation par observation, si une variable pousse la
+prédiction vers le haut ou vers le bas ; une **importance par permutation**,
+mesure indépendante du SHAP qui vient recouper ses conclusions ; une
+**courbe de calibration** (le modèle est-il "sûr à raison" quand il annonce
+une probabilité ?) ; et une **courbe d'apprentissage** (le modèle
+bénéficierait-il de plus de données ?). Chaque graphique est accompagné
+d'une phrase d'interprétation en langage clair, jamais un graphe brut sans
+explication, et dégrade proprement (message clair) plutôt que de planter
+quand le calcul n'est pas disponible pour un modèle donné.
+
+### Refonte UI : design system moderne
+
+Le premier système visuel (dégradé teal, Lot E1/E1-bis) a été remplacé par
+une refonte complète calquée sur une maquette de référence moderne : palette
+de tokens sémantiques cohérente (le bleu de marque devient l'accent
+principal partout, pas seulement sur le logo), sidebar fixe groupée par
+pilier métier, pipeline d'entraînement en wizard horizontal à étapes
+visibles, cartes réorganisées en grille plutôt qu'empilées sur les pages
+Résultats et Exploration de données. Plusieurs bugs réels d'affichage
+corrigés au passage (build cassé par un commentaire CSS mal formé, bouton
+tronqué sur une carte trop étroite, nuage de points faussé par une valeur
+manquante).
+
+*Les deux lots ci-dessus ont été livrés par une session parallèle sur ce
+même dépôt (voir `backend/workflow.md` pour le détail fichier par fichier,
+reconstitué a posteriori à partir du contenu réel des commits).*
 
 ### Audit backend + Lot Nettoyage guidé des variables, refonte Résultats/Datasets
 
