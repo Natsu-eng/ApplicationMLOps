@@ -563,11 +563,17 @@ export const api = {
       request<HistogramResponse>(
         `/datasets/${id}/histogram?column=${encodeURIComponent(column)}&bins=${bins}`,
       ),
-    qualityCheck: (id: number, targetColumn: string, groupColumn?: string) =>
-      request<DataQualityResponse>(
-        `/datasets/${id}/quality-check?target_column=${encodeURIComponent(targetColumn)}` +
-          (groupColumn ? `&group_column=${encodeURIComponent(groupColumn)}` : ""),
-      ),
+    // `targetColumn` optionnel (Lot Nettoyage guidé des variables) : absent,
+    // seules les détections structurelles reviennent (voir services/data_quality.py) —
+    // permet d'appeler ce endpoint dès l'exploration d'un dataset, avant même
+    // de choisir une cible.
+    qualityCheck: (id: number, targetColumn?: string, groupColumn?: string) => {
+      const params = new URLSearchParams();
+      if (targetColumn) params.set("target_column", targetColumn);
+      if (groupColumn) params.set("group_column", groupColumn);
+      const qs = params.toString();
+      return request<DataQualityResponse>(`/datasets/${id}/quality-check${qs ? `?${qs}` : ""}`);
+    },
     featureByTarget: (id: number, feature: string, target: string) =>
       request<FeatureByTargetResponse>(
         `/datasets/${id}/feature-by-target?feature=${encodeURIComponent(feature)}&target=${encodeURIComponent(target)}`,

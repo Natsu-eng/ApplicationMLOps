@@ -282,6 +282,75 @@ défaut dès que rien n'est envoyé).
 *Rendu visuel non vérifié en conditions réelles par ce lot, comme pour
 E1-ter — aucun outil de navigateur disponible dans cet environnement.*
 
+### Lot Explicabilité globale — comprendre le modèle au-delà des chiffres
+
+Le SHAP du Lot 5 disait déjà quelles variables comptaient en moyenne
+(barres), jamais dans quel sens ni pour quel cas précis. Ce lot ajoute trois
+angles complémentaires sur le modèle retenu : un **nuage de points (beeswarm)**
+qui montre, observation par observation, si une variable pousse la
+prédiction vers le haut ou vers le bas ; une **importance par permutation**,
+mesure indépendante du SHAP qui vient recouper ses conclusions ; une
+**courbe de calibration** (le modèle est-il "sûr à raison" quand il annonce
+une probabilité ?) ; et une **courbe d'apprentissage** (le modèle
+bénéficierait-il de plus de données ?). Chaque graphique est accompagné
+d'une phrase d'interprétation en langage clair, jamais un graphe brut sans
+explication, et dégrade proprement (message clair) plutôt que de planter
+quand le calcul n'est pas disponible pour un modèle donné.
+
+### Refonte UI : design system moderne
+
+Le premier système visuel (dégradé teal, Lot E1/E1-bis) a été remplacé par
+une refonte complète calquée sur une maquette de référence moderne : palette
+de tokens sémantiques cohérente (le bleu de marque devient l'accent
+principal partout, pas seulement sur le logo), sidebar fixe groupée par
+pilier métier, pipeline d'entraînement en wizard horizontal à étapes
+visibles, cartes réorganisées en grille plutôt qu'empilées sur les pages
+Résultats et Exploration de données. Plusieurs bugs réels d'affichage
+corrigés au passage (build cassé par un commentaire CSS mal formé, bouton
+tronqué sur une carte trop étroite, nuage de points faussé par une valeur
+manquante).
+
+*Les deux lots ci-dessus ont été livrés par une session parallèle sur ce
+même dépôt (voir `backend/workflow.md` pour le détail fichier par fichier,
+reconstitué a posteriori à partir du contenu réel des commits).*
+
+### Audit backend + Lot Nettoyage guidé des variables, refonte Résultats/Datasets
+
+Un audit expert du backend (lecture seule, rapport validé avant tout code)
+a confirmé un pipeline ML supervisé déjà solide (anti-fuite bout en bout,
+sélection sur la validation croisée, explicabilité multi-famille) et
+identifié une lacune concrète, signalée par l'utilisateur : les garde-fous
+détectaient déjà les colonnes sans valeur prédictive (identifiants,
+constantes) avec une recommandation textuelle, mais rien ne permettait de
+les exclure en un clic — il fallait lire l'alerte puis décocher la colonne
+à la main, ailleurs dans le formulaire. Corrigé, avec deux détections
+supplémentaires dans le même esprit :
+
+- **Colonnes dupliquées** (contenu strictement identique sous un autre nom)
+  et **variables numériques mal typées en texte** (virgule décimale,
+  séparateur de milliers — invisibles jusqu'ici, traitées à tort comme des
+  catégories) viennent compléter les détections déjà en place (constantes,
+  identifiants).
+- **Action "Exclure" directement sur l'alerte**, plus un bouton "Tout
+  exclure" — approuver une suggestion retire vraiment la colonne du
+  formulaire, sans aller-retour manuel. La conversion numérique suit le
+  même principe d'approbation explicite que l'ingénierie de variables du
+  Lot 4c.
+- **Analyse de qualité utilisable dès l'exploration d'un dataset**, avant
+  même de choisir une cible pour un entraînement (auparavant réservée au
+  formulaire d'entraînement).
+
+*Ce même passage a aussi fait évoluer le design des deux écrans identifiés
+comme les moins aboutis malgré un contenu déjà riche : la page d'exploration
+de données (9 analyses jusque-là empilées verticalement, sans hiérarchie)
+et la page de résultat d'un entraînement (10+ sections dans la même
+situation) sont désormais organisées en onglets thématiques, avec des
+en-têtes de section identifiables (icône colorée) plutôt qu'une liste de
+libellés gris uniformes ; la sidebar est passée d'un blanc quasi invisible
+à un fond bleu de marque assombri, pour une identité visuelle plus nette.
+Rendu réel non vérifié dans un navigateur (aucun outil disponible dans cet
+environnement) — revue visuelle à faire.*
+
 ---
 
 ## Robustesse — pas juste "ça marche chez moi"

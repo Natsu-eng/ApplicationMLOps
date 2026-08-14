@@ -820,6 +820,226 @@ détection du type de tâche avant soumission côté UI (le catalogue affiche
 tâche/modèle reste fait côté serveur à la création du job) ; explicabilité
 SHAP locale enrichie et refonte visuelle fine hors périmètre.
 
+## Lot Explicabilité globale — au-delà de l'importance moyenne (livré)
+
+Livré par une session parallèle (voir mémoire `project_parallel_sessions`),
+documenté ici a posteriori à partir du contenu réel des 5 commits (validé
+par l'utilisateur). Avant ce lot, SHAP ne donnait que l'importance moyenne
+par variable (barres, Lot 5) : on savait qu'une variable comptait, jamais si
+elle poussait la prédiction vers le haut ou le bas pour un cas donné, ni
+comment le modèle se comportait au-delà des seules métriques ponctuelles
+(train/test).
+
+- [x] **`services/ml_training.py`** — 4 nouveaux diagnostics sur le modèle
+  gagnant : **beeswarm SHAP** (réutilise l'explainer et les `shap_values`
+  déjà calculés par `_compute_shap_summary`, aucun second appel — distribution
+  signée + valeur de la feature en couleur, bornée en variables/points pour
+  un payload JSON raisonnable) ; **importance par permutation** (mesure
+  indépendante du type de modèle, pour recouper le SHAP) ; **courbe de
+  calibration** (classification uniquement, réutilise `proba_test`/`y_test`
+  déjà calculés — aucun risque de fuite propre à ce calcul) ; **courbe
+  d'apprentissage** (seul calcul réellement coûteux du lot : refit du modèle
+  gagnant, hyperparamètres déjà figés par Optuna, sur des tailles de train
+  croissantes, avec la MÊME validation croisée que la sélection du modèle —
+  jamais sur le train complet vu par le modèle final). Chaque diagnostic
+  dégrade proprement (statut `"ok"`/`"degraded"` + message FR, même motif que
+  l'explicabilité SHAP du Lot 5) plutôt que de faire échouer l'entraînement.
+- [x] **Bug réel trouvé et corrigé pendant ce lot** : `CatBoost` marque en
+  lecture seule, comme effet de bord de son `Pool` interne, le tableau numpy
+  qu'on lui passe à `predict()` — `permutation_importance` réutilise ce même
+  tableau sur plusieurs répétitions, donc la 2ᵉ répétition échouait
+  systématiquement quand CatBoost était le modèle retenu. Corrigé en passant
+  un `DataFrame` (réaffectation de colonne côté pandas, jamais d'écriture
+  in-place dans le buffer verrouillé par CatBoost).
+- [x] **`api/core/models.py`/`database.py`** — 4 nouvelles colonnes JSON-as-
+  Text sur `MLModel` (`shap_beeswarm_json`, `permutation_importance_json`,
+  `calibration_json`, `learning_curve_json`), nullable, migration additive
+  idempotente (même mécanisme que le reste du projet, pas d'Alembic).
+- [x] **`workers/training_worker.py`** — les 4 champs sont écrits sur
+  `MLModel` (calibration/courbe d'apprentissage peuvent être `None`/absents
+  selon la tâche, jamais une erreur).
+- [x] **`api/routers/training.py`** — `MLModelDetail` expose les 4 champs
+  avec des défauts (`[]`/`{}`/`{}`/`None`) : un job entraîné avant ce lot
+  répond avec ces défauts plutôt que de planter (même rétrocompatibilité par
+  absence que le reste du projet).
+- [x] **Frontend** — `GlobalExplainability.tsx` (`ShapBeeswarmChart` : jitter
+  déterministe sans dépendance beeswarm dédiée, couleur par valeur de
+  variable normalisée bleu→rouge ; `PermutationImportanceChart` : barres ±
+  écart-type) ; `ReliabilityDiagnostics.tsx` (`CalibrationChart`/
+  `LearningCurveChart`, réutilisent le motif d'isolation de série des
+  courbes ROC/PR du Lot E1-ter, exporté depuis `EvaluationCharts.tsx` pour
+  l'occasion) ; `ModelResultModal.tsx` — nouvelles sections "Explicabilité
+  SHAP" et "Diagnostics de fiabilité", `DiagnosticBlock` généralise le motif
+  de dégradation du Lot 5 (renommé `isDiagnosticStatus`) pour les 4 nouveaux
+  diagnostics ; chaque graphe accompagné d'une phrase d'interprétation en
+  langage clair, jamais un graphe brut sans explication.
+
+**Vérifié** (repris du message des commits d'origine) : suite pytest
+complète verte (195 tests à l'issue de ce lot — entraînements réels, pas
+mockés, ~20 min) ; preuve structurelle d'anti-fuite de la courbe
+d'apprentissage (préprocesseur cloné jamais déjà fit, données brutes en
+entrée) ; round-trip complet worker → colonnes DB → réponse HTTP ;
+rétrocompatibilité vérifiée sur un job sans ces colonnes. Frontend : `tsc
+-b`, `vite build`, `vitest` verts (nouveau `theme/charts.test.ts`).
+
+## Refonte UI : design system moderne (livré)
+
+Livré par la même session parallèle, sur la même branche que le lot
+ci-dessus, à la demande explicite de l'utilisateur en cours de session —
+documenté ici a posteriori à partir du commit réel (validé par
+l'utilisateur). Refonte visuelle calquée sur une maquette de référence
+(v0/Vercel).
+
+- [x] **`index.css`** — nouveau système de tokens sémantiques en OKLCH
+  (`primary` passe du teal au bleu de marque ; `secondary`/`muted`/`accent`/
+  `destructive`/`warning`/`success`/`border`/`ring`/`card`/`sidebar`),
+  exposés en utilitaires Tailwind via `--color-*`. **Bug réel corrigé** : un
+  commentaire contenant littéralement `*/` fermait prématurément le bloc CSS
+  et cassait silencieusement le build (`vite build` échouait sans que `tsc`
+  le détecte).
+- [x] **Composants de base recolorisés** — `Button` (dégradé de marque sur
+  le variant primaire, cohérent avec l'auth), `Badge` (puce de statut +
+  pulse), `Card`, `Avatar`, `Heatmap` (cellules compactes, libellés pivotés
+  au-delà de 6 colonnes — matrices larges illisibles signalées en usage
+  réel), `Modal` (fond gris pâle pour faire ressortir les cartes internes),
+  `Input`, `Tooltip`. `theme/charts.ts` aligné sur le bleu de marque.
+- [x] **`AppShell.tsx`** — barre du haut remplacée par une sidebar fixe
+  (façon maquette), groupée par pilier (ML supervisé actif, non
+  supervisé/vision "Bientôt"), profil utilisateur en pied de sidebar,
+  panneau glissant en mobile. *(Tokens `--color-sidebar-accent`/
+  `--color-sidebar-muted-foreground` définis à ce lot mais pas encore
+  appliqués partout dans la sidebar — complété par le Lot Nettoyage guidé des
+  variables ci-dessus.)*
+- [x] **Pages alignées sur les nouveaux tokens** — Dashboard (CTA "Nouvel
+  entraînement", badges de statut à puce, bouton Supprimer sur chaque
+  entraînement, absent avant ce commit) ; Datasets (grille plafonnée à 3
+  colonnes — bouton Supprimer coupé par overflow-hidden sur une carte trop
+  étroite à 4 colonnes, bug réel constaté) ; Training (pipeline en wizard
+  horizontal à une étape visible, pastilles numérotées, récapitulatif
+  honnête avant lancement — jamais de temps/coût estimé fabriqué) ;
+  ModelResultModal/EvaluationCharts/PredictionForm (sections en grille de
+  cartes plutôt qu'empilées) ; EdaModal (sections en cartes, nuages de
+  points corrélés filtrés des valeurs manquantes — un point `null` faussait
+  le domaine auto des axes, bug réel constaté ; histogramme à bornes de bin
+  lisibles) ; ComingSoon (Clustering/Vision), Orientation, PillarCard,
+  garde-fous (ClassRebalancing/DataQuality/FeatureEngineering),
+  ExpertModePanel (sélection de modèles en tuiles), Login/Register/
+  PasswordStrengthMeter.
+
+**Vérifié** (repris du message du commit d'origine) : `tsc -b`, `vite
+build`, `vitest` verts après chaque étape.
+
+**Scope volontairement limité, signalé par la session d'origine** :
+persistance de la progression du wizard Entraînement à la navigation (état
+local React, pas encore de `sessionStorage`) — comportement ambigu à
+clarifier avant d'y toucher, non traité depuis.
+
+## Lot Nettoyage guidé des variables — détecter et exclure les colonnes inutiles (livré)
+
+Déclenché par un audit expert du backend (lecture seule, validé avant tout
+code) : les garde-fous Lot B détectaient déjà les colonnes constantes/quasi-
+constantes et à cardinalité excessive avec une action textuelle ("retirez
+cette colonne"), mais rien ne reliait cette recommandation à une action
+concrète côté formulaire d'entraînement — l'utilisateur devait lire l'alerte
+puis décocher la colonne manuellement, sans lien visuel entre les deux.
+L'EDA autonome (avant choix d'une cible) n'exécutait en outre aucune de ces
+détections. Deux lacunes supplémentaires identifiées au même audit :
+colonnes dupliquées noyées dans l'alerte générique de colinéarité, et
+colonnes numériques mal typées en texte (virgule décimale, séparateur de
+milliers) totalement invisibles.
+
+- [x] **`services/data_quality.py`** — `target_column` devient optionnel
+  dans `analyze_data_quality()` : absent, les détections structurelles
+  (constantes, cardinalité, doublons, numérique mal typé, valeurs
+  manquantes, colinéarité, dataset trop petit) restent actives, seules
+  fuite/déséquilibre (qui exigent une cible) sont omises — rétrocompatible,
+  comportement inchangé quand une cible est fournie. Deux nouveaux
+  détecteurs : `_detect_duplicate_columns` (hash `pandas.util.
+  hash_pandas_object` puis `Series.equals` seulement entre colonnes de même
+  hash — évite une comparaison O(k²) systématique sur un dataset à beaucoup
+  de colonnes), niveau "attention" (contenu strictement identique, sans
+  ambiguïté, contrairement à la colinéarité ≥0.9 restée en "info") ;
+  `_detect_mistyped_numeric` (`_try_parse_numeric_text`/
+  `_has_numeric_format_signal`), avec un garde-fou explicite avant tout
+  parsing — une part suffisante de l'échantillon doit porter un signe de
+  formatage numérique (virgule, séparateur de milliers) avant d'être
+  considérée candidate, pour ne jamais confondre une colonne d'identifiants
+  (ex. codes postaux à zéro non significatif) avec du numérique mal typé.
+- [x] **`services/feature_engineering.py`** — `_suggest_column_exclusion`
+  (nouveau, branché sur `colonne_constante`/`cardinalite_excessive`/
+  `colonnes_dupliquees`) : suggestion d'exclusion, mais PAS une
+  transformation de pipeline — son `transformation` (`{"type":
+  "exclude_column", ...}`) n'entre jamais dans `spec["upstream"]` (absent de
+  `_UPSTREAM_TRANSFORMATION_TYPES` par construction, lèverait une erreur
+  explicite s'il y apparaissait), approuver cette suggestion revient
+  simplement à décocher la colonne dans `TrainingJobCreate.feature_columns`,
+  mécanisme qui existe depuis le Lot 3. `suggest_numeric_coercion` +
+  `apply_numeric_coercion` (nouveau type upstream `numeric_coerce`,
+  déterministe ligne à ligne comme `datetime_decompose`/`ratio`) : réutilise
+  EXACTEMENT le même parseur que la détection, pour que suggestion affichée
+  et conversion appliquée ne divergent jamais. Appliqué EN PREMIER dans
+  `apply_upstream_feature_engineering` (avant décomposition datetime et
+  ratio) : un ratio référençant une colonne mal typée doit voir sa forme
+  déjà convertie.
+- [x] **`api/routers/datasets.py`** — `GET /datasets/{id}/quality-check` :
+  `target_column` devient optionnel, permet un appel dès l'exploration d'un
+  dataset (page Données/EDA), avant même de choisir une cible pour un
+  entraînement.
+- [x] **`api/routers/training.py`** — `_KNOWN_UPSTREAM_TYPES` +
+  `numeric_coerce`, validation de la colonne référencée par cette
+  transformation au même titre que `datetime_decompose`/`ratio`.
+- [x] **Frontend, `DataQualityWarnings.tsx`** — action "Exclure « colonne »"
+  par alerte excluable (miroir de `_EXCLUSION_WARNING_CODES` côté backend,
+  sans appel réseau supplémentaire : lit directement `warning.columns`) +
+  bouton "Tout exclure" groupé ; devient utilisable sans cible (EDA) via
+  `targetColumn` optionnel. `Training.tsx` : `excludeFeatures()` (retrait
+  explicite, jamais un toggle — approuver deux fois la même suggestion reste
+  sans effet) câblé sur la sélection de variables de l'étape 1.
+  `FeatureEngineeringSuggestions.tsx` : filtre `exclusion_variable` (déjà
+  proposée, plus utilement, dans le panneau qualité — l'afficher aussi ici
+  aurait été un cul-de-sac, sa transformation n'étant jamais une entrée de
+  pipeline) ; ajoute la branche manquante `numeric_coerce` dans la
+  construction du payload (absente, une suggestion de conversion approuvée
+  n'aurait silencieusement rien fait).
+- [x] **Refonte visuelle associée** (au-delà du périmètre initial, cadrée en
+  cours de session) : sidebar recolorisée (fond bleu de marque assombri,
+  `--color-sidebar*` en OKLCH, teinte 258 cohérente avec `--color-primary` —
+  remplace un blanc quasi invisible confondu avec le fond de page) ;
+  `EdaModal.tsx` restructuré en onglets (Vue d'ensemble/Qualité des
+  données/Corrélations/Distributions/Relation à la cible) avec bande de
+  statistiques (`StatTile`, réutilisé du dashboard) — remplace un
+  empilement vertical de 9 cartes identiques ; panneau qualité (ce lot)
+  intégré comme onglet dédié. `ModelResultModal.tsx`/`ModelResultView`
+  restructuré en onglets (Performance/Explicabilité/Fiabilité/Prédire/
+  Détails), nouveau composant partagé `components/ui/SectionHeader.tsx`
+  (icône colorée + titre, remplace les libellés gris uniformes dans les deux
+  écrans). `Modal.tsx` gagne un prop `size` (`"md"`/`"xl"`, défaut inchangé)
+  pour ces deux contenus riches.
+
+**Vérifié** :
+
+- Suite pytest complète verte (218/218, 26 nouveaux tests : détecteurs
+  data_quality, target_column optionnel, suggestions d'exclusion/coercion,
+  endpoints API).
+- Frontend : `tsc -b`, `vite build` et `vitest run` verts (13/13).
+- Non-régression structurelle : un job/dataset qui ne déclenche aucun des
+  nouveaux garde-fous produit exactement les mêmes suggestions qu'avant ce
+  lot (assertions de codes mises à jour uniquement là où un dataset de test
+  déclenche réellement une nouvelle détection, ex. cardinalité excessive sur
+  "ville").
+- Rendu visuel réel **non vérifié** en conditions réelles — aucun outil
+  d'interaction navigateur disponible dans cet environnement de travail ;
+  revue visuelle à faire par l'utilisateur avant de considérer la refonte
+  définitive.
+
+**Scope volontairement limité** : pas de détection de colonnes numériques
+mal typées AU-DELÀ de la virgule/séparateur de milliers (ex. devises avec
+symbole, pourcentages en texte — non rencontrés dans les datasets réels de
+l'utilisateur à ce jour) ; pas de comparaison inter-jobs (Lot D-bis,
+toujours en attente) ; pas de registre de modèles versionné (Lot 9) ; pas de
+durcissement SaaS (Lot 10, quotas de jobs concurrents notamment) — ces trois
+derniers points restent priorisés dans l'audit backend qui a précédé ce lot.
+
 ## Prochains lots (résumé — détail complet dans le diagnostic de migration et les échanges de cadrage)
 
 | Lot | Contenu | Livrable testable |

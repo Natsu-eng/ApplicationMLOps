@@ -29,7 +29,7 @@ from services.ml_registry import MODEL_REGISTRY
 from services.ml_task import detect_task_type
 from services.ml_training import selection_metric_label
 
-_KNOWN_UPSTREAM_TYPES = {"datetime_decompose", "ratio"}
+_KNOWN_UPSTREAM_TYPES = {"datetime_decompose", "ratio", "numeric_coerce"}
 
 # Mode expert (Lot E2) : modèles signalés comme lents dans le sélecteur —
 # pas une propriété du registre (`ml_registry.ModelSpec`, purement une
@@ -238,10 +238,12 @@ def _validate_and_serialize_feature_engineering(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail={"code": "TRANSFORMATION_INCONNUE", "message": f"Type de transformation amont inconnu : {ttype}"},
             )
-        referenced = (
-            [transformation.get("source_column")] if ttype == "datetime_decompose"
-            else [transformation.get("numerator"), transformation.get("denominator")]
-        )
+        if ttype == "datetime_decompose":
+            referenced = [transformation.get("source_column")]
+        elif ttype == "numeric_coerce":
+            referenced = [transformation.get("column")]
+        else:  # "ratio"
+            referenced = [transformation.get("numerator"), transformation.get("denominator")]
         unknown = {c for c in referenced if c not in known_columns}
         if unknown:
             raise HTTPException(

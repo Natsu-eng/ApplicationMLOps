@@ -1,5 +1,5 @@
 import { type ReactNode, useEffect, useState } from "react";
-import { ShieldCheck, Sparkles } from "lucide-react";
+import { Activity, ClipboardList, Gauge, ShieldCheck, Sparkles, Trophy, Wand2 } from "lucide-react";
 import {
   ApiError,
   api,
@@ -13,12 +13,22 @@ import { BoxPlotChart } from "../ui/BoxPlot";
 import { Card } from "../ui/Card";
 import { Modal } from "../ui/Modal";
 import { LabelWithHelp } from "../ui/Tooltip";
+import { SectionHeader } from "../ui/SectionHeader";
 import { formatMetricValue, formatPercent } from "../../utils/format";
 import { clampUnitScore, foldScoresToBoxPlotDatum } from "../../utils/cvScore";
 import EvaluationCharts from "./EvaluationCharts";
 import { ShapBeeswarmChart, PermutationImportanceChart } from "./GlobalExplainability";
 import { CalibrationChart, LearningCurveChart } from "./ReliabilityDiagnostics";
 import PredictionForm from "./PredictionForm";
+
+const RESULT_TABS = [
+  { id: "performance", label: "Performance" },
+  { id: "explicabilite", label: "Explicabilité" },
+  { id: "fiabilite", label: "Fiabilité" },
+  { id: "predire", label: "Prédire" },
+  { id: "details", label: "Détails" },
+] as const;
+type ResultTabId = (typeof RESULT_TABS)[number]["id"];
 
 function isBootstrapCI(value: unknown): value is BootstrapCI {
   return typeof value === "object" && value !== null && "ci_low" in value && "ci_high" in value;
@@ -106,7 +116,7 @@ function FeatureEngineeringSummary({ spec }: { spec: MLModelDetail["feature_engi
   if (items.length === 0) return null;
   return (
     <Card className="p-5">
-      <p className="text-xs uppercase tracking-wide text-slate-500 mb-2">Ingénierie de variables appliquée</p>
+      <SectionHeader icon={Wand2} color="teal" label="Ingénierie de variables appliquée" />
       <ul className="text-xs text-slate-600 space-y-1 list-disc list-inside">
         {items.map((item, i) => (
           <li key={i}>{item}</li>
@@ -218,12 +228,12 @@ function Leaderboard({ data }: { data: LeaderboardResponse | null }) {
 
   return (
     <Card className="p-5 h-full">
-      <p className="text-xs uppercase tracking-wide text-slate-500 mb-2">
-        <LabelWithHelp
-          label="Modèles évalués"
-          help={`Classement sur ${data.selection_metric_label} — la métrique qui a réellement départagé les candidats pendant l'entraînement, jamais une exactitude brute qui peut être trompeuse sur un dataset déséquilibré.`}
-        />
-      </p>
+      <SectionHeader
+        icon={Trophy}
+        color="amber"
+        label="Modèles évalués"
+        help={`Classement sur ${data.selection_metric_label} — la métrique qui a réellement départagé les candidats pendant l'entraînement, jamais une exactitude brute qui peut être trompeuse sur un dataset déséquilibré.`}
+      />
 
       {winner && runnerUp && (
         <p className="text-xs text-slate-600 mb-3">
@@ -287,6 +297,7 @@ export function ModelResultView({ job }: { job: TrainingJobSummary }) {
   const [model, setModel] = useState<MLModelDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [leaderboard, setLeaderboard] = useState<LeaderboardResponse | null>(null);
+  const [activeTab, setActiveTab] = useState<ResultTabId>("performance");
 
   useEffect(() => {
     api.training
@@ -311,7 +322,7 @@ export function ModelResultView({ job }: { job: TrainingJobSummary }) {
       {!model && !error && <p className="text-sm text-slate-500">Chargement…</p>}
 
       {model && (
-        <div className="space-y-6">
+        <div className="space-y-5">
           <div className="flex items-center gap-2 flex-wrap">
             <Badge variant="accent">{model.algorithm}</Badge>
             <Badge variant="neutral">
@@ -325,203 +336,235 @@ export function ModelResultView({ job }: { job: TrainingJobSummary }) {
             )}
           </div>
 
-          {/* Dashboard en grille (pas un empilement) — modèles comparés à
-              gauche, métriques détaillées du gagnant à droite, comme le
-              reste des sections ci-dessous : chaque bloc est une carte
-              distincte, jamais une section nue qui se fond dans la page. */}
-          <div className="grid gap-5 lg:grid-cols-5">
-            <div className="lg:col-span-2">
-              <Leaderboard data={leaderboard} />
-            </div>
-            <Card className="p-5 lg:col-span-3">
-              <p className="text-xs uppercase tracking-wide text-slate-500 mb-2">Performance</p>
-              <div className="grid grid-cols-2 gap-3">
-                {model.task_type === "regression" ? (
-                  <>
-                    <MetricCard
-                      label="R² (test)"
-                      help="Part de la variation de la cible expliquée par le modèle, de 0 à 1. 0,90 = le modèle explique 90 % des écarts observés — plus c'est proche de 1, mieux c'est."
-                      value={model.metrics.r2_test as number}
-                      ci={isBootstrapCI(model.metrics.r2_bootstrap) ? model.metrics.r2_bootstrap : undefined}
-                    />
-                    <MetricCard
-                      label="RMSE"
-                      help="Erreur moyenne de prédiction, dans l'unité de la cible. Plus c'est bas, mieux c'est — à comparer à l'échelle typique de vos valeurs."
-                      value={model.metrics.rmse as number}
-                      ci={isBootstrapCI(model.metrics.rmse_bootstrap) ? model.metrics.rmse_bootstrap : undefined}
-                    />
-                    <MetricCard label="MAE" help="Erreur absolue moyenne — comme le RMSE mais moins sensible aux grosses erreurs isolées." value={model.metrics.mae as number} />
-                    <MetricCard label="Score CV" help="Performance moyenne sur plusieurs découpages des données d'entraînement — plus fiable qu'un seul test, c'est ce score qui a servi à choisir ce modèle." value={model.metrics.cv_score as number} />
-                  </>
-                ) : (
-                  <>
-                    <MetricCard
-                      label="Précision globale"
-                      help="Pourcentage de prédictions correctes sur le jeu de test."
-                      value={model.metrics.accuracy as number}
-                      ci={isBootstrapCI(model.metrics.accuracy_bootstrap) ? model.metrics.accuracy_bootstrap : undefined}
-                    />
-                    <MetricCard label="F1-score" help="Équilibre entre précision et rappel — utile quand les classes sont déséquilibrées, où la précision seule peut être trompeuse." value={model.metrics.f1 as number} />
-                    <MetricCard label="AUC-ROC" help="Capacité du modèle à distinguer les classes, de 0,5 (hasard) à 1 (parfait)." value={model.metrics.roc_auc as number} />
-                    <MetricCard label="Score CV" help="Performance moyenne sur plusieurs découpages des données d'entraînement — plus fiable qu'un seul test, c'est ce score qui a servi à choisir ce modèle." value={model.metrics.cv_score as number} />
-                  </>
-                )}
-              </div>
-              {model.task_type === "regression" && typeof model.metrics.delta_r2 === "number" && (
-                <p className="text-xs text-slate-500 mt-3">
-                  Écart train/test (R²) : <span className="tabular-nums">{formatMetricValue(model.metrics.delta_r2)}</span>
-                  {" — "}
-                  {model.metrics.delta_r2 < 0.08 ? "pas de surapprentissage notable" : "surapprentissage à surveiller"}
-                </p>
-              )}
-            </Card>
+          {/* Onglets — remplace l'ancien empilement vertical de 10+ cartes
+              identiques (défilement long, aucune hiérarchie) par une
+              navigation groupée par intention, même motif que EdaModal.tsx
+              (Lot refonte Résultats/Datasets). */}
+          <div className="flex items-center gap-1 overflow-x-auto pb-1 border-b border-slate-200">
+            {RESULT_TABS.map((tab) => (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => setActiveTab(tab.id)}
+                className={`flex-shrink-0 px-3 py-2 text-xs font-medium border-b-2 transition-colors ${
+                  activeTab === tab.id
+                    ? "border-primary text-primary"
+                    : "border-transparent text-slate-500 hover:text-slate-700"
+                }`}
+              >
+                {tab.label}
+              </button>
+            ))}
           </div>
 
-          <div className="grid gap-5 lg:grid-cols-2">
-            <EvaluationCharts taskType={model.task_type} evaluation={model.evaluation} />
-          </div>
-
-          <Card className="p-5">
-            <p className="text-xs uppercase tracking-wide text-slate-500 mb-3 flex items-center gap-1.5">
-              <Sparkles size={12} className="text-primary" />
-              Explicabilité SHAP
-            </p>
+          {activeTab === "performance" && (
             <div className="space-y-5">
-              <div>
-                <p className="text-xs text-slate-600 mb-2">
-                  <LabelWithHelp
-                    label="Importance moyenne des variables"
-                    help="Plus une variable a une barre longue, plus elle pèse en moyenne dans les décisions du modèle — calculé par la méthode SHAP, standard en explicabilité de modèles ML."
-                  />
-                </p>
-                <DiagnosticBlock status={explainability} isEmpty={model.shap_summary.length === 0}>
-                  <ShapBars features={model.shap_summary} />
-                </DiagnosticBlock>
+              {/* Dashboard en grille (pas un empilement) — modèles comparés à
+                  gauche, métriques détaillées du gagnant à droite. */}
+              <div className="grid gap-5 lg:grid-cols-5">
+                <div className="lg:col-span-2">
+                  <Leaderboard data={leaderboard} />
+                </div>
+                <Card className="p-5 lg:col-span-3">
+                  <SectionHeader icon={Gauge} color="blue" label="Performance" />
+                  <div className="grid grid-cols-2 gap-3">
+                    {model.task_type === "regression" ? (
+                      <>
+                        <MetricCard
+                          label="R² (test)"
+                          help="Part de la variation de la cible expliquée par le modèle, de 0 à 1. 0,90 = le modèle explique 90 % des écarts observés — plus c'est proche de 1, mieux c'est."
+                          value={model.metrics.r2_test as number}
+                          ci={isBootstrapCI(model.metrics.r2_bootstrap) ? model.metrics.r2_bootstrap : undefined}
+                        />
+                        <MetricCard
+                          label="RMSE"
+                          help="Erreur moyenne de prédiction, dans l'unité de la cible. Plus c'est bas, mieux c'est — à comparer à l'échelle typique de vos valeurs."
+                          value={model.metrics.rmse as number}
+                          ci={isBootstrapCI(model.metrics.rmse_bootstrap) ? model.metrics.rmse_bootstrap : undefined}
+                        />
+                        <MetricCard label="MAE" help="Erreur absolue moyenne — comme le RMSE mais moins sensible aux grosses erreurs isolées." value={model.metrics.mae as number} />
+                        <MetricCard label="Score CV" help="Performance moyenne sur plusieurs découpages des données d'entraînement — plus fiable qu'un seul test, c'est ce score qui a servi à choisir ce modèle." value={model.metrics.cv_score as number} />
+                      </>
+                    ) : (
+                      <>
+                        <MetricCard
+                          label="Précision globale"
+                          help="Pourcentage de prédictions correctes sur le jeu de test."
+                          value={model.metrics.accuracy as number}
+                          ci={isBootstrapCI(model.metrics.accuracy_bootstrap) ? model.metrics.accuracy_bootstrap : undefined}
+                        />
+                        <MetricCard label="F1-score" help="Équilibre entre précision et rappel — utile quand les classes sont déséquilibrées, où la précision seule peut être trompeuse." value={model.metrics.f1 as number} />
+                        <MetricCard label="AUC-ROC" help="Capacité du modèle à distinguer les classes, de 0,5 (hasard) à 1 (parfait)." value={model.metrics.roc_auc as number} />
+                        <MetricCard label="Score CV" help="Performance moyenne sur plusieurs découpages des données d'entraînement — plus fiable qu'un seul test, c'est ce score qui a servi à choisir ce modèle." value={model.metrics.cv_score as number} />
+                      </>
+                    )}
+                  </div>
+                  {model.task_type === "regression" && typeof model.metrics.delta_r2 === "number" && (
+                    <p className="text-xs text-slate-500 mt-3">
+                      Écart train/test (R²) : <span className="tabular-nums">{formatMetricValue(model.metrics.delta_r2)}</span>
+                      {" — "}
+                      {model.metrics.delta_r2 < 0.08 ? "pas de surapprentissage notable" : "surapprentissage à surveiller"}
+                    </p>
+                  )}
+                </Card>
               </div>
 
-              <div>
-                <p className="text-xs text-slate-600 mb-1">
-                  <LabelWithHelp
-                    label="Distribution des effets (beeswarm)"
-                    help="Chaque point est une observation du jeu de test. Sa position horizontale montre si, pour ce cas précis, la variable a poussé la prédiction vers le haut ou vers le bas — la barre ci-dessus ne montrait que la moyenne, sans direction."
-                  />
-                </p>
-                <DiagnosticBlock
-                  status={explainability}
-                  isEmpty={Object.keys(model.shap_beeswarm).length === 0}
-                >
-                  <ShapBeeswarmChart beeswarm={model.shap_beeswarm} />
-                </DiagnosticBlock>
-                <p className="text-xs text-slate-500 mt-2">
-                  Les variables en haut ont le plus d'influence. Une couleur chaude (rouge) à droite signifie qu'une
-                  valeur élevée de cette variable augmente la prédiction ; une couleur froide (bleu) à droite
-                  signifierait l'inverse — une valeur basse qui l'augmente.
-                </p>
+              <div className="grid gap-5 lg:grid-cols-2">
+                <EvaluationCharts taskType={model.task_type} evaluation={model.evaluation} />
               </div>
 
-              <div>
-                <p className="text-xs text-slate-600 mb-1">
-                  <LabelWithHelp
-                    label="Importance par permutation"
-                    help="Mesure indépendante du SHAP : on mélange aléatoirement les valeurs d'une variable et on regarde de combien le score du modèle chute — plus la chute est grande, plus la variable compte."
-                  />
-                </p>
-                <DiagnosticBlock status={permutationStatus} isEmpty={model.permutation_importance.length === 0}>
-                  <PermutationImportanceChart features={model.permutation_importance} />
-                </DiagnosticBlock>
-                <p className="text-xs text-slate-500 mt-2">
-                  Une variable qui arrive en tête ici ET dans les graphes SHAP ci-dessus est un signal fort qu'elle
-                  compte vraiment pour ce modèle — les deux méthodes se recoupent.
-                </p>
-              </div>
+              <ModelInterpretation
+                model={model}
+                leaderboard={leaderboard}
+                explainabilityDegraded={explainability?.status === "degraded"}
+              />
             </div>
-          </Card>
+          )}
 
-          <ModelInterpretation
-            model={model}
-            leaderboard={leaderboard}
-            explainabilityDegraded={explainability?.status === "degraded"}
-          />
+          {activeTab === "explicabilite" && (
+            <Card className="p-5">
+              <SectionHeader icon={Sparkles} color="violet" label="Explicabilité SHAP" />
+              <div className="space-y-5">
+                <div>
+                  <p className="text-xs text-slate-600 mb-2">
+                    <LabelWithHelp
+                      label="Importance moyenne des variables"
+                      help="Plus une variable a une barre longue, plus elle pèse en moyenne dans les décisions du modèle — calculé par la méthode SHAP, standard en explicabilité de modèles ML."
+                    />
+                  </p>
+                  <DiagnosticBlock status={explainability} isEmpty={model.shap_summary.length === 0}>
+                    <ShapBars features={model.shap_summary} />
+                  </DiagnosticBlock>
+                </div>
 
-          <Card className="p-5">
-            <p className="text-xs uppercase tracking-wide text-slate-500 mb-3">Diagnostics de fiabilité</p>
-            <div className="space-y-5">
-              {model.task_type === "classification" && (
                 <div>
                   <p className="text-xs text-slate-600 mb-1">
                     <LabelWithHelp
-                      label="Courbe de calibration"
-                      help="Compare la probabilité annoncée par le modèle à la fréquence réelle observée — le modèle est-il « sûr à raison » ?"
+                      label="Distribution des effets (beeswarm)"
+                      help="Chaque point est une observation du jeu de test. Sa position horizontale montre si, pour ce cas précis, la variable a poussé la prédiction vers le haut ou vers le bas — la barre ci-dessus ne montrait que la moyenne, sans direction."
                     />
                   </p>
                   <DiagnosticBlock
-                    status={calibrationStatus}
-                    isEmpty={!model.calibration || Object.keys(model.calibration).length === 0}
+                    status={explainability}
+                    isEmpty={Object.keys(model.shap_beeswarm).length === 0}
                   >
-                    <CalibrationChart calibration={model.calibration ?? {}} />
+                    <ShapBeeswarmChart beeswarm={model.shap_beeswarm} />
                   </DiagnosticBlock>
                   <p className="text-xs text-slate-500 mt-2">
-                    Une courbe proche de la diagonale grise signifie que le modèle est fiable : quand il annonce 80 %
-                    de chances, c'est vrai environ 80 % du temps. Une courbe au-dessus de la diagonale : le modèle est
-                    trop prudent. En dessous : trop confiant.
+                    Les variables en haut ont le plus d'influence. Une couleur chaude (rouge) à droite signifie qu'une
+                    valeur élevée de cette variable augmente la prédiction ; une couleur froide (bleu) à droite
+                    signifierait l'inverse — une valeur basse qui l'augmente.
                   </p>
                 </div>
-              )}
 
-              <div>
-                <p className="text-xs text-slate-600 mb-1">
-                  <LabelWithHelp
-                    label="Courbe d'apprentissage"
-                    help="Montre comment le score évoluerait avec plus ou moins de données d'entraînement — aide à savoir si collecter davantage de données aiderait le modèle."
-                  />
-                </p>
-                <DiagnosticBlock status={learningCurveStatus} isEmpty={model.learning_curve === null}>
-                  {model.learning_curve && <LearningCurveChart data={model.learning_curve} />}
-                </DiagnosticBlock>
-                <p className="text-xs text-slate-500 mt-2">
-                  Si les deux courbes se rapprochent et restent hautes à droite, ajouter des données n'apporterait
-                  probablement pas grand-chose. Un écart persistant entre les deux est un signe de surapprentissage —
-                  le modèle a appris le train par cœur plus qu'il n'a généralisé.
-                </p>
+                <div>
+                  <p className="text-xs text-slate-600 mb-1">
+                    <LabelWithHelp
+                      label="Importance par permutation"
+                      help="Mesure indépendante du SHAP : on mélange aléatoirement les valeurs d'une variable et on regarde de combien le score du modèle chute — plus la chute est grande, plus la variable compte."
+                    />
+                  </p>
+                  <DiagnosticBlock status={permutationStatus} isEmpty={model.permutation_importance.length === 0}>
+                    <PermutationImportanceChart features={model.permutation_importance} />
+                  </DiagnosticBlock>
+                  <p className="text-xs text-slate-500 mt-2">
+                    Une variable qui arrive en tête ici ET dans les graphes SHAP ci-dessus est un signal fort qu'elle
+                    compte vraiment pour ce modèle — les deux méthodes se recoupent.
+                  </p>
+                </div>
               </div>
-            </div>
-          </Card>
-
-          {model.cqr && (
-            <Card className="p-5">
-              <p className="text-xs uppercase tracking-wide text-slate-500 mb-2">
-                <LabelWithHelp
-                  label="Fiabilité des prédictions"
-                  help="Plutôt qu'une seule valeur, le modèle peut donner une fourchette dans laquelle la vraie valeur tombe la plupart du temps — utile pour savoir jusqu'où faire confiance à une prédiction."
-                />
-              </p>
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                <MetricCard label="Couverture visée" value={model.cqr.target_coverage} />
-                <MetricCard label="Couverture observée" value={model.cqr.empirical_coverage} />
-                <MetricCard label="Largeur moyenne" value={model.cqr.mean_interval_width} />
-              </div>
-              <p className="text-xs text-slate-500 mt-2">
-                {formatPercent(model.cqr.empirical_coverage)} des valeurs test tombent dans l'intervalle prédit,
-                pour une cible de {formatPercent(model.cqr.target_coverage)} — calibré par {model.cqr.n_strata} strates.
-              </p>
             </Card>
           )}
 
-          <FeatureEngineeringSummary spec={model.feature_engineering} />
+          {activeTab === "fiabilite" && (
+            <div className="space-y-5">
+              <Card className="p-5">
+                <SectionHeader icon={Activity} color="teal" label="Diagnostics de fiabilité" />
+                <div className="space-y-5">
+                  {model.task_type === "classification" && (
+                    <div>
+                      <p className="text-xs text-slate-600 mb-1">
+                        <LabelWithHelp
+                          label="Courbe de calibration"
+                          help="Compare la probabilité annoncée par le modèle à la fréquence réelle observée — le modèle est-il « sûr à raison » ?"
+                        />
+                      </p>
+                      <DiagnosticBlock
+                        status={calibrationStatus}
+                        isEmpty={!model.calibration || Object.keys(model.calibration).length === 0}
+                      >
+                        <CalibrationChart calibration={model.calibration ?? {}} />
+                      </DiagnosticBlock>
+                      <p className="text-xs text-slate-500 mt-2">
+                        Une courbe proche de la diagonale grise signifie que le modèle est fiable : quand il annonce 80 %
+                        de chances, c'est vrai environ 80 % du temps. Une courbe au-dessus de la diagonale : le modèle est
+                        trop prudent. En dessous : trop confiant.
+                      </p>
+                    </div>
+                  )}
 
-          <PredictionForm jobId={job.id} taskType={model.task_type} featureSchema={model.feature_schema} />
+                  <div>
+                    <p className="text-xs text-slate-600 mb-1">
+                      <LabelWithHelp
+                        label="Courbe d'apprentissage"
+                        help="Montre comment le score évoluerait avec plus ou moins de données d'entraînement — aide à savoir si collecter davantage de données aiderait le modèle."
+                      />
+                    </p>
+                    <DiagnosticBlock status={learningCurveStatus} isEmpty={model.learning_curve === null}>
+                      {model.learning_curve && <LearningCurveChart data={model.learning_curve} />}
+                    </DiagnosticBlock>
+                    <p className="text-xs text-slate-500 mt-2">
+                      Si les deux courbes se rapprochent et restent hautes à droite, ajouter des données n'apporterait
+                      probablement pas grand-chose. Un écart persistant entre les deux est un signe de surapprentissage —
+                      le modèle a appris le train par cœur plus qu'il n'a généralisé.
+                    </p>
+                  </div>
+                </div>
+              </Card>
 
-          <Card className="p-5">
-            <p className="text-xs uppercase tracking-wide text-slate-500 mb-2">Fiche modèle</p>
-            <dl className="grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-2 text-xs">
-              <Fact label="Échantillons train" value={String(model.model_card.n_train ?? "—")} />
-              <Fact label="Échantillons test" value={String(model.model_card.n_test ?? "—")} />
-              <Fact label="Doublons retirés" value={String(model.model_card.duplicates_removed ?? "—")} />
-              <Fact label="Essais Optuna" value={String(model.model_card.optuna_trials ?? "—")} />
-              <Fact label="Folds de CV" value={String(model.model_card.cv_folds ?? "—")} />
-              <Fact label="Variables" value={String(model.feature_columns.length)} />
-            </dl>
-          </Card>
+              {model.cqr && (
+                <Card className="p-5">
+                  <SectionHeader
+                    icon={Gauge}
+                    color="amber"
+                    label="Fiabilité des prédictions"
+                    help="Plutôt qu'une seule valeur, le modèle peut donner une fourchette dans laquelle la vraie valeur tombe la plupart du temps — utile pour savoir jusqu'où faire confiance à une prédiction."
+                  />
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                    <MetricCard label="Couverture visée" value={model.cqr.target_coverage} />
+                    <MetricCard label="Couverture observée" value={model.cqr.empirical_coverage} />
+                    <MetricCard label="Largeur moyenne" value={model.cqr.mean_interval_width} />
+                  </div>
+                  <p className="text-xs text-slate-500 mt-2">
+                    {formatPercent(model.cqr.empirical_coverage)} des valeurs test tombent dans l'intervalle prédit,
+                    pour une cible de {formatPercent(model.cqr.target_coverage)} — calibré par {model.cqr.n_strata} strates.
+                  </p>
+                </Card>
+              )}
+            </div>
+          )}
+
+          {activeTab === "predire" && (
+            <PredictionForm jobId={job.id} taskType={model.task_type} featureSchema={model.feature_schema} />
+          )}
+
+          {activeTab === "details" && (
+            <div className="space-y-5">
+              <FeatureEngineeringSummary spec={model.feature_engineering} />
+
+              <Card className="p-5">
+                <SectionHeader icon={ClipboardList} color="blue" label="Fiche modèle" />
+                <dl className="grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-2 text-xs">
+                  <Fact label="Échantillons train" value={String(model.model_card.n_train ?? "—")} />
+                  <Fact label="Échantillons test" value={String(model.model_card.n_test ?? "—")} />
+                  <Fact label="Doublons retirés" value={String(model.model_card.duplicates_removed ?? "—")} />
+                  <Fact label="Essais Optuna" value={String(model.model_card.optuna_trials ?? "—")} />
+                  <Fact label="Folds de CV" value={String(model.model_card.cv_folds ?? "—")} />
+                  <Fact label="Variables" value={String(model.feature_columns.length)} />
+                </dl>
+              </Card>
+            </div>
+          )}
         </div>
       )}
     </>
@@ -536,7 +579,7 @@ export default function ModelResultModal({
   onClose: () => void;
 }) {
   return (
-    <Modal title={`${job.dataset_name ?? "Dataset"} — ${job.target_column}`} onClose={onClose}>
+    <Modal title={`${job.dataset_name ?? "Dataset"} — ${job.target_column}`} onClose={onClose} size="xl">
       <ModelResultView job={job} />
     </Modal>
   );

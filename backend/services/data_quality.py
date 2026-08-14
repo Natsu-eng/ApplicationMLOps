@@ -12,6 +12,7 @@ l'appelant (voir `analyze_data_quality`).
 from __future__ import annotations
 
 import logging
+from collections import defaultdict
 from typing import Any, Optional
 
 import numpy as np
@@ -106,6 +107,35 @@ CATEGORICAL_CORR_MAX_UNIQUE = 30
 # façon déjà couverte par le garde-fou "cardinalité excessive", et un
 # tableau de contingence à forte cardinalité coûte cher pour un signal déjà
 # rapporté ailleurs.
+
+# ── Lot Nettoyage guidé des variables ───────────────────────────────────────
+#
+# Répond à une lacune identifiée à l'usage : les colonnes constantes/quasi-
+# constantes et à cardinalité excessive étaient déjà détectées ci-dessus
+# (avec une action "retirez cette colonne" en langage clair), mais rien ne
+# reliait cette recommandation à une action concrète côté formulaire
+# d'entraînement — l'utilisateur devait lire l'alerte puis aller décocher la
+# colonne manuellement, sans lien visuel entre les deux. Les deux détections
+# ci-dessous complètent le même principe ("cette colonne n'apporte rien, ou
+# n'apporte rien de plus qu'une autre") ; leur exploitation concrète
+# (suggestion d'exclusion actionnable) vit dans `services/feature_engineering.py`.
+
+NUMERIC_MISTYPED_MIN_SIGNAL_RATIO = 0.5
+# Part minimale de l'échantillon devant porter un signe explicite de
+# formatage numérique (virgule décimale, séparateur de milliers) avant même
+# de tenter un parsing — évite de confondre une colonne d'identifiants/codes
+# (ex. codes postaux à zéro non significatif) avec une colonne numérique mal
+# typée : un identifiant ne contient normalement ni virgule ni séparateur.
+NUMERIC_MISTYPED_SUCCESS_THRESHOLD = 0.95
+# Part minimale de l'échantillon qui doit effectivement se parser comme un
+# nombre (une fois le signal de formatage confirmé) — même logique et même
+# valeur que `DATETIME_PARSE_SUCCESS_THRESHOLD` (feature_engineering.py) :
+# tolère quelques valeurs mal saisies sans les laisser dominer la décision.
+NUMERIC_MISTYPED_SAMPLE_MAX_ROWS = 5_000
+# Bornage de coût du test de parsing — même ordre de grandeur que
+# `DATETIME_SAMPLE_MAX_ROWS`.
+_THOUSANDS_CHARS = (" ", " ", "'")  # espace, espace insécable, apostrophe (convention suisse)
+
 
 _LEVEL_ORDER = {"critique": 0, "attention": 1, "info": 2}
 
@@ -413,6 +443,154 @@ def _detect_collinearity(df: pd.DataFrame, features: list[str]) -> list[dict[str
     ]
 
 
+def _detect_duplicate_columns(df: pd.DataFrame, features: list[str]) -> list[dict[str, Any]]:
+    """Colonnes de contenu strictement identique sous un nom différent —
+    redondance à 100%, distincte de la colinéarité (`_detect_collinearity`,
+    Pearson ≥ 0.9, numérique uniquement, niveau "info") : ici la comparaison
+    est une égalité exacte valeur par valeur, numérique OU catégorielle, et le
+    niveau est "attention" — un doublon exact ne laisse aucune ambiguïté sur
+    l'action à prendre, contrairement à une simple corrélation forte.
+
+    Coût : O(n) par colonne pour un hash (`pandas.util.hash_pandas_object`),
+    puis comparaison exacte (`Series.equals`, seule fiable à 100% — un hash
+    identique ne garantit pas une égalité, l'inverse si) seulement entre
+    colonnes de même hash. Bien moins cher qu'une comparaison `equals` O(k²)
+    systématique sur un dataset à beaucoup de colonnes : un hash différent
+    élimine déjà la quasi-totalité des paires possibles sans les comparer."""
+    warnings: list[dict[str, Any]] = []
+    hash_groups: dict[int, list[str]] = defaultdict(list)
+    for col in features:
+        try:
+            h = int(pd.util.hash_pandas_object(df[col], index=False).sum())
+            hash_groups[h].append(col)
+        except Exception:
+            logger.warning("[DataQuality] Hash de colonne échoué pour '%s'", col, exc_info=True)
+
+    reported: set[str] = set()
+    for cols in hash_groups.values():
+        if len(cols) < 2:
+            continue
+        for i in range(len(cols)):
+            c1 = cols[i]
+            if c1 in reported:
+                continue
+            for j in range(i + 1, len(cols)):
+                c2 = cols[j]
+                if c2 in reported:
+                    continue
+                try:
+                    if not df[c1].equals(df[c2]):
+                        continue
+                    warnings.append(_warning(
+                        level="attention",
+                        code="colonnes_dupliquees",
+                        title=f"« {c1} » et « {c2} » ont un contenu strictement identique",
+                        explanation=(
+                            "Ces deux colonnes contiennent exactement les mêmes valeurs, "
+                            "ligne par ligne — l'une est une copie ou un renommage de "
+                            "l'autre, elle n'apporte aucune information supplémentaire."
+                        ),
+                        action=f"Retirez « {c2} » (ou « {c1} ») des variables utilisées : garder les deux n'apporte rien.",
+                        columns=[c1, c2],
+                    ))
+                    reported.add(c2)
+                except Exception:
+                    logger.warning(
+                        "[DataQuality] Détection de doublon échouée pour '%s'/'%s'", c1, c2, exc_info=True
+                    )
+    return warnings
+
+
+def _try_parse_numeric_text(text: str) -> Optional[float]:
+    """Tente de parser une chaîne comme un nombre écrit avec une convention
+    différente du point décimal standard : séparateur de milliers (espace,
+    espace insécable, apostrophe) et/ou virgule décimale (convention FR/EU).
+    Retourne `None` si la chaîne ne ressemble à aucune de ces conventions —
+    jamais d'exception, cœur du parsing réutilisé par `services/
+    feature_engineering.py` pour appliquer la conversion réellement approuvée.
+    """
+    cleaned = text.strip()
+    if not cleaned:
+        return None
+    for ch in _THOUSANDS_CHARS:
+        cleaned = cleaned.replace(ch, "")
+    # Une seule virgule -> décimale (convention FR/EU) ; un point restant
+    # avant la virgule est alors un séparateur de milliers (ex. "1.234,56").
+    if cleaned.count(",") == 1:
+        integer_part, _, decimal_part = cleaned.partition(",")
+        cleaned = f"{integer_part.replace('.', '')}.{decimal_part}"
+    try:
+        return float(cleaned)
+    except ValueError:
+        return None
+
+
+def _has_numeric_format_signal(text: str) -> bool:
+    """Vrai si la chaîne porte un signe explicite de formatage numérique
+    (virgule ou séparateur de milliers) — sert de garde-fou avant même de
+    tenter un parsing (voir `NUMERIC_MISTYPED_MIN_SIGNAL_RATIO`) : une
+    colonne d'identifiants/codes (ex. codes postaux à zéro non significatif)
+    ne porte normalement aucun de ces signes et ne doit jamais être proposée
+    à la conversion numérique."""
+    return "," in text or any(ch in text for ch in _THOUSANDS_CHARS)
+
+
+def _detect_mistyped_numeric(df: pd.DataFrame, features: list[str]) -> list[dict[str, Any]]:
+    """Colonnes texte qui sont en réalité des nombres mal formatés (virgule
+    décimale et/ou séparateur de milliers) — un cas courant sur des exports
+    métier réels, invisible aujourd'hui : la colonne est alors traitée comme
+    catégorielle (chaque valeur = une modalité distincte) au lieu d'une
+    variable numérique exploitable. Deux garde-fous avant de signaler,
+    volontairement stricts pour ne jamais confondre avec une colonne
+    d'identifiants (qui, elle, doit rester du texte) :
+    1. une part suffisante de l'échantillon doit porter un signe explicite de
+       formatage numérique (`_has_numeric_format_signal`) — un simple entier
+       sans séparateur ("00123") n'est jamais un candidat ;
+    2. parmi ces candidats, une part suffisante doit effectivement se parser
+       comme un nombre (`_try_parse_numeric_text`).
+
+    Coût : O(n) par colonne texte, borné par échantillonnage déterministe
+    (`NUMERIC_MISTYPED_SAMPLE_MAX_ROWS`, même patron que la détection
+    datetime de `services/feature_engineering.py`)."""
+    warnings: list[dict[str, Any]] = []
+    for col in features:
+        try:
+            series = df[col]
+            if pd.api.types.is_numeric_dtype(series):
+                continue
+            non_null = series.dropna().astype(str)
+            if len(non_null) == 0:
+                continue
+            sampled = sample_if_large(non_null.to_frame("v"), NUMERIC_MISTYPED_SAMPLE_MAX_ROWS)["v"]
+
+            signal_ratio = float(sampled.map(_has_numeric_format_signal).mean())
+            if signal_ratio < NUMERIC_MISTYPED_MIN_SIGNAL_RATIO:
+                continue
+
+            parsed = sampled.map(_try_parse_numeric_text)
+            success_ratio = float(parsed.notna().mean())
+            if success_ratio < NUMERIC_MISTYPED_SUCCESS_THRESHOLD:
+                continue
+
+            warnings.append(_warning(
+                level="attention",
+                code="numerique_mal_type",
+                title=f"« {col} » ressemble à une variable numérique stockée en texte",
+                explanation=(
+                    "Cette colonne contient presque uniquement des nombres, mais "
+                    "écrits avec une virgule décimale ou un séparateur de milliers — "
+                    "elle est donc traitée comme une catégorie (chaque valeur devient "
+                    "une modalité distincte) au lieu d'une vraie variable numérique."
+                ),
+                action=f"Convertissez « {col} » en nombre (une suggestion automatique est proposée à l'étape suivante).",
+                columns=[col],
+                details={"parse_success_ratio": round(success_ratio, 4)},
+            ))
+        except Exception:
+            logger.warning("[DataQuality] Détection numérique mal typé échouée pour '%s'", col, exc_info=True)
+    return warnings
+
+
 def _group_column_transparency_warning(group_column: str) -> dict[str, Any]:
     return _warning(
         level="info",
@@ -430,10 +608,22 @@ def _group_column_transparency_warning(group_column: str) -> dict[str, Any]:
 
 
 def analyze_data_quality(
-    df: pd.DataFrame, target_column: str, group_column: Optional[str] = None
+    df: pd.DataFrame, target_column: Optional[str] = None, group_column: Optional[str] = None
 ) -> list[dict[str, Any]]:
     """Point d'entrée — analyse `df` par rapport à `target_column` et
     retourne une liste d'avertissements triés (critique > attention > info).
+
+    `target_column` optionnel (Lot Nettoyage guidé des variables) : absent,
+    les détections qui exigent une cible (fuite, déséquilibre de classes)
+    sont simplement omises — toutes les détections STRUCTURELLES (colonnes
+    constantes, cardinalité excessive, doublons exacts, numérique mal typé,
+    valeurs manquantes, colinéarité, dataset trop petit) restent actives.
+    Permet une analyse de qualité dès l'exploration d'un dataset (`GET
+    /datasets/{id}/eda`), avant même de choisir une cible pour un
+    entraînement — l'utilisateur n'a plus besoin d'atteindre l'étape
+    "qualité des données" du formulaire pour voir qu'une colonne est
+    inutile. Rétrocompatible : tout appelant existant qui fournit déjà
+    `target_column` conserve exactement le même comportement.
 
     `group_column`, si fourni, est EXCLU de l'ensemble des colonnes
     analysées comme features (calculé UNE SEULE FOIS ici — `features_to_
@@ -442,35 +632,42 @@ def analyze_data_quality(
     prédictive, aucune alerte de qualité de feature n'a de sens dessus. Un
     avertissement "info" signale explicitement cette exclusion.
 
-    Lève `KeyError` si `target_column` n'existe pas dans `df` (à l'appelant
-    de traduire en erreur HTTP, comme pour `compute_histogram`). Toute autre
-    exception issue d'une détection individuelle est capturée et loguée —
-    jamais propagée : le pire résultat possible est une liste partielle ou
-    vide, jamais un crash.
+    Lève `KeyError` si `target_column` est fourni mais n'existe pas dans `df`
+    (à l'appelant de traduire en erreur HTTP, comme pour
+    `compute_histogram`). Toute autre exception issue d'une détection
+    individuelle est capturée et loguée — jamais propagée : le pire résultat
+    possible est une liste partielle ou vide, jamais un crash.
     """
-    if target_column not in df.columns:
+    if target_column is not None and target_column not in df.columns:
         raise KeyError(f"Colonne cible '{target_column}' absente du dataset")
 
     has_group = group_column is not None and group_column in df.columns
-    excluded = {target_column} | ({group_column} if has_group else set())
+    excluded = ({target_column} if target_column is not None else set()) | ({group_column} if has_group else set())
     features_to_analyze = [c for c in df.columns if c not in excluded]
 
-    try:
-        task_type = detect_task_type(df[target_column])
-    except Exception:
-        logger.warning("[DataQuality] Détection du type de tâche échouée sur '%s'", target_column, exc_info=True)
-        return []
+    task_type: Optional[str] = None
+    if target_column is not None:
+        try:
+            task_type = detect_task_type(df[target_column])
+        except Exception:
+            logger.warning("[DataQuality] Détection du type de tâche échouée sur '%s'", target_column, exc_info=True)
+            task_type = None  # dégradé : détections structurelles conservées, fuite/déséquilibre omises ci-dessous
 
     warnings: list[dict[str, Any]] = []
     detections = [
-        lambda: _detect_target_leakage(df, target_column, features_to_analyze, task_type),
-        lambda: _detect_class_imbalance(df, target_column, task_type),
         lambda: _detect_high_cardinality(df, features_to_analyze),
         lambda: _detect_constant_columns(df, features_to_analyze),
+        lambda: _detect_duplicate_columns(df, features_to_analyze),
+        lambda: _detect_mistyped_numeric(df, features_to_analyze),
         lambda: _detect_small_dataset(df, features_to_analyze),
         lambda: _detect_high_missing_rate(df, features_to_analyze),
         lambda: _detect_collinearity(df, features_to_analyze),
     ]
+    if target_column is not None and task_type is not None:
+        detections = [
+            lambda: _detect_target_leakage(df, target_column, features_to_analyze, task_type),
+            lambda: _detect_class_imbalance(df, target_column, task_type),
+        ] + detections
     for detect in detections:
         try:
             warnings.extend(detect())

@@ -9,10 +9,12 @@ from services.feature_engineering import (
     CURRENT_SPEC_VERSION,
     FeatureEngineeringSpecError,
     apply_datetime_decomposition,
+    apply_numeric_coercion,
     apply_ratio_features,
     apply_upstream_feature_engineering,
     suggest_datetime_columns,
     suggest_feature_engineering,
+    suggest_numeric_coercion,
     suggest_ratio_features,
     validate_spec_version,
 )
@@ -171,12 +173,15 @@ def test_suggest_feature_engineering_covers_all_transformation_types():
     assert codes == {
         "decomposition_date", "ratio_colonnes_correlees",
         "regroupement_frequence", "imputation_configurable",
+        "exclusion_variable",  # "ville" (cardinalité excessive) — Lot Nettoyage guidé des variables
     }
     # Chaque suggestion branchée sur un garde-fou Lot B porte bien son code d'origine.
     by_code = {s["code"]: s for s in suggestions}
     assert by_code["regroupement_frequence"]["based_on_warning"] == "cardinalite_excessive"
     assert by_code["imputation_configurable"]["based_on_warning"] == "valeurs_manquantes_elevees"
     assert by_code["ratio_colonnes_correlees"]["based_on_warning"] == "collinearite_forte"
+    assert by_code["exclusion_variable"]["based_on_warning"] == "cardinalite_excessive"
+    assert by_code["exclusion_variable"]["columns"] == ["ville"]
     assert by_code["decomposition_date"]["based_on_warning"] is None
 
 
@@ -234,3 +239,102 @@ def test_validate_spec_version_accepts_current_rejects_other():
         validate_spec_version({"version": CURRENT_SPEC_VERSION + 1})
     with pytest.raises(FeatureEngineeringSpecError):
         validate_spec_version({})
+
+
+# ── Conversion numérique (Lot Nettoyage guidé des variables) ────────────────
+
+
+def _mistyped_numeric_warning(col="prix"):
+    return {
+        "level": "attention",
+        "code": "numerique_mal_type",
+        "title": f"« {col} » ressemble à une variable numérique stockée en texte",
+        "explanation": "...",
+        "action": "...",
+        "columns": [col],
+        "details": {"parse_success_ratio": 0.99},
+    }
+
+
+def test_suggest_numeric_coercion_branches_on_mistyped_warning():
+    suggestions = suggest_numeric_coercion([_mistyped_numeric_warning(), _collinearity_warning()])
+    assert len(suggestions) == 1
+    assert suggestions[0]["based_on_warning"] == "numerique_mal_type"
+    assert suggestions[0]["transformation"] == {"type": "numeric_coerce", "column": "prix"}
+
+
+def test_suggest_numeric_coercion_ignores_unrelated_warnings():
+    assert suggest_numeric_coercion([{"code": "collinearite_forte", "columns": ["x", "y"]}]) == []
+
+
+def test_apply_numeric_coercion_parses_comma_decimal_in_place():
+    df = pd.DataFrame({"prix": ["1 234,50", "999,00"], "autre": ["a", "b"]})
+    result, columns = apply_numeric_coercion(df, ["prix", "autre"], [{"type": "numeric_coerce", "column": "prix"}])
+    assert columns == ["prix", "autre"]  # même colonne, pas de nouvelle colonne créée
+    assert list(result["prix"]) == [1234.50, 999.00]
+    assert pd.api.types.is_float_dtype(result["prix"])
+
+
+def test_apply_numeric_coercion_unparseable_value_becomes_nan_not_crash():
+    df = pd.DataFrame({"prix": ["1 234,50", "n'importe quoi"]})
+    result, _ = apply_numeric_coercion(df, ["prix"], [{"type": "numeric_coerce", "column": "prix"}])
+    assert pd.isna(result.loc[1, "prix"])
+
+
+def test_apply_numeric_coercion_is_deterministic_single_row_vs_batch():
+    df = pd.DataFrame({"prix": [f"1 {200 + i:03d},{i:02d}" for i in range(20)]})
+    spec = [{"type": "numeric_coerce", "column": "prix"}]
+    batch_result, _ = apply_numeric_coercion(df, ["prix"], spec)
+    single_result, _ = apply_numeric_coercion(df.iloc[[5]].reset_index(drop=True), ["prix"], spec)
+    assert single_result.loc[0, "prix"] == batch_result.loc[5, "prix"]
+
+
+def test_apply_upstream_feature_engineering_applies_numeric_coercion_before_ratio():
+    """La coercion numérique doit s'appliquer AVANT le ratio dans
+    `apply_upstream_feature_engineering` : un ratio référençant une colonne
+    mal typée doit voir sa forme déjà convertie."""
+    df = pd.DataFrame({"prix": ["1 000,00", "2 000,00"], "surface": [10.0, 20.0]})
+    spec = {
+        "version": CURRENT_SPEC_VERSION,
+        "upstream": [
+            {"type": "numeric_coerce", "column": "prix"},
+            {"type": "ratio", "numerator": "prix", "denominator": "surface"},
+        ],
+        "pipeline": {},
+    }
+    result, columns = apply_upstream_feature_engineering(df, ["prix", "surface"], spec)
+    assert "prix_sur_surface" in columns
+    assert list(result["prix_sur_surface"]) == [100.0, 100.0]
+
+
+# ── Exclusion de variables (Lot Nettoyage guidé des variables) ──────────────
+
+
+def test_suggest_feature_engineering_suggests_exclusion_for_constant_column():
+    df = _rich_df()
+    df["toujours_pareil"] = 42
+    suggestions = suggest_feature_engineering(df, target_column="cible")
+    exclusions = {s["columns"][0] for s in suggestions if s["code"] == "exclusion_variable"}
+    assert "toujours_pareil" in exclusions
+    assert "ville" in exclusions  # cardinalité excessive, déjà couverte plus haut
+
+
+def test_suggest_feature_engineering_suggests_exclusion_for_duplicate_column():
+    df = _rich_df()
+    df["surface_bis"] = df["surface"]
+    suggestions = suggest_feature_engineering(df, target_column="cible")
+    exclusions = [s for s in suggestions if s["code"] == "exclusion_variable" and s["columns"] == ["surface_bis"]]
+    assert len(exclusions) == 1
+    assert exclusions[0]["based_on_warning"] == "colonnes_dupliquees"
+    # "surface" (la première des deux) n'est jamais elle-même suggérée à l'exclusion.
+    assert not any(s["columns"] == ["surface"] for s in suggestions if s["code"] == "exclusion_variable")
+
+
+def test_exclude_column_transformation_never_reaches_upstream_apply():
+    """`exclude_column` est un repère UI pur (voir docstring du module) —
+    s'il apparaissait quand même dans `spec["upstream"]` (erreur du client),
+    il doit être rejeté explicitement, jamais silencieusement ignoré."""
+    df = pd.DataFrame({"x": [1, 2, 3]})
+    spec = {"version": CURRENT_SPEC_VERSION, "upstream": [{"type": "exclude_column", "column": "x"}]}
+    with pytest.raises(FeatureEngineeringSpecError):
+        apply_upstream_feature_engineering(df, ["x"], spec)

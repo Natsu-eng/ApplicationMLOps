@@ -49,6 +49,7 @@ def test_feature_engineering_suggestions_endpoint_returns_all_families(client):
     assert codes == {
         "decomposition_date", "ratio_colonnes_correlees",
         "regroupement_frequence", "imputation_configurable",
+        "exclusion_variable",  # "ville" (cardinalité excessive) — Lot Nettoyage guidé des variables
     }
 
 

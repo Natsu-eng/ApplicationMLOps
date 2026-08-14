@@ -53,7 +53,15 @@ export function FeatureEngineeringSuggestions({
     setFillValues({});
     api.datasets
       .featureEngineeringSuggestions(datasetId, targetColumn, groupColumn)
-      .then((data) => setSuggestions(data.suggestions))
+      // "exclusion_variable" (Lot Nettoyage guidé des variables) est déjà
+      // proposée, en plus utilement (bouton direct par colonne, sans étape
+      // supplémentaire), dans le panneau "Qualité des données" juste avant
+      // (voir DataQualityWarnings.tsx) — l'afficher aussi ici dupliquerait la
+      // recommandation ET serait un cul-de-sac : sa `transformation`
+      // (`exclude_column`) n'est volontairement pas une entrée de pipeline
+      // (voir la note dans `services/feature_engineering.py`), donc l'approuver
+      // ici ne ferait rien.
+      .then((data) => setSuggestions(data.suggestions.filter((s) => s.code !== "exclusion_variable")))
       .catch((err) => setError(err instanceof ApiError ? err.message : "Suggestions indisponibles"))
       .finally(() => setLoading(false));
   }, [datasetId, targetColumn, groupColumn]);
@@ -72,7 +80,7 @@ export function FeatureEngineeringSuggestions({
     approved.forEach((index) => {
       const suggestion = suggestions[index];
       const t = suggestion.transformation;
-      if (t.type === "datetime_decompose" || t.type === "ratio") {
+      if (t.type === "datetime_decompose" || t.type === "ratio" || t.type === "numeric_coerce") {
         upstream.push(t);
       } else if (t.type === "frequency_encoding") {
         frequencyEncoding.push(String(t.column));

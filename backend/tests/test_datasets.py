@@ -211,3 +211,28 @@ def test_quality_check_isolation_between_organizations(client):
         f"/datasets/{created['id']}/quality-check", headers=headers_b, params={"target_column": "b"}
     )
     assert resp.status_code == 404
+
+
+# ── target_column optionnel (Lot Nettoyage guidé des variables) ─────────────
+
+
+def test_quality_check_without_target_column_returns_structural_warnings(client):
+    """Permet d'appeler ce endpoint dès l'exploration d'un dataset (page
+    Données/EDA), avant même de choisir une cible pour un entraînement."""
+    headers = _register(client)
+    n = 100
+    content = "id_client,toujours_pareil,x\n" + "\n".join(
+        f"C{i},42,{i}" for i in range(n)
+    ) + "\n"
+    created = client.post(
+        "/datasets", headers=headers, files={"file": ("d.csv", io.BytesIO(content.encode()), "text/csv")}
+    ).json()
+
+    resp = client.get(f"/datasets/{created['id']}/quality-check", headers=headers)
+    assert resp.status_code == 200
+    codes = {w["code"] for w in resp.json()["warnings"]}
+    assert "colonne_constante" in codes
+    assert "cardinalite_excessive" in codes
+    # Aucune détection nécessitant une cible ne peut apparaître sans cible fournie.
+    assert "fuite_cible" not in codes
+    assert "desequilibre_classes" not in codes
