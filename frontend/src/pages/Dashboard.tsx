@@ -16,7 +16,7 @@ import { Avatar } from "../components/ui/Avatar";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
-import { ColorIconBadge, accentColorForId } from "../components/ui/ColorIconBadge";
+import { ColorIconBadge, type AccentColor } from "../components/ui/ColorIconBadge";
 import { Input } from "../components/ui/Input";
 import { formatDateTime } from "../utils/format";
 
@@ -46,6 +46,24 @@ function datasetStatusBadge(status: DatasetSummary["status"]) {
   if (status === "ready") return <Badge variant="success" dot>Prêt</Badge>;
   if (status === "error") return <Badge variant="danger" dot>Erreur</Badge>;
   return <Badge variant="primary" dot pulse>Analyse…</Badge>;
+}
+
+/** Couleur d'icône reflétant le STATUT réel (pas une rotation par id) — un
+ * entraînement en échec doit se voir avant même de lire le badge, un
+ * entraînement en cours doit se distinguer visuellement d'un entraînement
+ * terminé. Retour explicite : les cartes coloraient déjà par identité
+ * (`accentColorForId`), mais rien ne reflétait la valeur/l'état affiché. */
+function accentColorForJobStatus(status: TrainingJobSummary["status"]): AccentColor {
+  if (status === "completed") return "teal";
+  if (status === "failed") return "rose";
+  if (status === "running") return "blue";
+  return "amber"; // queued
+}
+
+function accentColorForDatasetStatus(status: DatasetSummary["status"]): AccentColor {
+  if (status === "ready") return "teal";
+  if (status === "error") return "rose";
+  return "blue"; // processing
 }
 
 /** Page protégée du Lot 1, enrichie au Lot E1-ter : vue d'ensemble de
@@ -167,7 +185,7 @@ export default function Dashboard() {
                     }`}
                   >
                     <div className="flex items-center gap-3 min-w-0">
-                      <ColorIconBadge icon={BrainCircuit} color={accentColorForId(job.id)} size="sm" />
+                      <ColorIconBadge icon={BrainCircuit} color={accentColorForJobStatus(job.status)} size="sm" />
                       <div className="min-w-0">
                         <p className="text-sm text-slate-800 truncate">
                           {job.dataset_name ?? "Dataset"} <span className="text-slate-400">→</span>{" "}
@@ -237,7 +255,7 @@ export default function Dashboard() {
               {recentDatasets.map((dataset) => (
                 <li key={dataset.id} className="group py-2.5 flex items-center justify-between gap-3 hover:bg-slate-50 -mx-1 px-1 rounded-lg transition-colors">
                   <div className="flex items-center gap-3 min-w-0">
-                    <ColorIconBadge icon={FileSpreadsheet} color={accentColorForId(dataset.id)} size="sm" />
+                    <ColorIconBadge icon={FileSpreadsheet} color={accentColorForDatasetStatus(dataset.status)} size="sm" />
                     <div className="min-w-0">
                       <p className="text-sm text-slate-800 truncate">{dataset.name}</p>
                       <p className="text-xs text-slate-500">

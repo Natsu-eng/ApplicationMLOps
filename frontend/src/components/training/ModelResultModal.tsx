@@ -1,5 +1,5 @@
 import { type ReactNode, useEffect, useState } from "react";
-import { Activity, ClipboardList, Gauge, ShieldCheck, Sparkles, Trophy, Wand2 } from "lucide-react";
+import { Activity, Calculator, ClipboardList, Gauge, ShieldCheck, Sparkles, Trophy, Wand2 } from "lucide-react";
 import {
   ApiError,
   api,
@@ -14,6 +14,7 @@ import { Card } from "../ui/Card";
 import { Modal } from "../ui/Modal";
 import { LabelWithHelp } from "../ui/Tooltip";
 import { SectionHeader } from "../ui/SectionHeader";
+import { Tabs } from "../ui/Tabs";
 import { formatMetricValue, formatPercent } from "../../utils/format";
 import { clampUnitScore, foldScoresToBoxPlotDatum } from "../../utils/cvScore";
 import EvaluationCharts from "./EvaluationCharts";
@@ -22,11 +23,11 @@ import { CalibrationChart, LearningCurveChart } from "./ReliabilityDiagnostics";
 import PredictionForm from "./PredictionForm";
 
 const RESULT_TABS = [
-  { id: "performance", label: "Performance" },
-  { id: "explicabilite", label: "Explicabilité" },
-  { id: "fiabilite", label: "Fiabilité" },
-  { id: "predire", label: "Prédire" },
-  { id: "details", label: "Détails" },
+  { id: "performance", label: "Performance", icon: Gauge },
+  { id: "explicabilite", label: "Explicabilité", icon: Sparkles },
+  { id: "fiabilite", label: "Fiabilité", icon: Activity },
+  { id: "predire", label: "Prédire", icon: Calculator },
+  { id: "details", label: "Détails", icon: ClipboardList },
 ] as const;
 type ResultTabId = (typeof RESULT_TABS)[number]["id"];
 
@@ -340,22 +341,7 @@ export function ModelResultView({ job }: { job: TrainingJobSummary }) {
               identiques (défilement long, aucune hiérarchie) par une
               navigation groupée par intention, même motif que EdaModal.tsx
               (Lot refonte Résultats/Datasets). */}
-          <div className="flex items-center gap-1 overflow-x-auto pb-1 border-b border-slate-200">
-            {RESULT_TABS.map((tab) => (
-              <button
-                key={tab.id}
-                type="button"
-                onClick={() => setActiveTab(tab.id)}
-                className={`flex-shrink-0 px-3 py-2 text-xs font-medium border-b-2 transition-colors ${
-                  activeTab === tab.id
-                    ? "border-primary text-primary"
-                    : "border-transparent text-slate-500 hover:text-slate-700"
-                }`}
-              >
-                {tab.label}
-              </button>
-            ))}
-          </div>
+          <Tabs items={RESULT_TABS} active={activeTab} onChange={setActiveTab} />
 
           {activeTab === "performance" && (
             <div className="space-y-5">

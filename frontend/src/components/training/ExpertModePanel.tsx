@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { AlertTriangle } from "lucide-react";
 import { api, type ModelCatalogEntry } from "../../api/client";
 import { Badge } from "../ui/Badge";
+import { Switch } from "../ui/Switch";
 import { LabelWithHelp } from "../ui/Tooltip";
 
 /** Défauts du mode expert (Lot E2) — STRICTEMENT ceux du mode guidé
@@ -98,22 +99,7 @@ export function ExpertModePanel({
             de bons choix.
           </p>
         </div>
-        <button
-          type="button"
-          role="switch"
-          aria-checked={expertMode}
-          aria-label="Activer le mode expert"
-          onClick={() => onExpertModeChange(!expertMode)}
-          className={`relative inline-flex h-6 w-11 flex-shrink-0 items-center rounded-full transition-colors ${
-            expertMode ? "bg-primary" : "bg-slate-300"
-          }`}
-        >
-          <span
-            className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${
-              expertMode ? "translate-x-6" : "translate-x-1"
-            }`}
-          />
-        </button>
+        <Switch checked={expertMode} onChange={onExpertModeChange} label="Activer le mode expert" />
       </div>
 
       {expertMode && (
@@ -191,19 +177,16 @@ export function ExpertModePanel({
             </div>
           </div>
 
-          <div>
-            <label className="flex items-center gap-2 text-sm text-slate-700">
-              <input
-                type="checkbox"
-                className="accent-primary"
-                checked={classRebalancing}
-                onChange={() => onClassRebalancingChange(!classRebalancing)}
-              />
-              <LabelWithHelp
-                label="Rééquilibrer les classes (classification)"
-                help="Donne plus de poids aux classes rares pendant l'entraînement, au prix de plus de fausses alertes sur la classe majoritaire. Sans effet en régression. Si un déséquilibre est détecté, une suggestion contextuelle apparaît aussi à l'étape précédente — cette case permet de forcer ou d'annuler ce choix manuellement."
-              />
-            </label>
+          <div className="flex items-center justify-between gap-3">
+            <LabelWithHelp
+              label="Rééquilibrer les classes (classification)"
+              help="Donne plus de poids aux classes rares pendant l'entraînement, au prix de plus de fausses alertes sur la classe majoritaire. Sans effet en régression. Si un déséquilibre est détecté, une suggestion contextuelle apparaît aussi à l'étape précédente — cette case permet de forcer ou d'annuler ce choix manuellement."
+            />
+            <Switch
+              checked={classRebalancing}
+              onChange={onClassRebalancingChange}
+              label="Rééquilibrer les classes"
+            />
           </div>
 
           <div>

@@ -35,6 +35,7 @@ import { Modal } from "../ui/Modal";
 import { Heatmap } from "../ui/Heatmap";
 import { BoxPlotChart, type BoxPlotDatum } from "../ui/BoxPlot";
 import { SectionHeader } from "../ui/SectionHeader";
+import { Tabs } from "../ui/Tabs";
 import { StatTile, StatTileRow } from "../dashboard/StatTile";
 import { DataQualityWarnings } from "../training/DataQualityWarnings";
 import {
@@ -173,27 +174,7 @@ export default function EdaModal({ dataset, onClose }: { dataset: DatasetSummary
               identiques (défilement long, aucune hiérarchie) par une
               navigation groupée par intention (vue d'ensemble, qualité,
               corrélations, distributions, cible). */}
-          <div className="flex items-center gap-1 overflow-x-auto pb-1 border-b border-slate-200">
-            {TABS.map((tab) => {
-              const Icon = tab.icon;
-              const active = activeTab === tab.id;
-              return (
-                <button
-                  key={tab.id}
-                  type="button"
-                  onClick={() => setActiveTab(tab.id)}
-                  className={`flex-shrink-0 flex items-center gap-1.5 px-3 py-2 text-xs font-medium border-b-2 transition-colors ${
-                    active
-                      ? "border-primary text-primary"
-                      : "border-transparent text-slate-500 hover:text-slate-700"
-                  }`}
-                >
-                  <Icon size={14} />
-                  {tab.label}
-                </button>
-              );
-            })}
-          </div>
+          <Tabs items={TABS} active={activeTab} onChange={setActiveTab} />
 
           {activeTab === "overview" && (
             <Card className="p-4">
