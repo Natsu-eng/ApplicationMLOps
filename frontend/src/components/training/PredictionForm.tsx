@@ -5,6 +5,7 @@ import { Button } from "../ui/Button";
 import { Card } from "../ui/Card";
 import { Input } from "../ui/Input";
 import { LabelWithHelp } from "../ui/Tooltip";
+import { LocalExplanationPanel } from "./LocalExplanation";
 import { formatMetricValue } from "../../utils/format";
 
 function isNumericDtype(dtype: string): boolean {
@@ -128,6 +129,8 @@ export default function PredictionForm({
                 ))}
             </div>
           )}
+
+          <LocalExplanationPanel explanation={result.explanation} />
         </div>
       )}
     </Card>
