@@ -35,6 +35,7 @@ import { Modal } from "../ui/Modal";
 import { Heatmap } from "../ui/Heatmap";
 import { BoxPlotChart, type BoxPlotDatum } from "../ui/BoxPlot";
 import { SectionHeader } from "../ui/SectionHeader";
+import { Tabs } from "../ui/Tabs";
 import { StatTile, StatTileRow } from "../dashboard/StatTile";
 import { DataQualityWarnings } from "../training/DataQualityWarnings";
 import {
@@ -68,6 +69,37 @@ function histogramToChartData(histogram: HistogramResponse | null) {
         count,
       }))
     : (histogram.categories ?? []).map((cat, i) => ({ name: cat, count: histogram.counts[i] }));
+}
+
+/** Nombre lisible en contexte tableau — séparateur de milliers (locale FR),
+ * décimales limitées à 2. Sans ça, un écart-type comme 125020585.61
+ * (colonne identifiant à grande échelle, ex. "id" patient) s'affichait en un
+ * seul bloc de chiffres illisible. */
+function formatStatNumber(value: number): string {
+  return value.toLocaleString("fr-FR", { maximumFractionDigits: 2 });
+}
+
+/** Pastille de taux de valeurs manquantes — verte/neutre/ambre/rouge selon
+ * la gravité, avec mini barre de progression, plutôt qu'un pourcentage nu :
+ * la sévérité se lit d'un coup d'œil sur toute la colonne du tableau. */
+function MissingRateCell({ pct }: { pct: number }) {
+  const severity = pct === 0 ? "none" : pct <= 10 ? "low" : pct <= 30 ? "medium" : "high";
+  const styles: Record<string, { text: string; bar: string }> = {
+    none: { text: "text-slate-400", bar: "bg-slate-200" },
+    low: { text: "text-slate-600", bar: "bg-blue-400" },
+    medium: { text: "text-amber-600", bar: "bg-amber-400" },
+    high: { text: "text-rose-600", bar: "bg-rose-500" },
+  };
+  const s = styles[severity];
+  return (
+    <div className="flex items-center justify-end gap-2">
+      {severity === "high" && <AlertTriangle size={11} className="flex-shrink-0 text-rose-500" />}
+      <div className="w-12 h-1.5 rounded-full bg-slate-100 overflow-hidden flex-shrink-0">
+        <div className={`h-full rounded-full ${s.bar}`} style={{ width: `${Math.min(100, pct)}%` }} />
+      </div>
+      <span className={`tabular-nums text-xs font-medium w-9 text-right ${s.text}`}>{pct.toFixed(0)}%</span>
+    </div>
+  );
 }
 
 function boxplotStatsToDatum(stats: { min: number | null; q1: number | null; median: number | null; q3: number | null; max: number | null; outliers: number[] }, name: string): BoxPlotDatum | null {
@@ -173,62 +205,51 @@ export default function EdaModal({ dataset, onClose }: { dataset: DatasetSummary
               identiques (défilement long, aucune hiérarchie) par une
               navigation groupée par intention (vue d'ensemble, qualité,
               corrélations, distributions, cible). */}
-          <div className="flex items-center gap-1 overflow-x-auto pb-1 border-b border-slate-200">
-            {TABS.map((tab) => {
-              const Icon = tab.icon;
-              const active = activeTab === tab.id;
-              return (
-                <button
-                  key={tab.id}
-                  type="button"
-                  onClick={() => setActiveTab(tab.id)}
-                  className={`flex-shrink-0 flex items-center gap-1.5 px-3 py-2 text-xs font-medium border-b-2 transition-colors ${
-                    active
-                      ? "border-primary text-primary"
-                      : "border-transparent text-slate-500 hover:text-slate-700"
-                  }`}
-                >
-                  <Icon size={14} />
-                  {tab.label}
-                </button>
-              );
-            })}
-          </div>
+          <Tabs items={TABS} active={activeTab} onChange={setActiveTab} />
 
           {activeTab === "overview" && (
-            <Card className="p-4">
+            <Card className="p-5">
               <SectionHeader
                 icon={Table2}
                 color="blue"
                 label="Résumé par colonne"
                 help="Un coup d'œil sur chaque variable : type détecté, part de valeurs manquantes, et un résumé adapté (moyenne/écart-type pour le numérique, cardinalité/valeur la plus fréquente pour le catégoriel)."
               />
-              <div className="overflow-x-auto rounded-lg border border-slate-200">
-                <table className="min-w-full text-xs">
+              <div className="overflow-x-auto rounded-xl border border-slate-200">
+                <table className="min-w-full text-sm border-separate border-spacing-0">
                   <thead>
-                    <tr className="border-b border-slate-200 bg-slate-50">
-                      <th className="text-left px-3 py-2 font-medium text-slate-500">Colonne</th>
-                      <th className="text-left px-3 py-2 font-medium text-slate-500">Type</th>
-                      <th className="text-right px-3 py-2 font-medium text-slate-500">Manquant</th>
-                      <th className="text-left px-3 py-2 font-medium text-slate-500">Résumé</th>
+                    <tr className="bg-muted">
+                      <th className="text-left px-3.5 py-2.5 font-medium text-muted-foreground text-xs uppercase tracking-wide">Colonne</th>
+                      <th className="text-left px-3.5 py-2.5 font-medium text-muted-foreground text-xs uppercase tracking-wide">Type</th>
+                      <th className="text-right px-3.5 py-2.5 font-medium text-muted-foreground text-xs uppercase tracking-wide">Manquant</th>
+                      <th className="text-left px-3.5 py-2.5 font-medium text-muted-foreground text-xs uppercase tracking-wide">Résumé</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {eda.column_stats.map((c) => (
-                      <tr key={c.name} className="border-b border-slate-100">
-                        <td className="px-3 py-1.5 text-slate-800">{c.name}</td>
-                        <td className="px-3 py-1.5 text-slate-500">{c.dtype}</td>
-                        <td className="px-3 py-1.5 text-right tabular-nums">
-                          {c.missing_pct > 30 && (
-                            <AlertTriangle size={11} className="inline mr-1 text-amber-600" />
-                          )}
-                          <span className={c.missing_pct > 30 ? "text-amber-600" : "text-slate-500"}>
-                            {c.missing_pct.toFixed(0)}%
+                    {eda.column_stats.map((c, i) => (
+                      <tr
+                        key={c.name}
+                        className={`transition-colors hover:bg-primary/5 ${i % 2 === 1 ? "bg-slate-50/60" : ""}`}
+                      >
+                        <td className="px-3.5 py-2.5 font-medium text-slate-800 border-t border-slate-100">{c.name}</td>
+                        <td className="px-3.5 py-2.5 border-t border-slate-100">
+                          <span
+                            className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium ${
+                              c.kind === "numeric"
+                                ? "bg-blue-50 text-blue-600 border border-blue-100"
+                                : "bg-violet-50 text-violet-600 border border-violet-100"
+                            }`}
+                          >
+                            {c.kind === "numeric" ? <Hash size={10} /> : <Tags size={10} />}
+                            {c.dtype}
                           </span>
                         </td>
-                        <td className="px-3 py-1.5 text-slate-500">
+                        <td className="px-3.5 py-2.5 border-t border-slate-100">
+                          <MissingRateCell pct={c.missing_pct} />
+                        </td>
+                        <td className="px-3.5 py-2.5 text-slate-500 border-t border-slate-100">
                           {c.kind === "numeric"
-                            ? `moyenne ${c.mean?.toFixed(2)} · écart-type ${c.std?.toFixed(2)}`
+                            ? `moyenne ${c.mean !== null && c.mean !== undefined ? formatStatNumber(c.mean) : "—"} · écart-type ${c.std !== null && c.std !== undefined ? formatStatNumber(c.std) : "—"}`
                             : `${c.n_unique} valeurs · fréquente : ${c.top_values?.[0]?.value ?? "—"}`}
                         </td>
                       </tr>
@@ -240,7 +261,7 @@ export default function EdaModal({ dataset, onClose }: { dataset: DatasetSummary
           )}
 
           {activeTab === "quality" && (
-            <Card className="p-4">
+            <Card className="p-5">
               <SectionHeader
                 icon={ShieldCheck}
                 color="teal"
@@ -274,7 +295,7 @@ export default function EdaModal({ dataset, onClose }: { dataset: DatasetSummary
           {activeTab === "correlations" && (
             <div className="space-y-5">
               {eda.correlation_matrix.columns.length >= 2 && (
-                <Card className="p-4">
+                <Card className="p-5">
                   <SectionHeader
                     icon={GitCompareArrows}
                     color="blue"
@@ -291,7 +312,7 @@ export default function EdaModal({ dataset, onClose }: { dataset: DatasetSummary
               )}
 
               {eda.categorical_correlation_matrix.columns.length >= 2 && (
-                <Card className="p-4">
+                <Card className="p-5">
                   <SectionHeader
                     icon={GitCompareArrows}
                     color="violet"
@@ -308,7 +329,7 @@ export default function EdaModal({ dataset, onClose }: { dataset: DatasetSummary
               )}
 
               {eda.top_correlated_pairs.length > 0 && (
-                <Card className="p-4">
+                <Card className="p-5">
                   <SectionHeader
                     icon={GitCompareArrows}
                     color="amber"
@@ -366,7 +387,7 @@ export default function EdaModal({ dataset, onClose }: { dataset: DatasetSummary
           {activeTab === "distributions" && (
             <div className="space-y-5">
               {missingData.length > 0 && (
-                <Card className="p-4">
+                <Card className="p-5">
                   <SectionHeader
                     icon={AlertTriangle}
                     color="amber"
@@ -386,7 +407,7 @@ export default function EdaModal({ dataset, onClose }: { dataset: DatasetSummary
               )}
 
               {outlierBoxData.length > 0 && (
-                <Card className="p-4">
+                <Card className="p-5">
                   <SectionHeader
                     icon={BarChart3}
                     color="violet"
@@ -397,7 +418,7 @@ export default function EdaModal({ dataset, onClose }: { dataset: DatasetSummary
                 </Card>
               )}
 
-              <Card className="p-4">
+              <Card className="p-5">
                 <SectionHeader
                   icon={BarChart3}
                   color="blue"
@@ -440,7 +461,7 @@ export default function EdaModal({ dataset, onClose }: { dataset: DatasetSummary
 
           {activeTab === "target" && (
             <div className="space-y-5">
-              <Card className="p-4">
+              <Card className="p-5">
                 <SectionHeader
                   icon={TargetIcon}
                   color="teal"
@@ -472,7 +493,7 @@ export default function EdaModal({ dataset, onClose }: { dataset: DatasetSummary
               )}
 
               {targetColumn && targetDistributionData.length > 0 && (
-                <Card className="p-4">
+                <Card className="p-5">
                   <SectionHeader
                     icon={BarChart3}
                     color="teal"
@@ -492,7 +513,7 @@ export default function EdaModal({ dataset, onClose }: { dataset: DatasetSummary
               )}
 
               {targetColumn && numericFeatureOptions.length > 0 && (
-                <Card className="p-4">
+                <Card className="p-5">
                   <SectionHeader
                     icon={GitCompareArrows}
                     color="amber"

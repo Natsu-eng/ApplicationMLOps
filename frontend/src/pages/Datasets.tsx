@@ -176,6 +176,12 @@ function DatasetCard({
   onExplore: () => void;
   onDelete: () => void;
 }) {
+  // Couleur décorative par IDENTITÉ (pas par statut) — revenu en arrière sur
+  // retour utilisateur direct : la quasi-totalité des datasets sont "Prêt"
+  // en usage réel, un accent piloté par le statut rendait la grille
+  // monochrome (toutes les cartes teal). Le statut réel reste lisible via
+  // StatusBadge (texte + puce), qui n'a jamais changé — variété visuelle et
+  // information de statut sur deux canaux séparés plutôt que confondus.
   const color = accentColorForId(dataset.id);
   return (
     <Card interactive className="group overflow-hidden flex flex-col">

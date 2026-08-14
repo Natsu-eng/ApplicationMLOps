@@ -43,15 +43,26 @@ export const CHART_TOOLTIP_STYLE = {
   labelStyle: { color: "#334155" }, // slate-700
 };
 
-// Palette de séries — jusqu'à 6 classes lisibles (courbes ROC/PR multi-classes).
-// Bleu de marque en tête (série principale), puis pink/teal/amber/emerald/orange.
-export const CHART_SERIES_COLORS = ["#1d4ed8", "#db2777", "#0d9488", "#d97706", "#059669", "#ea580c"];
+// Palette de séries — jusqu'à 6 classes lisibles (courbes ROC/PR multi-classes,
+// beeswarm par classe). Ordre VALIDÉ (pas choisi à l'œil) contre la
+// discrimination des couleurs (deutéranopie/protanopie/tritanopie) : l'ancien
+// ordre (bleu/pink/teal/amber/emerald/orange) échouait la paire adjacente
+// pink↔teal (ΔE 3.8 en deutéranopie, sous le seuil de 6). Revalidé avec
+// `dataviz/scripts/validate_palette.js` (méthode skill dataviz) — bleu de
+// marque conservé en position 1, les 5 teintes suivantes reprennent l'ordre
+// de référence du skill (seul ordre garanti sans collision adjacente) :
+// tous les écarts adjacents ≥ 9.1 ΔE en vision daltonienne, ≥ 19.6 en
+// vision normale, contraste ≥ 3:1 sur fond blanc.
+export const CHART_SERIES_COLORS = ["#1d4ed8", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300"];
 
-// Couleurs sémantiques par usage — cohérentes avec CHART_SERIES_COLORS
-export const CHART_COLOR_PRIMARY = "#1d4ed8"; // blue-700 (marque) — série principale (prédit vs réel, distributions, corrélations)
-export const CHART_COLOR_SECONDARY = "#db2777"; // pink-600 — série de contraste (résidus, valeurs manquantes)
-export const CHART_COLOR_TERTIARY = "#0d9488"; // teal-600 — distribution de la cible
-export const CHART_COLOR_WARNING = "#d97706"; // amber-600 — anomalies/outliers
+// Couleurs sémantiques par usage — alignées sur les positions validées de
+// CHART_SERIES_COLORS (jamais une teinte hors palette, pour rester
+// cohérent si un graphe combine une couleur "sémantique" et la palette de
+// séries dans la même figure).
+export const CHART_COLOR_PRIMARY = "#1d4ed8"; // bleu de marque (slot 1) — série principale (prédit vs réel, distributions, corrélations)
+export const CHART_COLOR_SECONDARY = "#eb6834"; // orange (slot 2) — série de contraste (résidus, valeurs manquantes)
+export const CHART_COLOR_TERTIARY = "#1baf7a"; // aqua (slot 3) — distribution de la cible
+export const CHART_COLOR_WARNING = "#eda100"; // jaune/ambre (slot 4) — anomalies/outliers
 
 // Échelle divergente du beeswarm SHAP (Lot Explicabilité globale) — colore
 // chaque point par la valeur (normalisée par variable) de la feature, PAS
@@ -69,6 +80,38 @@ export function beeswarmColor(t: number): string {
   const [r1, g1, b1] = [0x25, 0x63, 0xeb];
   const [r2, g2, b2] = [0xdc, 0x26, 0x26];
   return `rgb(${lerp(r1, r2)}, ${lerp(g1, g2)}, ${lerp(b1, b2)})`;
+}
+
+// ── Heatmap (corrélations, matrice de confusion) ────────────────────────────
+//
+// Rampe SÉQUENTIELLE (une seule teinte, clair→foncé — comptages, matrice de
+// confusion) et rampe DIVERGENTE (deux teintes + point neutre gris — signe
+// d'une corrélation) : reprennent la méthode et les teintes de référence du
+// skill dataviz (bleu séquentiel, paire divergente bleu↔rouge), plutôt que
+// les anciens dégradés d'opacité ad hoc (rgba(29,78,216, alpha) codés en dur
+// dans Heatmap.tsx, jamais revalidés). Étapes discrètes (buckets), pas un
+// dégradé continu par opacité — un vrai palier par intensité se distingue
+// mieux qu'une simple variation de transparence sur une petite cellule.
+export const HEATMAP_SEQUENTIAL_STEPS = ["#eaf1fc", "#cde2fb", "#9ec5f4", "#5598e7", "#256abf", "#184f95", "#0d366b"];
+export const HEATMAP_DIVERGING_POSITIVE_STEPS = ["#eaf1fc", "#cde2fb", "#9ec5f4", "#5598e7", "#256abf", "#184f95", "#0d366b"];
+export const HEATMAP_DIVERGING_NEGATIVE_STEPS = ["#fbeae9", "#f7d2cf", "#eea19b", "#e2685e", "#c73f34", "#a12f26", "#7a231c"];
+export const HEATMAP_NEUTRAL_STEP = "#f0efec"; // point neutre gris (corrélation ≈ 0) — jamais une teinte, pour ne pas lire comme "un peu positif/négatif"
+export const HEATMAP_MISSING_FILL = "#f1f5f9"; // slate-100 — cellule sans valeur
+
+/** Choisit le nombre de paliers de HEATMAP_*_STEPS le plus proche d'une
+ * intensité normalisée [0, 1] — quantification discrète plutôt qu'une
+ * interpolation continue, pour que chaque palier reste identifiable. */
+export function heatmapStepIndex(intensity: number, stepCount: number): number {
+  const clamped = Math.min(1, Math.max(0, intensity));
+  return Math.min(stepCount - 1, Math.floor(clamped * stepCount));
+}
+
+/** Encre de texte lisible sur une cellule de heatmap — blanc à partir du
+ * palier le plus soutenu (index ≥ 4 sur les rampes à 7 paliers ci-dessus),
+ * sombre en-dessous. Calculé une fois ici plutôt que deviné composant par
+ * composant. */
+export function heatmapTextColor(stepIndex: number): string {
+  return stepIndex >= 4 ? "#ffffff" : "#0f172a"; // slate-900
 }
 
 // Boxplot (composant custom BoxPlot.tsx, pas de primitive Recharts native)

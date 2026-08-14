@@ -33,7 +33,13 @@
   --color-ring: oklch(0.48 0.17 258);
   --color-card: oklch(1 0 0);
   --color-card-foreground: oklch(0.21 0.03 260);
-  --color-background: oklch(0.985 0.002 260);
+  /* Canvas de contenu (derrière AppShell, hors sidebar) — teinté bleu-gris
+     visible (retour explicite : trop proche du blanc des cartes, "tout est
+     blanc" malgré --color-card à 1.0 de luminosité) plutôt qu'un gris neutre
+     à 0.985 quasi indissociable du blanc. Même teinte (258) que
+     --color-primary/--color-sidebar pour une palette cohérente — les cartes
+     (bg-card, blanches) ressortent nettement dessus sans bordure appuyée. */
+  --color-background: oklch(0.94 0.014 258);
   --color-foreground: oklch(0.21 0.03 260);
 
   /* Palette de graphes (théme/charts.ts la consomme via les mêmes valeurs

@@ -48,6 +48,7 @@ function datasetStatusBadge(status: DatasetSummary["status"]) {
   return <Badge variant="primary" dot pulse>Analyse…</Badge>;
 }
 
+
 /** Page protégée du Lot 1, enrichie au Lot E1-ter : vue d'ensemble de
  * l'activité (datasets, entraînements récents) au-dessus de la gestion
  * d'équipe — le dashboard doit d'abord montrer ce qui se passe, pas
