@@ -6,7 +6,7 @@ import EdaModal from "../components/datasets/EdaModal";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
-import { ColorIconBadge, accentBarClass, type AccentColor } from "../components/ui/ColorIconBadge";
+import { ColorIconBadge, accentBarClass, accentColorForId } from "../components/ui/ColorIconBadge";
 import { Modal } from "../components/ui/Modal";
 import { formatDate, formatFileSize } from "../utils/format";
 
@@ -165,14 +165,6 @@ function StatusBadge({ status }: { status: string }) {
   return <Badge variant="primary" dot pulse>Analyse…</Badge>;
 }
 
-/** Couleur reflétant le STATUT réel du dataset (pas une rotation par id) —
- * un dataset en erreur doit se voir avant même de lire le badge. */
-function accentColorForDatasetStatus(status: DatasetSummary["status"]): AccentColor {
-  if (status === "ready") return "teal";
-  if (status === "error") return "rose";
-  return "blue"; // processing
-}
-
 function DatasetCard({
   dataset,
   onPreview,
@@ -184,7 +176,13 @@ function DatasetCard({
   onExplore: () => void;
   onDelete: () => void;
 }) {
-  const color = accentColorForDatasetStatus(dataset.status);
+  // Couleur décorative par IDENTITÉ (pas par statut) — revenu en arrière sur
+  // retour utilisateur direct : la quasi-totalité des datasets sont "Prêt"
+  // en usage réel, un accent piloté par le statut rendait la grille
+  // monochrome (toutes les cartes teal). Le statut réel reste lisible via
+  // StatusBadge (texte + puce), qui n'a jamais changé — variété visuelle et
+  // information de statut sur deux canaux séparés plutôt que confondus.
+  const color = accentColorForId(dataset.id);
   return (
     <Card interactive className="group overflow-hidden flex flex-col">
       <div className={`h-1.5 ${accentBarClass(color)}`} aria-hidden="true" />

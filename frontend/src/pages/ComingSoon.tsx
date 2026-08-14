@@ -13,6 +13,7 @@ import AppShell from "../components/AppShell";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
+import { ColorIconBadge, accentColorForId } from "../components/ui/ColorIconBadge";
 import { PILLARS, type PillarId } from "../config/pillars";
 
 interface PreviewFeature {
@@ -98,10 +99,13 @@ export default function ComingSoon({ pillarId }: { pillarId: PillarId }) {
 
         {features.length > 0 && (
           <div className="grid sm:grid-cols-2 gap-4 mb-8 text-left">
-            {features.map((feature) => (
-              <Card key={feature.title} className="p-4">
-                <p className="text-sm font-medium text-slate-800 mb-1">{feature.title}</p>
-                <p className="text-xs text-slate-500 leading-relaxed">{feature.description}</p>
+            {features.map((feature, i) => (
+              <Card key={feature.title} className="p-4 flex items-start gap-3">
+                <ColorIconBadge icon={feature.icon} color={accentColorForId(i)} size="sm" />
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-slate-800 mb-1">{feature.title}</p>
+                  <p className="text-xs text-slate-500 leading-relaxed">{feature.description}</p>
+                </div>
               </Card>
             ))}
           </div>
