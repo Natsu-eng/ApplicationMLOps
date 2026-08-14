@@ -3,10 +3,12 @@ prédiction sur une nouvelle observation fournie par l'utilisateur.
 
 Logique pure (aucune dépendance HTTP), le bundle est le fichier joblib
 produit par `services/ml_training.py::train_and_evaluate` — modèle +
-preprocessor + (en régression) les régresseurs de quantile CQR.
+preprocessor + (en régression) les régresseurs de quantile CQR + (Lot
+Explicabilité locale) de quoi construire l'explainer SHAP à la demande.
 """
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any, Optional
 
@@ -15,6 +17,16 @@ import numpy as np
 import pandas as pd
 
 from services.feature_engineering import FeatureEngineeringSpecError, apply_upstream_feature_engineering
+from services.ml_explainability import build_explainer, normalize_base_value, select_class_matrix, shap_values_per_class
+
+logger = logging.getLogger("datalab.ml_inference")
+
+# Contributions individuelles affichées dans le waterfall local — le reste
+# est agrégé sous "Autres" pour rester lisible même sur un dataset à
+# beaucoup de variables (colonnes one-hot comprises, qui gonflent
+# `feature_names` bien au-delà du nombre de colonnes saisies par
+# l'utilisateur).
+LOCAL_EXPLAIN_TOP_FEATURES = 10
 
 
 class InferenceError(ValueError):
@@ -66,6 +78,95 @@ def _cqr_interval(cqr: dict[str, Any], X_proc: np.ndarray, point_prediction: flo
     return {"low": float(lo_final), "high": float(hi_final), "confidence": float(cqr["target_coverage"])}
 
 
+def explain_one(bundle: dict[str, Any], X_proc_row: np.ndarray, class_index: Optional[int]) -> dict[str, Any]:
+    """Explication locale (waterfall) — pourquoi CETTE prédiction précise,
+    contribution signée par variable, plutôt que la seule importance
+    moyenne déjà disponible sur la fiche modèle (explicabilité globale, Lot
+    5/Explicabilité globale). Réutilise le MÊME routage d'explainer par
+    famille que l'entraînement (`services/ml_explainability.py`) — jamais un
+    second calcul de SHAP qui pourrait diverger dans sa forme.
+
+    `class_index` : classe prédite (classification, voir `predict_one`) à
+    expliquer — `None` en régression. Sans effet si l'explainer ne renvoie
+    qu'une seule sortie (selon la version de SHAP, voir
+    `ml_explainability.select_class_matrix`).
+
+    Dégrade proprement (jamais d'exception propagée à l'appelant) : un job
+    entraîné avant ce lot n'a pas `explainer_kind` dans son bundle — statut
+    `"degraded"` avec message clair plutôt qu'un crash de la prédiction
+    elle-même (l'explication est un COMPLÉMENT, jamais une condition pour
+    obtenir la prédiction). Contributions bornées à
+    `LOCAL_EXPLAIN_TOP_FEATURES`, le reste agrégé sous "Autres" pour rester
+    lisible même avec beaucoup de colonnes (one-hot compris)."""
+    explainer_kind = bundle.get("explainer_kind")
+    feature_names: list[str] = bundle.get("feature_names") or []
+    if explainer_kind is None:
+        return {
+            "status": "degraded",
+            "message": "Ce modèle a été entraîné avant l'explicabilité locale — réentraînez-le pour l'obtenir.",
+            "base_value": None,
+            "contributions": [],
+            "other_contribution": None,
+        }
+    try:
+        explainer = build_explainer(explainer_kind, bundle["model"], bundle.get("local_explain_background"))
+        shap_values = explainer.shap_values(X_proc_row)
+        class_matrices = shap_values_per_class(shap_values)
+
+        # Cas binaire non listé (bug réel trouvé en test, vérifié empiriquement
+        # sur un modèle réel) : certaines versions de SHAP/backends d'arbre
+        # renvoient, pour une classification à 2 classes, UN SEUL tableau —
+        # celui de `class_names[1]` (la "classe positive"), jamais celui de
+        # `class_names[0]`, quelle que soit la classe réellement prédite pour
+        # cette observation. Sans correction, expliquer une observation
+        # prédite classe 0 afficherait des contributions au signe inversé
+        # (une variable qui pousse VERS la classe prédite s'afficherait comme
+        # la poussant CONTRE). Les classes ≥ 3 (liste de matrices, une par
+        # classe) n'ont pas cette ambiguïté — chaque entrée correspond déjà
+        # directement à son índice de classe (même hypothèse que le beeswarm
+        # global, `ml_training.py`, en production depuis le Lot Explicabilité
+        # globale sans anomalie rapportée).
+        class_names = bundle.get("class_names") or []
+        sign = -1.0 if (
+            not isinstance(class_matrices, list) and class_index == 0 and len(class_names) == 2
+        ) else 1.0
+
+        row_values = sign * np.asarray(select_class_matrix(class_matrices, class_index))[0]
+        base_value = sign * normalize_base_value(explainer.expected_value, class_index)
+
+        order = np.argsort(-np.abs(row_values))
+        top_idx = order[:LOCAL_EXPLAIN_TOP_FEATURES]
+        rest_idx = order[LOCAL_EXPLAIN_TOP_FEATURES:]
+        row_dense = X_proc_row[0]
+
+        contributions = [
+            {
+                "feature": feature_names[i] if i < len(feature_names) else f"variable_{i}",
+                "value": float(row_dense[i]),
+                "contribution": float(row_values[i]),
+            }
+            for i in top_idx
+        ]
+        other_contribution = float(np.sum(row_values[rest_idx])) if len(rest_idx) else 0.0
+
+        return {
+            "status": "ok",
+            "message": None,
+            "base_value": base_value,
+            "contributions": contributions,
+            "other_contribution": other_contribution,
+        }
+    except Exception as exc:  # dernier filet — l'explication ne doit jamais faire échouer la prédiction
+        logger.warning("[Inference] Explication locale dégradée (explainer=%s) : %s", explainer_kind, exc)
+        return {
+            "status": "degraded",
+            "message": "L'explication détaillée n'a pas pu être calculée pour cette prédiction.",
+            "base_value": None,
+            "contributions": [],
+            "other_contribution": None,
+        }
+
+
 def predict_one(bundle: dict[str, Any], feature_columns: list[str], row: dict[str, Any]) -> dict[str, Any]:
     """Prédit sur une seule observation (dict colonne → valeur brute saisie
     par l'utilisateur). Retourne un résultat prêt à sérialiser en JSON.
@@ -107,6 +208,10 @@ def predict_one(bundle: dict[str, Any], feature_columns: list[str], row: dict[st
             result["probabilities"] = {
                 (class_names[i] if i < len(class_names) else str(i)): float(p) for i, p in enumerate(proba)
             }
+        # Explicabilité locale (Lot Explicabilité locale) — explique la
+        # classe PRÉDITE, celle qui intéresse réellement l'utilisateur pour
+        # cette observation précise, pas les K classes à la fois.
+        result["explanation"] = explain_one(bundle, X_proc, pred_index)
         return result
 
     point = float(model.predict(X_proc)[0])
@@ -122,4 +227,5 @@ def predict_one(bundle: dict[str, Any], feature_columns: list[str], row: dict[st
         X_proc_cqr = cqr_preprocessor.transform(df)
         X_proc_cqr = np.asarray(X_proc_cqr.todense()) if hasattr(X_proc_cqr, "todense") else np.asarray(X_proc_cqr)
         result["interval"] = _cqr_interval(bundle["cqr"], X_proc_cqr, point)
+    result["explanation"] = explain_one(bundle, X_proc, None)
     return result

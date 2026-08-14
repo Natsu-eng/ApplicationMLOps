@@ -9,6 +9,7 @@ de prédiction dans des conditions représentatives.
 from __future__ import annotations
 
 import json
+import math
 import tempfile
 from pathlib import Path
 
@@ -178,3 +179,116 @@ def test_predict_rejects_incompatible_feature_engineering_spec_version():
     row = {"date": df.loc[0, "date"], "x": float(df.loc[0, "x"])}
     with pytest.raises(InferenceError):
         predict_one(bundle, raw_feature_columns, row)
+
+
+# ── Lot Explicabilité locale — waterfall par prédiction ──────────────────
+
+
+def _sigmoid(x: float) -> float:
+    return 1 / (1 + math.exp(-x))
+
+
+def _reconstruct(explanation: dict) -> float:
+    """base_value + toutes les contributions (top affichées + "Autres"
+    agrégé) — propriété fondamentale de SHAP (`sum(shap_values) +
+    expected_value == sortie du modèle`), vérifiée ici de bout en bout sur
+    un modèle réel plutôt que supposée."""
+    return explanation["base_value"] + sum(c["contribution"] for c in explanation["contributions"]) + (
+        explanation["other_contribution"] or 0
+    )
+
+
+def test_explain_regression_reconstructs_prediction_exactly():
+    rng = np.random.default_rng(1)
+    n = 200
+    df = pd.DataFrame({"x1": rng.normal(50, 10, n), "x2": rng.normal(20, 5, n)})
+    df["cible"] = 2.5 * df["x1"] - 1.2 * df["x2"] + rng.normal(0, 1, n)
+
+    split = split_dataset(df, "cible", ["x1", "x2"], "regression", None, 0.2, 42)
+    result = train_and_evaluate(split, "regression", _FAST_CONFIG, lambda s, p: None)
+    bundle = result.pipeline_bundle
+
+    out = predict_one(bundle, ["x1", "x2"], {"x1": 50.0, "x2": 20.0})
+    exp = out["explanation"]
+    assert exp["status"] == "ok"
+    assert len(exp["contributions"]) > 0
+    # Régression : la reconstruction SHAP est directement dans l'espace de
+    # la prédiction (pas de transformation sigmoïde/softmax à intercaler).
+    assert _reconstruct(exp) == pytest.approx(out["prediction"], abs=1e-6)
+
+
+def test_explain_binary_classification_reconstructs_predicted_class_probability():
+    """Bug réel trouvé en test : pour une classification binaire, certaines
+    versions de SHAP renvoient un SEUL tableau de valeurs — celui de la
+    "classe positive" (class_names[1]), quelle que soit la classe réellement
+    prédite pour l'observation. Sans correction de signe, expliquer une
+    observation prédite classe 0 affichait des contributions inversées (une
+    variable qui pousse VERS la classe prédite semblait la pousser CONTRE).
+    Ce test verrouille la correction pour LES DEUX classes prédites — pas
+    seulement celle qui "marchait déjà par hasard"."""
+    rng = np.random.default_rng(0)
+    n = 200
+    df = pd.DataFrame({"x1": rng.normal(0, 1, n), "x2": rng.normal(0, 1, n)})
+    df["cible"] = np.where(df["x1"] + df["x2"] > 0, "a", "b")
+
+    split = split_dataset(df, "cible", ["x1", "x2"], "classification", None, 0.2, 42)
+    config = TrainingConfig(optuna_trials=3, cv_folds=3, model_ids=["lightgbm"])
+    result = train_and_evaluate(split, "classification", config, lambda s, p: None)
+    bundle = result.pipeline_bundle
+
+    # Deux observations construites pour prédire chacune des deux classes —
+    # la correction de signe ne doit être correcte QUE pour l'une des deux
+    # sans elle (voir docstring), d'où le test sur les deux.
+    for row in ({"x1": 2.0, "x2": 2.0}, {"x1": -2.0, "x2": -2.0}):
+        out = predict_one(bundle, ["x1", "x2"], row)
+        exp = out["explanation"]
+        assert exp["status"] == "ok"
+        predicted_proba = out["probabilities"][out["prediction"]]
+        reconstructed_proba = _sigmoid(_reconstruct(exp))
+        assert reconstructed_proba == pytest.approx(predicted_proba, abs=1e-4)
+
+
+def test_explain_multiclass_classification_does_not_crash():
+    """Classification à 3 classes (Iris) — même précaution que le bug SHAP
+    multiclasse historique du Lot 3 (forme de shap_values dépendante de la
+    version) : preuve que l'explication locale ne plante pas et produit une
+    structure exploitable, sur un vrai dataset réel."""
+    from sklearn.datasets import load_iris
+
+    data = load_iris(as_frame=True)
+    df = data.frame.rename(columns={"target": "cible"})
+    df["cible"] = df["cible"].map(dict(enumerate(data.target_names)))
+    features = [c for c in df.columns if c != "cible"]
+
+    split = split_dataset(df, "cible", features, "classification", None, 0.2, 42)
+    config = TrainingConfig(optuna_trials=3, cv_folds=3, model_ids=["lightgbm"])
+    result = train_and_evaluate(split, "classification", config, lambda s, p: None)
+    bundle = result.pipeline_bundle
+
+    row = {f: float(df.iloc[0][f]) for f in features}
+    out = predict_one(bundle, features, row)
+    exp = out["explanation"]
+    assert exp["status"] == "ok"
+    assert len(exp["contributions"]) > 0
+    assert exp["base_value"] is not None
+
+
+def test_explain_degrades_gracefully_on_legacy_bundle_without_explainer_kind():
+    """Un modèle entraîné avant ce lot n'a pas `explainer_kind` dans son
+    bundle — l'explication doit dégrader proprement (statut "degraded",
+    message clair) SANS empêcher la prédiction elle-même de réussir."""
+    rng = np.random.default_rng(2)
+    n = 150
+    df = pd.DataFrame({"x1": rng.normal(50, 10, n), "x2": rng.normal(20, 5, n)})
+    df["cible"] = 2.5 * df["x1"] - 1.2 * df["x2"] + rng.normal(0, 3, n)
+
+    split = split_dataset(df, "cible", ["x1", "x2"], "regression", None, 0.2, 42)
+    result = train_and_evaluate(split, "regression", _FAST_CONFIG, lambda s, p: None)
+    bundle = result.pipeline_bundle
+    del bundle["explainer_kind"]  # simule un bundle antérieur au lot
+
+    out = predict_one(bundle, ["x1", "x2"], {"x1": 50.0, "x2": 20.0})
+    assert "prediction" in out
+    assert out["explanation"]["status"] == "degraded"
+    assert out["explanation"]["contributions"] == []
+    assert out["explanation"]["message"]

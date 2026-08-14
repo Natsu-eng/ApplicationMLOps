@@ -62,7 +62,6 @@ from typing import Any, Callable, Optional
 import numpy as np
 import optuna
 import pandas as pd
-import shap
 from lightgbm import LGBMRegressor
 from sklearn.base import clone
 from sklearn.calibration import calibration_curve
@@ -95,6 +94,7 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import LabelEncoder, label_binarize
 from sklearn.utils.class_weight import compute_sample_weight
 
+from services.ml_explainability import build_explainer, shap_values_per_class
 from services.ml_preprocessing import SplitResult, build_preprocessor
 from services.ml_registry import ModelSpec, models_for_task
 
@@ -425,49 +425,14 @@ _CALIBRATION_N_BINS = 10
 _LEARNING_CURVE_TRAIN_SIZES = np.linspace(0.2, 1.0, 5)
 
 
-def _build_explainer(explainer_kind: str, estimator: Any, X_train_background: Any):
-    """Construit l'explainer SHAP adapté à la famille du modèle gagnant.
-
-    Point critique (Lot 5, correction 2) : `X_train_background` DOIT être
-    dans le même espace que celui vu par `estimator` — c'est-à-dire déjà
-    passé par le préprocesseur (post-scaling, post-OHE), jamais les données
-    brutes. Un `LinearExplainer`/`KernelExplainer` nourri de données brutes
-    ne lève aucune erreur mais produit des valeurs SHAP fausses (les
-    coefficients du modèle linéaire, eux, ont été appris dans l'espace
-    préprocessé) — l'appelant (`_compute_explainability`) ne passe donc
-    jamais autre chose que `X_train_proc`/`X_test_proc`.
-
-    `X_train_background` est sparse pour "tree" (ignoré, TreeExplainer n'en a
-    pas besoin), toujours dense (déjà converti par l'appelant) pour
-    "linear"/"kernel", qui l'exigent.
-    """
-    if explainer_kind == "tree":
-        return shap.TreeExplainer(estimator)
-    if explainer_kind == "linear":
-        return shap.LinearExplainer(estimator, X_train_background)
-    background = shap.kmeans(X_train_background, min(_KERNEL_SHAP_BACKGROUND_SIZE, len(X_train_background)))
-    predict_fn = estimator.predict_proba if hasattr(estimator, "predict_proba") else estimator.predict
-    return shap.KernelExplainer(predict_fn, background)
-
-
-def _shap_values_per_class(shap_values: Any) -> list[np.ndarray] | np.ndarray:
-    """Normalise la sortie brute de `explainer.shap_values` en une liste de
-    matrices `(n_échantillons, n_features)` (une par classe), ou une matrice
-    2D unique en régression/sortie unique — factorisé depuis
-    `_compute_shap_summary` (Lot 3/5) pour être réutilisé par le beeswarm
-    (Lot Explicabilité globale) sans dupliquer la logique de forme.
-
-    La forme dépend de la version de SHAP/du backend et de l'explainer :
-    soit une liste d'une matrice par classe (API historique), soit un seul
-    tableau `(n_échantillons, n_features, n_classes)` (API unifiée récente)
-    — bug réel rencontré en test (classification 3 classes, Lot 3) sans
-    cette normalisation."""
-    if isinstance(shap_values, list):
-        return [np.asarray(sv) for sv in shap_values]
-    arr = np.asarray(shap_values)
-    if arr.ndim == 3:  # (n_échantillons, n_features, n_classes)
-        return [arr[:, :, k] for k in range(arr.shape[2])]
-    return arr  # 2D — régression ou classification à une seule sortie
+# `_build_explainer`/`_shap_values_per_class` — déplacées vers
+# `services/ml_explainability.py` (Lot Explicabilité locale) pour être
+# réutilisées telles quelles par `services/ml_inference.py`, sans risque
+# qu'une copie diverge de l'autre sur la normalisation de la sortie SHAP
+# (bug réel historique, voir la docstring du module partagé). Alias locaux
+# conservés pour ne pas toucher tous les appels existants de ce fichier.
+_build_explainer = build_explainer
+_shap_values_per_class = shap_values_per_class
 
 
 def _build_beeswarm(
@@ -1131,6 +1096,21 @@ def train_and_evaluate(
         best_model, winning_spec.explainer_kind, X_train_proc, X_test_proc, feature_names, class_names, config
     )
 
+    # Fond pour l'explicabilité LOCALE à l'inférence (Lot Explicabilité
+    # locale, services/ml_inference.py) — uniquement pour les familles qui en
+    # ont besoin (linear/kernel, voir services/ml_explainability.py) ;
+    # TreeExplainer n'en a jamais besoin, ce qui couvre tout le catalogue par
+    # défaut (aucun coût de bundle supplémentaire dans le cas courant). Même
+    # bornage que le fond de l'explicabilité globale ci-dessus
+    # (`_KERNEL_SHAP_BACKGROUND_SIZE`), recalculé séparément ici car
+    # `_compute_explainability` ne l'expose pas au-delà de son propre scope.
+    local_explain_background: Optional[np.ndarray] = None
+    if winning_spec.explainer_kind != "tree":
+        bg_size = min(_KERNEL_SHAP_BACKGROUND_SIZE, X_train_proc.shape[0])
+        bg_idx = np.random.default_rng(config.seed).choice(X_train_proc.shape[0], size=bg_size, replace=False)
+        bg = X_train_proc[bg_idx]
+        local_explain_background = np.asarray(bg.todense()) if hasattr(bg, "todense") else np.asarray(bg)
+
     progress_cb("Importance par permutation", 82)
     permutation_summary, permutation_status = _compute_permutation_importance(
         best_model, X_test_proc, y_test, feature_names, config.seed
@@ -1208,6 +1188,11 @@ def train_and_evaluate(
         "feature_names": feature_names,
         "class_names": class_names,
         "task_type": task_type,
+        # Lot Explicabilité locale — routage de l'explainer à l'inférence
+        # (services/ml_inference.py::explain_one), même famille que celle
+        # utilisée pour l'explicabilité globale ci-dessus.
+        "explainer_kind": winning_spec.explainer_kind,
+        "local_explain_background": local_explain_background,
     }
     if cqr_artifacts:
         bundle["cqr"] = {**cqr_artifacts, **{k: v for k, v in (cqr_result or {}).items() if not k.startswith("_")}}

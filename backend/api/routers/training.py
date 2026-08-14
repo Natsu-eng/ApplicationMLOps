@@ -176,10 +176,31 @@ class PredictionRequest(BaseModel):
     data: dict[str, Any]
 
 
+class LocalContribution(BaseModel):
+    feature: str
+    value: float
+    contribution: float
+
+
+class LocalExplanation(BaseModel):
+    """Explication locale (waterfall, Lot Explicabilité locale) — pourquoi
+    CETTE prédiction précise, contribution signée par variable. `status`
+    "degraded" (modèle antérieur à ce lot, ou calcul SHAP indisponible pour
+    ce modèle) : `message` porte l'explication, les autres champs restent
+    vides plutôt qu'une erreur HTTP — l'explication est un complément à la
+    prédiction, jamais une condition pour l'obtenir."""
+    status: str
+    message: Optional[str] = None
+    base_value: Optional[float] = None
+    contributions: List[LocalContribution] = []
+    other_contribution: Optional[float] = None
+
+
 class PredictionResponse(BaseModel):
     prediction: Any
     probabilities: Optional[dict[str, float]] = None
     interval: Optional[dict[str, float]] = None
+    explanation: Optional[LocalExplanation] = None
 
 
 # ── Aides internes ───────────────────────────────────────────────────────────
