@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
-import { Activity, BrainCircuit, Database, FileSpreadsheet, Trash2, Users } from "lucide-react";
+import { Activity, BrainCircuit, Database, FileSpreadsheet, ScrollText, Trash2, Users } from "lucide-react";
 import {
   ApiError,
   api,
+  type AuditLogEntry,
   type DatasetSummary,
   type TeamMember,
   type TrainingJobSummary,
@@ -17,8 +18,73 @@ import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
 import { ColorIconBadge, accentColorForId } from "../components/ui/ColorIconBadge";
+import { SectionHeader } from "../components/ui/SectionHeader";
 import { Input } from "../components/ui/Input";
 import { formatDateTime } from "../utils/format";
+
+const AUDIT_ACTION_LABELS: Record<string, string> = {
+  "member.added": "Membre ajouté",
+  "dataset.deleted": "Dataset supprimé",
+  "training_job.deleted": "Entraînement supprimé",
+  "model.promoted": "Modèle promu",
+};
+
+function auditActionLabel(entry: AuditLogEntry): string {
+  const base = AUDIT_ACTION_LABELS[entry.action] ?? entry.action;
+  if (entry.action === "member.added" && entry.details?.email) return `${base} — ${entry.details.email}`;
+  if (entry.action === "dataset.deleted" && entry.details?.name) return `${base} — ${entry.details.name}`;
+  if (entry.action === "training_job.deleted" && entry.details?.target_column) {
+    return `${base} — cible « ${entry.details.target_column} »`;
+  }
+  if (entry.action === "model.promoted" && entry.details?.stage) {
+    const stage = entry.details.stage;
+    const stageLabel = stage === "production" ? "production" : stage === "staging" ? "validation" : "retiré";
+    return `${base} (${entry.details.algorithm ?? ""}) → ${stageLabel}`;
+  }
+  return base;
+}
+
+/** Journal d'audit (Lot 10, owner uniquement) — actions sensibles de
+ * l'équipe (ajout de membre, suppression de dataset/entraînement,
+ * promotion de modèle), pas un log applicatif complet (déjà couvert côté
+ * serveur) : juste ce qu'un owner voudrait pouvoir vérifier après coup. */
+function AuditLogPanel() {
+  const [entries, setEntries] = useState<AuditLogEntry[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    api.team
+      .auditLog()
+      .then(setEntries)
+      .catch((err) => setError(err instanceof ApiError ? err.message : "Journal indisponible"));
+  }, []);
+
+  return (
+    <>
+      <SectionHeader
+        icon={ScrollText}
+        color="amber"
+        label="Journal d'audit"
+        help="Actions sensibles de l'équipe — ajout de membre, suppression de dataset/entraînement, promotion de modèle. Visible uniquement par le propriétaire de l'organisation."
+      />
+      {error && <p className="text-sm text-rose-600">{error}</p>}
+      {entries === null && !error && <p className="text-sm text-slate-500">Chargement…</p>}
+      {entries && entries.length === 0 && <p className="text-sm text-slate-500">Aucune action enregistrée pour l'instant.</p>}
+      {entries && entries.length > 0 && (
+        <ul className="divide-y divide-slate-200 max-h-72 overflow-y-auto">
+          {entries.slice(0, 20).map((entry) => (
+            <li key={entry.id} className="py-2 flex items-center justify-between gap-3">
+              <p className="text-sm text-slate-700 truncate">{auditActionLabel(entry)}</p>
+              <span className="text-xs text-slate-400 flex-shrink-0">
+                {entry.actor_name ?? "—"} · {formatDateTime(entry.created_at)}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </>
+  );
+}
 
 const ACTIVE_STATUSES = new Set(["queued", "running"]);
 
@@ -140,7 +206,7 @@ export default function Dashboard() {
         <Card className="p-5">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-sm font-medium text-slate-800">Derniers entraînements</h2>
-            <Link to="/training" className="text-xs text-primary hover:text-primary/80">
+            <Link to="/training/history" className="text-xs text-primary hover:text-primary/80">
               Voir tout
             </Link>
           </div>
@@ -306,6 +372,12 @@ export default function Dashboard() {
         {user.role === "owner" && (
           <Card className="p-5 lg:col-span-3">
             <AddMemberForm onMemberAdded={loadMembers} />
+          </Card>
+        )}
+
+        {user.role === "owner" && (
+          <Card className="p-5 lg:col-span-3">
+            <AuditLogPanel />
           </Card>
         )}
       </div>

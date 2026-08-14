@@ -387,6 +387,58 @@ affichés retombe bien sur la probabilité réellement annoncée par le modèle
 vérifie les deux classes, pas seulement celle qui fonctionnait déjà par
 hasard.
 
+### Lot D-bis — comparer plusieurs entraînements entre eux
+
+Le Lot D rendait déjà visible la comparaison des modèles au sein d'UN
+entraînement (leaderboard). Ce lot ajoute la comparaison ENTRE
+entraînements : une nouvelle page "Historique" liste tous les
+entraînements passés (jusqu'ici seuls les 5 plus récents étaient visibles
+sur le tableau de bord), avec une sélection multiple pour comparer
+métriques et réglages côte à côte — les réglages qui diffèrent réellement
+entre les entraînements sélectionnés sont surlignés automatiquement.
+*Corrige au passage* un lien du tableau de bord ("Voir tout") qui menait
+vers le formulaire de lancement d'un entraînement plutôt que vers un
+historique — l'historique n'avait tout simplement pas d'écran dédié
+jusqu'ici.
+
+### Lot 9 — registre de modèles versionné
+
+L'artefact d'un modèle entraîné existait déjà, mais rien ne distinguait
+"un modèle entraîné parmi d'autres" de "LE modèle sur lequel on peut
+compter pour ce problème", et rien ne permettait de le récupérer hors de
+la plateforme. Depuis la page Résultats, un modèle peut désormais être
+marqué "en validation" ou "en production" — un seul modèle en production à
+la fois par dataset et cible, promouvoir un nouveau modèle démet
+automatiquement l'ancien (jamais supprimé, juste plus la référence
+actuelle). Un bouton "Exporter l'artefact" télécharge le modèle complet
+pour un usage hors de la plateforme. La page Historique affiche désormais
+un panneau "Registre de modèles" listant tout ce qui a été promu.
+
+*Export ONNX volontairement écarté pour l'instant* : le pipeline peut
+inclure une transformation maison (regroupement de catégories rares) sans
+équivalent standard côté ONNX — mieux vaut un export qui fonctionne
+vraiment (le format Python natif) qu'un export qui promet l'interopérabilité
+et échoue silencieusement sur certains cas.
+
+*Traçabilité complétée au même moment* : chaque modèle entraîné enregistre
+désormais les versions exactes des librairies ML utilisées
+(scikit-learn, LightGBM, XGBoost...) — un modèle promu en production doit
+pouvoir être audité et reproduit, pas seulement réutilisé.
+
+### Lot 10 — durcissement SaaS (portée technique)
+
+Deux garde-fous, sans toucher aux questions commerciales (plans
+tarifaires, facturation — hors périmètre technique) :
+
+- **Journal d'audit** : qui a supprimé ce dataset, ajouté ce membre, promu
+  ce modèle, et quand — consultable par le propriétaire de l'organisation
+  depuis le tableau de bord.
+- **Quota d'entraînements concurrents** par organisation (3 par défaut) :
+  un seul worker traite les entraînements de toutes les organisations à la
+  fois — sans limite, une organisation qui lance beaucoup d'entraînements
+  d'affilée pourrait faire attendre toutes les autres. Un entraînement
+  terminé ou en échec libère immédiatement sa place.
+
 ---
 
 ## Robustesse — pas juste "ça marche chez moi"
@@ -442,13 +494,12 @@ Identifié explicitement en testant le produit, pas oublié :
 
 | Lot | Contenu |
 | --- | --- |
-| **D-bis** (prochain) | Comparaison inter-jobs — tri par score, diff de config entre entraînements (reporté du Lot D pour ne pas le bâcler) |
 | **6-8** | Vision par ordinateur / détection d'anomalies (l'autre grand pilier de l'app historique, pas encore porté) |
-| **9** | Registre de modèles versionné (l'artefact existe déjà, pas encore le versioning/export) |
-| **10** | Durcissement SaaS : audit, quotas, facturation — prêt pour un client pilote |
+| **11+** | ML non supervisé (clustering) — plan détaillé ci-dessous |
 
-*Clustering (non supervisé) et SMOTE avancé : hors périmètre pour l'instant,
-non planifiés dans les lots ci-dessus.*
+*Durcissement SaaS commercial restant (plans tarifaires, facturation, quota
+de stockage) : hors périmètre technique, décision produit à cadrer
+séparément. SMOTE avancé : hors périmètre pour l'instant.*
 
 ---
 

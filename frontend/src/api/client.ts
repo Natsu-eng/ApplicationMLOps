@@ -126,6 +126,17 @@ export interface UserProfile {
   last_login: string | null;
 }
 
+// Lot 10 — journal d'audit (owner uniquement).
+export interface AuditLogEntry {
+  id: number;
+  action: string;
+  target_type: string | null;
+  target_id: number | null;
+  details: Record<string, unknown> | null;
+  actor_name: string | null;
+  created_at: string;
+}
+
 export interface TeamMember {
   id: number;
   email: string;
@@ -465,6 +476,26 @@ export interface LearningCurveData {
   metric_label: string;
 }
 
+// Lot 9 — registre de modèles versionné.
+export type ModelStage = "staging" | "production" | null;
+
+export interface ModelRegistryEntry {
+  job_id: number;
+  model_id: number;
+  dataset_id: number;
+  dataset_name: string | null;
+  task_type: TaskType;
+  target_column: string;
+  algorithm: string;
+  stage: ModelStage;
+  promoted_at: string | null;
+  headline_metric: HeadlineMetric | null;
+}
+
+export interface ModelRegistryResponse {
+  entries: ModelRegistryEntry[];
+}
+
 export interface MLModelDetail {
   id: number;
   training_job_id: number;
@@ -485,6 +516,9 @@ export interface MLModelDetail {
   permutation_importance: PermutationImportanceFeature[];
   calibration: Calibration | null;
   learning_curve: LearningCurveData | null;
+  // Lot 9 — registre de modèles versionné. `null` = jamais promu.
+  stage: ModelStage;
+  promoted_at: string | null;
   created_at: string;
 }
 
@@ -504,6 +538,28 @@ export interface ModelCandidate {
 export interface LeaderboardResponse {
   selection_metric_label: string;
   candidates: ModelCandidate[];
+}
+
+// Lot D-bis — comparaison inter-jobs (pas seulement les modèles d'un même
+// job, déjà couvert par LeaderboardResponse ci-dessus).
+export interface JobComparisonEntry {
+  job_id: number;
+  dataset_id: number;
+  dataset_name: string | null;
+  task_type: TaskType;
+  target_column: string;
+  status: JobStatus;
+  algorithm: string | null;
+  created_at: string;
+  headline_metric: HeadlineMetric | null;
+  metrics: Record<string, unknown>;
+  config: Record<string, unknown>;
+  feature_engineering_active: boolean;
+}
+
+export interface JobComparisonResponse {
+  entries: JobComparisonEntry[];
+  differing_config_fields: string[];
 }
 
 export interface PredictionInterval {
@@ -564,6 +620,8 @@ export const api = {
         method: "POST",
         body: JSON.stringify(data),
       }),
+    // Lot 10 — journal d'audit (owner uniquement, 403 sinon).
+    auditLog: () => request<AuditLogEntry[]>("/auth/team/audit-log"),
   },
 
   datasets: {
@@ -614,11 +672,44 @@ export const api = {
     getJob: (id: number) => request<TrainingJobSummary>(`/training/jobs/${id}`),
     getModel: (id: number) => request<MLModelDetail>(`/training/jobs/${id}/model`),
     getCandidates: (id: number) => request<LeaderboardResponse>(`/training/jobs/${id}/candidates`),
+    compareJobs: (jobIds: number[]) => {
+      const qs = jobIds.map((id) => `job_ids=${id}`).join("&");
+      return request<JobComparisonResponse>(`/training/jobs/compare?${qs}`);
+    },
     predict: (jobId: number, data: Record<string, unknown>) =>
       request<PredictionResult>(`/training/jobs/${jobId}/predict`, {
         method: "POST",
         body: JSON.stringify({ data }),
       }),
     remove: (id: number) => request<void>(`/training/jobs/${id}`, { method: "DELETE" }),
+    // Lot 9 — registre de modèles versionné.
+    promoteModel: (jobId: number, stageValue: Exclude<ModelStage, null> | "none") =>
+      request<MLModelDetail>(`/training/jobs/${jobId}/model/promote`, {
+        method: "POST",
+        body: JSON.stringify({ stage: stageValue }),
+      }),
+    registry: () => request<ModelRegistryResponse>("/training/models/registry"),
+    /** Export de l'artefact — pas de JSON, un fichier binaire : fetch direct
+     * (pas `request()`, qui suppose toujours une réponse JSON), déclenche le
+     * téléchargement navigateur via un lien éphémère. */
+    exportModel: async (jobId: number, suggestedFilename?: string): Promise<void> => {
+      const token = getToken();
+      const res = await fetch(`${BASE_URL}/training/jobs/${jobId}/model/export`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      });
+      if (!res.ok) throw await extractError(res);
+      const blob = await res.blob();
+      const disposition = res.headers.get("content-disposition") ?? "";
+      const match = /filename="?([^"]+)"?/.exec(disposition);
+      const filename = match?.[1] ?? suggestedFilename ?? `modele_job${jobId}.joblib`;
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    },
   },
 };

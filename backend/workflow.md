@@ -1166,6 +1166,171 @@ déjà entraînés avant ce lot — dégradation propre, pas de backfill) ;
 explication locale non exposée pour les modèles CQR (intervalle de
 confiance) eux-mêmes, seulement pour la prédiction centrale.
 
+## Lot D-bis — comparaison inter-jobs (livré)
+
+Le Lot D (leaderboard) comparait déjà les modèles D'UN MÊME job — ce lot
+ajoute la comparaison ENTRE PLUSIEURS jobs (config, métriques), reporté du
+Lot D pour ne pas le bâcler.
+
+- [x] **`api/routers/training.py::GET /training/jobs/compare`** —
+  `job_ids` en paramètres de requête répétés (`Query(..., min_length=2,
+  max_length=8)`), isolé par organisation comme le reste : un id d'une
+  autre organisation dans la liste est traité comme absent (404
+  `TRAINING_JOB_INTROUVABLE`), jamais un indice d'existence croisée.
+  Enregistré AVANT `GET /jobs/{job_id}` dans le routeur — FastAPI matche les
+  routes dans l'ordre de déclaration, `/jobs/compare` après `/jobs/{job_id}`
+  aurait été intercepté par le paramètre de chemin (`job_id="compare"`,
+  échec de conversion en entier, 422 au lieu de la comparaison attendue).
+- [x] `_differing_config_fields` — compare les champs de `config_json`
+  (`test_size`/`optuna_trials`/`cv_folds`/`seed`/`cqr_alpha`/
+  `class_rebalancing`/`model_ids`) entre tous les jobs demandés, calculé
+  côté serveur (source unique de vérité) plutôt que recalculé côté
+  frontend. `model_ids` comparé par ENSEMBLE (`frozenset`), pas par ordre —
+  le même sous-ensemble de modèles choisi dans un ordre différent n'est pas
+  une vraie différence de configuration.
+- [x] `JobComparisonEntry` — dataset/cible/algorithme/statut/métriques
+  complètes/config par job demandé, dans l'ORDRE de la requête (pas l'ordre
+  SQL) pour que le frontend affiche les colonnes dans l'ordre de sélection
+  de l'utilisateur.
+- [x] **Frontend, nouvelle page `pages/TrainingHistory.tsx`** (route
+  `/training/history`) — historique complet des entraînements (jusqu'ici
+  seuls les 5 plus récents étaient visibles, sur le tableau de bord),
+  sélection multiple par case à cocher, tableau de comparaison (métriques +
+  configuration, lignes qui diffèrent surlignées). **Corrige au passage un
+  point mort UX préexistant** : le lien "Voir tout" du tableau de bord
+  pointait vers le formulaire d'entraînement (`/training`), qui n'affiche
+  plus d'historique depuis le Lot E1-ter — aucun endroit ne permettait de
+  consulter tous les entraînements passés. Nouvel item de navigation
+  "Historique" dans la sidebar (`config/pillars.ts`).
+
+**Vérifié** :
+
+- 6 nouveaux tests (`tests/test_job_comparison.py`) : ordre des entrées
+  respecté, détection des champs différents (et non-détection des champs
+  identiques), `model_ids` comparé par ensemble, refus si moins de deux
+  jobs valides, 404 sur un id inconnu, isolation entre organisations
+  (un id d'une autre organisation dans la requête → 404, pas une fuite de
+  métadonnées). Suite pytest complète verte.
+- Frontend : `tsc -b`, `vite build`, `vitest` (13/13) verts.
+- Rendu visuel réel **non vérifié** en conditions réelles — aucun outil
+  d'interaction navigateur disponible dans cet environnement de travail.
+
+**Scope volontairement limité** : pas de graphique de comparaison (courbes
+superposées) — un tableau suffit pour ce volume de jobs comparés à la fois
+(2 à 8) ; pas de sauvegarde d'une comparaison favorite.
+
+## Lot 9 — registre de modèles versionné (livré)
+
+L'artefact (bundle joblib) existait depuis le Lot 3, mais rien ne
+distinguait "un modèle entraîné parmi d'autres" de "LE modèle sur lequel on
+peut compter pour ce problème", et rien ne permettait de le récupérer hors
+de la plateforme.
+
+- [x] **`api/core/models.py::MLModel`** — `stage` (`"staging"`/`"production"`,
+  `NULL` = jamais promu) et `promoted_at`, colonnes NULLABLE (rétrocompat
+  par absence, même idiome que le reste du projet — jamais de backfill).
+  Migration additive idempotente (`api/core/database.py`).
+- [x] **`api/routers/training.py::POST /jobs/{id}/model/promote`** — règle
+  du registre : UN SEUL modèle `"production"` à la fois par couple
+  (dataset, cible) au sein d'une organisation. Promouvoir un nouveau modèle
+  en production DÉMET automatiquement l'ancien pour LE MÊME couple
+  dataset+cible (repasse en `"staging"`, jamais supprimé/écrasé) — deux
+  jobs sur le même dataset mais des cibles différentes ne sont jamais en
+  concurrence, ce sont deux problèmes distincts.
+- [x] **`GET /jobs/{id}/model/export`** — l'artefact joblib complet
+  (modèle + préprocesseur + CQR le cas échéant) en téléchargement direct
+  (`FileResponse`), isolé par organisation comme le reste. Rechargeable via
+  `joblib.load` dans un environnement Python équivalent — versions de
+  scikit-learn/lightgbm/xgboost/catboost/shap non garanties au-delà de
+  `backend/requirements.txt`, noté explicitement plutôt que promis à tort.
+- [x] **`GET /models/registry`** — tous les modèles PROMUS de
+  l'organisation (`stage IS NOT NULL`), tous datasets/cibles confondus :
+  n'est PAS un doublon de l'historique complet (Lot D-bis), seulement ce
+  qui a été explicitement retenu.
+- [x] **Frontend** — `ModelRegistryControls` (`ModelResultModal.tsx`,
+  onglet Détails) : badge de statut + actions Mettre en validation/
+  Promouvoir en production/Retirer/Exporter l'artefact. `api/client.ts::
+  exportModel` télécharge via `fetch` + lien éphémère (pas `request()`,
+  qui suppose toujours une réponse JSON). Nouveau panneau "Registre de
+  modèles" en tête de `TrainingHistory.tsx` (Lot D-bis) — liste les
+  modèles promus, masqué s'il n'y en a aucun.
+
+**Vérifié** :
+
+- 11 nouveaux tests (`tests/test_model_registry.py`) : promotion vers
+  chaque statut, démotion automatique du modèle production précédent pour
+  le MÊME dataset+cible, absence de démotion pour une cible différente,
+  retrait (`"none"`), rejet d'un statut invalide, rejet sur un job sans
+  modèle, export retourne un fichier joblib valide et rechargeable, rejet
+  si l'artefact a disparu du disque, isolation entre organisations
+  (export ET registre). Suite pytest complète verte.
+- Frontend : `tsc -b`, `vite build`, `vitest` (13/13) verts.
+- Rendu visuel réel **non vérifié** en conditions réelles — aucun outil
+  d'interaction navigateur disponible dans cet environnement de travail.
+
+**Scope volontairement limité** : pas d'export ONNX — le pipeline peut
+inclure un transformateur personnalisé (`RareCategoryFrequencyEncoder`,
+Lot 4c) sans convertisseur ONNX standard ; l'export joblib est honnête
+(fonctionne réellement) là où un export ONNX partiel aurait pu échouer
+silencieusement pour certains pipelines. À reprendre dans un lot dédié si
+un besoin réel d'interopérabilité hors Python apparaît. Pas de limite de
+versions conservées (aucune purge automatique des anciens modèles).
+
+## Lot 10 — durcissement SaaS, portée technique (livré)
+
+Portée volontairement TECHNIQUE (garde-fous), pas commerciale — pas de
+plans tarifaires, quotas de stockage ni facturation, décisions produit
+hors périmètre d'un audit backend et non tranchées ici.
+
+- [x] **`api/core/models.py::AuditLog`** (nouvelle table) — journal des
+  actions sensibles d'une organisation : qui, quand, quoi. Pas un log
+  applicatif générique (déjà couvert par `logging`, journaux serveur) :
+  seulement ce qu'un `owner` voudrait pouvoir auditer après coup.
+  `actor_id` avec `ondelete="SET NULL"` (pas de cascade) — une entrée
+  survit à la suppression du compte de son auteur, la traçabilité de
+  l'action ne doit jamais disparaître avec lui.
+- [x] **`services/audit.py::log_action`** — écrit l'entrée SANS committer
+  (l'appelant l'ajoute à la MÊME transaction que l'action auditée elle-même
+  — suppression de dataset, d'entraînement, ajout de membre, promotion de
+  modèle — pour qu'un rollback annule les deux ensemble, jamais un journal
+  qui prétend qu'une action a eu lieu alors qu'elle a échoué).
+- [x] **`GET /auth/team/audit-log`** (réservé au `owner`, même règle que le
+  reste de la gestion d'équipe) — les 100 dernières actions de
+  l'organisation, nom de l'auteur résolu, isolé comme le reste.
+- [x] **Quota technique de jobs concurrents**
+  (`Settings.max_concurrent_jobs_per_org`, défaut 3) — un seul worker RQ
+  traite les jobs de TOUTES les organisations (`docker-compose.yml`) : sans
+  limite, une organisation qui enfile beaucoup d'entraînements d'affilée
+  peut affamer les autres. Vérifié dans `create_training_job` AVANT toute
+  lecture du dataset (échec rapide), ne compte que les jobs `queued`/
+  `running` — un job terminé ou en échec libère immédiatement le quota.
+  429 `QUOTA_ENTRAINEMENTS_ATTEINT` avec un message actionnable.
+- [x] **Frontend** — `AuditLogPanel` (`Dashboard.tsx`, section owner
+  uniquement, à côté de la gestion d'équipe) : les 20 dernières actions,
+  libellé en langage clair par type d'action. Le dépassement de quota
+  s'affiche automatiquement via la bannière d'erreur déjà utilisée par le
+  formulaire d'entraînement (aucun traitement spécial nécessaire côté UI,
+  le message serveur est déjà actionnable).
+
+**Vérifié** :
+
+- Nouveaux tests (`tests/test_saas_hardening.py`) : chaque type d'action
+  auditée (membre ajouté, dataset supprimé, entraînement supprimé, modèle
+  promu) apparaît bien dans le journal avec le bon acteur et les bons
+  détails ; accès restreint au owner (403 pour un membre) ; isolation entre
+  organisations. Quota : blocage au-delà de la limite, jobs terminés/en
+  échec qui ne comptent plus, isolation entre organisations (le quota
+  atteint d'une organisation n'affecte jamais une autre).
+- Frontend : `tsc -b`, `vite build`, `vitest` (13/13) verts.
+- Rendu visuel réel **non vérifié** en conditions réelles — aucun outil
+  d'interaction navigateur disponible dans cet environnement de travail.
+
+**Scope volontairement limité** (hors périmètre technique de ce lot, à
+cadrer séparément si besoin) : pas de plans tarifaires/facturation, pas de
+quota de stockage (taille totale des datasets par organisation), pas
+d'export du journal d'audit (CSV/PDF), pas de rétention limitée du journal
+(aucune purge automatique).
+
 ## Prochains lots (résumé — détail complet dans le diagnostic de migration et les échanges de cadrage)
 
 | Lot | Contenu | Livrable testable |

@@ -8,6 +8,7 @@ import Login from "./pages/Login";
 import Orientation from "./pages/Orientation";
 import Register from "./pages/Register";
 import Training from "./pages/Training";
+import TrainingHistory from "./pages/TrainingHistory";
 
 export default function App() {
   return (
@@ -45,6 +46,14 @@ export default function App() {
             element={
               <ProtectedRoute>
                 <Training />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/training/history"
+            element={
+              <ProtectedRoute>
+                <TrainingHistory />
               </ProtectedRoute>
             }
           />

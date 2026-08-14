@@ -9,6 +9,7 @@ recoupent jamais (voir `list_team_members`, filtré par `organization_id`).
 """
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from typing import List, Optional
 
@@ -18,8 +19,9 @@ from pydantic import BaseModel, EmailStr, Field, model_validator
 from sqlalchemy.orm import Session
 
 from api.core.database import get_db
-from api.core.models import Organization, User
+from api.core.models import AuditLog, Organization, User
 from api.core.security import create_access_token, decode_token, hash_password, verify_password
+from services.audit import log_action
 
 router = APIRouter(prefix="/auth", tags=["authentification"])
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
@@ -260,6 +262,52 @@ def add_team_member(
         actif=True,
     )
     db.add(member)
+    db.flush()  # obtient member.id avant l'écriture du journal, même transaction
+    log_action(
+        db, owner.organization_id, owner.id, "member.added",
+        target_type="user", target_id=member.id, details={"email": member.email, "nom": member.nom},
+    )
     db.commit()
     db.refresh(member)
     return member
+
+
+class AuditLogEntry(BaseModel):
+    id: int
+    action: str
+    target_type: Optional[str] = None
+    target_id: Optional[int] = None
+    details: Optional[dict] = None
+    actor_name: Optional[str] = None
+    created_at: datetime
+
+
+@router.get("/team/audit-log", response_model=List[AuditLogEntry])
+def list_audit_log(
+    owner: User = Depends(require_owner),
+    db: Session = Depends(get_db),
+    limit: int = 100,
+):
+    """[Owner] Journal des actions sensibles de MON organisation (Lot 10) —
+    suppression de dataset/entraînement, ajout de membre, promotion de
+    modèle. Réservé au owner, même règle que le reste de la gestion
+    d'équipe : un membre ordinaire ne consulte pas ce journal."""
+    entries = (
+        db.query(AuditLog)
+        .filter(AuditLog.organization_id == owner.organization_id)
+        .order_by(AuditLog.created_at.desc())
+        .limit(max(1, min(limit, 500)))
+        .all()
+    )
+    return [
+        AuditLogEntry(
+            id=e.id,
+            action=e.action,
+            target_type=e.target_type,
+            target_id=e.target_id,
+            details=json.loads(e.details_json) if e.details_json else None,
+            actor_name=e.actor.nom if e.actor else None,
+            created_at=e.created_at,
+        )
+        for e in entries
+    ]

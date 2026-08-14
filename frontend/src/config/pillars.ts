@@ -1,4 +1,4 @@
-import { BrainCircuit, Database, LayoutDashboard, ScanEye, Shapes, Target, type LucideIcon } from "lucide-react";
+import { BrainCircuit, Database, History, LayoutDashboard, ScanEye, Shapes, Target, type LucideIcon } from "lucide-react";
 
 /** Registre unique des piliers du produit — l'écran d'orientation, la
  * navigation (AppShell) et les routes réservées lisent tous ce fichier.
@@ -38,6 +38,7 @@ export const PILLARS: Pillar[] = [
       { to: "/dashboard", label: "Tableau de bord", icon: LayoutDashboard },
       { to: "/datasets", label: "Mes données", icon: Database },
       { to: "/training", label: "Entraînement", icon: BrainCircuit },
+      { to: "/training/history", label: "Historique", icon: History },
     ],
   },
   {
