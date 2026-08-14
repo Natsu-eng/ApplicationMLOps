@@ -38,17 +38,17 @@ export default function Login() {
         tagline="Reconnectez-vous pour reprendre l'exploration de vos données et l'entraînement de vos modèles."
       />
 
-      <div className="flex-1 flex items-center justify-center p-6 sm:p-10 bg-slate-50">
+      <div className="flex-1 flex items-center justify-center p-6 sm:p-10 bg-muted">
         <div className="max-w-sm w-full">
           <div className="mb-6">
-            <h1 className="text-2xl font-serif text-slate-900">Connexion</h1>
-            <p className="text-sm text-slate-500 mt-1">Accédez à votre bureau d'études.</p>
+            <h1 className="text-2xl font-serif text-foreground">Connexion</h1>
+            <p className="text-sm text-muted-foreground mt-1">Accédez à votre bureau d'études.</p>
           </div>
 
           <Card className="p-6">
             <form onSubmit={handleSubmit} className="space-y-4">
               <div>
-                <label htmlFor="email" className="block text-sm text-slate-600 mb-1">
+                <label htmlFor="email" className="block text-sm text-muted-foreground mb-1">
                   Email
                 </label>
                 <Input
@@ -62,7 +62,7 @@ export default function Login() {
               </div>
 
               <div>
-                <label htmlFor="password" className="block text-sm text-slate-600 mb-1">
+                <label htmlFor="password" className="block text-sm text-muted-foreground mb-1">
                   Mot de passe
                 </label>
                 <Input
@@ -76,7 +76,7 @@ export default function Login() {
               </div>
 
               {error && (
-                <p className="text-sm text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2">
+                <p className="text-sm text-destructive bg-destructive/10 border border-destructive/20 rounded-lg px-3 py-2">
                   {error}
                 </p>
               )}
@@ -87,7 +87,7 @@ export default function Login() {
             </form>
           </Card>
 
-          <p className="text-center text-sm text-slate-500 mt-4">
+          <p className="text-center text-sm text-muted-foreground mt-4">
             Pas encore de compte ?{" "}
             <Link to="/register" className="text-primary hover:text-primary/80 font-medium">
               Créer mon bureau d'études

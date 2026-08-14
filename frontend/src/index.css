@@ -24,22 +24,36 @@
   --color-accent-foreground: oklch(0.4 0.09 258);
   --color-destructive: oklch(0.58 0.21 25);
   --color-destructive-foreground: oklch(0.99 0.005 260);
-  --color-warning: oklch(0.72 0.16 65);
+  /* Luminosité réduite (0.72→0.56, 0.62→0.53) par rapport à la version
+     d'origine — AUDIT_ROADMAP.md, H15 : `text-warning`/`text-success` sont
+     utilisés comme couleur de TEXTE (Badge à 11px, MetricCard, StatTile),
+     pas seulement comme fond — vérifié au contrastomètre (calcul WCAG
+     direct sur les valeurs OKLCH, pas un outil visuel) : la version
+     d'origine tombait à 2.57:1 (warning) et 3.40:1 (success) sur fond
+     blanc, sous le seuil AA texte normal (4.5:1). Nouvelles valeurs à
+     4.82:1 sur blanc, teinte (H) et chroma (C) inchangés — même identité de
+     couleur, juste plus lisible. `--color-chart-3`/`--color-chart-4`
+     (theme/charts.ts) sont des tokens séparés, non affectés. */
+  --color-warning: oklch(0.56 0.16 65);
   --color-warning-foreground: oklch(0.32 0.09 65);
-  --color-success: oklch(0.62 0.15 155);
+  --color-success: oklch(0.53 0.15 155);
   --color-success-foreground: oklch(0.99 0.005 260);
   --color-border: oklch(0.923 0.006 260);
   --color-input: oklch(0.923 0.006 260);
   --color-ring: oklch(0.48 0.17 258);
   --color-card: oklch(1 0 0);
   --color-card-foreground: oklch(0.21 0.03 260);
-  /* Canvas de contenu (derrière AppShell, hors sidebar) — teinté bleu-gris
-     visible (retour explicite : trop proche du blanc des cartes, "tout est
-     blanc" malgré --color-card à 1.0 de luminosité) plutôt qu'un gris neutre
-     à 0.985 quasi indissociable du blanc. Même teinte (258) que
-     --color-primary/--color-sidebar pour une palette cohérente — les cartes
-     (bg-card, blanches) ressortent nettement dessus sans bordure appuyée. */
-  --color-background: oklch(0.94 0.014 258);
+  /* Canvas de contenu (derrière AppShell, hors sidebar) — REVU (retour
+     utilisateur direct sur captures, 2026-08-14) : la version bleu-gris
+     appuyée précédente (0.94 de luminosité) lisait comme "fade"/terne sur
+     les pages hors sidebar, à l'opposé de l'effet recherché. Retour à un
+     quasi-blanc (0.98), très légèrement teinté (chroma 0.006, même teinte
+     258 que --color-primary/--color-sidebar, pour ne pas devenir un gris
+     neutre) — la séparation canevas/carte se fait désormais par l'OMBRE
+     (voir Card.tsx, shadow renforcée) plutôt que par un écart de couleur de
+     fond, cohérent avec les références SaaS modernes fournies par
+     l'utilisateur (fond quasi blanc, cartes qui se détachent par élévation). */
+  --color-background: oklch(0.98 0.006 258);
   --color-foreground: oklch(0.21 0.03 260);
 
   /* Palette de graphes (théme/charts.ts la consomme via les mêmes valeurs

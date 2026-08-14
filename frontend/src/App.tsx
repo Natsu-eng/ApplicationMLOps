@@ -1,6 +1,7 @@
 import { Navigate, Route, BrowserRouter as Router, Routes } from "react-router-dom";
 import ProtectedRoute from "./components/ProtectedRoute";
 import { AuthProvider } from "./contexts/AuthContext";
+import Clustering from "./pages/Clustering";
 import ComingSoon from "./pages/ComingSoon";
 import Dashboard from "./pages/Dashboard";
 import Datasets from "./pages/Datasets";
@@ -57,15 +58,15 @@ export default function App() {
               </ProtectedRoute>
             }
           />
-          {/* Piliers réservés — non actifs, page de présentation uniquement (voir config/pillars.ts) */}
           <Route
-            path="/unsupervised"
+            path="/clustering"
             element={
               <ProtectedRoute>
-                <ComingSoon pillarId="unsupervised" />
+                <Clustering />
               </ProtectedRoute>
             }
           />
+          {/* Pilier réservé — non actif, page de présentation uniquement (voir config/pillars.ts) */}
           <Route
             path="/vision"
             element={

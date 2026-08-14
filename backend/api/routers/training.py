@@ -26,6 +26,7 @@ from api.routers.auth import get_current_user
 from services.audit import log_action
 from services.datasets import DatasetParsingError, read_dataframe
 from services.feature_engineering import CURRENT_SPEC_VERSION
+from services.job_watchdog import reconcile_stale_jobs
 from services.ml_inference import InferenceError, load_bundle, predict_one
 from services.ml_registry import MODEL_REGISTRY
 from services.ml_task import detect_task_type
@@ -409,6 +410,11 @@ def create_training_job(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    # Réconciliation des jobs orphelins (H2, AUDIT_ROADMAP.md) — AVANT le
+    # comptage du quota ci-dessous : un job "running" dont le worker a
+    # crashé ne doit jamais bloquer indéfiniment un slot de quota.
+    reconcile_stale_jobs(db, current_user.organization_id, _settings.stale_job_timeout_minutes)
+
     # Garde-fou technique (Lot 10) — un seul worker RQ traite les jobs de
     # TOUTES les organisations : sans limite, une organisation qui enfile
     # beaucoup d'entraînements d'affilée peut affamer les autres. Vérifié

@@ -10,7 +10,6 @@ import {
   type TrainingJobSummary,
 } from "../../api/client";
 import { Badge } from "../ui/Badge";
-import { BoxPlotChart } from "../ui/BoxPlot";
 import { Button } from "../ui/Button";
 import { Card } from "../ui/Card";
 import { accentSurfaceClass, accentValueTextClass, type AccentColor } from "../ui/ColorIconBadge";
@@ -19,7 +18,7 @@ import { LabelWithHelp } from "../ui/Tooltip";
 import { SectionHeader } from "../ui/SectionHeader";
 import { Tabs } from "../ui/Tabs";
 import { formatMetricValue, formatPercent } from "../../utils/format";
-import { clampUnitScore, foldScoresToBoxPlotDatum } from "../../utils/cvScore";
+import { clampUnitScore } from "../../utils/cvScore";
 import EvaluationCharts from "./EvaluationCharts";
 import { ShapBeeswarmChart, PermutationImportanceChart } from "./GlobalExplainability";
 import { CalibrationChart, LearningCurveChart } from "./ReliabilityDiagnostics";
@@ -60,11 +59,11 @@ function isDiagnosticStatus(value: unknown): value is DiagnosticStatus {
 function DiagnosticBlock({ status, isEmpty, children }: { status: unknown; isEmpty: boolean; children: ReactNode }) {
   if (status === undefined || (isDiagnosticStatus(status) && status.status === "ok" && isEmpty)) {
     return (
-      <p className="text-xs text-slate-400 italic">Non disponible pour ce modèle — réentraînez-le pour l'obtenir.</p>
+      <p className="text-xs text-muted-foreground italic">Non disponible pour ce modèle — réentraînez-le pour l'obtenir.</p>
     );
   }
   if (isDiagnosticStatus(status) && status.status === "degraded") {
-    return <p className="text-xs text-slate-500 italic">{status.message}</p>;
+    return <p className="text-xs text-muted-foreground italic">{status.message}</p>;
   }
   return <>{children}</>;
 }
@@ -91,12 +90,12 @@ function MetricCard({
   if (value === null || value === undefined) return null;
   return (
     <div className={`rounded-xl border px-4 py-3 ${accentSurfaceClass(color)}`}>
-      <p className="text-xs text-slate-500 mb-1">
+      <p className="text-xs text-muted-foreground mb-1">
         {help ? <LabelWithHelp label={label} help={help} /> : label}
       </p>
       <p className={`text-xl font-semibold tabular-nums ${accentValueTextClass(color)}`}>{formatMetricValue(value)}</p>
       {ci && (
-        <p className="text-[11px] text-slate-400 mt-0.5 tabular-nums">
+        <p className="text-[11px] text-muted-foreground mt-0.5 tabular-nums">
           IC 95 % [{formatMetricValue(ci.ci_low)} – {formatMetricValue(ci.ci_high)}]
         </p>
       )}
@@ -126,9 +125,9 @@ function FeatureEngineeringSummary({ spec }: { spec: MLModelDetail["feature_engi
   ];
   if (items.length === 0) return null;
   return (
-    <Card className="p-5">
+    <Card className={`p-5 ${accentSurfaceClass("teal")}`}>
       <SectionHeader icon={Wand2} color="teal" label="Ingénierie de variables appliquée" />
-      <ul className="text-xs text-slate-600 space-y-1 list-disc list-inside">
+      <ul className="text-xs text-muted-foreground space-y-1 list-disc list-inside">
         {items.map((item, i) => (
           <li key={i}>{item}</li>
         ))}
@@ -144,16 +143,16 @@ function ShapBars({ features }: { features: MLModelDetail["shap_summary"] }) {
     <div className="space-y-2">
       {features.slice(0, 8).map((f) => (
         <div key={f.feature} className="flex items-center gap-3">
-          <span className="text-xs text-slate-500 w-40 truncate flex-shrink-0" title={f.feature}>
+          <span className="text-xs text-muted-foreground w-40 truncate flex-shrink-0" title={f.feature}>
             {f.feature}
           </span>
-          <div className="flex-1 h-2 rounded-full bg-slate-100 overflow-hidden">
+          <div className="flex-1 h-2 rounded-full bg-muted overflow-hidden">
             <div
               className="h-full rounded-full bg-gradient-to-r from-primary/80 to-primary"
               style={{ width: `${(f.importance / max) * 100}%` }}
             />
           </div>
-          <span className="text-xs text-slate-400 w-12 text-right tabular-nums">
+          <span className="text-xs text-muted-foreground w-12 text-right tabular-nums">
             {f.importance.toFixed(2)}
           </span>
         </div>
@@ -207,11 +206,11 @@ function ModelInterpretation({
         <Sparkles size={12} />
         Interprétation du modèle
       </p>
-      <p className="text-sm text-slate-700 leading-relaxed">{whyText}</p>
+      <p className="text-sm text-foreground/90 leading-relaxed">{whyText}</p>
       {featuresText && (
-        <p className="text-sm text-slate-700 leading-relaxed mt-2">
+        <p className="text-sm text-foreground/90 leading-relaxed mt-2">
           {featuresText}{" "}
-          <span className="text-slate-500">
+          <span className="text-muted-foreground">
             Une variable en tête de liste influence davantage la prédiction que les autres — cela ne prouve pas
             un lien de cause à effet, seulement que le modèle s'appuie fortement dessus.
           </span>
@@ -233,12 +232,9 @@ function Leaderboard({ data }: { data: LeaderboardResponse | null }) {
   const winner = data.candidates.find((c) => c.is_winner);
   const runnerUp = data.candidates.find((c) => !c.is_winner);
   const metricShortName = data.selection_metric_label.split(" (")[0];
-  const boxData = data.candidates
-    .filter((c): c is typeof c & { fold_scores: number[] } => (c.fold_scores?.length ?? 0) > 1)
-    .map((c) => foldScoresToBoxPlotDatum(c.algorithm, c.fold_scores));
 
   return (
-    <Card className="p-5 h-full">
+    <Card className={`p-5 h-full ${accentSurfaceClass("amber")}`}>
       <SectionHeader
         icon={Trophy}
         color="amber"
@@ -247,10 +243,10 @@ function Leaderboard({ data }: { data: LeaderboardResponse | null }) {
       />
 
       {winner && runnerUp && (
-        <p className="text-xs text-slate-600 mb-3">
-          <span className="text-slate-800 font-medium">{winner.algorithm}</span> retenu : meilleur {metricShortName}{" "}
+        <p className="text-xs text-muted-foreground mb-3">
+          <span className="text-foreground font-medium">{winner.algorithm}</span> retenu : meilleur {metricShortName}{" "}
           en validation croisée, devant {runnerUp.algorithm} de{" "}
-          <span className="tabular-nums text-slate-700">
+          <span className="tabular-nums text-foreground/90">
             {(winner.selection_score - runnerUp.selection_score).toFixed(3)}
           </span>{" "}
           points.
@@ -264,7 +260,7 @@ function Leaderboard({ data }: { data: LeaderboardResponse | null }) {
           // hiérarchie de classement (jamais "bon/mauvais modèle" au sens
           // qualité, tous les candidats sont des choix valides).
           const podiumBorder =
-            c.rank === 1 ? "border-primary/30 bg-primary/10" : c.rank === 2 ? "border-slate-300 bg-slate-50" : c.rank === 3 ? "border-amber-200 bg-amber-50/60" : "border-slate-200 bg-slate-50";
+            c.rank === 1 ? "border-primary/30 bg-primary/10" : c.rank === 2 ? "border-input bg-muted" : c.rank === 3 ? "border-warning/30 bg-warning/10" : "border-border bg-muted";
           return (
             <div
               key={c.algorithm}
@@ -272,19 +268,19 @@ function Leaderboard({ data }: { data: LeaderboardResponse | null }) {
             >
               <div className="flex items-center gap-2 min-w-0">
                 <Badge variant={c.is_winner ? "accent" : "neutral"}>#{c.rank}</Badge>
-                <span className={`text-sm truncate ${c.is_winner ? "text-slate-900 font-medium" : "text-slate-800"}`}>
+                <span className={`text-sm truncate ${c.is_winner ? "text-foreground font-medium" : "text-foreground"}`}>
                   {c.algorithm}
                 </span>
-                {c.is_winner && <Trophy size={13} className="text-amber-500 flex-shrink-0" />}
+                {c.is_winner && <Trophy size={13} className="text-warning flex-shrink-0" />}
               </div>
               <div className="flex items-center gap-3 flex-shrink-0 text-xs">
                 {c.secondary_metric !== null && (
-                  <span className="text-slate-500">
+                  <span className="text-muted-foreground">
                     {c.secondary_metric_label} :{" "}
-                    <span className="tabular-nums text-slate-700">{c.secondary_metric.toFixed(2)}</span>
+                    <span className="tabular-nums text-foreground/90">{c.secondary_metric.toFixed(2)}</span>
                   </span>
                 )}
-                <span className={`tabular-nums font-medium ${c.is_winner ? "text-primary" : "text-slate-800"}`}>
+                <span className={`tabular-nums font-medium ${c.is_winner ? "text-primary" : "text-foreground"}`}>
                   {clampUnitScore(c.selection_score).toFixed(3)}
                 </span>
               </div>
@@ -292,18 +288,6 @@ function Leaderboard({ data }: { data: LeaderboardResponse | null }) {
           );
         })}
       </div>
-
-      {boxData.length > 1 && (
-        <div className="mt-3">
-          <p className="text-[11px] text-slate-400 mb-1">
-            <LabelWithHelp
-              label="Variance entre les découpages de validation croisée"
-              help="Chaque modèle est évalué plusieurs fois sur des portions différentes des données d'entraînement — une boîte étroite signifie un score stable d'un découpage à l'autre, une boîte large signifie un score plus sensible aux données vues."
-            />
-          </p>
-          <BoxPlotChart data={boxData} height={180} />
-        </div>
-      )}
     </Card>
   );
 }
@@ -342,7 +326,7 @@ function ModelRegistryControls({
   const stageBadgeVariant = model.stage === "production" ? "success" : model.stage === "staging" ? "warning" : "neutral";
 
   return (
-    <Card className="p-5">
+    <Card className={`p-5 ${accentSurfaceClass("violet")}`}>
       <SectionHeader
         icon={Award}
         color="violet"
@@ -373,7 +357,7 @@ function ModelRegistryControls({
           </Button>
         </div>
       </div>
-      {error && <p className="text-xs text-rose-600 mt-2">{error}</p>}
+      {error && <p className="text-xs text-destructive mt-2">{error}</p>}
     </Card>
   );
 }
@@ -408,8 +392,8 @@ export function ModelResultView({ job }: { job: TrainingJobSummary }) {
 
   return (
     <>
-      {error && <p className="text-sm text-rose-600">{error}</p>}
-      {!model && !error && <p className="text-sm text-slate-500">Chargement…</p>}
+      {error && <p className="text-sm text-destructive">{error}</p>}
+      {!model && !error && <p className="text-sm text-muted-foreground">Chargement…</p>}
 
       {model && (
         <div className="space-y-5">
@@ -442,7 +426,7 @@ export function ModelResultView({ job }: { job: TrainingJobSummary }) {
                 </div>
                 <Card className="p-5 lg:col-span-3">
                   <SectionHeader icon={Gauge} color="blue" label="Performance" />
-                  <div className="grid grid-cols-2 gap-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     {model.task_type === "regression" ? (
                       <>
                         <MetricCard
@@ -478,7 +462,7 @@ export function ModelResultView({ job }: { job: TrainingJobSummary }) {
                     )}
                   </div>
                   {model.task_type === "regression" && typeof model.metrics.delta_r2 === "number" && (
-                    <p className="text-xs text-slate-500 mt-3">
+                    <p className="text-xs text-muted-foreground mt-3">
                       Écart train/test (R²) : <span className="tabular-nums">{formatMetricValue(model.metrics.delta_r2)}</span>
                       {" — "}
                       {model.metrics.delta_r2 < 0.08 ? "pas de surapprentissage notable" : "surapprentissage à surveiller"}
@@ -500,11 +484,11 @@ export function ModelResultView({ job }: { job: TrainingJobSummary }) {
           )}
 
           {activeTab === "explicabilite" && (
-            <Card className="p-5">
+            <Card className={`p-5 ${accentSurfaceClass("violet")}`}>
               <SectionHeader icon={Sparkles} color="violet" label="Explicabilité SHAP" />
               <div className="space-y-5">
                 <div>
-                  <p className="text-xs text-slate-600 mb-2">
+                  <p className="text-xs text-muted-foreground mb-2">
                     <LabelWithHelp
                       label="Importance moyenne des variables"
                       help="Plus une variable a une barre longue, plus elle pèse en moyenne dans les décisions du modèle — calculé par la méthode SHAP, standard en explicabilité de modèles ML."
@@ -516,7 +500,7 @@ export function ModelResultView({ job }: { job: TrainingJobSummary }) {
                 </div>
 
                 <div>
-                  <p className="text-xs text-slate-600 mb-1">
+                  <p className="text-xs text-muted-foreground mb-1">
                     <LabelWithHelp
                       label="Distribution des effets (beeswarm)"
                       help="Chaque point est une observation du jeu de test. Sa position horizontale montre si, pour ce cas précis, la variable a poussé la prédiction vers le haut ou vers le bas — la barre ci-dessus ne montrait que la moyenne, sans direction."
@@ -528,7 +512,7 @@ export function ModelResultView({ job }: { job: TrainingJobSummary }) {
                   >
                     <ShapBeeswarmChart beeswarm={model.shap_beeswarm} />
                   </DiagnosticBlock>
-                  <p className="text-xs text-slate-500 mt-2">
+                  <p className="text-xs text-muted-foreground mt-2">
                     Les variables en haut ont le plus d'influence. Une couleur chaude (rouge) à droite signifie qu'une
                     valeur élevée de cette variable augmente la prédiction ; une couleur froide (bleu) à droite
                     signifierait l'inverse — une valeur basse qui l'augmente.
@@ -536,7 +520,7 @@ export function ModelResultView({ job }: { job: TrainingJobSummary }) {
                 </div>
 
                 <div>
-                  <p className="text-xs text-slate-600 mb-1">
+                  <p className="text-xs text-muted-foreground mb-1">
                     <LabelWithHelp
                       label="Importance par permutation"
                       help="Mesure indépendante du SHAP : on mélange aléatoirement les valeurs d'une variable et on regarde de combien le score du modèle chute — plus la chute est grande, plus la variable compte."
@@ -545,7 +529,7 @@ export function ModelResultView({ job }: { job: TrainingJobSummary }) {
                   <DiagnosticBlock status={permutationStatus} isEmpty={model.permutation_importance.length === 0}>
                     <PermutationImportanceChart features={model.permutation_importance} />
                   </DiagnosticBlock>
-                  <p className="text-xs text-slate-500 mt-2">
+                  <p className="text-xs text-muted-foreground mt-2">
                     Une variable qui arrive en tête ici ET dans les graphes SHAP ci-dessus est un signal fort qu'elle
                     compte vraiment pour ce modèle — les deux méthodes se recoupent.
                   </p>
@@ -556,12 +540,12 @@ export function ModelResultView({ job }: { job: TrainingJobSummary }) {
 
           {activeTab === "fiabilite" && (
             <div className="space-y-5">
-              <Card className="p-5">
+              <Card className={`p-5 ${accentSurfaceClass("teal")}`}>
                 <SectionHeader icon={Activity} color="teal" label="Diagnostics de fiabilité" />
                 <div className="space-y-5">
                   {model.task_type === "classification" && (
                     <div>
-                      <p className="text-xs text-slate-600 mb-1">
+                      <p className="text-xs text-muted-foreground mb-1">
                         <LabelWithHelp
                           label="Courbe de calibration"
                           help="Compare la probabilité annoncée par le modèle à la fréquence réelle observée — le modèle est-il « sûr à raison » ?"
@@ -573,7 +557,7 @@ export function ModelResultView({ job }: { job: TrainingJobSummary }) {
                       >
                         <CalibrationChart calibration={model.calibration ?? {}} />
                       </DiagnosticBlock>
-                      <p className="text-xs text-slate-500 mt-2">
+                      <p className="text-xs text-muted-foreground mt-2">
                         Une courbe proche de la diagonale grise signifie que le modèle est fiable : quand il annonce 80 %
                         de chances, c'est vrai environ 80 % du temps. Une courbe au-dessus de la diagonale : le modèle est
                         trop prudent. En dessous : trop confiant.
@@ -582,7 +566,7 @@ export function ModelResultView({ job }: { job: TrainingJobSummary }) {
                   )}
 
                   <div>
-                    <p className="text-xs text-slate-600 mb-1">
+                    <p className="text-xs text-muted-foreground mb-1">
                       <LabelWithHelp
                         label="Courbe d'apprentissage"
                         help="Montre comment le score évoluerait avec plus ou moins de données d'entraînement — aide à savoir si collecter davantage de données aiderait le modèle."
@@ -591,7 +575,7 @@ export function ModelResultView({ job }: { job: TrainingJobSummary }) {
                     <DiagnosticBlock status={learningCurveStatus} isEmpty={model.learning_curve === null}>
                       {model.learning_curve && <LearningCurveChart data={model.learning_curve} />}
                     </DiagnosticBlock>
-                    <p className="text-xs text-slate-500 mt-2">
+                    <p className="text-xs text-muted-foreground mt-2">
                       Si les deux courbes se rapprochent et restent hautes à droite, ajouter des données n'apporterait
                       probablement pas grand-chose. Un écart persistant entre les deux est un signe de surapprentissage —
                       le modèle a appris le train par cœur plus qu'il n'a généralisé.
@@ -613,7 +597,7 @@ export function ModelResultView({ job }: { job: TrainingJobSummary }) {
                     <MetricCard label="Couverture observée" value={model.cqr.empirical_coverage} color="teal" />
                     <MetricCard label="Largeur moyenne" value={model.cqr.mean_interval_width} color="amber" />
                   </div>
-                  <p className="text-xs text-slate-500 mt-2">
+                  <p className="text-xs text-muted-foreground mt-2">
                     {formatPercent(model.cqr.empirical_coverage)} des valeurs test tombent dans l'intervalle prédit,
                     pour une cible de {formatPercent(model.cqr.target_coverage)} — calibré par {model.cqr.n_strata} strates.
                   </p>
@@ -632,7 +616,7 @@ export function ModelResultView({ job }: { job: TrainingJobSummary }) {
 
               <FeatureEngineeringSummary spec={model.feature_engineering} />
 
-              <Card className="p-5">
+              <Card className={`p-5 ${accentSurfaceClass("blue")}`}>
                 <SectionHeader icon={ClipboardList} color="blue" label="Fiche modèle" />
                 <dl className="grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-2 text-xs">
                   <Fact label="Échantillons train" value={String(model.model_card.n_train ?? "—")} />
@@ -659,7 +643,7 @@ export default function ModelResultModal({
   onClose: () => void;
 }) {
   return (
-    <Modal title={`${job.dataset_name ?? "Dataset"} — ${job.target_column}`} onClose={onClose} size="xl">
+    <Modal title={`${job.dataset_name ?? "Dataset"} — ${job.target_column}`} onClose={onClose} size="2xl">
       <ModelResultView job={job} />
     </Modal>
   );
@@ -668,8 +652,8 @@ export default function ModelResultModal({
 function Fact({ label, value }: { label: string; value: string }) {
   return (
     <div>
-      <dt className="text-slate-500">{label}</dt>
-      <dd className="text-slate-700 tabular-nums">{value}</dd>
+      <dt className="text-muted-foreground">{label}</dt>
+      <dd className="text-foreground/90 tabular-nums">{value}</dd>
     </div>
   );
 }

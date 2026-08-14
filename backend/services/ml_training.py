@@ -95,7 +95,7 @@ from sklearn.preprocessing import LabelEncoder, label_binarize
 from sklearn.utils.class_weight import compute_sample_weight
 
 from services.ml_explainability import build_explainer, shap_values_per_class
-from services.ml_preprocessing import SplitResult, build_preprocessor
+from services.ml_preprocessing import SplitResult, TrainingAbortedError, build_preprocessor
 from services.ml_registry import ModelSpec, models_for_task
 
 logger = logging.getLogger("datalab.ml_training")
@@ -207,14 +207,19 @@ def selection_metric_label(task_type: str) -> str:
     return "ROC-AUC (validation croisée)" if task_type == "classification" else "R² (validation croisée)"
 
 
-def _make_cv(task_type: str, cv_folds: int, groups: Optional[np.ndarray]):
+def _make_cv(task_type: str, cv_folds: int, groups: Optional[np.ndarray], seed: int):
     """GroupKFold si une colonne de groupe est fournie (anti-fuite jusque dans
-    la CV) — sinon StratifiedKFold (classification) ou KFold (régression)."""
+    la CV, sans notion de seed — GroupKFold est déterministe par construction,
+    pas de `shuffle`) — sinon StratifiedKFold (classification) ou KFold
+    (régression), toutes deux mélangées avec `seed` (AUDIT_ROADMAP.md, H6 :
+    avant ce correctif, `random_state=42` était figé en dur, indépendant du
+    seed choisi par l'utilisateur — changer le seed ne faisait jamais varier
+    les folds de CV)."""
     if groups is not None:
         return GroupKFold(n_splits=cv_folds)
     if task_type == "classification":
-        return StratifiedKFold(n_splits=cv_folds, shuffle=True, random_state=42)
-    return KFold(n_splits=cv_folds, shuffle=True, random_state=42)
+        return StratifiedKFold(n_splits=cv_folds, shuffle=True, random_state=seed)
+    return KFold(n_splits=cv_folds, shuffle=True, random_state=seed)
 
 
 def _classification_selection_score(estimator, X, y) -> float:
@@ -987,6 +992,22 @@ def train_and_evaluate(
     if task_type == "classification":
         encoder = LabelEncoder()
         y_train = encoder.fit_transform(y_train_raw)
+        # H8 (AUDIT_ROADMAP.md) — GroupShuffleSplit (split anti-fuite par
+        # groupe) ne stratifie pas : une classe rare concentrée dans un seul
+        # groupe peut finir entièrement en test, absente du train.
+        # `encoder.transform` lèverait alors une ValueError sklearn brute
+        # ("y contains previously unseen labels"), peu diagnosticable.
+        # Détecté ici pour lever un message déjà actionnable — surfacé tel
+        # quel à l'utilisateur depuis le correctif H7 (RuntimeError).
+        unseen_classes = set(y_test_raw.unique()) - set(encoder.classes_)
+        if unseen_classes:
+            labels = ", ".join(sorted(str(c) for c in unseen_classes))
+            raise TrainingAbortedError(
+                f"Impossible d'entraîner : la classe (ou les classes) {labels} n'apparaît que dans les données de "
+                "test après le découpage, jamais dans l'entraînement — cela arrive quand une classe rare est "
+                "concentrée dans un seul groupe de la colonne de regroupement. Essayez une graine aléatoire "
+                "différente, ou retirez la colonne de regroupement si elle n'est pas indispensable."
+            )
         y_test = encoder.transform(y_test_raw)
         class_names = [str(c) for c in encoder.classes_]
     else:
@@ -1013,7 +1034,7 @@ def train_and_evaluate(
     # le préprocesseur ait vu la portion de validation de chaque fold).
     preprocessor_template = build_preprocessor(split.X_train, feature_engineering_config)
 
-    cv = _make_cv(task_type, config.cv_folds, split.groups_train)
+    cv = _make_cv(task_type, config.cv_folds, split.groups_train, config.seed)
     # Stratégie produit "B" (Lot 5) : par défaut, seul le sous-ensemble
     # robuste/rapide tourne (boosters + RandomForest, `ModelSpec.is_default`)
     # — les modèles sensibles/lents (SVM, KNN, linéaire, Naive Bayes) restent

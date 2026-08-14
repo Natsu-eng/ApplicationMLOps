@@ -126,21 +126,21 @@ export function FeatureEngineeringSuggestions({
 
   return (
     <div className="space-y-2">
-      <p className="text-xs uppercase tracking-wide text-slate-500 flex items-center gap-1.5">
+      <p className="text-xs uppercase tracking-wide text-muted-foreground flex items-center gap-1.5">
         <Wand2 size={12} className="text-primary" />
         Ingénierie de variables suggérée
         {approvedCount > 0 && (
-          <span className="text-slate-400">
+          <span className="text-muted-foreground">
             ({approvedCount} approuvée{approvedCount > 1 ? "s" : ""})
           </span>
         )}
       </p>
 
-      {loading && <p className="text-xs text-slate-500">Analyse des transformations possibles…</p>}
-      {error && <p className="text-xs text-rose-600">{error}</p>}
+      {loading && <p className="text-xs text-muted-foreground">Analyse des transformations possibles…</p>}
+      {error && <p className="text-xs text-destructive">{error}</p>}
 
       {!loading && !error && suggestions && suggestions.length === 0 && (
-        <p className="text-xs text-slate-400">Aucune suggestion pour ce dataset et cette cible.</p>
+        <p className="text-xs text-muted-foreground">Aucune suggestion pour ce dataset et cette cible.</p>
       )}
 
       {!loading &&
@@ -154,8 +154,8 @@ export function FeatureEngineeringSuggestions({
           return (
             <div
               key={`${suggestion.code}-${suggestion.columns.join(",")}-${index}`}
-              className={`rounded-lg border px-3 py-2.5 bg-slate-50 ${
-                isApproved ? "border-primary/40" : "border-slate-200"
+              className={`rounded-lg border px-3 py-2.5 bg-muted ${
+                isApproved ? "border-primary/40" : "border-border"
               }`}
             >
               <div className="flex items-start gap-2">
@@ -175,25 +175,25 @@ export function FeatureEngineeringSuggestions({
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2 flex-wrap">
                       {suggestion.based_on_warning && <Badge variant="accent">Garde-fou</Badge>}
-                      <p className="text-sm text-slate-800 font-medium">{suggestion.title}</p>
+                      <p className="text-sm text-foreground font-medium">{suggestion.title}</p>
                     </div>
                   </div>
                   <ChevronDown
                     size={14}
-                    className={`flex-shrink-0 text-slate-400 transition-transform mt-1 ${isOpen ? "rotate-180" : ""}`}
+                    className={`flex-shrink-0 text-muted-foreground transition-transform mt-1 ${isOpen ? "rotate-180" : ""}`}
                   />
                 </button>
               </div>
 
-              {isOpen && <p className="text-xs text-slate-600 mt-2 pl-6">{suggestion.explanation}</p>}
-              <p className="text-xs text-slate-600 mt-2 pl-6">{suggestion.action}</p>
+              {isOpen && <p className="text-xs text-muted-foreground mt-2 pl-6">{suggestion.explanation}</p>}
+              <p className="text-xs text-muted-foreground mt-2 pl-6">{suggestion.action}</p>
 
               {isApproved && isImputation && suggestion.choice && (
                 <div className="pl-6 mt-2 flex items-center gap-2">
                   <select
                     value={currentStrategy}
                     onChange={(e) => setStrategies((prev) => ({ ...prev, [index]: e.target.value }))}
-                    className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-primary/40"
+                    className="rounded-md border border-input bg-white px-2 py-1 text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
                   >
                     {suggestion.choice.options.map((opt) => (
                       <option key={opt} value={opt}>
@@ -207,7 +207,7 @@ export function FeatureEngineeringSuggestions({
                       placeholder="Valeur"
                       value={fillValues[index] ?? ""}
                       onChange={(e) => setFillValues((prev) => ({ ...prev, [index]: e.target.value }))}
-                      className="w-24 rounded-md border border-slate-300 bg-white px-2 py-1 text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-primary/40"
+                      className="w-24 rounded-md border border-input bg-white px-2 py-1 text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
                     />
                   )}
                 </div>

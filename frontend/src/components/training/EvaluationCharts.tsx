@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Activity, Crosshair, Grid3x3, Target as TargetIcon, Waves } from "lucide-react";
 import {
   CartesianGrid,
   Legend,
@@ -14,8 +15,9 @@ import {
 } from "recharts";
 import type { ModelEvaluation, TaskType } from "../../api/client";
 import { Card } from "../ui/Card";
+import { accentSurfaceClass } from "../ui/ColorIconBadge";
 import { Heatmap } from "../ui/Heatmap";
-import { LabelWithHelp } from "../ui/Tooltip";
+import { SectionHeader } from "../ui/SectionHeader";
 import {
   CHART_COLOR_PRIMARY,
   CHART_COLOR_SECONDARY,
@@ -94,13 +96,13 @@ function ClassificationCharts({ evaluation }: { evaluation: ModelEvaluation }) {
 
   return (
     <>
-      <Card className="p-4">
-        <p className="text-xs uppercase tracking-wide text-slate-500 mb-2">
-          <LabelWithHelp
-            label="Matrice de confusion"
-            help="Chaque ligne = la vraie classe, chaque colonne = la classe prédite. La diagonale montre les prédictions correctes — tout ce qui est hors diagonale est une erreur."
-          />
-        </p>
+      <Card className={`p-4 ${accentSurfaceClass("blue")}`}>
+        <SectionHeader
+          icon={Grid3x3}
+          color="blue"
+          label="Matrice de confusion"
+          help="Chaque ligne = la vraie classe, chaque colonne = la classe prédite. La diagonale montre les prédictions correctes — tout ce qui est hors diagonale est une erreur."
+        />
         <Heatmap
           xLabels={classNames}
           yLabels={classNames}
@@ -110,15 +112,15 @@ function ClassificationCharts({ evaluation }: { evaluation: ModelEvaluation }) {
       </Card>
 
       {rocData.length > 0 && (
-        <Card className="p-4">
-          <p className="text-xs uppercase tracking-wide text-slate-500 mb-2">
-            <LabelWithHelp
-              label="Courbe ROC"
-              help="Plus la courbe se rapproche du coin supérieur gauche, mieux le modèle distingue les classes. La diagonale grise correspond au hasard."
-            />
-          </p>
+        <Card className={`p-4 ${accentSurfaceClass("teal")}`}>
+          <SectionHeader
+            icon={Activity}
+            color="teal"
+            label="Courbe ROC"
+            help="Plus la courbe se rapproche du coin supérieur gauche, mieux le modèle distingue les classes. La diagonale grise correspond au hasard."
+          />
           {manyClasses && (
-            <p className="text-[11px] text-slate-400 mb-1">
+            <p className="text-[11px] text-muted-foreground mb-1">
               Survolez ou cliquez une classe dans la légende pour l'isoler.
             </p>
           )}
@@ -166,15 +168,15 @@ function ClassificationCharts({ evaluation }: { evaluation: ModelEvaluation }) {
       )}
 
       {prData.length > 0 && (
-        <Card className="p-4">
-          <p className="text-xs uppercase tracking-wide text-slate-500 mb-2">
-            <LabelWithHelp
-              label="Courbe précision-rappel"
-              help="Utile en complément de la ROC quand les classes sont déséquilibrées — plus la courbe reste haute, mieux le modèle équilibre précision et rappel."
-            />
-          </p>
+        <Card className={`p-4 ${accentSurfaceClass("violet")}`}>
+          <SectionHeader
+            icon={TargetIcon}
+            color="violet"
+            label="Courbe précision-rappel"
+            help="Utile en complément de la ROC quand les classes sont déséquilibrées — plus la courbe reste haute, mieux le modèle équilibre précision et rappel."
+          />
           {manyClasses && (
-            <p className="text-[11px] text-slate-400 mb-1">
+            <p className="text-[11px] text-muted-foreground mb-1">
               Survolez ou cliquez une classe dans la légende pour l'isoler.
             </p>
           )}
@@ -234,13 +236,13 @@ function RegressionCharts({ evaluation }: { evaluation: ModelEvaluation }) {
 
   return (
     <>
-      <Card className="p-4">
-        <p className="text-xs uppercase tracking-wide text-slate-500 mb-2">
-          <LabelWithHelp
-            label="Prédit vs réel"
-            help="Chaque point est une observation du test. Plus les points sont proches de la diagonale, plus la prédiction est fidèle à la valeur réelle."
-          />
-        </p>
+      <Card className={`p-4 ${accentSurfaceClass("blue")}`}>
+        <SectionHeader
+          icon={Crosshair}
+          color="blue"
+          label="Prédit vs réel"
+          help="Chaque point est une observation du test. Plus les points sont proches de la diagonale, plus la prédiction est fidèle à la valeur réelle."
+        />
         <ResponsiveContainer width="100%" height={240}>
           <ScatterChart margin={{ left: 0, right: 12, bottom: 8 }}>
             <CartesianGrid strokeDasharray="3 3" stroke={CHART_GRID_STROKE} />
@@ -269,13 +271,13 @@ function RegressionCharts({ evaluation }: { evaluation: ModelEvaluation }) {
         </ResponsiveContainer>
       </Card>
 
-      <Card className="p-4">
-        <p className="text-xs uppercase tracking-wide text-slate-500 mb-2">
-          <LabelWithHelp
-            label="Résidus"
-            help="Écart entre valeur réelle et prédite, par niveau de prédiction. Un nuage sans forme particulière autour de zéro est bon signe ; un motif (entonnoir, courbe) indique que le modèle se trompe différemment selon la zone."
-          />
-        </p>
+      <Card className={`p-4 ${accentSurfaceClass("amber")}`}>
+        <SectionHeader
+          icon={Waves}
+          color="amber"
+          label="Résidus"
+          help="Écart entre valeur réelle et prédite, par niveau de prédiction. Un nuage sans forme particulière autour de zéro est bon signe ; un motif (entonnoir, courbe) indique que le modèle se trompe différemment selon la zone."
+        />
         <ResponsiveContainer width="100%" height={220}>
           <ScatterChart margin={{ left: 0, right: 12, bottom: 8 }}>
             <CartesianGrid strokeDasharray="3 3" stroke={CHART_GRID_STROKE} />

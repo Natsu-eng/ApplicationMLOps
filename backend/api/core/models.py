@@ -119,6 +119,11 @@ class TrainingJob(Base):
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="queued", index=True)
     progress_step: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     progress_percent: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # Dernier signal de vie du worker (mis à jour à chaque étape de
+    # progression, voir workers/training_worker.py::_make_progress_callback)
+    # — permet à services/job_watchdog.py de distinguer un job réellement en
+    # cours d'un job "running" abandonné par un worker mort.
+    progress_updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     rq_job_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -290,3 +295,118 @@ class AuditLog(Base):
 
     organization: Mapped["Organization"] = relationship("Organization")
     actor: Mapped[Optional["User"]] = relationship("User")
+
+
+class ClusteringJob(Base):
+    """Un entraînement de clustering (Lot 11+, ML non supervisé) — exécuté
+    en tâche de fond (RQ), même mécanisme que `TrainingJob` (réutilise la
+    même `training_queue`, voir `api/core/job_queue.py`).
+
+    Table DÉDIÉE, jamais une extension de `TrainingJob` — confirmé par
+    l'audit du 2026-08-14 (AUDIT_ROADMAP.md) : le clustering n'a pas de
+    cible (`target_column`, NOT NULL sur `TrainingJob`) ni de notion de
+    split train/test au même sens. Mêmes conventions d'isolation
+    (`organization_id`), de progression (`progress_step`/`progress_percent`/
+    `progress_updated_at`, réutilisé par `services/job_watchdog.py`) et de
+    quota que le supervisé."""
+
+    __tablename__ = "clustering_jobs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    organization_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    dataset_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("datasets.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    created_by_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    # Colonnes soumises au clustering — pas de "cible" (non supervisé).
+    feature_columns_json: Mapped[str] = mapped_column(Text, nullable=False)
+    config_json: Mapped[str] = mapped_column(Text, nullable=False)
+    # queued | running | completed | failed
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="queued", index=True)
+    progress_step: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    progress_percent: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    progress_updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    rq_job_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+    organization: Mapped["Organization"] = relationship("Organization")
+    dataset: Mapped["Dataset"] = relationship("Dataset")
+    created_by: Mapped[Optional["User"]] = relationship("User")
+    result: Mapped[Optional["ClusterModel"]] = relationship(
+        "ClusterModel", back_populates="clustering_job", uselist=False, passive_deletes=True
+    )
+
+
+class ClusterModel(Base):
+    """Le résultat produit par un `ClusteringJob` réussi — algorithme
+    retenu, métriques (silhouette/Davies-Bouldin/Calinski-Harabasz), profils
+    de segments et artefact persistés, même esprit que `MLModel` côté
+    supervisé."""
+
+    __tablename__ = "cluster_models"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    organization_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    clustering_job_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("clustering_jobs.id", ondelete="CASCADE"), nullable=False, unique=True
+    )
+    algorithm: Mapped[str] = mapped_column(String(100), nullable=False)  # libellé lisible (services/clustering_registry.py)
+    n_clusters: Mapped[int] = mapped_column(Integer, nullable=False)
+    feature_columns_json: Mapped[str] = mapped_column(Text, nullable=False)
+    metrics_json: Mapped[str] = mapped_column(Text, nullable=False)  # silhouette/davies_bouldin/calinski_harabasz/noise_ratio
+    # Profils de segments (taille, moyenne/médiane par variable, variables
+    # différenciantes) — voir services/clustering_training.py::ClusterProfile.
+    # Un LLM éventuel ne reçoit QUE ces statistiques déjà calculées, jamais
+    # laissé à inventer les caractéristiques d'un cluster (skill
+    # senior-ai-saas-engineer, data-science.md).
+    profiles_json: Mapped[str] = mapped_column(Text, nullable=False)
+    # Cluster assigné par ligne du dataset (-1 = bruit DBSCAN) — base d'une
+    # future visualisation (Lot 13, réduction de dimension : coloration par
+    # cluster) et de la prédiction du cluster d'une nouvelle observation.
+    labels_json: Mapped[str] = mapped_column(Text, nullable=False)
+    model_card_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    file_path: Mapped[str] = mapped_column(String(500), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+    organization: Mapped["Organization"] = relationship("Organization")
+    clustering_job: Mapped["ClusteringJob"] = relationship("ClusteringJob", back_populates="result")
+
+
+class ClusterCandidateRecord(Base):
+    """Un candidat comparé pendant un `ClusteringJob` — TOUS les candidats
+    évalués (plusieurs k, plusieurs algorithmes), pas seulement le gagnant.
+    Même raisonnement que `ModelCandidate` (Lot D, leaderboard supervisé) :
+    rendre visible le travail de comparaison réel du moteur."""
+
+    __tablename__ = "cluster_candidates"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    organization_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    clustering_job_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("clustering_jobs.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    algorithm: Mapped[str] = mapped_column(String(100), nullable=False)
+    family: Mapped[str] = mapped_column(String(30), nullable=False)
+    params_json: Mapped[str] = mapped_column(Text, nullable=False)
+    n_clusters: Mapped[int] = mapped_column(Integer, nullable=False)
+    silhouette: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    davies_bouldin: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    calinski_harabasz: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    noise_ratio: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    is_winner: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    rank: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    organization: Mapped["Organization"] = relationship("Organization")
+    clustering_job: Mapped["ClusteringJob"] = relationship("ClusteringJob")

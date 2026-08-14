@@ -13,18 +13,22 @@ import json
 from datetime import datetime, timezone
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from pydantic import BaseModel, EmailStr, Field, model_validator
 from sqlalchemy.orm import Session
 
+from api.core.config import get_settings
 from api.core.database import get_db
+from api.core.job_queue import redis_conn
 from api.core.models import AuditLog, Organization, User
+from api.core.rate_limit import is_rate_limited, reset_rate_limit
 from api.core.security import create_access_token, decode_token, hash_password, verify_password
 from services.audit import log_action
 
 router = APIRouter(prefix="/auth", tags=["authentification"])
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
+_settings = get_settings()
 
 
 # ── Schémas ──────────────────────────────────────────────────────────────────
@@ -163,8 +167,27 @@ def register(body: RegisterRequest, db: Session = Depends(get_db)):
 
 
 @router.post("/login", response_model=TokenResponse)
-def login(form: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
-    """Connexion — retourne un JWT Bearer (username = email)."""
+def login(request: Request, form: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+    """Connexion — retourne un JWT Bearer (username = email).
+
+    Limité par IP cliente (H11, AUDIT_ROADMAP.md) : au-delà de
+    `login_rate_limit_max_attempts` tentatives ÉCHOUÉES dans la fenêtre
+    glissante, 429 avant même de consulter la base — brute force sur mot de
+    passe rendu impraticable sans pénaliser un utilisateur qui se trompe une
+    ou deux fois."""
+    client_ip = request.client.host if request.client else "inconnu"
+    rate_limit_key = f"login_attempts:{client_ip}"
+    if is_rate_limited(
+        redis_conn, rate_limit_key, _settings.login_rate_limit_max_attempts, _settings.login_rate_limit_window_seconds
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail={
+                "code": "AUTH_TROP_DE_TENTATIVES",
+                "message": "Trop de tentatives de connexion — réessayez dans quelques minutes.",
+            },
+        )
+
     user = db.query(User).filter(User.email == form.username).first()
     if not user or not verify_password(form.password, user.hashed_password):
         raise HTTPException(
@@ -177,6 +200,7 @@ def login(form: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get
             detail={"code": "AUTH_COMPTE_DESACTIVE", "message": "Compte désactivé — contacter le propriétaire de votre organisation"},
         )
 
+    reset_rate_limit(redis_conn, rate_limit_key)
     user.last_login = datetime.now(timezone.utc)
     db.commit()
 

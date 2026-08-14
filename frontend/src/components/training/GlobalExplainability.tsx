@@ -70,10 +70,10 @@ function BeeswarmTooltip({ active, payload }: { active?: boolean; payload?: { pa
       <p style={CHART_TOOLTIP_STYLE.labelStyle} className="font-medium mb-1">
         {p.feature}
       </p>
-      <p className="text-slate-500">
+      <p className="text-muted-foreground">
         Valeur SHAP : <span className="tabular-nums">{p.x.toFixed(3)}</span>
       </p>
-      <p className="text-slate-500">
+      <p className="text-muted-foreground">
         Valeur de la variable : <span className="tabular-nums">{p.feature_value.toFixed(2)}</span>
       </p>
     </div>
@@ -114,7 +114,7 @@ export function ShapBeeswarmChart({ beeswarm }: { beeswarm: ShapBeeswarm }) {
               className={`text-xs px-2.5 py-1 rounded-full border transition-colors ${
                 name === (selected || classNames[0])
                   ? "border-primary bg-primary/10 text-primary"
-                  : "border-slate-200 text-slate-500 hover:border-slate-300"
+                  : "border-border text-muted-foreground hover:border-input"
               }`}
             >
               {name}
@@ -156,7 +156,7 @@ export function ShapBeeswarmChart({ beeswarm }: { beeswarm: ShapBeeswarm }) {
           />
         </ScatterChart>
       </ResponsiveContainer>
-      <div className="flex items-center gap-2 mt-2 text-[11px] text-slate-400">
+      <div className="flex items-center gap-2 mt-2 text-[11px] text-muted-foreground">
         <span>Valeur de la variable :</span>
         <span
           className="inline-block w-16 h-2 rounded-full"

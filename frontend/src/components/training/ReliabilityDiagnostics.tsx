@@ -33,7 +33,7 @@ export function CalibrationChart({ calibration }: { calibration: Calibration }) 
   return (
     <>
       {classNames.length > 3 && (
-        <p className="text-[11px] text-slate-400 mb-1">Survolez ou cliquez une classe dans la légende pour l'isoler.</p>
+        <p className="text-[11px] text-muted-foreground mb-1">Survolez ou cliquez une classe dans la légende pour l'isoler.</p>
       )}
       <ResponsiveContainer width="100%" height={240}>
         <LineChart margin={{ left: 0, right: 12 }}>

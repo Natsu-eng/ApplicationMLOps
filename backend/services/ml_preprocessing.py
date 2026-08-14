@@ -37,6 +37,17 @@ class DataLeakageError(RuntimeError):
     """Levée si le split groupé laisse un groupe présent à la fois en train et en test."""
 
 
+class TrainingAbortedError(RuntimeError):
+    """Erreur de pré-condition métier détectée AVANT tout calcul ML coûteux,
+    avec un message déjà rédigé en français pour l'utilisateur (H7/H8,
+    AUDIT_ROADMAP.md) — ex. dataset non prêt, classe absente du train après
+    un split groupé. Type dédié (pas un `RuntimeError` nu) précisément pour
+    que `workers/training_worker.py` puisse la distinguer avec certitude
+    d'une exception technique de bibliothèque (elle aussi souvent un
+    `RuntimeError`, ex. erreurs CatBoost) et la surfacer telle quelle sans
+    risquer d'exposer un détail interne par erreur."""
+
+
 @dataclass
 class SplitResult:
     X_train: pd.DataFrame

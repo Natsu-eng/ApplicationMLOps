@@ -1331,6 +1331,265 @@ quota de stockage (taille totale des datasets par organisation), pas
 d'export du journal d'audit (CSV/PDF), pas de rétention limitée du journal
 (aucune purge automatique).
 
+## Lot Audit + durcissement — corrections de l'audit du 2026-08-14 (livré)
+
+Audit expert complet (lecture seule, backend + frontend + legacy, voir
+`AUDIT_ROADMAP.md`) suivi d'un lot correctif couvrant les points Critique et
+la majorité des points Important. Portée volontairement large — validée
+lot par lot via les tests, jamais un commit sans suite verte.
+
+**Backend, critique** :
+- [x] **H1 — isolation des tests** : la suite complète (257 tests) échouait
+  intermittemment (2 tests) uniquement en run complet, jamais isolée ni sur
+  des sous-groupes de fichiers testés explicitement. Diagnostiqué comme un
+  épuisement de ressources (connexions SQLite non recyclées sur ~30 min,
+  des dizaines d'entraînements réels), pas une fuite d'état déterministe.
+  Mitigé par `poolclass=NullPool` dans `tests/conftest.py`.
+- [x] **H2 — watchdog de jobs orphelins** (`services/job_watchdog.py`,
+  nouveau) : un job `running` dont le worker a crashé (OOM, coupure)
+  consommait indéfiniment un slot de quota. Réconciliation appelée avant le
+  comptage du quota (`api/routers/training.py::create_training_job`) —
+  `TrainingJob.progress_updated_at` (migration additive) sert de dernier
+  signal de vie, seuil configurable (`stale_job_timeout_minutes`, défaut 40
+  min, au-dessus du timeout RQ de 30 min).
+- [x] **H3 — hard-fail JWT en production** : la clé par défaut n'était
+  auparavant que journalisée en avertissement, jamais bloquante. Démarrage
+  refusé (`RuntimeError`) si `environment=="production"` et
+  `jwt_secret_key` reste la valeur par défaut du dépôt.
+- [x] **H7 — erreurs déjà rédigées absorbées par le filet générique** :
+  nouveau type dédié `TrainingAbortedError` (`services/ml_preprocessing.py`,
+  sous-classe de `RuntimeError`) pour les erreurs de pré-condition
+  utilisateur (dataset non prêt, classe absente après split groupé) —
+  surfacées telles quelles. **Premier essai trop large** (catcher tout
+  `RuntimeError`) cassait un test de non-régression existant en surfaçant
+  aussi de vraies erreurs techniques (CatBoost) : corrigé avec un type
+  dédié, pas un `RuntimeError` nu.
+- [x] **H8 — classe absente après split groupé** : `GroupShuffleSplit` ne
+  stratifie pas — une classe rare concentrée dans un seul groupe pouvait
+  finir entièrement en test, provoquant une `ValueError` sklearn brute à
+  l'encodage. Détecté explicitement dans `train_and_evaluate`
+  (`services/ml_training.py`), message actionnable via `TrainingAbortedError`.
+- [x] **H6 — seed non propagée à la CV** : `_make_cv` hardcodait
+  `random_state=42`, indépendant du seed choisi par l'utilisateur. Corrigé,
+  `GroupKFold` (déterministe, pas de `shuffle`) inchangé.
+
+**Backend, important** :
+- [x] **H11 — rate-limiting login** (`api/core/rate_limit.py`, nouveau) :
+  fenêtre glissante Redis par IP cliente sur `/auth/login` uniquement
+  (jamais `/auth/register`), 10 tentatives échouées / 15 min par défaut,
+  échec ouvert si Redis est indisponible, compteur remis à zéro sur succès.
+  Nécessite `tests/conftest.py::_fresh_rate_limit_counters` (nouveau,
+  autouse) pour la même raison que H1 — sans ça, le compteur
+  `login_attempts:testclient` se serait accumulé sur toute la suite.
+- [x] **H17 — champ mort `ModelSpec.requires_scaling`** : jamais consommé
+  (`build_preprocessor` scale déjà tout inconditionnellement) — supprimé du
+  registre plutôt que branché, pour ne pas ajouter de complexité sans
+  bénéfice réel.
+- [x] **H5 — dérive documentaire** : `backend/ARCHITECTURE.md` était figé
+  au Lot 4b pendant que ce fichier et `recap.md` continuaient d'avancer —
+  remis à niveau (résumé, pas dupliqué).
+
+**Frontend — refonte design + corrections UX** (guidée par retours
+utilisateur directs sur captures d'écran, plusieurs itérations) :
+- [x] Système de tokens sémantiques réellement appliqué partout (auparavant
+  suivi seulement dans une minorité de composants) — passage systématique
+  slate-\*/rose-\*/emerald-\* → tokens sur tous les fichiers `pages/` et
+  `components/training|datasets|dashboard|pillars|ui`.
+- [x] Fond de page reclarifié (bleu-gris terne → quasi blanc,
+  `--color-background` 0.94→0.98 de luminosité) : la séparation
+  canevas/carte se fait désormais par l'ombre (`Card.tsx`, `shadow-md`
+  renforcée) plutôt que par un écart de couleur de fond.
+- [x] **`PageHeader`** (nouveau, `components/ui/PageHeader.tsx`) : icône en
+  dégradé de marque + fond teinté par pilier, remplace le titre flottant
+  sans ancrage visuel sur Dashboard/Datasets/Training/TrainingHistory.
+- [x] Cartes colorées sur **tous les onglets** de Résultats (Performance,
+  Explicabilité, Fiabilité, Prédire, Détails) et Explorer (5 onglets) —
+  fond teinté assorti à l'icône de section, sauf les deux cartes qui
+  contiennent déjà des sous-cartes multicolores (Performance, Fiabilité des
+  prédictions), laissées neutres pour ne pas se télescoper.
+- [x] Modale de résultats/exploration agrandie (`Modal.tsx`, nouvelle taille
+  `2xl`, 95vw/90vh) — perçue comme trop petite pour des grilles de
+  graphiques.
+- [x] **Bug réel trouvé et supprimé** (pas corrigé, supprimé sur demande
+  explicite) : le graphe "Variance entre les découpages de validation
+  croisée" (`Leaderboard`, `ModelResultModal.tsx`) affichait des valeurs
+  aberrantes (jusqu'à 9 chiffres) malgré le clamp déjà en place côté
+  utilitaire (`utils/cvScore.ts`) — cause non retrouvée dans le composant
+  `BoxPlotChart` personnalisé, retiré plutôt que laissé cassé.
+- [x] Premier vrai onboarding du produit (`components/HelpModal.tsx`,
+  nouveau) — remplace la recherche/les notifications de l'AppShell
+  (visuelles mais jamais câblées, honnêteté du même principe que les
+  piliers "Bientôt").
+- [x] Salutation à 3 tranches (Bonjour/Bon après-midi/Bonsoir).
+- [x] **H4/D2** — confirmation à deux clics avant suppression de dataset
+  (`Datasets.tsx`), motif extrait dans `hooks/useConfirmAction.ts`.
+- [x] **H4/D3** — distinction erreur réseau / état vide sur Dashboard,
+  Training, TrainingHistory (auparavant indiscernables, catch silencieux
+  vers `[]`).
+- [x] **H10** — labels de formulaire liés (`htmlFor`/`id`) sur le wizard
+  d'entraînement (5 champs), `ExpertModePanel` (4 champs), `PredictionForm`
+  (génération dynamique par variable).
+- [x] **H14** — duplication réduite : `StatusBadge.tsx`
+  (`JobStatusBadge`/`DatasetStatusBadge`, 3 implémentations identiques
+  fusionnées), `Select.tsx` (6+ occurrences de la même classe recopiée),
+  `useConfirmAction.ts` (motif à deux clics, 2 implémentations
+  indépendantes fusionnées).
+- [x] **H15** — contraste `text-warning`/`text-success` vérifié au
+  contrastomètre (calcul WCAG direct sur les valeurs OKLCH, pas d'outil
+  visuel dans cet environnement) : 2.57:1 et 3.40:1 sur fond blanc, sous le
+  seuil AA texte normal (4.5:1). Luminosité réduite (teinte/chroma
+  inchangés) → 4.82:1 sur les deux — bénéfice secondaire, améliore aussi le
+  contraste du texte blanc sur `bg-success` plein (`Training.tsx`).
+- [x] **H18** — grille de métriques (`ModelResultModal.tsx`) : repli
+  `grid-cols-1` en dessous de `sm`, plus figée à 2 colonnes sur mobile.
+- [x] **H9** — `eslint` réellement installé (`eslint.config.js`, nouveau —
+  configuré dans `package.json` depuis des mois de lots mais jamais
+  installé, `npm run lint` échouait immédiatement). Règles React Hooks
+  limitées aux deux classiques (`rules-of-hooks`, `exhaustive-deps`) —
+  `eslint-plugin-react-hooks` v7 embarque par défaut des règles orientées
+  React Compiler (ex. `set-state-in-effect`) qui signalent comme erreur le
+  pattern standard "charger des données dans un `useEffect`", largement et
+  légitimement utilisé dans ce projet. État à l'installation : 0 erreur, 11
+  avertissements mesurés (dette réelle mais non bloquante).
+- [x] **Persistance de session** (`pages/Training.tsx`) — signalé comme
+  "comportement ambigu à clarifier avant d'y toucher" dans ce fichier
+  depuis le lot "Refonte UI : design system moderne", jamais traité :
+  rafraîchir la page pendant qu'un entraînement tourne réellement côté
+  serveur renvoyait silencieusement au formulaire de configuration.
+  `sessionStorage` (pas `localStorage`, volontairement borné à l'onglet en
+  cours) restaure la vue (progression/résultat/échec) au lieu de perdre
+  l'état.
+- [x] **Deep-linking** (H20/D12) — ouvrir un résultat d'entraînement
+  (`Dashboard.tsx`) ou l'exploration/aperçu d'un dataset (`Datasets.tsx`)
+  synchronise désormais l'URL (`?job=`, `?explore=`, `?preview=`) dans les
+  deux sens via `useSearchParams` — un rafraîchissement ou un lien partagé
+  rouvre la même vue.
+
+**Vérifié** : suite pytest ciblée sur chaque fichier touché systématiquement
+verte à chaque étape (jamais un commit sans validation) ; `tsc -b`,
+`vite build`, `vitest run` (13/13) verts après chaque vague de changements
+frontend ; `npm run lint` fonctionnel pour la première fois. Suite pytest
+complète non re-vérifiée en un seul run après ce lot (coût ~30 min) — les
+fichiers touchés ont chacun été validés isolément.
+
+**Reporté** (voir `AUDIT_ROADMAP.md` pour le détail) : H12/H13 (découpage de
+`ModelResultView`/`TrainingForm` en sous-composants, tests de composants
+React — aucune infrastructure de test de composants dans ce dépôt,
+`@testing-library/react` non installé) ; H19 (séparer Dashboard
+activité/organisation) ; H21 (quota de stockage, export du journal
+d'audit) ; H22 (couche Workspace/Projet, pas de besoin business confirmé) —
+chantiers plus lourds, à traiter dans un lot dédié plutôt que dilués ici.
+
+## Lot 11+12 — Clustering et profils de segments, ML non supervisé (livré)
+
+Premier module du pilier "ML non supervisé". Module **délibérément séparé**
+de `ml_registry.py`/`ml_training.py` — confirmé par l'audit du 2026-08-14
+(AUDIT_ROADMAP.md) : le clustering n'a pas de `y`, les hypothèses binaires
+classification/régression du moteur supervisé (encodage de la cible, score
+de sélection, CQR) n'ont pas de sens pour un algorithme non supervisé.
+
+- [x] **`services/clustering_registry.py`** (nouveau) — registre de 4
+  algorithmes (`ClusterSpec`) : K-Means, K-Means rapide (MiniBatch, gros
+  volumes, mode expert), clustering hiérarchique (linkage Ward), DBSCAN.
+  `candidate_configs(n_samples, seed)` génère la grille de configurations à
+  comparer par algorithme — k ∈ {2,3,4,5,6,8} pour les algorithmes à k
+  explicite ; pour DBSCAN, `resolve_dbscan_eps` dérive le rayon de
+  voisinage de la distribution réelle des distances au k-ème plus proche
+  voisin (percentile 90, heuristique du "k-distance plot"), pas une valeur
+  fixe. Sous-ensemble par défaut (`DEFAULT_ALGORITHM_IDS`) : K-Means,
+  hiérarchique, DBSCAN — MiniBatchKMeans réservé au mode expert, même
+  stratégie produit "B" que le Lot 5 côté supervisé.
+- [x] **`services/clustering_training.py`** (nouveau) —
+  `train_and_evaluate_clustering` : réutilise `build_preprocessor`
+  (`ml_preprocessing.py`, générique, déjà indépendant de toute cible),
+  compare toutes les configurations du registre filtré, sélectionne la
+  meilleure sur le score de silhouette (Davies-Bouldin/Calinski-Harabasz
+  calculés en recoupement, jamais pour classer). `_compute_cluster_metrics`
+  exclut le bruit DBSCAN (label -1) du calcul des 3 métriques — l'inclure
+  les fausserait. `_build_cluster_profiles` calcule, pour le clustering
+  retenu, taille/moyenne/médiane/z-score par variable et top catégorie par
+  variable catégorielle, sur les données D'ORIGINE (pas préprocessées) —
+  variables différenciantes triées par |z-score|, jamais un texte inventé
+  (règle reprise du skill senior-ai-saas-engineer, data-science.md).
+  **Dégradation propre confirmée par test** : un `eps` DBSCAN résolu à 0.0
+  (données quasi dégénérées) est écarté proprement plutôt que de lever
+  l'`InvalidParameterError` sklearn brute — trouvé par un test dédié, pas
+  supposé.
+- [x] **`api/core/models.py`** — `ClusteringJob`/`ClusterModel`/
+  `ClusterCandidateRecord`, tables dédiées (pas une extension de
+  `TrainingJob`/`MLModel`), même conventions d'isolation
+  (`organization_id`) et de progression (`progress_step`/
+  `progress_percent`/`progress_updated_at`) que le supervisé. Tables
+  neuves : pas de migration additive nécessaire, `create_all()` suffit.
+- [x] **`services/job_watchdog.py`** — `reconcile_stale_jobs` généralisé
+  (paramètre `model: Type[JobModel] = TrainingJob`) plutôt que dupliqué —
+  `TrainingJob` et `ClusteringJob` partagent exactement les colonnes de
+  progression nécessaires.
+- [x] **`workers/clustering_worker.py`** (nouveau) — même structure que
+  `training_worker.py` (session DB propre, progression persistée à chaque
+  étape, `TrainingAbortedError`/`FeatureEngineeringSpecError`-like
+  dégradation propre, `_user_safe_error_message` dupliqué volontairement
+  plutôt qu'importé — indépendance des deux traductions si elles divergent
+  un jour, même choix que la séparation des registres).
+- [x] **`api/routers/clustering.py`** (nouveau) — `POST /clustering/jobs`
+  (création + enfilement sur `training_queue`, même file que le supervisé —
+  un seul worker physique), `GET /jobs`, `GET /jobs/{id}`, `GET
+  /jobs/{id}/result`, `GET /jobs/{id}/candidates`, `DELETE /jobs/{id}`, `GET
+  /algorithms-catalog`. **Quota partagé** avec le supervisé (compte
+  `TrainingJob` + `ClusteringJob` actifs ensemble contre la même limite,
+  `max_concurrent_jobs_per_org`) — un seul worker traite les deux types, une
+  limite séparée par type aurait permis de le saturer en cumulant les deux.
+- [x] **Frontend** — `pages/Clustering.tsx` (nouveau) : sélection dataset +
+  variables (cases à cocher, pas de wizard multi-étapes comme le supervisé
+  — la configuration d'un clustering est plus légère), lancement,
+  progression, résultat (leaderboard implicite via le badge algorithme +
+  cartes de profils de segments colorées, différenciantes en tête). Même
+  persistance de session (`sessionStorage`) que `Training.tsx` — un
+  rafraîchissement pendant le calcul ne perd pas la progression. Pilier
+  "ML non supervisé" activé dans `config/pillars.ts` (`status: "active"`,
+  route `/clustering`) — la page signale elle-même, honnêtement, que
+  détection d'anomalies et réduction de dimension arrivent ensuite (pas
+  promises dans le pilier sans être livrées).
+
+**Vérifié** :
+
+- 41 nouveaux tests (`test_clustering_registry.py` 8,
+  `test_clustering_training.py` 14, `test_clustering_worker.py` 5,
+  `test_clustering_api.py` 11, `test_security.py`/`test_auth.py` non
+  comptés ici) : chaque algorithme du registre s'entraîne et prédit sans
+  erreur, sélection correcte du nombre de groupes sur un cas construit (3
+  groupes séparés + variable catégorielle corrélée — silhouette > 0,7,
+  chaque segment découvert dominé à 100 % par sa vraie catégorie d'origine,
+  pas seulement "ça ne plante pas"), variables différenciantes identifient
+  le vrai signal, seed réellement propagée à l'estimateur (vérifié sur
+  l'objet fitté, pas déduit d'un résultat statistique), quota partagé
+  supervisé/clustering, isolation multi-tenant, dégradation propre sur
+  dataset trop petit ou données dégénérées, aucune trace brute
+  (chemin/traceback) dans un message d'erreur persisté.
+- **Un bug de régression volontairement introduit par cette même session a
+  été détecté par les tests de ce lot** : le premier essai du correctif H7
+  (audit du même jour) attrapait tout `RuntimeError` pour lui donner un
+  message plus clair — `test_worker_never_leaks_raw_traceback_on_training_failure`
+  a immédiatement signalé que ça surfaçait aussi de vraies erreurs
+  techniques CatBoost. Corrigé avec un type dédié (`TrainingAbortedError`)
+  avant que ce lot ne réutilise le même mécanisme pour le clustering —
+  preuve que le filet de test fonctionne.
+- Régression : suite ciblée sur les fichiers touchés par le partage de
+  quota (`test_training_api.py`, `test_saas_hardening.py`, `test_auth.py`)
+  intégralement verte (39/39) après ce lot.
+- Frontend : `tsc -b`, `vite build`, `npm run lint` (0 erreur), `vitest run`
+  (13/13) verts.
+
+**Scope volontairement limité** (planifié séparément, signalé honnêtement
+dans la page `Clustering.tsx` elle-même) : détection d'anomalies tabulaire
+(Isolation Forest, LOF — Lot 14) et réduction de dimension pour
+visualisation (PCA/t-SNE/UMAP — Lot 13) ; pas de prédiction du cluster
+d'une nouvelle observation (le bundle joblib persisté le permettrait, non
+exposé par API dans ce lot) ; pas de comparaison inter-jobs de clustering
+(pendant du Lot D-bis côté supervisé) ; rendu visuel réel non vérifié dans
+un navigateur (même limite que tous les lots frontend précédents dans cet
+environnement).
+
 ## Prochains lots (résumé — détail complet dans le diagnostic de migration et les échanges de cadrage)
 
 | Lot | Contenu | Livrable testable |

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
-import { Link } from "react-router-dom";
-import { Activity, BrainCircuit, Database, FileSpreadsheet, ScrollText, Trash2, Users } from "lucide-react";
+import { Link, useSearchParams } from "react-router-dom";
+import { Activity, BrainCircuit, Database, FileSpreadsheet, LayoutDashboard, ScrollText, Trash2, Users } from "lucide-react";
 import {
   ApiError,
   api,
@@ -20,6 +20,9 @@ import { Card } from "../components/ui/Card";
 import { ColorIconBadge, accentColorForId } from "../components/ui/ColorIconBadge";
 import { SectionHeader } from "../components/ui/SectionHeader";
 import { Input } from "../components/ui/Input";
+import { PageHeader } from "../components/ui/PageHeader";
+import { DatasetStatusBadge, JobStatusBadge } from "../components/ui/StatusBadge";
+import { useConfirmAction } from "../hooks/useConfirmAction";
 import { formatDateTime } from "../utils/format";
 
 const AUDIT_ACTION_LABELS: Record<string, string> = {
@@ -67,15 +70,17 @@ function AuditLogPanel() {
         label="Journal d'audit"
         help="Actions sensibles de l'équipe — ajout de membre, suppression de dataset/entraînement, promotion de modèle. Visible uniquement par le propriétaire de l'organisation."
       />
-      {error && <p className="text-sm text-rose-600">{error}</p>}
-      {entries === null && !error && <p className="text-sm text-slate-500">Chargement…</p>}
-      {entries && entries.length === 0 && <p className="text-sm text-slate-500">Aucune action enregistrée pour l'instant.</p>}
+      {error && <p className="text-sm text-destructive">{error}</p>}
+      {entries === null && !error && <p className="text-sm text-muted-foreground">Chargement…</p>}
+      {entries && entries.length === 0 && (
+        <p className="text-sm text-muted-foreground">Aucune action enregistrée pour l'instant.</p>
+      )}
       {entries && entries.length > 0 && (
-        <ul className="divide-y divide-slate-200 max-h-72 overflow-y-auto">
+        <ul className="divide-y divide-border max-h-72 overflow-y-auto">
           {entries.slice(0, 20).map((entry) => (
             <li key={entry.id} className="py-2 flex items-center justify-between gap-3">
-              <p className="text-sm text-slate-700 truncate">{auditActionLabel(entry)}</p>
-              <span className="text-xs text-slate-400 flex-shrink-0">
+              <p className="text-sm text-foreground/90 truncate">{auditActionLabel(entry)}</p>
+              <span className="text-xs text-muted-foreground flex-shrink-0">
                 {entry.actor_name ?? "—"} · {formatDateTime(entry.created_at)}
               </span>
             </li>
@@ -89,31 +94,15 @@ function AuditLogPanel() {
 const ACTIVE_STATUSES = new Set(["queued", "running"]);
 
 /** Salutation contextuelle à l'heure réelle du navigateur — jamais un texte
- * figé. Convention FR usuelle : "Bonjour" en journée, "Bonsoir" le soir/la
- * nuit (5h–18h / 18h–5h). */
+ * figé. Trois tranches (retour utilisateur explicite : deux ne suffisaient
+ * pas à distinguer le milieu de journée) : "Bonjour" le matin (5h–12h),
+ * "Bon après-midi" l'après-midi (12h–18h), "Bonsoir" le soir/la nuit
+ * (18h–5h) — convention FR usuelle. */
 function greeting(hour: number): string {
-  return hour >= 5 && hour < 18 ? "Bonjour" : "Bonsoir";
+  if (hour >= 5 && hour < 12) return "Bonjour";
+  if (hour >= 12 && hour < 18) return "Bon après-midi";
+  return "Bonsoir";
 }
-
-function jobStatusBadge(job: TrainingJobSummary) {
-  switch (job.status) {
-    case "completed":
-      return <Badge variant="success" dot>Terminé</Badge>;
-    case "failed":
-      return <Badge variant="danger" dot>Échec</Badge>;
-    case "running":
-      return <Badge variant="primary" dot pulse>En cours</Badge>;
-    default:
-      return <Badge variant="neutral" dot>En file</Badge>;
-  }
-}
-
-function datasetStatusBadge(status: DatasetSummary["status"]) {
-  if (status === "ready") return <Badge variant="success" dot>Prêt</Badge>;
-  if (status === "error") return <Badge variant="danger" dot>Erreur</Badge>;
-  return <Badge variant="primary" dot pulse>Analyse…</Badge>;
-}
-
 
 /** Page protégée du Lot 1, enrichie au Lot E1-ter : vue d'ensemble de
  * l'activité (datasets, entraînements récents) au-dessus de la gestion
@@ -125,9 +114,39 @@ export default function Dashboard() {
   const [members, setMembers] = useState<TeamMember[] | null>(null);
   const [membersError, setMembersError] = useState<string | null>(null);
   const [datasets, setDatasets] = useState<DatasetSummary[] | null>(null);
+  const [datasetsError, setDatasetsError] = useState<string | null>(null);
   const [jobs, setJobs] = useState<TrainingJobSummary[] | null>(null);
+  const [jobsError, setJobsError] = useState<string | null>(null);
   const [viewingJob, setViewingJob] = useState<TrainingJobSummary | null>(null);
-  const [confirmingDeleteJobId, setConfirmingDeleteJobId] = useState<number | null>(null);
+  const confirmDeleteJob = useConfirmAction<number>();
+
+  // Résultat "deep-linkable" (AUDIT_ROADMAP.md, H20/D12 — signalé après le
+  // correctif de persistance de la page Entraînement) : avant ce correctif,
+  // ouvrir un résultat d'entraînement ne changeait jamais l'URL — un
+  // rafraîchissement fermait la modale sans recours, et un lien vers "ce
+  // résultat précis" ne pouvait pas se partager. `?job=<id>` synchronise
+  // l'URL avec la modale ouverte, dans les deux sens.
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  useEffect(() => {
+    const jobId = searchParams.get("job");
+    if (!jobId) return;
+    api.training
+      .getJob(Number(jobId))
+      .then(setViewingJob)
+      .catch(() => setSearchParams({}, { replace: true }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  function openJob(job: TrainingJobSummary) {
+    setViewingJob(job);
+    setSearchParams({ job: String(job.id) }, { replace: false });
+  }
+
+  function closeJob() {
+    setViewingJob(null);
+    setSearchParams({}, { replace: false });
+  }
 
   const loadMembers = useCallback(async () => {
     try {
@@ -138,24 +157,34 @@ export default function Dashboard() {
     }
   }, []);
 
-  const loadJobs = useCallback(() => {
-    api.training.listJobs().then(setJobs).catch(() => setJobs([]));
+  const loadJobs = useCallback(async () => {
+    try {
+      setJobs(await api.training.listJobs());
+      setJobsError(null);
+    } catch (err) {
+      // AUDIT_ROADMAP.md, H4/D3 : distinguer "aucun entraînement" (liste
+      // vide légitime) d'un échec réseau — avant ce correctif, les deux cas
+      // affichaient exactement le même message "Aucun entraînement".
+      setJobsError(err instanceof ApiError ? err.message : "Impossible de charger les entraînements");
+    }
+  }, []);
+
+  const loadDatasets = useCallback(async () => {
+    try {
+      setDatasets(await api.datasets.list());
+      setDatasetsError(null);
+    } catch (err) {
+      setDatasetsError(err instanceof ApiError ? err.message : "Impossible de charger les datasets");
+    }
   }, []);
 
   useEffect(() => {
     loadMembers();
-    api.datasets.list().then(setDatasets).catch(() => setDatasets([]));
+    loadDatasets();
     loadJobs();
-  }, [loadMembers, loadJobs]);
+  }, [loadMembers, loadDatasets, loadJobs]);
 
-  // Deux clics pour confirmer (même motif que la page Entraînement) — pas de
-  // window.confirm natif, pour rester cohérent avec le reste de l'app.
   async function handleDeleteJob(id: number) {
-    if (confirmingDeleteJobId !== id) {
-      setConfirmingDeleteJobId(id);
-      return;
-    }
-    setConfirmingDeleteJobId(null);
     try {
       await api.training.remove(id);
       loadJobs();
@@ -172,22 +201,21 @@ export default function Dashboard() {
 
   return (
     <AppShell pillarId="supervised">
-      <div className="mb-8 flex items-center justify-between flex-wrap gap-4">
-        <div>
-          <p className="text-xs uppercase tracking-widest text-primary font-semibold mb-1">
-            Vue d'ensemble
-          </p>
-          <h1 className="text-2xl font-serif text-slate-900">
-            {greeting(new Date().getHours())}, {user.nom.split(" ")[0]}
-          </h1>
-        </div>
-        <Link to="/training">
-          <Button>
-            <BrainCircuit size={15} />
-            Nouvel entraînement
-          </Button>
-        </Link>
-      </div>
+      <PageHeader
+        eyebrow="Vue d'ensemble"
+        title={`${greeting(new Date().getHours())}, ${user.nom.split(" ")[0]}`}
+        description={`${user.organization_name} — voici l'activité récente de votre équipe.`}
+        icon={LayoutDashboard}
+        color="blue"
+        action={
+          <Link to="/training">
+            <Button>
+              <BrainCircuit size={15} />
+              Nouvel entraînement
+            </Button>
+          </Link>
+        }
+      />
 
       <StatTileRow>
         <StatTile icon={Database} label="Datasets" value={datasets?.length} color="blue" delayMs={0} />
@@ -205,16 +233,18 @@ export default function Dashboard() {
       <div className="grid gap-6 lg:grid-cols-2 mb-10">
         <Card className="p-5">
           <div className="flex items-center justify-between mb-4">
-            <h2 className="text-sm font-medium text-slate-800">Derniers entraînements</h2>
+            <h2 className="text-sm font-medium text-foreground">Derniers entraînements</h2>
             <Link to="/training/history" className="text-xs text-primary hover:text-primary/80">
               Voir tout
             </Link>
           </div>
 
-          {jobs === null ? (
-            <p className="text-sm text-slate-500">Chargement…</p>
+          {jobsError ? (
+            <ErrorNote message={jobsError} />
+          ) : jobs === null ? (
+            <p className="text-sm text-muted-foreground">Chargement…</p>
           ) : recentJobs.length === 0 ? (
-            <p className="text-sm text-slate-500">
+            <p className="text-sm text-muted-foreground">
               Aucun entraînement pour l'instant — lancez-en un depuis{" "}
               <Link to="/training" className="text-primary hover:text-primary/80">
                 Entraînement
@@ -222,53 +252,48 @@ export default function Dashboard() {
               .
             </p>
           ) : (
-            <ul className="divide-y divide-slate-200">
+            <ul className="divide-y divide-border">
               {recentJobs.map((job) => {
                 const isCompleted = job.status === "completed";
+                const pendingDelete = confirmDeleteJob.isPending(job.id);
                 return (
                   <li
                     key={job.id}
-                    onClick={() => isCompleted && setViewingJob(job)}
+                    onClick={() => isCompleted && openJob(job)}
                     className={`group py-2.5 flex items-center justify-between gap-3 ${
-                      isCompleted ? "cursor-pointer hover:bg-slate-50 -mx-1 px-1 rounded-lg" : ""
+                      isCompleted ? "cursor-pointer hover:bg-muted/50 -mx-1 px-1 rounded-lg transition-colors" : ""
                     }`}
                   >
                     <div className="flex items-center gap-3 min-w-0">
                       <ColorIconBadge icon={BrainCircuit} color={accentColorForId(job.id)} size="sm" />
                       <div className="min-w-0">
-                        <p className="text-sm text-slate-800 truncate">
-                          {job.dataset_name ?? "Dataset"} <span className="text-slate-400">→</span>{" "}
+                        <p className="text-sm text-foreground/90 truncate">
+                          {job.dataset_name ?? "Dataset"} <span className="text-muted-foreground">→</span>{" "}
                           {job.target_column}
                         </p>
-                        <p className="text-xs text-slate-500">{formatDateTime(job.created_at)}</p>
+                        <p className="text-xs text-muted-foreground">{formatDateTime(job.created_at)}</p>
                       </div>
                     </div>
                     <div className="flex items-center gap-2 flex-shrink-0">
                       {isCompleted && job.headline_metric && (
-                        <span className="text-xs text-slate-500 tabular-nums">
+                        <span className="text-xs text-muted-foreground tabular-nums">
                           {job.headline_metric.name} = {job.headline_metric.value?.toFixed(3) ?? "—"}
                         </span>
                       )}
-                      {jobStatusBadge(job)}
+                      <JobStatusBadge status={job.status} />
                       <button
                         type="button"
                         onClick={(e) => {
                           e.stopPropagation();
-                          handleDeleteJob(job.id);
+                          confirmDeleteJob.trigger(job.id, () => handleDeleteJob(job.id));
                         }}
-                        onMouseLeave={() => setConfirmingDeleteJobId((id) => (id === job.id ? null : id))}
-                        aria-label={
-                          confirmingDeleteJobId === job.id ? "Confirmer la suppression" : "Supprimer cet entraînement"
-                        }
-                        title={
-                          confirmingDeleteJobId === job.id
-                            ? "Cliquer à nouveau pour confirmer"
-                            : "Supprimer cet entraînement"
-                        }
+                        onMouseLeave={confirmDeleteJob.reset}
+                        aria-label={pendingDelete ? "Confirmer la suppression" : "Supprimer cet entraînement"}
+                        title={pendingDelete ? "Cliquer à nouveau pour confirmer" : "Supprimer cet entraînement"}
                         className={`flex-shrink-0 h-7 w-7 flex items-center justify-center rounded-md transition-colors ${
-                          confirmingDeleteJobId === job.id
-                            ? "text-rose-700 bg-rose-100"
-                            : "text-slate-300 hover:text-rose-600 hover:bg-rose-50"
+                          pendingDelete
+                            ? "text-destructive bg-destructive/15"
+                            : "text-muted-foreground/50 hover:text-destructive hover:bg-destructive/10"
                         }`}
                       >
                         <Trash2 size={13} />
@@ -283,16 +308,18 @@ export default function Dashboard() {
 
         <Card className="p-5">
           <div className="flex items-center justify-between mb-4">
-            <h2 className="text-sm font-medium text-slate-800">Derniers datasets</h2>
+            <h2 className="text-sm font-medium text-foreground">Derniers datasets</h2>
             <Link to="/datasets" className="text-xs text-primary hover:text-primary/80">
               Voir tout
             </Link>
           </div>
 
-          {datasets === null ? (
-            <p className="text-sm text-slate-500">Chargement…</p>
+          {datasetsError ? (
+            <ErrorNote message={datasetsError} />
+          ) : datasets === null ? (
+            <p className="text-sm text-muted-foreground">Chargement…</p>
           ) : recentDatasets.length === 0 ? (
-            <p className="text-sm text-slate-500">
+            <p className="text-sm text-muted-foreground">
               Aucun dataset pour l'instant — importez-en un depuis{" "}
               <Link to="/datasets" className="text-primary hover:text-primary/80">
                 Mes données
@@ -300,19 +327,19 @@ export default function Dashboard() {
               .
             </p>
           ) : (
-            <ul className="divide-y divide-slate-200">
+            <ul className="divide-y divide-border">
               {recentDatasets.map((dataset) => (
-                <li key={dataset.id} className="group py-2.5 flex items-center justify-between gap-3 hover:bg-slate-50 -mx-1 px-1 rounded-lg transition-colors">
+                <li key={dataset.id} className="group py-2.5 flex items-center justify-between gap-3 hover:bg-muted/50 -mx-1 px-1 rounded-lg transition-colors">
                   <div className="flex items-center gap-3 min-w-0">
                     <ColorIconBadge icon={FileSpreadsheet} color={accentColorForId(dataset.id)} size="sm" />
                     <div className="min-w-0">
-                      <p className="text-sm text-slate-800 truncate">{dataset.name}</p>
-                      <p className="text-xs text-slate-500">
+                      <p className="text-sm text-foreground/90 truncate">{dataset.name}</p>
+                      <p className="text-xs text-muted-foreground">
                         {dataset.row_count ?? "—"} lignes · {dataset.column_count ?? "—"} colonnes
                       </p>
                     </div>
                   </div>
-                  {datasetStatusBadge(dataset.status)}
+                  <DatasetStatusBadge status={dataset.status} />
                 </li>
               ))}
             </ul>
@@ -325,8 +352,8 @@ export default function Dashboard() {
           <div className="flex items-center gap-3 mb-4">
             <Avatar name={user.nom} />
             <div className="min-w-0">
-              <p className="font-medium text-slate-900 truncate">{user.nom}</p>
-              <p className="text-xs text-slate-500 truncate">{user.email}</p>
+              <p className="font-medium text-foreground truncate">{user.nom}</p>
+              <p className="text-xs text-muted-foreground truncate">{user.email}</p>
             </div>
           </div>
           <RoleBadge role={user.role} />
@@ -336,7 +363,7 @@ export default function Dashboard() {
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-2">
               <Users size={16} className="text-primary" />
-              <h2 className="text-sm font-medium text-slate-800">
+              <h2 className="text-sm font-medium text-foreground">
                 Équipe — {user.organization_name}
               </h2>
             </div>
@@ -350,16 +377,16 @@ export default function Dashboard() {
           {membersError && <ErrorNote message={membersError} />}
 
           {members === null && !membersError ? (
-            <p className="text-sm text-slate-500">Chargement…</p>
+            <p className="text-sm text-muted-foreground">Chargement…</p>
           ) : (
-            <ul className="divide-y divide-slate-200">
+            <ul className="divide-y divide-border">
               {members?.map((member) => (
                 <li key={member.id} className="py-2.5 flex items-center justify-between">
                   <div className="flex items-center gap-3 min-w-0">
                     <Avatar name={member.nom} size="sm" />
                     <div className="min-w-0">
-                      <p className="text-sm text-slate-800 truncate">{member.nom}</p>
-                      <p className="text-xs text-slate-500 truncate">{member.email}</p>
+                      <p className="text-sm text-foreground/90 truncate">{member.nom}</p>
+                      <p className="text-xs text-muted-foreground truncate">{member.email}</p>
                     </div>
                   </div>
                   <RoleBadge role={member.role} />
@@ -382,7 +409,7 @@ export default function Dashboard() {
         )}
       </div>
 
-      {viewingJob && <ModelResultModal job={viewingJob} onClose={() => setViewingJob(null)} />}
+      {viewingJob && <ModelResultModal job={viewingJob} onClose={closeJob} />}
     </AppShell>
   );
 }
@@ -397,7 +424,7 @@ function RoleBadge({ role }: { role: "owner" | "member" }) {
 
 function ErrorNote({ message }: { message: string }) {
   return (
-    <p className="text-sm text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2 mb-3">
+    <p className="text-sm text-destructive bg-destructive/10 border border-destructive/20 rounded-lg px-3 py-2 mb-3">
       {message}
     </p>
   );
@@ -432,7 +459,7 @@ function AddMemberForm({ onMemberAdded }: { onMemberAdded: () => void }) {
 
   return (
     <>
-      <h2 className="text-sm font-medium text-slate-800 mb-4">Ajouter un membre à l'équipe</h2>
+      <h2 className="text-sm font-medium text-foreground mb-4">Ajouter un membre à l'équipe</h2>
       <form onSubmit={handleSubmit} className="grid sm:grid-cols-3 gap-3 items-start">
         <Input
           type="text"
@@ -461,8 +488,8 @@ function AddMemberForm({ onMemberAdded }: { onMemberAdded: () => void }) {
           {isSubmitting ? "Ajout…" : "Ajouter"}
         </Button>
       </form>
-      {error && <p className="text-sm text-rose-600 mt-2">{error}</p>}
-      {success && <p className="text-sm text-emerald-600 mt-2">Membre ajouté.</p>}
+      {error && <p className="text-sm text-destructive mt-2">{error}</p>}
+      {success && <p className="text-sm text-success mt-2">Membre ajouté.</p>}
     </>
   );
 }

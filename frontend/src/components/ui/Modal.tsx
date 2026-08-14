@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import { X } from "lucide-react";
 
 const SIZE_CLASSES = {
@@ -6,7 +6,14 @@ const SIZE_CLASSES = {
   // Contenu riche (ex. exploration de données à plusieurs sections) — évite
   // de compresser des graphiques Recharts dans une largeur trop étroite.
   xl: "max-w-6xl",
+  // Contenu le plus riche de l'app (résultats d'entraînement, exploration de
+  // données) — retour utilisateur direct : xl restait perçu comme "petit"
+  // pour des grilles de graphiques côte à côte. Largeur quasi pleine
+  // fenêtre, plafonnée pour rester lisible sur très grand écran.
+  "2xl": "max-w-[96rem] w-[95vw]",
 } as const;
+
+let modalIdCounter = 0;
 
 export function Modal({
   title,
@@ -23,30 +30,77 @@ export function Modal({
    * (ex. onglets de navigation interne — voir EdaModal). */
   headerExtra?: ReactNode;
 }) {
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const titleId = useRef(`modal-title-${++modalIdCounter}`).current;
+
+  // Accessibilité (AUDIT_ROADMAP.md, D4/H10) : Échap ferme la modale, focus
+  // posé sur la boîte de dialogue à l'ouverture, piège de focus au Tab pour
+  // qu'un utilisateur clavier ne puisse jamais "sortir" de la modale vers le
+  // contenu masqué derrière — utilisé par tous les écrans de résultats/
+  // exploration de l'app (ModelResultModal, EdaModal...).
+  useEffect(() => {
+    const previouslyFocused = document.activeElement as HTMLElement | null;
+    dialogRef.current?.focus();
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        onClose();
+        return;
+      }
+      if (event.key !== "Tab" || !dialogRef.current) return;
+      const focusable = dialogRef.current.querySelectorAll<HTMLElement>(
+        'a[href], button:not([disabled]), textarea, input, select, [tabindex]:not([tabindex="-1"])'
+      );
+      if (focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    }
+
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+      previouslyFocused?.focus();
+    };
+  }, [onClose]);
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-slate-950/50 backdrop-blur-sm" onClick={onClose} />
+      <div className="absolute inset-0 bg-foreground/40 backdrop-blur-sm" onClick={onClose} aria-hidden="true" />
       <div
-        className={`relative w-full ${SIZE_CLASSES[size]} max-h-[85vh] overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xl flex flex-col`}
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        tabIndex={-1}
+        className={`relative w-full ${SIZE_CLASSES[size]} max-h-[90vh] overflow-hidden rounded-2xl border border-border bg-card shadow-xl flex flex-col outline-none`}
       >
-        <div className="flex items-center justify-between gap-4 px-5 py-4 border-b border-slate-200 flex-shrink-0">
-          <h3 className="text-sm font-medium text-slate-900 truncate">{title}</h3>
+        <div className="flex items-center justify-between gap-4 px-5 py-4 border-b border-border flex-shrink-0">
+          <h3 id={titleId} className="text-sm font-medium text-foreground truncate">
+            {title}
+          </h3>
           <div className="flex items-center gap-4 flex-shrink-0">
             {headerExtra}
             <button
               onClick={onClose}
               aria-label="Fermer"
-              className="text-slate-400 hover:text-slate-600 transition-colors flex-shrink-0"
+              className="text-muted-foreground hover:text-foreground transition-colors flex-shrink-0"
             >
               <X size={18} />
             </button>
           </div>
         </div>
-        {/* Fond gris pâle (pas blanc) : les cartes internes (Card, blanches
-            + bordure) ressortent nettement plutôt que de se fondre dans un
-            modal tout blanc — même contraste canevas/carte que le reste de
-            l'app (index.css --color-canvas). */}
-        <div className="overflow-auto p-5 bg-slate-50">{children}</div>
+        {/* Fond légèrement teinté (pas la couleur des cartes) : les cartes
+            internes (Card, bg-card + bordure) ressortent nettement plutôt
+            que de se fondre dans un modal uniforme — même logique
+            canevas/carte que le reste de l'app (index.css --color-background). */}
+        <div className="overflow-auto p-5 bg-muted/40">{children}</div>
       </div>
     </div>
   );

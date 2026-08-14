@@ -14,7 +14,7 @@ const LEVEL_CONFIG: Record<
   DataWarning["level"],
   { badge: "danger" | "warning" | "accent"; icon: typeof ShieldAlert; border: string; iconColor: string }
 > = {
-  critique: { badge: "danger", icon: ShieldAlert, border: "border-rose-200", iconColor: "text-rose-600" },
+  critique: { badge: "danger", icon: ShieldAlert, border: "border-destructive/20", iconColor: "text-destructive" },
   attention: { badge: "warning", icon: AlertTriangle, border: "border-amber-200", iconColor: "text-amber-600" },
   info: { badge: "accent", icon: Info, border: "border-primary/20", iconColor: "text-primary" },
 };
@@ -103,11 +103,11 @@ export function DataQualityWarnings({
 
   return (
     <div className="space-y-2">
-      {loading && <p className="text-xs text-slate-500">Analyse des données…</p>}
-      {error && <p className="text-xs text-rose-600">{error}</p>}
+      {loading && <p className="text-xs text-muted-foreground">Analyse des données…</p>}
+      {error && <p className="text-xs text-destructive">{error}</p>}
 
       {!loading && !error && warnings && warnings.length === 0 && (
-        <div className="flex items-center gap-2 text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2">
+        <div className="flex items-center gap-2 text-xs text-success bg-success/10 border border-success/20 rounded-lg px-3 py-2">
           <ShieldCheck size={14} className="flex-shrink-0" />
           Aucune alerte détectée sur ce dataset pour cette cible.
         </div>
@@ -115,7 +115,7 @@ export function DataQualityWarnings({
 
       {canExclude && stillIncluded.length > 0 && (
         <div className="flex items-center justify-between gap-3 rounded-lg border border-primary/20 bg-primary/5 px-3 py-2">
-          <p className="text-xs text-slate-600">
+          <p className="text-xs text-muted-foreground">
             {stillIncluded.length} variable{stillIncluded.length > 1 ? "s" : ""} sans valeur prédictive
             détectée{stillIncluded.length > 1 ? "s" : ""} (identifiant, constante, doublon).
           </p>
@@ -138,7 +138,7 @@ export function DataQualityWarnings({
           return (
             <div
               key={`${warning.code}-${warning.columns.join(",")}-${index}`}
-              className={`rounded-lg border ${config.border} bg-slate-50 px-3 py-2.5`}
+              className={`rounded-lg border ${config.border} bg-muted px-3 py-2.5`}
             >
               <button
                 type="button"
@@ -149,19 +149,19 @@ export function DataQualityWarnings({
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2 flex-wrap">
                     <Badge variant={config.badge}>{LEVEL_LABEL[warning.level]}</Badge>
-                    <p className="text-sm text-slate-800 font-medium">{warning.title}</p>
+                    <p className="text-sm text-foreground font-medium">{warning.title}</p>
                   </div>
                 </div>
                 <ChevronDown
                   size={14}
-                  className={`flex-shrink-0 text-slate-400 transition-transform mt-1 ${isOpen ? "rotate-180" : ""}`}
+                  className={`flex-shrink-0 text-muted-foreground transition-transform mt-1 ${isOpen ? "rotate-180" : ""}`}
                 />
               </button>
 
-              {isOpen && <p className="text-xs text-slate-600 mt-2 pl-6">{warning.explanation}</p>}
+              {isOpen && <p className="text-xs text-muted-foreground mt-2 pl-6">{warning.explanation}</p>}
 
-              <p className="text-xs text-slate-600 mt-2 pl-6">
-                <span className="text-slate-500">Action recommandée : </span>
+              <p className="text-xs text-muted-foreground mt-2 pl-6">
+                <span className="text-muted-foreground">Action recommandée : </span>
                 {warning.action}
               </p>
 
@@ -173,7 +173,7 @@ export function DataQualityWarnings({
                         key={col}
                         type="button"
                         onClick={() => onExcludeColumns?.([col])}
-                        className="inline-flex items-center gap-1 rounded-full border border-rose-200 bg-white px-2.5 py-1 text-xs font-medium text-rose-700 hover:bg-rose-50 transition-colors"
+                        className="inline-flex items-center gap-1 rounded-full border border-destructive/20 bg-white px-2.5 py-1 text-xs font-medium text-destructive hover:bg-destructive/10 transition-colors"
                       >
                         <XCircle size={12} />
                         Exclure « {col} »
@@ -181,7 +181,7 @@ export function DataQualityWarnings({
                     ) : (
                       <span
                         key={col}
-                        className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700"
+                        className="inline-flex items-center gap-1 rounded-full border border-success/20 bg-success/10 px-2.5 py-1 text-xs font-medium text-success"
                       >
                         <ShieldCheck size={12} />
                         « {col} » exclue

@@ -24,7 +24,7 @@ export function Switch({
       disabled={disabled}
       onClick={() => onChange(!checked)}
       className={`relative inline-flex h-6 w-11 flex-shrink-0 items-center rounded-full transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
-        checked ? "bg-primary" : "bg-slate-300"
+        checked ? "bg-primary" : "bg-input"
       }`}
     >
       <span

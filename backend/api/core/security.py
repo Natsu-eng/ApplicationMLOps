@@ -23,6 +23,17 @@ _TOKEN_TTL_MINUTES = 60 * 24  # 24 h
 
 _DEV_DEFAULT_KEY = "changez-cette-cle-en-production"
 if _settings.jwt_secret_key == _DEV_DEFAULT_KEY:
+    if _settings.environment == "production":
+        # Bloquant, pas juste journalisé : une clé par défaut en production
+        # permettrait à quiconque de forger un token valide pour n'importe
+        # quel utilisateur (la clé par défaut est publique, présente dans le
+        # dépôt). Constaté lors de l'audit du 2026-08-14 (AUDIT_ROADMAP.md,
+        # H3) : seul un avertissement journalisé existait, jamais bloquant.
+        raise RuntimeError(
+            "JWT_SECRET_KEY non définie en environnement de production — "
+            "démarrage refusé. Générer une clé : "
+            "python -c \"import secrets; print(secrets.token_hex(64))\""
+        )
     logger.warning(
         "JWT_SECRET_KEY non définie — clé de développement utilisée. "
         "NE PAS utiliser cette clé en production !"

@@ -331,6 +331,75 @@ export interface FeatureEngineeringSpec {
 export type TaskType = "classification" | "regression";
 export type JobStatus = "queued" | "running" | "completed" | "failed";
 
+// ── Clustering (Lot 11+ — ML non supervisé) ──────────────────────────────
+
+export interface ClusteringJobCreatePayload {
+  dataset_id: number;
+  feature_columns: string[];
+  seed?: number;
+  algorithm_ids?: string[];
+}
+
+export interface ClusteringJobSummary {
+  id: number;
+  dataset_id: number;
+  dataset_name: string | null;
+  feature_columns: string[];
+  status: JobStatus;
+  progress_step: string | null;
+  progress_percent: number;
+  error_message: string | null;
+  created_by: string | null;
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+  algorithm: string | null;
+  n_clusters: number | null;
+  silhouette: number | null;
+}
+
+export interface ClusterProfile {
+  cluster_id: number;
+  size: number;
+  size_pct: number;
+  numeric_summary: Record<string, { mean: number; median: number; z_score: number }>;
+  categorical_summary: Record<string, { top_category: string; top_pct: number }>;
+  differentiating_variables: string[];
+}
+
+export interface ClusteringResult {
+  algorithm: string;
+  n_clusters: number;
+  metrics: {
+    silhouette: number | null;
+    davies_bouldin: number | null;
+    calinski_harabasz: number | null;
+    noise_ratio: number;
+  };
+  profiles: ClusterProfile[];
+  model_card: Record<string, unknown>;
+}
+
+export interface ClusterCandidate {
+  algorithm: string;
+  family: string;
+  params: Record<string, unknown>;
+  n_clusters: number;
+  silhouette: number | null;
+  davies_bouldin: number | null;
+  calinski_harabasz: number | null;
+  noise_ratio: number;
+  is_winner: boolean;
+  rank: number;
+}
+
+export interface AlgorithmCatalogEntry {
+  id: string;
+  label: string;
+  family: string;
+  is_default: boolean;
+}
+
 export interface TrainingJobCreatePayload {
   dataset_id: number;
   target_column: string;
@@ -711,5 +780,19 @@ export const api = {
       link.remove();
       URL.revokeObjectURL(url);
     },
+  },
+
+  clustering: {
+    algorithmsCatalog: () => request<{ algorithms: AlgorithmCatalogEntry[] }>("/clustering/algorithms-catalog"),
+    createJob: (data: ClusteringJobCreatePayload) =>
+      request<ClusteringJobSummary>("/clustering/jobs", {
+        method: "POST",
+        body: JSON.stringify(data),
+      }),
+    listJobs: () => request<ClusteringJobSummary[]>("/clustering/jobs"),
+    getJob: (id: number) => request<ClusteringJobSummary>(`/clustering/jobs/${id}`),
+    getResult: (id: number) => request<ClusteringResult>(`/clustering/jobs/${id}/result`),
+    getCandidates: (id: number) => request<ClusterCandidate[]>(`/clustering/jobs/${id}/candidates`),
+    remove: (id: number) => request<void>(`/clustering/jobs/${id}`, { method: "DELETE" }),
   },
 };

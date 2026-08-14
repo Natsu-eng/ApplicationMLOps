@@ -43,6 +43,67 @@ def test_login_wrong_password_rejected(client):
     assert resp.json()["detail"]["code"] == "AUTH_IDENTIFIANTS_INCORRECTS"
 
 
+# ── H11 (AUDIT_ROADMAP.md) — rate-limiting sur /auth/login ──────────────
+
+
+def test_login_blocked_after_too_many_failed_attempts(client):
+    from api.core.config import get_settings
+
+    client.post(
+        "/auth/register",
+        json={"email": "dana@bureau.fr", "nom": "Dana", "password": "motdepasse123", "organization_name": "Bureau"},
+    )
+    limit = get_settings().login_rate_limit_max_attempts
+
+    responses = [
+        client.post("/auth/login", data={"username": "dana@bureau.fr", "password": "faux"}) for _ in range(limit)
+    ]
+    assert all(r.status_code == 400 for r in responses)
+
+    blocked = client.post("/auth/login", data={"username": "dana@bureau.fr", "password": "faux"})
+    assert blocked.status_code == 429
+    assert blocked.json()["detail"]["code"] == "AUTH_TROP_DE_TENTATIVES"
+
+    # Même avec le bon mot de passe : la limite s'applique par IP, avant
+    # toute vérification des identifiants.
+    still_blocked = client.post("/auth/login", data={"username": "dana@bureau.fr", "password": "motdepasse123"})
+    assert still_blocked.status_code == 429
+
+
+def test_login_success_resets_rate_limit_counter(client):
+    client.post(
+        "/auth/register",
+        json={"email": "eva@bureau.fr", "nom": "Eva", "password": "motdepasse123", "organization_name": "Bureau"},
+    )
+    # Deux échecs, bien sous la limite, puis un succès.
+    client.post("/auth/login", data={"username": "eva@bureau.fr", "password": "faux"})
+    client.post("/auth/login", data={"username": "eva@bureau.fr", "password": "faux"})
+    ok = client.post("/auth/login", data={"username": "eva@bureau.fr", "password": "motdepasse123"})
+    assert ok.status_code == 200
+
+    # Le compteur a été remis à zéro par le succès — un nouvel échec isolé
+    # ne doit pas être proche d'atteindre la limite.
+    resp = client.post("/auth/login", data={"username": "eva@bureau.fr", "password": "faux"})
+    assert resp.status_code == 400  # pas 429
+
+
+def test_login_rate_limit_isolated_by_client_and_never_blocks_registration(client):
+    """La limite porte sur /auth/login (brute force de mot de passe), jamais
+    sur /auth/register — un pic d'inscriptions légitimes ne doit jamais être
+    confondu avec une attaque par force brute sur un mot de passe."""
+    for i in range(15):
+        resp = client.post(
+            "/auth/register",
+            json={
+                "email": f"user{i}@bureau.fr",
+                "nom": f"User {i}",
+                "password": "motdepasse123",
+                "organization_name": f"Bureau {i}",
+            },
+        )
+        assert resp.status_code == 201
+
+
 def test_me_requires_token(client):
     assert client.get("/auth/me").status_code == 401
 

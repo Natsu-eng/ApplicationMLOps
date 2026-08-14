@@ -41,11 +41,11 @@ export default function Register() {
         tagline="Vous devenez propriétaire de l'organisation — vous pourrez ensuite y inviter votre équipe."
       />
 
-      <div className="flex-1 flex items-center justify-center p-6 sm:p-10 bg-slate-50">
+      <div className="flex-1 flex items-center justify-center p-6 sm:p-10 bg-muted">
         <div className="max-w-sm w-full">
           <div className="mb-6">
-            <h1 className="text-2xl font-serif text-slate-900">Créer votre bureau d'études</h1>
-            <p className="text-sm text-slate-500 mt-1">
+            <h1 className="text-2xl font-serif text-foreground">Créer votre bureau d'études</h1>
+            <p className="text-sm text-muted-foreground mt-1">
               Vous devenez propriétaire de l'organisation — vous pourrez ensuite y inviter votre équipe.
             </p>
           </div>
@@ -53,7 +53,7 @@ export default function Register() {
           <Card className="p-6">
             <form onSubmit={handleSubmit} className="space-y-4">
               <div>
-                <label htmlFor="organization_name" className="block text-sm text-slate-600 mb-1">
+                <label htmlFor="organization_name" className="block text-sm text-muted-foreground mb-1">
                   Nom du bureau d'études
                 </label>
                 <Input
@@ -67,7 +67,7 @@ export default function Register() {
               </div>
 
               <div>
-                <label htmlFor="nom" className="block text-sm text-slate-600 mb-1">
+                <label htmlFor="nom" className="block text-sm text-muted-foreground mb-1">
                   Votre nom
                 </label>
                 <Input
@@ -81,7 +81,7 @@ export default function Register() {
               </div>
 
               <div>
-                <label htmlFor="email" className="block text-sm text-slate-600 mb-1">
+                <label htmlFor="email" className="block text-sm text-muted-foreground mb-1">
                   Email
                 </label>
                 <Input
@@ -95,7 +95,7 @@ export default function Register() {
               </div>
 
               <div>
-                <label htmlFor="password" className="block text-sm text-slate-600 mb-1">
+                <label htmlFor="password" className="block text-sm text-muted-foreground mb-1">
                   Mot de passe
                 </label>
                 <Input
@@ -111,7 +111,7 @@ export default function Register() {
               </div>
 
               {error && (
-                <p className="text-sm text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2">
+                <p className="text-sm text-destructive bg-destructive/10 border border-destructive/20 rounded-lg px-3 py-2">
                   {error}
                 </p>
               )}
@@ -122,7 +122,7 @@ export default function Register() {
             </form>
           </Card>
 
-          <p className="text-center text-sm text-slate-500 mt-4">
+          <p className="text-center text-sm text-muted-foreground mt-4">
             Déjà un compte ?{" "}
             <Link to="/login" className="text-primary hover:text-primary/80 font-medium">
               Se connecter

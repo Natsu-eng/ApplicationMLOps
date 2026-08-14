@@ -98,10 +98,11 @@ export function ColorIconBadge({
 }: {
   icon: LucideIcon;
   color: AccentColor;
-  size?: "sm" | "md";
+  size?: "sm" | "md" | "lg";
 }) {
-  const boxClass = size === "sm" ? "h-8 w-8 rounded-lg" : "h-10 w-10 rounded-xl";
-  const iconSize = size === "sm" ? 15 : 18;
+  const boxClass =
+    size === "sm" ? "h-8 w-8 rounded-lg" : size === "lg" ? "h-12 w-12 rounded-2xl" : "h-10 w-10 rounded-xl";
+  const iconSize = size === "sm" ? 15 : size === "lg" ? 22 : 18;
   return (
     <div
       className={`${boxClass} border flex items-center justify-center flex-shrink-0 transition-transform duration-200 group-hover:scale-110 group-hover:-rotate-3 ${ACCENT_CLASSES[color]}`}

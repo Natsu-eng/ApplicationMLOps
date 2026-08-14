@@ -17,14 +17,14 @@ export function Tooltip({ text }: { text: string }) {
       <button
         type="button"
         aria-label="Aide"
-        className="text-slate-400 hover:text-primary transition-colors"
+        className="text-muted-foreground hover:text-primary transition-colors"
       >
         <Info size={12} />
       </button>
       {open && (
         <span
           role="tooltip"
-          className="absolute z-20 bottom-full left-1/2 -translate-x-1/2 mb-2 w-56 rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-xs text-slate-200 shadow-xl"
+          className="absolute z-20 bottom-full left-1/2 -translate-x-1/2 mb-2 w-56 rounded-lg border border-foreground bg-foreground px-3 py-2 text-xs text-card shadow-xl"
         >
           {text}
         </span>

@@ -60,7 +60,6 @@ class ModelSpec:
     build_estimator: EstimatorBuilder
     hyperparameter_space: HyperparameterSpace
     explainer_kind: ExplainerKind
-    requires_scaling: bool  # déclaratif — build_preprocessor scale déjà tout inconditionnellement (Lot 5, Phase 1)
     is_default: bool  # fait partie du sous-ensemble lancé par défaut (stratégie produit "B")
     # Rééquilibrage des classes (lot déséquilibre) — déclaratif, un seul mécanisme
     # pour tout le catalogue : `sample_weight` passé à `.fit()`, mathématiquement
@@ -236,7 +235,6 @@ MODEL_REGISTRY: dict[str, ModelSpec] = {
         build_estimator=_build_lightgbm,
         hyperparameter_space=_lightgbm_space,
         explainer_kind="tree",
-        requires_scaling=False,
         is_default=True,
         supports_rebalancing=True,
     ),
@@ -248,7 +246,6 @@ MODEL_REGISTRY: dict[str, ModelSpec] = {
         build_estimator=_build_xgboost,
         hyperparameter_space=_xgboost_space,
         explainer_kind="tree",
-        requires_scaling=False,
         is_default=True,
         supports_rebalancing=True,
     ),
@@ -260,7 +257,6 @@ MODEL_REGISTRY: dict[str, ModelSpec] = {
         build_estimator=_build_catboost,
         hyperparameter_space=_catboost_space,
         explainer_kind="tree",
-        requires_scaling=False,
         is_default=True,
         supports_rebalancing=True,
     ),
@@ -272,7 +268,6 @@ MODEL_REGISTRY: dict[str, ModelSpec] = {
         build_estimator=_build_random_forest,
         hyperparameter_space=_random_forest_space,
         explainer_kind="tree",
-        requires_scaling=False,
         is_default=True,  # sous-ensemble par défaut, stratégie produit "B" — boosters + RandomForest
         supports_rebalancing=True,
     ),
@@ -284,7 +279,6 @@ MODEL_REGISTRY: dict[str, ModelSpec] = {
         build_estimator=_build_extra_trees,
         hyperparameter_space=_extra_trees_space,
         explainer_kind="tree",
-        requires_scaling=False,
         is_default=False,  # disponible, activable en mode expert (Lot E)
         supports_rebalancing=True,
     ),
@@ -296,7 +290,6 @@ MODEL_REGISTRY: dict[str, ModelSpec] = {
         build_estimator=_build_linear_reg,
         hyperparameter_space=_linear_reg_space,
         explainer_kind="linear",
-        requires_scaling=True,
         is_default=False,
         supports_rebalancing=True,
     ),
@@ -308,7 +301,6 @@ MODEL_REGISTRY: dict[str, ModelSpec] = {
         build_estimator=_build_svm,
         hyperparameter_space=_svm_space,
         explainer_kind="kernel",
-        requires_scaling=True,
         is_default=False,
         supports_rebalancing=True,
     ),
@@ -320,7 +312,6 @@ MODEL_REGISTRY: dict[str, ModelSpec] = {
         build_estimator=_build_knn,
         hyperparameter_space=_knn_space,
         explainer_kind="kernel",
-        requires_scaling=True,
         is_default=False,
         # Seul modèle du catalogue sans notion de pondération d'échantillon : le
         # vote par plus proches voisins n'a pas de paramètre `sample_weight` en
@@ -340,7 +331,6 @@ MODEL_REGISTRY: dict[str, ModelSpec] = {
         build_estimator=_build_naive_bayes,
         hyperparameter_space=_naive_bayes_space,
         explainer_kind="kernel",
-        requires_scaling=True,
         is_default=False,
         supports_rebalancing=True,
     ),

@@ -360,3 +360,72 @@ def test_worker_data_leakage_message_unaffected_by_safe_translation(db_session, 
     refreshed = db_session.query(TrainingJob).filter(TrainingJob.id == job.id).first()
     assert refreshed.status == "failed"
     assert refreshed.error_message == "Fuite détectée entre train et test sur 3 groupe(s) de la colonne 'groupe'"
+
+
+def test_worker_training_aborted_error_message_surfaced_verbatim(db_session, monkeypatch):
+    """H7 (AUDIT_ROADMAP.md) : `TrainingAbortedError` (ex. "Dataset
+    introuvable ou non prêt") porte déjà un message rédigé pour
+    l'utilisateur — ne doit plus être remplacé par le message générique du
+    filet `except Exception`."""
+    from services.ml_preprocessing import TrainingAbortedError
+
+    def _raise(*args, **kwargs):
+        raise TrainingAbortedError("Dataset introuvable ou non prêt")
+
+    monkeypatch.setattr(training_worker_module, "train_and_evaluate", _raise)
+
+    job = _make_job(db_session, None, feature_columns=["x"])
+    run_training_job(job.id)
+
+    db_session.expire_all()
+    refreshed = db_session.query(TrainingJob).filter(TrainingJob.id == job.id).first()
+    assert refreshed.status == "failed"
+    assert refreshed.error_message == "Dataset introuvable ou non prêt"
+
+
+def test_worker_bare_runtime_error_still_translated_to_safe_generic_message(db_session, monkeypatch):
+    """Garde-fou de non-régression : un `RuntimeError` NU (pas
+    `TrainingAbortedError`) — ex. une vraie erreur technique de bibliothèque
+    — doit continuer à être traduit vers le message générique sûr, jamais
+    surfacé tel quel. Un premier essai de H7 attrapait `RuntimeError` sans
+    distinction et cassait précisément cette garantie (voir
+    `test_worker_never_leaks_raw_traceback_on_training_failure`)."""
+
+    def _raise(*args, **kwargs):
+        raise RuntimeError("détail technique interne, chemin de fichier E:\\...\\core.py")
+
+    monkeypatch.setattr(training_worker_module, "train_and_evaluate", _raise)
+
+    job = _make_job(db_session, None, feature_columns=["x"])
+    run_training_job(job.id)
+
+    db_session.expire_all()
+    refreshed = db_session.query(TrainingJob).filter(TrainingJob.id == job.id).first()
+    assert refreshed.status == "failed"
+    assert "core.py" not in refreshed.error_message
+    assert "E:\\" not in refreshed.error_message
+    assert refreshed.error_message == _user_safe_error_message(RuntimeError("x"))
+
+
+def test_worker_feature_engineering_spec_error_surfaced_verbatim(db_session, monkeypatch):
+    """H7 (AUDIT_ROADMAP.md) : `FeatureEngineeringSpecError` porte déjà un
+    message français sûr (ex. colonne source absente) — ne doit plus être
+    absorbé par le message générique."""
+    from services.feature_engineering import FeatureEngineeringSpecError
+
+    def _raise(*args, **kwargs):
+        raise FeatureEngineeringSpecError("Colonne source 'date' absente du dataset")
+
+    monkeypatch.setattr(training_worker_module, "apply_upstream_feature_engineering", _raise)
+
+    job = _make_job(
+        db_session,
+        {"version": 1, "upstream": [{"type": "datetime_decompose", "source_column": "date"}], "pipeline": {}},
+        feature_columns=["x"],
+    )
+    run_training_job(job.id)
+
+    db_session.expire_all()
+    refreshed = db_session.query(TrainingJob).filter(TrainingJob.id == job.id).first()
+    assert refreshed.status == "failed"
+    assert refreshed.error_message == "Colonne source 'date' absente du dataset"

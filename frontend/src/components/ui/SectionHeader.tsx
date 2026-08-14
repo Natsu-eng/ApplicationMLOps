@@ -22,7 +22,7 @@ export function SectionHeader({
   return (
     <div className="flex items-center gap-2.5 mb-3">
       <ColorIconBadge icon={icon} color={color} size="sm" />
-      <span className="text-sm font-medium text-slate-800">
+      <span className="text-sm font-medium text-foreground">
         {help ? <LabelWithHelp label={label} help={help} /> : label}
       </span>
     </div>

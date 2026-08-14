@@ -53,16 +53,16 @@ export function Heatmap({ xLabels, yLabels, matrix, variant = "sequential", form
   const rotateLabels = xLabels.length > 6;
 
   return (
-    <div className="overflow-x-auto rounded-lg border border-slate-100">
+    <div className="overflow-x-auto rounded-lg border border-border">
       <div
-        className="inline-grid gap-px bg-slate-100 p-px"
+        className="inline-grid gap-px bg-border p-px"
         style={{ gridTemplateColumns: `auto repeat(${xLabels.length}, minmax(34px, 1fr))` }}
       >
-        <div className="bg-white" />
+        <div className="bg-card" />
         {xLabels.map((label) => (
           <div
             key={label}
-            className={`bg-white text-[9px] text-slate-500 px-0.5 pb-1 truncate ${
+            className={`bg-card text-[9px] text-muted-foreground px-0.5 pb-1 truncate ${
               rotateLabels ? "[writing-mode:vertical-rl] rotate-180 text-left max-h-20" : "text-center"
             }`}
             title={label}
@@ -72,7 +72,7 @@ export function Heatmap({ xLabels, yLabels, matrix, variant = "sequential", form
         ))}
         {yLabels.map((yLabel, i) => (
           <Fragment key={yLabel}>
-            <div className="bg-white text-[9px] text-slate-500 pr-1.5 flex items-center justify-end truncate max-w-24" title={yLabel}>
+            <div className="bg-card text-[9px] text-muted-foreground pr-1.5 flex items-center justify-end truncate max-w-24" title={yLabel}>
               {yLabel}
             </div>
             {matrix[i].map((value, j) => {

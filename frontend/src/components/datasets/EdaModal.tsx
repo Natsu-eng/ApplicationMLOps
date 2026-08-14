@@ -35,7 +35,9 @@ import { Modal } from "../ui/Modal";
 import { Heatmap } from "../ui/Heatmap";
 import { BoxPlotChart, type BoxPlotDatum } from "../ui/BoxPlot";
 import { SectionHeader } from "../ui/SectionHeader";
+import { Select } from "../ui/Select";
 import { Tabs } from "../ui/Tabs";
+import { accentSurfaceClass, accentValueTextClass } from "../ui/ColorIconBadge";
 import { StatTile, StatTileRow } from "../dashboard/StatTile";
 import { DataQualityWarnings } from "../training/DataQualityWarnings";
 import {
@@ -85,16 +87,16 @@ function formatStatNumber(value: number): string {
 function MissingRateCell({ pct }: { pct: number }) {
   const severity = pct === 0 ? "none" : pct <= 10 ? "low" : pct <= 30 ? "medium" : "high";
   const styles: Record<string, { text: string; bar: string }> = {
-    none: { text: "text-slate-400", bar: "bg-slate-200" },
-    low: { text: "text-slate-600", bar: "bg-blue-400" },
-    medium: { text: "text-amber-600", bar: "bg-amber-400" },
-    high: { text: "text-rose-600", bar: "bg-rose-500" },
+    none: { text: "text-muted-foreground", bar: "bg-muted-foreground/30" },
+    low: { text: "text-muted-foreground", bar: "bg-chart-2" },
+    medium: { text: "text-warning", bar: "bg-warning" },
+    high: { text: "text-destructive", bar: "bg-destructive" },
   };
   const s = styles[severity];
   return (
     <div className="flex items-center justify-end gap-2">
-      {severity === "high" && <AlertTriangle size={11} className="flex-shrink-0 text-rose-500" />}
-      <div className="w-12 h-1.5 rounded-full bg-slate-100 overflow-hidden flex-shrink-0">
+      {severity === "high" && <AlertTriangle size={11} className="flex-shrink-0 text-destructive" />}
+      <div className="w-12 h-1.5 rounded-full bg-muted overflow-hidden flex-shrink-0">
         <div className={`h-full rounded-full ${s.bar}`} style={{ width: `${Math.min(100, pct)}%` }} />
       </div>
       <span className={`tabular-nums text-xs font-medium w-9 text-right ${s.text}`}>{pct.toFixed(0)}%</span>
@@ -182,9 +184,9 @@ export default function EdaModal({ dataset, onClose }: { dataset: DatasetSummary
   }, [eda]);
 
   return (
-    <Modal title={`${dataset.name} — Exploration`} onClose={onClose} size="xl">
-      {error && <p className="text-sm text-rose-600">{error}</p>}
-      {!eda && !error && <p className="text-sm text-slate-500">Chargement…</p>}
+    <Modal title={`${dataset.name} — Exploration`} onClose={onClose} size="2xl">
+      {error && <p className="text-sm text-destructive">{error}</p>}
+      {!eda && !error && <p className="text-sm text-muted-foreground">Chargement…</p>}
 
       {eda && (
         <div className="space-y-5">
@@ -196,8 +198,8 @@ export default function EdaModal({ dataset, onClose }: { dataset: DatasetSummary
           </StatTileRow>
 
           {avgMissingPct !== null && avgMissingPct > 0 && (
-            <p className="text-xs text-slate-500 -mt-3">
-              Taux de valeurs manquantes moyen : <span className="tabular-nums font-medium text-slate-700">{avgMissingPct.toFixed(1)}%</span>
+            <p className="text-xs text-muted-foreground -mt-3">
+              Taux de valeurs manquantes moyen : <span className="tabular-nums font-medium text-foreground/90">{avgMissingPct.toFixed(1)}%</span>
             </p>
           )}
 
@@ -208,14 +210,14 @@ export default function EdaModal({ dataset, onClose }: { dataset: DatasetSummary
           <Tabs items={TABS} active={activeTab} onChange={setActiveTab} />
 
           {activeTab === "overview" && (
-            <Card className="p-5">
+            <Card className={`p-5 ${accentSurfaceClass("blue")}`}>
               <SectionHeader
                 icon={Table2}
                 color="blue"
                 label="Résumé par colonne"
                 help="Un coup d'œil sur chaque variable : type détecté, part de valeurs manquantes, et un résumé adapté (moyenne/écart-type pour le numérique, cardinalité/valeur la plus fréquente pour le catégoriel)."
               />
-              <div className="overflow-x-auto rounded-xl border border-slate-200">
+              <div className="overflow-x-auto rounded-xl border border-border">
                 <table className="min-w-full text-sm border-separate border-spacing-0">
                   <thead>
                     <tr className="bg-muted">
@@ -229,25 +231,23 @@ export default function EdaModal({ dataset, onClose }: { dataset: DatasetSummary
                     {eda.column_stats.map((c, i) => (
                       <tr
                         key={c.name}
-                        className={`transition-colors hover:bg-primary/5 ${i % 2 === 1 ? "bg-slate-50/60" : ""}`}
+                        className={`transition-colors hover:bg-primary/5 ${i % 2 === 1 ? "bg-muted/60" : ""}`}
                       >
-                        <td className="px-3.5 py-2.5 font-medium text-slate-800 border-t border-slate-100">{c.name}</td>
-                        <td className="px-3.5 py-2.5 border-t border-slate-100">
+                        <td className="px-3.5 py-2.5 font-medium text-foreground border-t border-border/60">{c.name}</td>
+                        <td className="px-3.5 py-2.5 border-t border-border/60">
                           <span
-                            className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium ${
-                              c.kind === "numeric"
-                                ? "bg-blue-50 text-blue-600 border border-blue-100"
-                                : "bg-violet-50 text-violet-600 border border-violet-100"
-                            }`}
+                            className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium border ${accentSurfaceClass(
+                              c.kind === "numeric" ? "blue" : "violet"
+                            )} ${accentValueTextClass(c.kind === "numeric" ? "blue" : "violet")}`}
                           >
                             {c.kind === "numeric" ? <Hash size={10} /> : <Tags size={10} />}
                             {c.dtype}
                           </span>
                         </td>
-                        <td className="px-3.5 py-2.5 border-t border-slate-100">
+                        <td className="px-3.5 py-2.5 border-t border-border/60">
                           <MissingRateCell pct={c.missing_pct} />
                         </td>
-                        <td className="px-3.5 py-2.5 text-slate-500 border-t border-slate-100">
+                        <td className="px-3.5 py-2.5 text-muted-foreground border-t border-border/60">
                           {c.kind === "numeric"
                             ? `moyenne ${c.mean !== null && c.mean !== undefined ? formatStatNumber(c.mean) : "—"} · écart-type ${c.std !== null && c.std !== undefined ? formatStatNumber(c.std) : "—"}`
                             : `${c.n_unique} valeurs · fréquente : ${c.top_values?.[0]?.value ?? "—"}`}
@@ -261,7 +261,7 @@ export default function EdaModal({ dataset, onClose }: { dataset: DatasetSummary
           )}
 
           {activeTab === "quality" && (
-            <Card className="p-5">
+            <Card className={`p-5 ${accentSurfaceClass("teal")}`}>
               <SectionHeader
                 icon={ShieldCheck}
                 color="teal"
@@ -269,16 +269,15 @@ export default function EdaModal({ dataset, onClose }: { dataset: DatasetSummary
                 help="Détection automatique des colonnes sans valeur prédictive (identifiants, constantes, doublons), des variables numériques mal typées, et d'autres signaux à connaître avant d'entraîner un modèle. Choisissez une cible ci-dessous pour affiner l'analyse (fuite de données, déséquilibre des classes)."
               />
               <div className="mb-3">
-                <label className="block text-xs text-slate-500 mb-1">
-                  Cible envisagée <span className="text-slate-400">(optionnel — affine l'analyse)</span>
+                <label className="block text-xs text-muted-foreground mb-1">
+                  Cible envisagée <span className="text-muted-foreground">(optionnel — affine l'analyse)</span>
                 </label>
-                <select
+                <Select
                   value={targetColumn}
                   onChange={(e) => {
                     setTargetColumn(e.target.value);
                     setFeatureForTarget("");
                   }}
-                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-primary/40"
                 >
                   <option value="">Aucune — analyse structurelle uniquement</option>
                   {eda.column_stats.map((c) => (
@@ -286,7 +285,7 @@ export default function EdaModal({ dataset, onClose }: { dataset: DatasetSummary
                       {c.name} ({c.dtype})
                     </option>
                   ))}
-                </select>
+                </Select>
               </div>
               <DataQualityWarnings datasetId={dataset.id} targetColumn={targetColumn || undefined} />
             </Card>
@@ -295,7 +294,7 @@ export default function EdaModal({ dataset, onClose }: { dataset: DatasetSummary
           {activeTab === "correlations" && (
             <div className="space-y-5">
               {eda.correlation_matrix.columns.length >= 2 && (
-                <Card className="p-5">
+                <Card className={`p-5 ${accentSurfaceClass("blue")}`}>
                   <SectionHeader
                     icon={GitCompareArrows}
                     color="blue"
@@ -312,7 +311,7 @@ export default function EdaModal({ dataset, onClose }: { dataset: DatasetSummary
               )}
 
               {eda.categorical_correlation_matrix.columns.length >= 2 && (
-                <Card className="p-5">
+                <Card className={`p-5 ${accentSurfaceClass("violet")}`}>
                   <SectionHeader
                     icon={GitCompareArrows}
                     color="violet"
@@ -329,7 +328,7 @@ export default function EdaModal({ dataset, onClose }: { dataset: DatasetSummary
               )}
 
               {eda.top_correlated_pairs.length > 0 && (
-                <Card className="p-5">
+                <Card className={`p-5 ${accentSurfaceClass("amber")}`}>
                   <SectionHeader
                     icon={GitCompareArrows}
                     color="amber"
@@ -350,9 +349,9 @@ export default function EdaModal({ dataset, onClose }: { dataset: DatasetSummary
                       if (points.length === 0) return null;
                       return (
                         <div key={`${pair.x_column}-${pair.y_column}`}>
-                          <p className="text-xs text-slate-500 mb-1">
+                          <p className="text-xs text-muted-foreground mb-1">
                             {pair.x_column} × {pair.y_column}{" "}
-                            <span className="text-slate-600">(r = {pair.correlation?.toFixed(2) ?? "—"})</span>
+                            <span className="text-muted-foreground">(r = {pair.correlation?.toFixed(2) ?? "—"})</span>
                           </p>
                           <ResponsiveContainer width="100%" height={180}>
                             <ScatterChart margin={{ left: 0, right: 12, bottom: 8 }}>
@@ -387,7 +386,7 @@ export default function EdaModal({ dataset, onClose }: { dataset: DatasetSummary
           {activeTab === "distributions" && (
             <div className="space-y-5">
               {missingData.length > 0 && (
-                <Card className="p-5">
+                <Card className={`p-5 ${accentSurfaceClass("amber")}`}>
                   <SectionHeader
                     icon={AlertTriangle}
                     color="amber"
@@ -407,7 +406,7 @@ export default function EdaModal({ dataset, onClose }: { dataset: DatasetSummary
               )}
 
               {outlierBoxData.length > 0 && (
-                <Card className="p-5">
+                <Card className={`p-5 ${accentSurfaceClass("violet")}`}>
                   <SectionHeader
                     icon={BarChart3}
                     color="violet"
@@ -418,24 +417,20 @@ export default function EdaModal({ dataset, onClose }: { dataset: DatasetSummary
                 </Card>
               )}
 
-              <Card className="p-5">
+              <Card className={`p-5 ${accentSurfaceClass("blue")}`}>
                 <SectionHeader
                   icon={BarChart3}
                   color="blue"
                   label="Distribution d'une variable"
                   help="Histogramme d'une colonne au choix — bins réguliers pour le numérique, comptage des modalités les plus fréquentes pour le catégoriel."
                 />
-                <select
-                  value={selectedColumn}
-                  onChange={(e) => setSelectedColumn(e.target.value)}
-                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 mb-3 focus:outline-none focus:ring-2 focus:ring-primary/40"
-                >
+                <Select value={selectedColumn} onChange={(e) => setSelectedColumn(e.target.value)} className="mb-3">
                   {eda.column_stats.map((c) => (
                     <option key={c.name} value={c.name}>
                       {c.name} ({c.dtype})
                     </option>
                   ))}
-                </select>
+                </Select>
                 {histogramData.length > 0 && (
                   <ResponsiveContainer width="100%" height={220}>
                     <BarChart data={histogramData} margin={{ left: 0, bottom: 8 }}>
@@ -461,20 +456,19 @@ export default function EdaModal({ dataset, onClose }: { dataset: DatasetSummary
 
           {activeTab === "target" && (
             <div className="space-y-5">
-              <Card className="p-5">
+              <Card className={`p-5 ${accentSurfaceClass("teal")}`}>
                 <SectionHeader
                   icon={TargetIcon}
                   color="teal"
                   label="Analyser par rapport à une cible"
                   help="Choisir une colonne cible débloque sa distribution et le pouvoir discriminant des autres variables par rapport à elle."
                 />
-                <select
+                <Select
                   value={targetColumn}
                   onChange={(e) => {
                     setTargetColumn(e.target.value);
                     setFeatureForTarget("");
                   }}
-                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-primary/40"
                 >
                   <option value="">Aucune — choisir une cible</option>
                   {eda.column_stats.map((c) => (
@@ -482,18 +476,18 @@ export default function EdaModal({ dataset, onClose }: { dataset: DatasetSummary
                       {c.name} ({c.dtype})
                     </option>
                   ))}
-                </select>
+                </Select>
               </Card>
 
               {!targetColumn && (
-                <p className="text-xs text-slate-400 text-center py-6">
+                <p className="text-xs text-muted-foreground text-center py-6">
                   Choisissez une cible ci-dessus pour voir sa distribution et le pouvoir discriminant des autres
                   variables.
                 </p>
               )}
 
               {targetColumn && targetDistributionData.length > 0 && (
-                <Card className="p-5">
+                <Card className={`p-5 ${accentSurfaceClass("teal")}`}>
                   <SectionHeader
                     icon={BarChart3}
                     color="teal"
@@ -513,7 +507,7 @@ export default function EdaModal({ dataset, onClose }: { dataset: DatasetSummary
               )}
 
               {targetColumn && numericFeatureOptions.length > 0 && (
-                <Card className="p-5">
+                <Card className={`p-5 ${accentSurfaceClass("amber")}`}>
                   <SectionHeader
                     icon={GitCompareArrows}
                     color="amber"
@@ -523,7 +517,7 @@ export default function EdaModal({ dataset, onClose }: { dataset: DatasetSummary
                   <select
                     value={featureForTarget}
                     onChange={(e) => setFeatureForTarget(e.target.value)}
-                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 mb-3 focus:outline-none focus:ring-2 focus:ring-primary/40"
+                    className="w-full rounded-lg border border-input bg-white px-3 py-2 text-sm text-foreground mb-3 focus:outline-none focus:ring-2 focus:ring-primary/40"
                   >
                     <option value="">Choisir une variable numérique…</option>
                     {numericFeatureOptions.map((c) => (

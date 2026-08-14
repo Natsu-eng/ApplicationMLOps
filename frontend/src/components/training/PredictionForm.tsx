@@ -3,8 +3,9 @@ import { Sparkles, Wand2 } from "lucide-react";
 import { ApiError, api, type FeatureSchemaEntry, type PredictionResult, type TaskType } from "../../api/client";
 import { Button } from "../ui/Button";
 import { Card } from "../ui/Card";
+import { accentSurfaceClass } from "../ui/ColorIconBadge";
 import { Input } from "../ui/Input";
-import { LabelWithHelp } from "../ui/Tooltip";
+import { SectionHeader } from "../ui/SectionHeader";
 import { LocalExplanationPanel } from "./LocalExplanation";
 import { formatMetricValue } from "../../utils/format";
 
@@ -51,22 +52,26 @@ export default function PredictionForm({
   if (featureSchema.length === 0) return null;
 
   return (
-    <Card className="p-5">
-      <p className="text-xs uppercase tracking-wide text-slate-500 mb-2 flex items-center gap-1.5">
-        <Wand2 size={12} className="text-primary" />
-        <LabelWithHelp
-          label="Tester une prédiction"
-          help="Saisissez des valeurs pour les variables utilisées à l'entraînement — le modèle calcule sa prédiction sur ce cas précis, en temps réel."
-        />
-      </p>
+    <Card className={`p-5 ${accentSurfaceClass("amber")}`}>
+      <SectionHeader
+        icon={Wand2}
+        color="amber"
+        label="Tester une prédiction"
+        help="Saisissez des valeurs pour les variables utilisées à l'entraînement — le modèle calcule sa prédiction sur ce cas précis, en temps réel."
+      />
 
       <form onSubmit={handleSubmit} className="grid sm:grid-cols-3 gap-3 items-start mb-3">
         {featureSchema.map((field) => (
           <div key={field.name}>
-            <label className="block text-xs text-slate-600 mb-1 truncate" title={field.name}>
+            <label
+              htmlFor={`predict-field-${field.name}`}
+              className="block text-xs text-muted-foreground mb-1 truncate"
+              title={field.name}
+            >
               {field.name}
             </label>
             <Input
+              id={`predict-field-${field.name}`}
               type={isNumericDtype(field.dtype) ? "number" : "text"}
               step="any"
               required
@@ -80,13 +85,13 @@ export default function PredictionForm({
         </Button>
       </form>
 
-      {error && <p className="text-sm text-rose-600">{error}</p>}
+      {error && <p className="text-sm text-destructive">{error}</p>}
 
       {result && (
         <div className="rounded-xl border border-primary/20 bg-primary/10 px-4 py-3">
           <div className="flex items-center gap-2 mb-1">
             <Sparkles size={14} className="text-primary" />
-            <p className="text-sm text-slate-800">
+            <p className="text-sm text-foreground">
               {taskType === "regression" ? (
                 <>
                   Valeur prédite :{" "}
@@ -103,7 +108,7 @@ export default function PredictionForm({
           </div>
 
           {result.interval && (
-            <p className="text-xs text-slate-500 tabular-nums">
+            <p className="text-xs text-muted-foreground tabular-nums">
               Intervalle de confiance à {Math.round(result.interval.confidence * 100)} % : entre{" "}
               {formatMetricValue(result.interval.low)} et {formatMetricValue(result.interval.high)}
             </p>
@@ -115,14 +120,14 @@ export default function PredictionForm({
                 .sort(([, a], [, b]) => b - a)
                 .map(([label, proba]) => (
                   <div key={label} className="flex items-center gap-2">
-                    <span className="text-xs text-slate-500 w-24 truncate">{label}</span>
-                    <div className="flex-1 h-1.5 rounded-full bg-slate-100 overflow-hidden">
+                    <span className="text-xs text-muted-foreground w-24 truncate">{label}</span>
+                    <div className="flex-1 h-1.5 rounded-full bg-muted overflow-hidden">
                       <div
                         className="h-full rounded-full bg-primary"
                         style={{ width: `${proba * 100}%` }}
                       />
                     </div>
-                    <span className="text-xs text-slate-400 w-10 text-right tabular-nums">
+                    <span className="text-xs text-muted-foreground w-10 text-right tabular-nums">
                       {(proba * 100).toFixed(0)} %
                     </span>
                   </div>

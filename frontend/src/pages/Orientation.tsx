@@ -16,8 +16,8 @@ export default function Orientation() {
         <p className="text-xs uppercase tracking-widest text-primary font-semibold mb-2">
           Bonjour, {user.nom.split(" ")[0]}
         </p>
-        <h1 className="text-2xl font-serif text-slate-900 mb-2">Que voulez-vous faire aujourd'hui ?</h1>
-        <p className="text-sm text-slate-500">Choisissez votre objectif — la méthode s'adapte, pas l'inverse.</p>
+        <h1 className="text-2xl font-serif text-foreground mb-2">Que voulez-vous faire aujourd'hui ?</h1>
+        <p className="text-sm text-muted-foreground">Choisissez votre objectif — la méthode s'adapte, pas l'inverse.</p>
       </div>
 
       <div className="grid gap-6 sm:grid-cols-3">

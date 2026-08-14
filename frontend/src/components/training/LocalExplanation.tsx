@@ -13,7 +13,7 @@ export function LocalExplanationPanel({ explanation }: { explanation: LocalExpla
 
   if (explanation.status === "degraded" || explanation.base_value === null || explanation.base_value === undefined) {
     return (
-      <p className="text-xs text-slate-400 italic mt-2">
+      <p className="text-xs text-muted-foreground italic mt-2">
         {explanation.message ?? "Explication détaillée non disponible pour cette prédiction."}
       </p>
     );
@@ -32,7 +32,7 @@ export function LocalExplanationPanel({ explanation }: { explanation: LocalExpla
 
   return (
     <div className="mt-3 pt-3 border-t border-primary/10">
-      <p className="text-xs text-slate-600 mb-2">
+      <p className="text-xs text-muted-foreground mb-2">
         <LabelWithHelp
           label="Pourquoi cette prédiction ?"
           help="Point de départ (moyenne du modèle sur l'ensemble d'entraînement), puis l'effet de chaque variable pour CE cas précis — en rouge ce qui pousse la prédiction vers le haut, en bleu ce qui la pousse vers le bas. Contrairement à l'importance moyenne (page Résultats), c'est propre à cette observation."
@@ -44,11 +44,11 @@ export function LocalExplanationPanel({ explanation }: { explanation: LocalExpla
           const positive = r.contribution >= 0;
           return (
             <div key={r.label} className="flex items-center gap-2">
-              <span className="text-xs text-slate-500 w-32 truncate flex-shrink-0" title={r.label}>
+              <span className="text-xs text-muted-foreground w-32 truncate flex-shrink-0" title={r.label}>
                 {r.label}
               </span>
               <div className="flex-1 h-4 flex items-center">
-                <div className="relative w-full h-1.5 rounded-full bg-slate-100">
+                <div className="relative w-full h-1.5 rounded-full bg-muted">
                   <div
                     className="absolute top-0 h-full rounded-full"
                     style={{
@@ -71,7 +71,7 @@ export function LocalExplanationPanel({ explanation }: { explanation: LocalExpla
           );
         })}
       </div>
-      <p className="text-[11px] text-slate-400 mt-2 tabular-nums">
+      <p className="text-[11px] text-muted-foreground mt-2 tabular-nums">
         Base du modèle : {explanation.base_value.toFixed(3)} → total après effet des variables :{" "}
         {finalValue.toFixed(3)}
       </p>

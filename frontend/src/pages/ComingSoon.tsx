@@ -94,8 +94,8 @@ export default function ComingSoon({ pillarId }: { pillarId: PillarId }) {
         <Badge variant="neutral">
           {pillarId === "unsupervised" ? "ML non supervisé" : "Vision"} · Bientôt disponible
         </Badge>
-        <h1 className="text-2xl font-serif text-slate-900 mt-4 mb-2">{pillar.title}</h1>
-        <p className="text-sm text-slate-600 leading-relaxed mb-8 max-w-lg mx-auto">{pillar.description}</p>
+        <h1 className="text-2xl font-serif text-foreground mt-4 mb-2">{pillar.title}</h1>
+        <p className="text-sm text-muted-foreground leading-relaxed mb-8 max-w-lg mx-auto">{pillar.description}</p>
 
         {features.length > 0 && (
           <div className="grid sm:grid-cols-2 gap-4 mb-8 text-left">
@@ -103,15 +103,15 @@ export default function ComingSoon({ pillarId }: { pillarId: PillarId }) {
               <Card key={feature.title} className="p-4 flex items-start gap-3">
                 <ColorIconBadge icon={feature.icon} color={accentColorForId(i)} size="sm" />
                 <div className="min-w-0">
-                  <p className="text-sm font-medium text-slate-800 mb-1">{feature.title}</p>
-                  <p className="text-xs text-slate-500 leading-relaxed">{feature.description}</p>
+                  <p className="text-sm font-medium text-foreground mb-1">{feature.title}</p>
+                  <p className="text-xs text-muted-foreground leading-relaxed">{feature.description}</p>
                 </div>
               </Card>
             ))}
           </div>
         )}
 
-        <p className="text-sm text-slate-500 mb-6">
+        <p className="text-sm text-muted-foreground mb-6">
           Ce pilier n'est pas encore actif. La prédiction (valeur ou catégorie) est disponible
           dès maintenant depuis l'écran des objectifs.
         </p>

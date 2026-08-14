@@ -20,8 +20,8 @@ from api.core.database import SessionLocal
 from api.core.models import Dataset, MLModel, ModelCandidate, TrainingJob
 from api.core.storage import model_file_path
 from services.datasets import read_dataframe
-from services.feature_engineering import apply_upstream_feature_engineering
-from services.ml_preprocessing import DataLeakageError, split_dataset
+from services.feature_engineering import FeatureEngineeringSpecError, apply_upstream_feature_engineering
+from services.ml_preprocessing import DataLeakageError, TrainingAbortedError, split_dataset
 from services.ml_training import TrainingConfig, train_and_evaluate
 
 logger = logging.getLogger("datalab.training_worker")
@@ -59,6 +59,7 @@ def _make_progress_callback(db, job: TrainingJob):
     def callback(step: str, percent: int) -> None:
         job.progress_step = step
         job.progress_percent = percent
+        job.progress_updated_at = datetime.now(timezone.utc)
         db.commit()
 
     return callback
@@ -76,12 +77,13 @@ def run_training_job(job_id: int) -> None:
 
         job.status = "running"
         job.started_at = datetime.now(timezone.utc)
+        job.progress_updated_at = job.started_at
         db.commit()
 
         try:
             dataset = db.query(Dataset).filter(Dataset.id == job.dataset_id).first()
             if dataset is None or dataset.status != "ready":
-                raise RuntimeError("Dataset introuvable ou non prêt")
+                raise TrainingAbortedError("Dataset introuvable ou non prêt")
 
             from pathlib import Path
 
@@ -206,6 +208,26 @@ def run_training_job(job_id: int) -> None:
             job.finished_at = datetime.now(timezone.utc)
             db.commit()
             logger.warning("[Training] Job %s — fuite détectée : %s", job_id, exc)
+
+        except (TrainingAbortedError, FeatureEngineeringSpecError) as exc:
+            # AUDIT_ROADMAP.md, H7 — ces deux exceptions portent déjà un
+            # message rédigé pour l'utilisateur (français, sans détail
+            # technique interne, voir leurs sites de levée) : avant ce
+            # correctif, elles tombaient dans le filet générique ci-dessous
+            # et étaient remplacées par un message inutile ("raison
+            # technique") qui masquait un diagnostic déjà précis (ex.
+            # "Dataset introuvable ou non prêt", "Colonne source 'x' absente
+            # du dataset"). `TrainingAbortedError` est un type DÉDIÉ (pas un
+            # `RuntimeError` nu, corrigé après un premier essai trop large
+            # qui interceptait aussi de vraies erreurs techniques de
+            # bibliothèque comme les échecs CatBoost, eux aussi des
+            # `RuntimeError`) — seul un code de ce module qui l'a
+            # explicitement levée atteint cette branche.
+            job.status = "failed"
+            job.error_message = str(exc)
+            job.finished_at = datetime.now(timezone.utc)
+            db.commit()
+            logger.warning("[Training] Job %s — échec diagnostiqué : %s", job_id, exc)
 
         except Exception as exc:  # toute erreur d'entraînement ne doit jamais faire planter le worker
             job.status = "failed"

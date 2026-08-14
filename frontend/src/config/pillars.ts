@@ -47,9 +47,12 @@ export const PILLARS: Pillar[] = [
     description:
       "Repérez des profils similaires ou des cas atypiques, sans savoir à l'avance ce que vous cherchez.",
     icon: Shapes,
-    status: "soon",
-    route: "/unsupervised",
-    navItems: [],
+    // Lot 11+ : clustering + profils de segments actifs. Détection
+    // d'anomalies et réduction de dimension restent "à venir" — signalé
+    // honnêtement dans la page elle-même (Clustering.tsx), pas ici.
+    status: "active",
+    route: "/clustering",
+    navItems: [{ to: "/clustering", label: "Clustering", icon: Shapes }],
   },
   {
     id: "vision",

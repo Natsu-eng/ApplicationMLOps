@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { LucideIcon } from "lucide-react";
-import { ColorIconBadge, accentSurfaceClass, type AccentColor } from "../ui/ColorIconBadge";
+import { ColorIconBadge, accentBarClass, type AccentColor } from "../ui/ColorIconBadge";
 
 const REDUCED_MOTION_QUERY = "(prefers-reduced-motion: reduce)";
 
@@ -60,13 +60,16 @@ export function StatTile({
 
   return (
     <div
-      className={`group stat-tile-enter rounded-2xl border shadow-sm p-4 flex items-center gap-3 transition-all duration-200 hover:shadow-md hover:-translate-y-0.5 ${accentSurfaceClass(color)}`}
+      className="group stat-tile-enter overflow-hidden rounded-2xl border border-border/70 bg-card shadow-md shadow-foreground/[0.04] transition-all duration-200 hover:shadow-lg hover:-translate-y-0.5"
       style={{ animationDelay: `${delayMs}ms` }}
     >
-      <ColorIconBadge icon={icon} color={color} />
-      <div className="min-w-0">
-        <p className="text-xl font-semibold text-slate-900 tabular-nums">{displayValue ?? "—"}</p>
-        <p className="text-xs text-slate-600 truncate">{label}</p>
+      <div className={`h-1 ${accentBarClass(color)}`} aria-hidden="true" />
+      <div className="p-4 flex items-center gap-3">
+        <ColorIconBadge icon={icon} color={color} />
+        <div className="min-w-0">
+          <p className="text-xl font-semibold text-foreground tabular-nums">{displayValue ?? "—"}</p>
+          <p className="text-xs text-muted-foreground truncate">{label}</p>
+        </div>
       </div>
     </div>
   );

@@ -12,21 +12,10 @@ import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
 import { ColorIconBadge, accentColorForId } from "../components/ui/ColorIconBadge";
+import { PageHeader } from "../components/ui/PageHeader";
 import { SectionHeader } from "../components/ui/SectionHeader";
+import { JobStatusBadge } from "../components/ui/StatusBadge";
 import { formatDateTime, formatMetricLabel, formatMetricValue } from "../utils/format";
-
-function jobStatusBadge(status: TrainingJobSummary["status"]) {
-  switch (status) {
-    case "completed":
-      return <Badge variant="success" dot>Terminé</Badge>;
-    case "failed":
-      return <Badge variant="danger" dot>Échec</Badge>;
-    case "running":
-      return <Badge variant="primary" dot pulse>En cours</Badge>;
-    default:
-      return <Badge variant="neutral" dot>En file</Badge>;
-  }
-}
 
 const CONFIG_ROWS: { key: string; label: string }[] = [
   { key: "test_size", label: "Part du jeu de test" },
@@ -60,6 +49,7 @@ export default function TrainingHistory() {
   const [comparing, setComparing] = useState(false);
   const [compareError, setCompareError] = useState<string | null>(null);
   const [registry, setRegistry] = useState<ModelRegistryEntry[] | null>(null);
+  const [registryError, setRegistryError] = useState<string | null>(null);
 
   const load = useCallback(() => {
     api.training
@@ -68,8 +58,14 @@ export default function TrainingHistory() {
       .catch((err) => setError(err instanceof ApiError ? err.message : "Impossible de charger l'historique"));
     api.training
       .registry()
-      .then((r) => setRegistry(r.entries))
-      .catch(() => setRegistry([]));
+      .then((r) => {
+        setRegistry(r.entries);
+        setRegistryError(null);
+      })
+      // AUDIT_ROADMAP.md, H4/D3 : un échec ici faisait disparaître le
+      // panneau "Registre de modèles" sans aucun indice — indiscernable de
+      // "rien n'a encore été promu".
+      .catch((err) => setRegistryError(err instanceof ApiError ? err.message : "Registre indisponible"));
   }, []);
 
   useEffect(() => {
@@ -112,23 +108,22 @@ export default function TrainingHistory() {
 
   return (
     <AppShell pillarId="supervised">
-      <div className="mb-6 flex items-end justify-between gap-4">
-        <div>
-          <p className="text-xs uppercase tracking-widest text-primary font-semibold mb-1">
-            Historique
-          </p>
-          <h1 className="text-2xl font-serif text-slate-900">Entraînements</h1>
-          <p className="text-sm text-slate-500 mt-1">
-            Sélectionnez au moins deux entraînements pour les comparer côte à côte.
-          </p>
-        </div>
-        <Button onClick={handleCompare} disabled={selected.size < 2 || comparing}>
-          <GitCompareArrows size={15} />
-          {comparing ? "Comparaison…" : `Comparer (${selected.size})`}
-        </Button>
-      </div>
+      <PageHeader
+        eyebrow="Historique"
+        title="Entraînements"
+        description="Sélectionnez au moins deux entraînements pour les comparer côte à côte."
+        icon={History}
+        color="amber"
+        action={
+          <Button onClick={handleCompare} disabled={selected.size < 2 || comparing}>
+            <GitCompareArrows size={15} />
+            {comparing ? "Comparaison…" : `Comparer (${selected.size})`}
+          </Button>
+        }
+      />
 
-      {error && <p className="text-sm text-rose-600 mb-4">{error}</p>}
+      {error && <p className="text-sm text-destructive mb-4">{error}</p>}
+      {registryError && <p className="text-sm text-destructive mb-4">{registryError}</p>}
 
       {registry && registry.length > 0 && (
         <Card className="p-5 mb-6">
@@ -138,22 +133,22 @@ export default function TrainingHistory() {
             label="Registre de modèles"
             help="Les modèles explicitement promus (validation ou production) depuis la page Résultats d'un entraînement — pas un doublon de l'historique complet ci-dessous, seulement ce qui a été retenu."
           />
-          <ul className="divide-y divide-slate-200">
+          <ul className="divide-y divide-border">
             {registry.map((entry) => (
               <li key={entry.model_id} className="py-2.5 flex items-center gap-3">
                 <ColorIconBadge icon={Award} color={accentColorForId(entry.model_id)} size="sm" />
                 <div className="min-w-0 flex-1">
-                  <p className="text-sm text-slate-800 truncate">
-                    {entry.dataset_name ?? "Dataset"} <span className="text-slate-400">→</span> {entry.target_column}
+                  <p className="text-sm text-foreground truncate">
+                    {entry.dataset_name ?? "Dataset"} <span className="text-muted-foreground">→</span> {entry.target_column}
                   </p>
-                  <p className="text-xs text-slate-500">
+                  <p className="text-xs text-muted-foreground">
                     {entry.algorithm}
                     {entry.promoted_at ? ` · promu le ${formatDateTime(entry.promoted_at)}` : ""}
                   </p>
                 </div>
                 <div className="flex items-center gap-2 flex-shrink-0">
                   {entry.headline_metric?.value !== null && entry.headline_metric?.value !== undefined && (
-                    <span className="text-xs text-slate-500 tabular-nums">
+                    <span className="text-xs text-muted-foreground tabular-nums">
                       {entry.headline_metric.name} = {entry.headline_metric.value.toFixed(3)}
                     </span>
                   )}
@@ -170,11 +165,11 @@ export default function TrainingHistory() {
       <Card className="p-5 mb-6">
         <SectionHeader icon={History} color="blue" label="Tous les entraînements" />
         {jobs === null ? (
-          <p className="text-sm text-slate-500">Chargement…</p>
+          error ? null : <p className="text-sm text-muted-foreground">Chargement…</p>
         ) : jobs.length === 0 ? (
-          <p className="text-sm text-slate-500">Aucun entraînement pour l'instant.</p>
+          <p className="text-sm text-muted-foreground">Aucun entraînement pour l'instant.</p>
         ) : (
-          <ul className="divide-y divide-slate-200">
+          <ul className="divide-y divide-border">
             {jobs.map((job) => (
               <li key={job.id} className="py-2.5 flex items-center gap-3">
                 <input
@@ -186,21 +181,21 @@ export default function TrainingHistory() {
                 />
                 <ColorIconBadge icon={BrainCircuit} color={accentColorForId(job.id)} size="sm" />
                 <div className="min-w-0 flex-1">
-                  <p className="text-sm text-slate-800 truncate">
-                    {job.dataset_name ?? "Dataset"} <span className="text-slate-400">→</span> {job.target_column}
+                  <p className="text-sm text-foreground truncate">
+                    {job.dataset_name ?? "Dataset"} <span className="text-muted-foreground">→</span> {job.target_column}
                   </p>
-                  <p className="text-xs text-slate-500">
+                  <p className="text-xs text-muted-foreground">
                     {formatDateTime(job.created_at)}
                     {job.algorithm ? ` · ${job.algorithm}` : ""}
                   </p>
                 </div>
                 <div className="flex items-center gap-2 flex-shrink-0">
                   {job.headline_metric?.value !== null && job.headline_metric?.value !== undefined && (
-                    <span className="text-xs text-slate-500 tabular-nums">
+                    <span className="text-xs text-muted-foreground tabular-nums">
                       {job.headline_metric.name} = {job.headline_metric.value.toFixed(3)}
                     </span>
                   )}
-                  {jobStatusBadge(job.status)}
+                  <JobStatusBadge status={job.status} />
                 </div>
               </li>
             ))}
@@ -208,7 +203,7 @@ export default function TrainingHistory() {
         )}
       </Card>
 
-      {compareError && <p className="text-sm text-rose-600 mb-4">{compareError}</p>}
+      {compareError && <p className="text-sm text-destructive mb-4">{compareError}</p>}
 
       {comparison && (
         <Card className="p-5 overflow-x-auto">
@@ -221,16 +216,16 @@ export default function TrainingHistory() {
           <table className="min-w-full text-sm border-separate border-spacing-0">
             <thead>
               <tr>
-                <th className="text-left px-3 py-2 text-xs font-medium text-slate-500 sticky left-0 bg-card">
+                <th className="text-left px-3 py-2 text-xs font-medium text-muted-foreground sticky left-0 bg-card">
                   &nbsp;
                 </th>
                 {comparison.entries.map((e) => (
                   <th key={e.job_id} className="text-left px-3 py-2 min-w-[160px]">
-                    <p className="text-sm font-medium text-slate-800 truncate">{e.dataset_name ?? "Dataset"}</p>
-                    <p className="text-xs text-slate-500 truncate">→ {e.target_column}</p>
+                    <p className="text-sm font-medium text-foreground truncate">{e.dataset_name ?? "Dataset"}</p>
+                    <p className="text-xs text-muted-foreground truncate">→ {e.target_column}</p>
                     <div className="mt-1 flex items-center gap-1.5">
-                      {jobStatusBadge(e.status)}
-                      {e.algorithm && <span className="text-xs text-slate-500">{e.algorithm}</span>}
+                      <JobStatusBadge status={e.status} />
+                      {e.algorithm && <span className="text-xs text-muted-foreground">{e.algorithm}</span>}
                     </div>
                   </th>
                 ))}
@@ -238,17 +233,17 @@ export default function TrainingHistory() {
             </thead>
             <tbody>
               <tr className="bg-muted">
-                <td className="px-3 py-2 text-xs font-semibold text-slate-600 sticky left-0 bg-muted" colSpan={comparison.entries.length + 1}>
+                <td className="px-3 py-2 text-xs font-semibold text-muted-foreground sticky left-0 bg-muted" colSpan={comparison.entries.length + 1}>
                   Métriques
                 </td>
               </tr>
               {metricKeys.map((key) => (
-                <tr key={key} className="border-t border-slate-100">
-                  <td className="px-3 py-2 text-xs text-slate-500 sticky left-0 bg-card">{formatMetricLabel(key)}</td>
+                <tr key={key} className="border-t border-border/60">
+                  <td className="px-3 py-2 text-xs text-muted-foreground sticky left-0 bg-card">{formatMetricLabel(key)}</td>
                   {comparison.entries.map((e) => {
                     const value = e.metrics[key];
                     return (
-                      <td key={e.job_id} className="px-3 py-2 text-sm tabular-nums text-slate-800">
+                      <td key={e.job_id} className="px-3 py-2 text-sm tabular-nums text-foreground">
                         {typeof value === "number" ? formatMetricValue(value) : "—"}
                       </td>
                     );
@@ -257,30 +252,30 @@ export default function TrainingHistory() {
               ))}
 
               <tr className="bg-muted">
-                <td className="px-3 py-2 text-xs font-semibold text-slate-600 sticky left-0 bg-muted" colSpan={comparison.entries.length + 1}>
+                <td className="px-3 py-2 text-xs font-semibold text-muted-foreground sticky left-0 bg-muted" colSpan={comparison.entries.length + 1}>
                   Configuration
                 </td>
               </tr>
               {CONFIG_ROWS.map((row) => {
                 const differs = comparison.differing_config_fields.includes(row.key);
                 return (
-                  <tr key={row.key} className={`border-t border-slate-100 ${differs ? "bg-amber-50/60" : ""}`}>
-                    <td className={`px-3 py-2 text-xs text-slate-500 sticky left-0 ${differs ? "bg-amber-50" : "bg-card"}`}>
+                  <tr key={row.key} className={`border-t border-border/60 ${differs ? "bg-amber-50/60" : ""}`}>
+                    <td className={`px-3 py-2 text-xs text-muted-foreground sticky left-0 ${differs ? "bg-amber-50" : "bg-card"}`}>
                       {row.label}
                       {differs && <span className="ml-1 text-amber-600">●</span>}
                     </td>
                     {comparison.entries.map((e) => (
-                      <td key={e.job_id} className="px-3 py-2 text-sm text-slate-800">
+                      <td key={e.job_id} className="px-3 py-2 text-sm text-foreground">
                         {formatConfigValue(row.key, e.config[row.key])}
                       </td>
                     ))}
                   </tr>
                 );
               })}
-              <tr className="border-t border-slate-100">
-                <td className="px-3 py-2 text-xs text-slate-500 sticky left-0 bg-card">Ingénierie de variables</td>
+              <tr className="border-t border-border/60">
+                <td className="px-3 py-2 text-xs text-muted-foreground sticky left-0 bg-card">Ingénierie de variables</td>
                 {comparison.entries.map((e) => (
-                  <td key={e.job_id} className="px-3 py-2 text-sm text-slate-800">
+                  <td key={e.job_id} className="px-3 py-2 text-sm text-foreground">
                     {e.feature_engineering_active ? "Activée" : "Non appliquée"}
                   </td>
                 ))}

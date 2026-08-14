@@ -72,7 +72,25 @@ Ce schéma se complète lot par lot :
 | 3 (livré) | `api/core/job_queue.py` (RQ + Redis), `workers/` (worker portable), `services/ml_*.py`, `api/routers/training.py` |
 | 4a (livré) | `services/ml_inference.py`, migration additive `feature_schema_json` |
 | 4b (livré) | `services/dataset_eda.py`, migration additive `evaluation_json`, évaluation calculée à l'entraînement dans `services/ml_training.py` |
-| 5 | `services/` continue de grandir — catalogue ML complet (sklearn, SMOTE, clustering) |
+| 4c (livré) | `services/feature_engineering.py` — suggestions approuvées explicitement, jamais appliquées en silence |
+| 5 (livré) | `services/ml_registry.py` (registre de 9 modèles, `ModelSpec`) — plus aucun nom d'algorithme en dur dans `ml_training.py` ; SHAP routé par famille (`Tree`/`Linear`/`Kernel`) |
+| Déséquilibre (livré) | `class_weight`/`sample_weight` proposé, jamais appliqué d'office — un seul mécanisme couvrant 8/9 modèles du registre |
+| D / D-bis (livré) | `ModelCandidate` (leaderboard intra-job) + `GET /training/jobs/compare` (comparaison inter-jobs), page `TrainingHistory.tsx` |
+| E1-ter / E2 (livré) | Frontend : wizard d'entraînement en 5 étapes, mode guidé/expert (`model_ids`/`seed`/`cqr_alpha`/`class_rebalancing` pilotables) |
+| Explicabilité globale/locale (livré) | `services/ml_explainability.py` (partagé training/inférence) — beeswarm SHAP, importance par permutation, calibration, courbe d'apprentissage, explication locale d'une prédiction |
+| 9 (livré) | Registre de modèles versionné — `MLModel.stage` (`staging`/`production`), export d'artefact, `GET /models/registry` |
+| 10 (livré) | Durcissement SaaS — `AuditLog` (`services/audit.py`), quota d'entraînements concurrents par organisation |
+| H2 (audit 2026-08-14) | `services/job_watchdog.py` — réconciliation des jobs `running` orphelins (worker mort), `TrainingJob.progress_updated_at` |
+| 11+ (à venir) | ML non supervisé — `services/clustering_registry.py` + `clustering_training.py` séparés, jamais une extension de `ml_training.py` (voir `AUDIT_ROADMAP.md`) |
+| 6-8 (à venir) | Computer Vision — nouveau module isolé, réutilisant seulement l'infra (job_queue, storage, audit, `MLModel` générique) |
+
+> **Note sur ce document** : resté figé au Lot 4b pendant plusieurs mois
+> pendant que `workflow.md`/`recap.md` continuaient d'être mis à jour à
+> chaque lot — dérive documentaire signalée par l'audit du 2026-08-14
+> (`AUDIT_ROADMAP.md`, H5) et corrigée ici. Pour le détail complet de
+> chaque lot (fichiers créés, décisions techniques, vérifications), la
+> source qui fait foi reste [`workflow.md`](workflow.md) — ce document ne
+> vise qu'une vue d'ensemble schématique, pas un historique complet.
 
 ## 3. Points d'entrée
 

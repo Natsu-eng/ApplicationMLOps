@@ -439,6 +439,87 @@ tarifaires, facturation — hors périmètre technique) :
   d'affilée pourrait faire attendre toutes les autres. Un entraînement
   terminé ou en échec libère immédiatement sa place.
 
+### Lot Audit + durcissement — corriger avant de continuer, pas empiler dessus
+
+Un audit expert complet (lecture seule, backend + frontend + code legacy) a
+d'abord établi un état des lieux honnête : le ML supervisé était solide,
+mais un nombre limité de points concrets restaient à corriger avant
+d'ajouter un nouveau pilier par-dessus — pas un blocage total, un point
+d'arrêt ciblé.
+
+**Corrigé côté fiabilité** : un job d'entraînement dont le worker meurt en
+cours de route ne bloque plus indéfiniment le quota de l'organisation
+(nouveau watchdog) ; le serveur refuse désormais de démarrer en production
+avec la clé de sécurité par défaut du dépôt (avant : un simple
+avertissement journalisé) ; les tentatives de connexion échouées sont
+limitées par IP (brute force rendu impraticable) ; une classe rare qui finit
+entièrement dans les données de test après un split anti-fuite par groupe
+produit maintenant un message diagnosticable plutôt qu'une erreur technique
+brute. *Un correctif a nécessité deux passes : la première interceptait
+toutes les erreurs "RuntimeError" pour leur donner un message plus clair,
+mais ça incluait aussi de vraies erreurs techniques de bibliothèque — la
+suite de tests existante l'a détecté immédiatement, corrigé avec un type
+d'erreur dédié plutôt qu'une catégorie trop large.*
+
+**Refonte visuelle guidée par des retours directs sur captures d'écran**,
+en plusieurs allers-retours : le fond des pages est passé d'un bleu-gris
+terne à un quasi-blanc (les cartes se détachent maintenant par l'ombre) ;
+chaque page a un en-tête avec une icône en dégradé de marque, plus un titre
+flottant sans ancrage ; les cartes de résultats et d'exploration portent
+une couleur assortie à leur section, sur tous les onglets ; un vrai premier
+onboarding du produit remplace la barre de recherche qui ne faisait rien.
+*Un vrai bug de crédibilité trouvé au passage : le graphe de variance entre
+les découpages de validation croisée affichait des valeurs aberrantes — pas
+retrouvé rapidement, retiré plutôt que laissé cassé, sur décision
+explicite.*
+
+**Deux trous UX refermés**, l'un comme l'autre déjà identifiés mais jamais
+traités : rafraîchir la page pendant qu'un entraînement tourne ne renvoie
+plus silencieusement au formulaire de configuration (persistance de
+session) ; ouvrir un résultat ou l'exploration d'un dataset se reflète
+maintenant dans l'URL — partageable, et ça survit à un rafraîchissement.
+
+*Reporté consciemment, pas oublié* : découper les deux plus gros composants
+frontend en sous-parties plus petites, et mettre en place des tests de
+composants React (aucune infrastructure de test de ce type dans le dépôt
+aujourd'hui) — des chantiers plus lourds, pour un lot dédié. Détail complet
+dans [`AUDIT_ROADMAP.md`](AUDIT_ROADMAP.md) et
+[`backend/workflow.md`](backend/workflow.md).
+
+### Lot 11+12 — ML non supervisé : clustering et profils de segments
+
+Premier module du deuxième pilier de l'app (`ML non supervisé`, jusqu'ici
+"Bientôt disponible"). Module **séparé** de l'entraînement supervisé — pas
+une extension : le clustering n'a pas de cible, les hypothèses du moteur
+supervisé (score de sélection, encodage de `y`) n'auraient pas de sens ici.
+Même méthodologie que le reste du projet : registre d'algorithmes (comme le
+catalogue de 9 modèles du Lot 5), tâche de fond RQ, watchdog et quota
+partagés avec le supervisé (un seul worker physique traite les deux).
+
+- **Comparaison automatique de plusieurs configurations** — K-Means,
+  clustering hiérarchique et DBSCAN comparés sur plusieurs nombres de
+  groupes (2 à 8) à chaque lancement, classés sur le score de silhouette
+  (jamais un seul essai lancé à l'aveugle) — même esprit que le leaderboard
+  du Lot D côté supervisé. K-Means rapide (gros volumes) disponible en mode
+  expert.
+- **Profils de segments automatiques** — chaque groupe découvert est décrit
+  par sa taille, ses statistiques et surtout ce qui le distingue le plus du
+  reste (pas seulement ses propres moyennes) : jamais un texte inventé,
+  uniquement des statistiques réellement calculées.
+- **DBSCAN sans réglage à deviner** : le rayon de voisinage (`eps`) est
+  résolu automatiquement à partir de la distribution réelle des distances
+  entre points du dataset, pas une valeur générique à l'aveugle.
+- Vérifié sur un cas construit (3 groupes séparés, avec une variable
+  catégorielle parfaitement corrélée) : les trois algorithmes retrouvent
+  les 3 groupes attendus, silhouette proche de 0,9, chaque segment
+  correctement dominé par sa vraie catégorie d'origine — pas seulement "ça
+  ne plante pas".
+
+*Volontairement pas dans ce lot* (prochaine étape, déjà planifiée) :
+détection d'anomalies tabulaire et réduction de dimension (PCA/t-SNE/UMAP)
+— signalé honnêtement dans la page elle-même plutôt que promis sans être
+livré.
+
 ---
 
 ## Robustesse — pas juste "ça marche chez moi"
@@ -494,8 +575,9 @@ Identifié explicitement en testant le produit, pas oublié :
 
 | Lot | Contenu |
 | --- | --- |
-| **6-8** | Vision par ordinateur / détection d'anomalies (l'autre grand pilier de l'app historique, pas encore porté) |
-| **11+** | ML non supervisé (clustering) — plan détaillé ci-dessous |
+| **6-8** | Vision par ordinateur / détection d'anomalies sur images (l'autre grand pilier de l'app historique, pas encore porté) |
+| **13** | Réduction de dimension (PCA/t-SNE/UMAP) — visualisation transversale au clustering et à la détection d'anomalies |
+| **14** | Détection d'anomalies tabulaire (Isolation Forest, LOF) — clustering livré au Lot 11+12, pas encore ce second volet du pilier non supervisé |
 
 *Durcissement SaaS commercial restant (plans tarifaires, facturation, quota
 de stockage) : hors périmètre technique, décision produit à cadrer

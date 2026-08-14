@@ -75,7 +75,18 @@ def init_db() -> None:
     puis applique les migrations additives connues (voir `_add_column_if_missing`)."""
     # Import local (et non en tête de module) pour éviter l'import circulaire :
     # api.core.models importe déjà `Base` depuis ce fichier.
-    from api.core.models import AuditLog, Dataset, MLModel, ModelCandidate, Organization, TrainingJob, User  # noqa: F401
+    from api.core.models import (  # noqa: F401
+        AuditLog,
+        ClusterCandidateRecord,
+        ClusterModel,
+        ClusteringJob,
+        Dataset,
+        MLModel,
+        ModelCandidate,
+        Organization,
+        TrainingJob,
+        User,
+    )
 
     Base.metadata.create_all(bind=engine)
     _add_column_if_missing("ml_models", "feature_schema_json", "TEXT")
@@ -93,6 +104,11 @@ def init_db() -> None:
     # Lot 9 — registre de modèles versionné (stage/promoted_at, NULL = jamais promu).
     _add_column_if_missing("ml_models", "stage", "VARCHAR(20)")
     _add_column_if_missing("ml_models", "promoted_at", "TIMESTAMP")
+    # Durcissement SaaS (AUDIT_ROADMAP.md, H2) — horodatage du dernier
+    # signal de vie écrit par le worker (job.status="running" ou chaque
+    # étape de progression). Permet de repérer un job "running" dont le
+    # worker a crashé sans jamais le marquer "failed" (services/job_watchdog.py).
+    _add_column_if_missing("training_jobs", "progress_updated_at", "TIMESTAMP")
     logger.info("[DB] Prête (%s)", "SQLite" if _is_sqlite else "PostgreSQL")
 
 

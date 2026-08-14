@@ -61,6 +61,22 @@ class Settings(BaseSettings):
     # technique de ce lot).
     max_concurrent_jobs_per_org: int = 3
 
+    # Durcissement SaaS (H2, AUDIT_ROADMAP.md) — au-delà de ce délai sans
+    # signal de vie (voir services/job_watchdog.py), un job "running" est
+    # considéré orphelin (worker mort) et reclassé "failed". Volontairement
+    # au-dessus du timeout RQ (`training_queue`, 1800s = 30 min,
+    # api/core/job_queue.py) : ne doit jamais se déclencher sur un
+    # entraînement encore réellement actif, seulement sur un worker disparu.
+    stale_job_timeout_minutes: int = 40
+
+    # Durcissement SaaS (H11, AUDIT_ROADMAP.md) — aucune limite n'existait
+    # sur les tentatives de connexion échouées, brute force possible sans
+    # borne. Fenêtre glissante par IP cliente, stockée dans Redis (déjà une
+    # dépendance du projet, voir job_queue.py) — échec ouvert (log seul) si
+    # Redis est indisponible, jamais bloquant pour la connexion légitime.
+    login_rate_limit_max_attempts: int = 10
+    login_rate_limit_window_seconds: int = 900  # 15 minutes
+
     # Journalisation
     log_level: str = "INFO"
 

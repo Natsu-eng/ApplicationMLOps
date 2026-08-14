@@ -171,3 +171,65 @@ def test_quota_isolated_between_organizations(client):
     headers_b = _register(client, "b@bureau-b.fr", "Bureau B")
     dataset_b = _upload_dataset(client, headers_b, "b.csv")
     assert _create_job(client, headers_b, dataset_b["id"]).status_code == 201
+
+
+# ── Watchdog de jobs orphelins (H2, AUDIT_ROADMAP.md) ────────────────────
+
+
+def test_stale_running_job_is_reconciled_and_frees_quota(client, db_session):
+    """Un job 'running' sans signal de vie depuis plus de
+    stale_job_timeout_minutes (worker mort) ne doit jamais bloquer le quota
+    indéfiniment — reclassé 'failed' à la prochaine tentative de création."""
+    from datetime import datetime, timedelta, timezone
+
+    from api.core.models import TrainingJob
+
+    headers = _register(client)
+    dataset = _upload_dataset(client, headers)
+    limit = get_settings().max_concurrent_jobs_per_org
+    timeout = get_settings().stale_job_timeout_minutes
+
+    jobs = [_create_job(client, headers, dataset["id"]).json() for _ in range(limit)]
+    stale_time = datetime.now(timezone.utc) - timedelta(minutes=timeout + 5)
+    for j in jobs:
+        row = db_session.query(TrainingJob).filter(TrainingJob.id == j["id"]).first()
+        row.status = "running"
+        row.started_at = stale_time
+        row.progress_updated_at = stale_time
+    db_session.commit()
+
+    resp = _create_job(client, headers, dataset["id"])
+    assert resp.status_code == 201
+
+    for j in jobs:
+        row = db_session.query(TrainingJob).filter(TrainingJob.id == j["id"]).first()
+        assert row.status == "failed"
+        assert row.error_message  # message actionnable, jamais vide
+
+
+def test_recent_running_job_is_not_reconciled(client, db_session):
+    """Un job 'running' avec un signal de vie récent est un entraînement
+    réellement en cours — ne doit jamais être reclassé par erreur."""
+    from datetime import datetime, timezone
+
+    from api.core.models import TrainingJob
+
+    headers = _register(client)
+    dataset = _upload_dataset(client, headers)
+    limit = get_settings().max_concurrent_jobs_per_org
+
+    jobs = [_create_job(client, headers, dataset["id"]).json() for _ in range(limit)]
+    now = datetime.now(timezone.utc)
+    for j in jobs:
+        row = db_session.query(TrainingJob).filter(TrainingJob.id == j["id"]).first()
+        row.status = "running"
+        row.started_at = now
+        row.progress_updated_at = now
+    db_session.commit()
+
+    resp = _create_job(client, headers, dataset["id"])
+    assert resp.status_code == 429
+
+    for j in jobs:
+        row = db_session.query(TrainingJob).filter(TrainingJob.id == j["id"]).first()
+        assert row.status == "running"

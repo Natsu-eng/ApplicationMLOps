@@ -90,10 +90,10 @@ export function ExpertModePanel({
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white px-3 py-2.5">
+      <div className="flex items-center justify-between gap-3 rounded-lg border border-border bg-white px-3 py-2.5">
         <div>
-          <p className="text-sm font-medium text-slate-800">Mode expert</p>
-          <p className="text-xs text-slate-500">
+          <p className="text-sm font-medium text-foreground">Mode expert</p>
+          <p className="text-xs text-muted-foreground">
             Affiche les réglages techniques du moteur (modèles comparés, validation croisée, graine
             aléatoire…). Inutile pour un usage courant — les valeurs par défaut du mode guidé sont déjà
             de bons choix.
@@ -105,13 +105,14 @@ export function ExpertModePanel({
       {expertMode && (
         <div className="space-y-5 rounded-lg border border-primary/20 bg-primary/5 p-3.5">
           <div>
-            <label className="block text-sm text-slate-600 mb-1">
+            <label htmlFor="expert-optuna-trials" className="block text-sm text-muted-foreground mb-1">
               <LabelWithHelp
                 label={`Recherche d'hyperparamètres — ${optunaTrials} essais`}
                 help="À chaque essai, l'outil teste une combinaison de réglages internes pour chaque modèle et garde la meilleure. Plus élevé = recherche plus fine, mais entraînement plus long."
               />
             </label>
             <input
+              id="expert-optuna-trials"
               type="range"
               min={5}
               max={60}
@@ -123,13 +124,14 @@ export function ExpertModePanel({
           </div>
 
           <div>
-            <label className="block text-sm text-slate-600 mb-1">
+            <label htmlFor="expert-cv-folds" className="block text-sm text-muted-foreground mb-1">
               <LabelWithHelp
                 label={`Nombre de blocs de validation croisée — ${cvFolds}`}
                 help="Le jeu d'entraînement est découpé en ce nombre de blocs : chaque modèle est évalué plusieurs fois en tournant le bloc de test. Plus de blocs = évaluation plus fiable, mais plus lente."
               />
             </label>
             <input
+              id="expert-cv-folds"
               type="range"
               min={2}
               max={10}
@@ -142,30 +144,32 @@ export function ExpertModePanel({
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-sm text-slate-600 mb-1">
+              <label htmlFor="expert-seed" className="block text-sm text-muted-foreground mb-1">
                 <LabelWithHelp
                   label="Graine aléatoire"
                   help="Fixe le hasard utilisé pendant l'entraînement (découpage, initialisation des modèles…). Deux entraînements avec la même graine et les mêmes données donnent le même résultat — utile pour reproduire un résultat exact."
                 />
               </label>
               <input
+                id="expert-seed"
                 type="number"
                 min={0}
                 max={99999}
                 value={seed}
                 onChange={(e) => onSeedChange(Number(e.target.value))}
-                className="w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-primary/40"
+                className="w-full rounded-lg border border-input bg-card px-3 py-1.5 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
               />
             </div>
 
             <div>
-              <label className="block text-sm text-slate-600 mb-1">
+              <label htmlFor="expert-cqr-alpha" className="block text-sm text-muted-foreground mb-1">
                 <LabelWithHelp
                   label={`Confiance des intervalles — ${Math.round((1 - cqrAlpha) * 100)} %`}
                   help="Régression uniquement. Le modèle donne, en plus de sa prédiction, une fourchette de valeurs probables. Une confiance plus haute élargit cette fourchette pour être sûr d'avoir raison plus souvent."
                 />
               </label>
               <input
+                id="expert-cqr-alpha"
                 type="range"
                 min={0.05}
                 max={0.5}
@@ -190,17 +194,17 @@ export function ExpertModePanel({
           </div>
 
           <div>
-            <p className="text-sm text-slate-600 mb-2">
+            <p className="text-sm text-muted-foreground mb-2">
               <LabelWithHelp
                 label={`Modèles comparés — ${selectedModelIds.size} sélectionné${selectedModelIds.size > 1 ? "s" : ""}`}
                 help="L'outil entraîne chaque modèle coché et garde le meilleur sur la validation croisée. En cocher plus augmente les chances de trouver un meilleur modèle, mais rallonge l'entraînement."
               />
             </p>
-            {!catalogLoaded && <p className="text-xs text-slate-400">Chargement du catalogue…</p>}
+            {!catalogLoaded && <p className="text-xs text-muted-foreground">Chargement du catalogue…</p>}
             <div className="space-y-3">
               {families.map((family) => (
                 <div key={family}>
-                  <p className="text-xs uppercase tracking-wide text-slate-400 mb-1.5">
+                  <p className="text-xs uppercase tracking-wide text-muted-foreground mb-1.5">
                     {FAMILY_LABELS[family] ?? family}
                   </p>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
@@ -214,7 +218,7 @@ export function ExpertModePanel({
                             className={`flex items-center gap-2 text-xs rounded-lg border px-2.5 py-2 cursor-pointer transition-colors ${
                               checked
                                 ? "border-primary/40 bg-primary/10 text-primary"
-                                : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"
+                                : "border-border bg-white text-foreground/90 hover:border-input"
                             }`}
                           >
                           <input

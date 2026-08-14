@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { Link } from "react-router-dom";
-import { AlertCircle, Check, ChevronLeft, ChevronRight, Loader2, PlayCircle, Trash2 } from "lucide-react";
+import { AlertCircle, BrainCircuit, Check, ChevronLeft, ChevronRight, Loader2, PlayCircle, Trash2 } from "lucide-react";
 import {
   ApiError,
   api,
@@ -22,6 +22,8 @@ import { FeatureEngineeringSuggestions } from "../components/training/FeatureEng
 import { ModelResultView } from "../components/training/ModelResultModal";
 import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
+import { PageHeader } from "../components/ui/PageHeader";
+import { Select } from "../components/ui/Select";
 import { formatDateTime } from "../utils/format";
 import { buildTrainingJobPayload } from "../utils/trainingPayload";
 
@@ -29,6 +31,7 @@ const DEFAULT_OPTUNA_TRIALS = 20; // `api.core.config.Settings.optuna_trials_def
 
 const ACTIVE_STATUSES = new Set(["queued", "running"]);
 const POLL_INTERVAL_MS = 3000;
+const ACTIVE_JOB_STORAGE_KEY = "datalab_active_training_job_id";
 
 /** Étapes du wizard horizontal (refonte UI) — même contenu/ordre que le
  * pipeline guidé existant (Lot E1-ter), rebaptisées pour tenir dans une
@@ -55,15 +58,53 @@ function phaseOf(job: TrainingJobSummary | null): Phase {
  * sur le tableau de bord ("Derniers entraînements"), pas ici. */
 export default function Training() {
   const [datasets, setDatasets] = useState<DatasetSummary[]>([]);
+  const [datasetsError, setDatasetsError] = useState<string | null>(null);
   const [activeJob, setActiveJob] = useState<TrainingJobSummary | null>(null);
+  const [restoringJob, setRestoringJob] = useState(true);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+
+  // Persistance de l'entraînement actif à travers un rafraîchissement de
+  // page (sessionStorage) — signalé comme "comportement ambigu à clarifier
+  // avant d'y toucher" dans backend/workflow.md, jamais traité depuis.
+  // Avant ce correctif : rafraîchir pendant qu'un job tournait réellement
+  // côté serveur (RQ/worker) faisait perdre tout l'état React, renvoyait
+  // silencieusement au formulaire de configuration comme si de rien
+  // n'était, alors que l'entraînement continuait en tâche de fond —
+  // aucun moyen de retrouver sa progression sans passer par le tableau de
+  // bord. sessionStorage plutôt que localStorage : le job actif ne doit
+  // resurgir que dans CETTE session de navigation (cet onglet, jusqu'à sa
+  // fermeture), jamais des jours plus tard dans un nouvel onglet.
+  useEffect(() => {
+    const storedId = sessionStorage.getItem(ACTIVE_JOB_STORAGE_KEY);
+    if (!storedId) {
+      setRestoringJob(false);
+      return;
+    }
+    api.training
+      .getJob(Number(storedId))
+      .then(setActiveJob)
+      .catch(() => sessionStorage.removeItem(ACTIVE_JOB_STORAGE_KEY))
+      .finally(() => setRestoringJob(false));
+  }, []);
+
+  useEffect(() => {
+    if (activeJob) {
+      sessionStorage.setItem(ACTIVE_JOB_STORAGE_KEY, String(activeJob.id));
+    } else {
+      sessionStorage.removeItem(ACTIVE_JOB_STORAGE_KEY);
+    }
+  }, [activeJob]);
 
   const loadDatasets = useCallback(async () => {
     try {
       const all = await api.datasets.list();
       setDatasets(all.filter((d) => d.status === "ready"));
-    } catch {
-      // silencieux — le formulaire affichera simplement "aucun dataset"
+      setDatasetsError(null);
+    } catch (err) {
+      // AUDIT_ROADMAP.md, H4/D3 : avant ce correctif, un échec réseau ici
+      // était indiscernable de "vous n'avez encore aucun dataset" — les deux
+      // affichaient le même formulaire vide, sans indice pour l'utilisateur.
+      setDatasetsError(err instanceof ApiError ? err.message : "Impossible de charger vos datasets");
     }
   }, []);
 
@@ -115,49 +156,51 @@ export default function Training() {
 
   return (
     <AppShell pillarId="supervised">
-      <div className="mb-8 flex items-start justify-between gap-4">
-        <div>
-          <p className="text-xs uppercase tracking-widest text-primary font-semibold mb-1">
-            Entraînement
-          </p>
-          <h1 className="text-2xl font-serif text-slate-900">{titles[phase]}</h1>
-          {phase === "configure" && (
-            <p className="text-sm text-slate-500 mt-1">
-              Objectif : prédire une valeur ou une catégorie. Nous vous guidons pas à pas.
-            </p>
-          )}
+      <PageHeader
+        eyebrow="Entraînement"
+        title={titles[phase]}
+        description={
+          phase === "configure" ? "Objectif : prédire une valeur ou une catégorie. Nous vous guidons pas à pas." : undefined
+        }
+        icon={BrainCircuit}
+        color="violet"
+        action={
+          phase !== "configure" ? (
+            <div className="flex items-center gap-2">
+              {(phase === "results" || phase === "failed") && (
+                <button
+                  type="button"
+                  onClick={handleDeleteActiveJob}
+                  onMouseLeave={() => setConfirmingDelete(false)}
+                  aria-label={confirmingDelete ? "Confirmer la suppression" : "Supprimer cet entraînement"}
+                  title={confirmingDelete ? "Cliquer à nouveau pour confirmer" : "Supprimer cet entraînement"}
+                  className={`p-2 rounded-lg transition-colors ${
+                    confirmingDelete
+                      ? "text-destructive bg-destructive/15"
+                      : "text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+                  }`}
+                >
+                  <Trash2 size={16} />
+                </button>
+              )}
+              <Button variant="secondary" size="sm" onClick={resetToConfigure}>
+                <PlayCircle size={14} />
+                Nouvel entraînement
+              </Button>
+            </div>
+          ) : undefined
+        }
+      />
+
+      {restoringJob ? (
+        <div className="flex items-center justify-center py-16 text-sm text-muted-foreground gap-2">
+          <Loader2 size={16} className="animate-spin" />
+          Reprise de votre session…
         </div>
-
-        {phase !== "configure" && (
-          <div className="flex items-center gap-2 flex-shrink-0">
-            {(phase === "results" || phase === "failed") && (
-              <button
-                type="button"
-                onClick={handleDeleteActiveJob}
-                onMouseLeave={() => setConfirmingDelete(false)}
-                aria-label={confirmingDelete ? "Confirmer la suppression" : "Supprimer cet entraînement"}
-                title={confirmingDelete ? "Cliquer à nouveau pour confirmer" : "Supprimer cet entraînement"}
-                className={`p-2 rounded-lg transition-colors ${
-                  confirmingDelete
-                    ? "text-rose-700 bg-rose-100"
-                    : "text-slate-400 hover:text-rose-600 hover:bg-rose-50"
-                }`}
-              >
-                <Trash2 size={16} />
-              </button>
-            )}
-            <Button variant="secondary" size="sm" onClick={resetToConfigure}>
-              <PlayCircle size={14} />
-              Nouvel entraînement
-            </Button>
-          </div>
-        )}
-      </div>
-
-      {phase === "configure" && (
+      ) : phase === "configure" && (
         <div className="max-w-3xl mx-auto">
-          <TrainingForm datasets={datasets} onJobCreated={setActiveJob} />
-          <p className="text-xs text-slate-400 text-center mt-4">
+          <TrainingForm datasets={datasets} datasetsError={datasetsError} onJobCreated={setActiveJob} />
+          <p className="text-xs text-muted-foreground text-center mt-4">
             Vos entraînements précédents restent consultables depuis le{" "}
             <Link to="/dashboard" className="text-primary hover:text-primary/80">
               tableau de bord
@@ -186,23 +229,23 @@ function TrainingProgress({ job }: { job: TrainingJobSummary }) {
       <div className="mx-auto mb-4 h-14 w-14 rounded-2xl bg-primary/10 border border-primary/20 flex items-center justify-center">
         <Loader2 className="text-primary animate-spin" size={26} />
       </div>
-      <h2 className="text-base font-medium text-slate-900">
-        {job.dataset_name ?? "Dataset"} <span className="text-slate-400">→</span> {job.target_column}
+      <h2 className="text-base font-medium text-foreground">
+        {job.dataset_name ?? "Dataset"} <span className="text-muted-foreground">→</span> {job.target_column}
       </h2>
-      <p className="text-xs text-slate-500 mb-6">
+      <p className="text-xs text-muted-foreground mb-6">
         {job.task_type === "regression" ? "Régression" : "Classification"} · lancé {formatDateTime(job.created_at)}
       </p>
-      <div className="h-2 rounded-full bg-slate-100 overflow-hidden mb-2">
+      <div className="h-2 rounded-full bg-muted overflow-hidden mb-2">
         <div
           className="h-full rounded-full bg-primary transition-all duration-500"
           style={{ width: `${Math.max(job.progress_percent, 4)}%` }}
         />
       </div>
-      <p className="text-xs text-slate-400 tabular-nums mb-3">{job.progress_percent}%</p>
-      <p className="text-sm text-slate-600">
+      <p className="text-xs text-muted-foreground tabular-nums mb-3">{job.progress_percent}%</p>
+      <p className="text-sm text-muted-foreground">
         {job.progress_step ?? "En attente d'un worker disponible…"}
       </p>
-      <p className="text-xs text-slate-400 mt-4">
+      <p className="text-xs text-muted-foreground mt-4">
         La durée dépend de la taille du dataset et du nombre d'essais — cette page se met à jour
         automatiquement, vous pouvez aussi la quitter et revenir plus tard.
       </p>
@@ -213,17 +256,17 @@ function TrainingProgress({ job }: { job: TrainingJobSummary }) {
 function TrainingFailed({ job }: { job: TrainingJobSummary }) {
   return (
     <Card className="max-w-xl mx-auto p-8 text-center">
-      <div className="mx-auto mb-4 h-14 w-14 rounded-2xl bg-rose-50 border border-rose-200 flex items-center justify-center">
-        <AlertCircle className="text-rose-600" size={26} />
+      <div className="mx-auto mb-4 h-14 w-14 rounded-2xl bg-destructive/10 border border-destructive/20 flex items-center justify-center">
+        <AlertCircle className="text-destructive" size={26} />
       </div>
-      <h2 className="text-base font-medium text-slate-900">
-        {job.dataset_name ?? "Dataset"} <span className="text-slate-400">→</span> {job.target_column}
+      <h2 className="text-base font-medium text-foreground">
+        {job.dataset_name ?? "Dataset"} <span className="text-muted-foreground">→</span> {job.target_column}
       </h2>
-      <p className="text-xs text-slate-500 mb-4">
+      <p className="text-xs text-muted-foreground mb-4">
         {job.task_type === "regression" ? "Régression" : "Classification"} · lancé {formatDateTime(job.created_at)}
       </p>
       {job.error_message && (
-        <p className="text-sm text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2 text-left">
+        <p className="text-sm text-destructive bg-destructive/10 border border-destructive/20 rounded-lg px-3 py-2 text-left">
           {job.error_message}
         </p>
       )}
@@ -233,9 +276,11 @@ function TrainingFailed({ job }: { job: TrainingJobSummary }) {
 
 function TrainingForm({
   datasets,
+  datasetsError,
   onJobCreated,
 }: {
   datasets: DatasetSummary[];
+  datasetsError: string | null;
   onJobCreated: (job: TrainingJobSummary) => void;
 }) {
   const [datasetId, setDatasetId] = useState<number | "">("");
@@ -368,11 +413,25 @@ function TrainingForm({
   const selectedDataset = datasets.find((d) => d.id === datasetId);
   const step1Valid = Boolean(datasetId && targetColumn && selectedFeatures.size > 0);
 
+  if (datasetsError) {
+    return (
+      <Card className="p-5">
+        <p className="text-sm text-destructive bg-destructive/10 border border-destructive/20 rounded-lg px-3 py-2">
+          {datasetsError}
+        </p>
+      </Card>
+    );
+  }
+
   if (datasets.length === 0) {
     return (
       <Card className="p-5">
-        <p className="text-sm text-slate-500">
-          Aucun dataset prêt — importez-en un depuis <span className="text-primary">Mes données</span>.
+        <p className="text-sm text-muted-foreground">
+          Aucun dataset prêt — importez-en un depuis{" "}
+          <Link to="/datasets" className="text-primary hover:text-primary/80">
+            Mes données
+          </Link>
+          .
         </p>
       </Card>
     );
@@ -386,12 +445,14 @@ function TrainingForm({
         {activeStep === 1 && (
           <StepContent title="Choisissez vos données" description="Sélectionnez le jeu de données, la colonne à prédire et, si besoin, une colonne de regroupement.">
             <div>
-              <label className="block text-sm text-slate-600 mb-1">Jeu de données</label>
-              <select
+              <label htmlFor="training-dataset" className="block text-sm text-muted-foreground mb-1">
+                Jeu de données
+              </label>
+              <Select
+                id="training-dataset"
                 value={datasetId}
                 onChange={(e) => handleDatasetChange(e.target.value)}
                 required
-                className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-primary/40"
               >
                 <option value="">Choisir un dataset…</option>
                 {datasets.map((d) => (
@@ -399,27 +460,24 @@ function TrainingForm({
                     {d.name} ({d.row_count} lignes)
                   </option>
                 ))}
-              </select>
+              </Select>
             </div>
 
             {columns.length > 0 && (
               <>
                 <div>
-                  <label className="block text-sm text-slate-600 mb-1">Colonne à prédire (cible)</label>
-                  <select
-                    value={targetColumn}
-                    onChange={(e) => setTargetColumn(e.target.value)}
-                    required
-                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-primary/40"
-                  >
+                  <label htmlFor="training-target" className="block text-sm text-muted-foreground mb-1">
+                    Colonne à prédire (cible)
+                  </label>
+                  <Select id="training-target" value={targetColumn} onChange={(e) => setTargetColumn(e.target.value)} required>
                     <option value="">Choisir une colonne…</option>
                     {columns.map((c) => (
                       <option key={c.name} value={c.name}>
                         {c.name} ({c.dtype})
                       </option>
                     ))}
-                  </select>
-                  <p className="text-xs text-slate-400 mt-1">
+                  </Select>
+                  <p className="text-xs text-muted-foreground mt-1">
                     C'est la valeur que le modèle apprendra à prédire. Classification ou régression détectée
                     automatiquement selon cette colonne.
                   </p>
@@ -427,22 +485,18 @@ function TrainingForm({
 
                 {targetColumn && (
                   <div>
-                    <label className="block text-sm text-slate-600 mb-1">
-                      Colonne de regroupement <span className="text-slate-400">(optionnel)</span>
+                    <label htmlFor="training-group-column" className="block text-sm text-muted-foreground mb-1">
+                      Colonne de regroupement <span className="text-muted-foreground">(optionnel)</span>
                     </label>
-                    <select
-                      value={groupColumn}
-                      onChange={(e) => setGroupColumn(e.target.value)}
-                      className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-primary/40"
-                    >
+                    <Select id="training-group-column" value={groupColumn} onChange={(e) => setGroupColumn(e.target.value)}>
                       <option value="">Aucune — split classique</option>
                       {otherColumns.map((c) => (
                         <option key={c.name} value={c.name}>
                           {c.name}
                         </option>
                       ))}
-                    </select>
-                    <p className="text-xs text-slate-400 mt-1">
+                    </Select>
+                    <p className="text-xs text-muted-foreground mt-1">
                       Empêche qu'un même groupe (ex. un client) apparaisse à la fois en entraînement et en
                       test — un garde-fou anti-fuite. Si plusieurs lignes partagent un même échantillon
                       (mesures répétées), indiquez la colonne qui les identifie.
@@ -458,19 +512,19 @@ function TrainingForm({
                       className="text-sm text-primary hover:text-primary/80"
                     >
                       Choisir les variables utilisées
-                      <span className="text-slate-400">
+                      <span className="text-muted-foreground">
                         {" "}
                         ({selectedFeatures.size} sélectionnée{selectedFeatures.size > 1 ? "s" : ""})
                       </span>
                     </button>
                     {showFeaturePicker && (
-                      <div className="mt-2 max-h-40 overflow-y-auto rounded-lg border border-slate-200 bg-slate-50 p-2 space-y-1">
+                      <div className="mt-2 max-h-40 overflow-y-auto rounded-lg border border-border bg-muted p-2 space-y-1">
                         {otherColumns
                           .filter((c) => c.name !== groupColumn)
                           .map((c) => (
                             <label
                               key={c.name}
-                              className="flex items-center gap-2 text-xs text-slate-600 px-1 py-0.5"
+                              className="flex items-center gap-2 text-xs text-muted-foreground px-1 py-0.5"
                             >
                               <input
                                 type="checkbox"
@@ -478,12 +532,12 @@ function TrainingForm({
                                 onChange={() => toggleFeature(c.name)}
                                 className="accent-primary"
                               />
-                              {c.name} <span className="text-slate-400">({c.dtype})</span>
+                              {c.name} <span className="text-muted-foreground">({c.dtype})</span>
                             </label>
                           ))}
                       </div>
                     )}
-                    <p className="text-xs text-slate-400 mt-1">
+                    <p className="text-xs text-muted-foreground mt-1">
                       Par défaut, toutes les variables sauf la cible sont utilisées — décochez celles à
                       exclure (ex. un identifiant sans valeur prédictive, ou une colonne signalée par le
                       contrôle qualité à l'étape suivante).
@@ -530,10 +584,11 @@ function TrainingForm({
         {activeStep === 4 && (
           <StepContent title="Mode expert" description="Par défaut, nous choisissons et réglons les modèles pour vous. Activez ce mode pour tout contrôler.">
             <div>
-              <label className="block text-sm text-slate-600 mb-1">
+              <label htmlFor="training-test-size" className="block text-sm text-muted-foreground mb-1">
                 Part du jeu de test — {Math.round(testSize * 100)} %
               </label>
               <input
+                id="training-test-size"
                 type="range"
                 min={0.1}
                 max={0.4}
@@ -565,8 +620,8 @@ function TrainingForm({
 
         {activeStep === 5 && (
           <StepContent title="Prêt à lancer" description="Vérifiez le récapitulatif, puis lancez l'entraînement.">
-            <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-              <p className="text-xs uppercase tracking-wide text-slate-500 mb-3">Récapitulatif</p>
+            <div className="rounded-xl border border-border bg-muted p-4">
+              <p className="text-xs uppercase tracking-wide text-muted-foreground mb-3">Récapitulatif</p>
               <dl className="grid grid-cols-2 gap-y-2.5 text-sm">
                 <Fact label="Données" value={selectedDataset?.name ?? "—"} />
                 <Fact label="Cible" value={targetColumn} mono />
@@ -581,7 +636,7 @@ function TrainingForm({
             </div>
 
             {error && (
-              <p className="text-sm text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2">
+              <p className="text-sm text-destructive bg-destructive/10 border border-destructive/20 rounded-lg px-3 py-2">
                 {error}
               </p>
             )}
@@ -593,7 +648,7 @@ function TrainingForm({
           </StepContent>
         )}
 
-        <div className="flex items-center justify-between pt-5 mt-5 border-t border-slate-200">
+        <div className="flex items-center justify-between pt-5 mt-5 border-t border-border">
           {activeStep > 1 ? (
             <Button type="button" variant="secondary" size="sm" onClick={goPrev}>
               <ChevronLeft size={14} />
@@ -646,7 +701,7 @@ function StepperNav({
         type="button"
         onClick={() => scrollBy(-180)}
         aria-label="Défiler vers la gauche"
-        className="flex-shrink-0 h-7 w-7 flex items-center justify-center rounded-full text-slate-400 hover:bg-slate-100 transition-colors"
+        className="flex-shrink-0 h-7 w-7 flex items-center justify-center rounded-full text-muted-foreground hover:bg-muted transition-colors"
       >
         <ChevronLeft size={16} />
       </button>
@@ -660,7 +715,7 @@ function StepperNav({
               disabled={step.number > maxReachedStep}
               onClick={() => onSelect(step.number)}
             />
-            {i < steps.length - 1 && <ChevronRight size={14} className="text-slate-300 flex-shrink-0" />}
+            {i < steps.length - 1 && <ChevronRight size={14} className="text-muted-foreground/50 flex-shrink-0" />}
           </div>
         ))}
       </div>
@@ -668,7 +723,7 @@ function StepperNav({
         type="button"
         onClick={() => scrollBy(180)}
         aria-label="Défiler vers la droite"
-        className="flex-shrink-0 h-7 w-7 flex items-center justify-center rounded-full text-slate-400 hover:bg-slate-100 transition-colors"
+        className="flex-shrink-0 h-7 w-7 flex items-center justify-center rounded-full text-muted-foreground hover:bg-muted transition-colors"
       >
         <ChevronRight size={16} />
       </button>
@@ -692,12 +747,12 @@ function StepPill({
   const pillStyle = {
     done: "border-success/30 bg-success/10 text-success",
     current: "border-primary/30 bg-primary/10 text-primary",
-    pending: "border-slate-200 text-slate-400",
+    pending: "border-border text-muted-foreground",
   }[state];
   const circleStyle = {
     done: "bg-success text-white",
     current: "bg-primary text-white",
-    pending: "bg-white border border-slate-300 text-slate-400",
+    pending: "bg-white border border-input text-muted-foreground",
   }[state];
 
   return (
@@ -729,8 +784,8 @@ function StepContent({
   return (
     <div className="space-y-4">
       <div>
-        <h3 className="text-sm font-medium text-slate-800">{title}</h3>
-        {description && <p className="text-xs text-slate-500 mt-0.5">{description}</p>}
+        <h3 className="text-sm font-medium text-foreground">{title}</h3>
+        {description && <p className="text-xs text-muted-foreground mt-0.5">{description}</p>}
       </div>
       {children}
     </div>
@@ -740,8 +795,8 @@ function StepContent({
 function Fact({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) {
   return (
     <div>
-      <dt className="text-xs text-slate-500">{label}</dt>
-      <dd className={`text-slate-800 ${mono ? "font-mono text-xs" : "text-sm"}`}>{value}</dd>
+      <dt className="text-xs text-muted-foreground">{label}</dt>
+      <dd className={`text-foreground ${mono ? "font-mono text-xs" : "text-sm"}`}>{value}</dd>
     </div>
   );
 }

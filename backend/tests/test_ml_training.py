@@ -109,6 +109,62 @@ def test_group_anti_leak_split_reflected_in_model_card():
     assert result.model_card["anti_leak_grouping"] is True
 
 
+def test_group_split_unseen_class_raises_actionable_error():
+    """H8 (AUDIT_ROADMAP.md) — GroupShuffleSplit (split anti-fuite par
+    groupe) ne stratifie pas : une classe rare concentrée dans un seul
+    groupe peut atterrir entièrement en test, absente du train. Avant ce
+    correctif, `LabelEncoder.transform` levait une `ValueError` sklearn
+    brute ("y contains previously unseen labels") au lieu d'un message
+    diagnosticable. Seed=0 choisi empiriquement pour reproduire le cas."""
+    n_a, n_b = 100, 5
+    df = pd.DataFrame(
+        {
+            "x": np.arange(n_a + n_b, dtype=float),
+            "groupe": ["A"] * n_a + ["B"] * n_b,
+            "cible": ["frequent"] * n_a + ["rare"] * n_b,
+        }
+    )
+    split = split_dataset(df, "cible", ["x"], "classification", "groupe", 0.2, 0)
+
+    with pytest.raises(RuntimeError, match="rare"):
+        train_and_evaluate(split, "classification", _FAST_CONFIG, lambda s, p: None)
+
+
+# ── H6 (AUDIT_ROADMAP.md) — le seed utilisateur doit varier les folds ──
+
+
+def test_make_cv_folds_vary_with_seed():
+    """Avant correctif, `_make_cv` hardcodait `random_state=42` : changer le
+    seed de l'utilisateur ne faisait jamais varier les folds de CV. Preuve
+    directe sur un vrai `KFold`/`StratifiedKFold` (pas un mock) : deux seeds
+    différents doivent produire des découpages différents, un même seed doit
+    rester reproductible."""
+    X = np.arange(30).reshape(-1, 1)
+    y = np.array([0, 1] * 15)
+
+    cv_a1 = list(_make_cv("classification", 3, None, seed=1).split(X, y))
+    cv_a2 = list(_make_cv("classification", 3, None, seed=1).split(X, y))
+    cv_b = list(_make_cv("classification", 3, None, seed=2).split(X, y))
+
+    # Même seed → mêmes folds (reproductibilité).
+    for (train_a1, test_a1), (train_a2, test_a2) in zip(cv_a1, cv_a2):
+        assert np.array_equal(train_a1, train_a2)
+        assert np.array_equal(test_a1, test_a2)
+
+    # Seed différent → au moins un fold différent.
+    assert any(
+        not np.array_equal(test_a1, test_b) for (_, test_a1), (_, test_b) in zip(cv_a1, cv_b)
+    )
+
+
+def test_make_cv_groupkfold_ignores_seed_deterministically():
+    """GroupKFold n'accepte pas `random_state` (pas de `shuffle`) — doit
+    rester construit sans erreur quel que soit le seed, et déterministe."""
+    groups = np.array([0, 0, 1, 1, 2, 2])
+    cv = _make_cv("regression", 3, groups, seed=7)
+    assert cv.__class__.__name__ == "GroupKFold"
+
+
 # ── Lot A — non-fuite préprocesseur/CV et calibration CQR groupée ──
 
 
@@ -129,7 +185,7 @@ def test_cv_estimator_is_pipeline_with_preprocessor_first_step(monkeypatch):
     split = split_dataset(df, "cible", ["x1", "x2"], "regression", None, 0.2, 42)
     y_train = split.y_train.to_numpy(dtype=float)
     preprocessor_template = build_preprocessor(split.X_train)
-    cv = _make_cv("regression", 3, None)
+    cv = _make_cv("regression", 3, None, 42)
     config = TrainingConfig(optuna_trials=1, cv_folds=3)
 
     spec = MODEL_REGISTRY["lightgbm"]
@@ -209,7 +265,7 @@ def test_feature_engineering_frequency_encoding_survives_pipeline_wiring(monkeyp
     split = split_dataset(df, "cible", ["x", "ville"], "regression", None, 0.2, 42)
     fe_config = {"frequency_encoding": ["ville"]}
     preprocessor_template = build_preprocessor(split.X_train, fe_config)
-    cv = _make_cv("regression", 3, None)
+    cv = _make_cv("regression", 3, None, 42)
     config = TrainingConfig(optuna_trials=1, cv_folds=3)
 
     captured: dict = {}
@@ -648,7 +704,7 @@ def test_learning_curve_pipeline_is_never_prefit(monkeypatch):
     split = split_dataset(df, "cible", ["x1", "x2"], "regression", None, 0.2, 42)
     y_train = split.y_train.to_numpy(dtype=float)
     preprocessor_template = build_preprocessor(split.X_train)
-    cv = _make_cv("regression", 3, None)
+    cv = _make_cv("regression", 3, None, 42)
     config = TrainingConfig(optuna_trials=1, cv_folds=3)
 
     result, status = _compute_learning_curve(
@@ -679,7 +735,7 @@ def test_learning_curve_degrades_on_failure(monkeypatch):
     split = split_dataset(df, "cible", ["x1", "x2"], "regression", None, 0.2, 42)
     y_train = split.y_train.to_numpy(dtype=float)
     preprocessor_template = build_preprocessor(split.X_train)
-    cv = _make_cv("regression", 3, None)
+    cv = _make_cv("regression", 3, None, 42)
     config = TrainingConfig(optuna_trials=1, cv_folds=3)
 
     from sklearn.linear_model import Ridge
@@ -738,7 +794,7 @@ def test_cv_estimator_is_pipeline_for_scaling_required_models(monkeypatch):
     split = split_dataset(df, "cible", ["x1", "x2"], "regression", None, 0.2, 42)
     y_train = split.y_train.to_numpy(dtype=float)
     preprocessor_template = build_preprocessor(split.X_train)
-    cv = _make_cv("regression", 3, None)
+    cv = _make_cv("regression", 3, None, 42)
     config = TrainingConfig(optuna_trials=1, cv_folds=3)
 
     for spec_id in ("svm", "knn", "linear_reg"):
@@ -890,7 +946,7 @@ def test_optimize_one_model_routes_sample_weight_for_supporting_model(monkeypatc
     y_train = rng.integers(0, 3, n_train)
     sample_weight = rng.uniform(0.5, 1.5, n_train)
     preprocessor_template = build_preprocessor(split.X_train)
-    cv = _make_cv("classification", 3, None)
+    cv = _make_cv("classification", 3, None, 42)
     config = TrainingConfig(optuna_trials=1, cv_folds=3, class_rebalancing=True)
 
     spec = MODEL_REGISTRY["lightgbm"]
@@ -923,7 +979,7 @@ def test_optimize_one_model_skips_sample_weight_for_unsupported_model(monkeypatc
     y_train = rng.integers(0, 3, n_train)
     sample_weight = rng.uniform(0.5, 1.5, n_train)
     preprocessor_template = build_preprocessor(split.X_train)
-    cv = _make_cv("classification", 3, None)
+    cv = _make_cv("classification", 3, None, 42)
     config = TrainingConfig(optuna_trials=1, cv_folds=3, class_rebalancing=True)
 
     spec = MODEL_REGISTRY["knn"]
@@ -985,7 +1041,7 @@ def test_optimize_one_model_captures_fold_scores_without_retraining():
     split = split_dataset(df, "cible", ["x1", "x2"], "regression", None, 0.2, 42)
     y_train = split.y_train.to_numpy(dtype=float)
     preprocessor_template = build_preprocessor(split.X_train)
-    cv = _make_cv("regression", 3, None)
+    cv = _make_cv("regression", 3, None, 42)
     config = TrainingConfig(optuna_trials=3, cv_folds=3)
 
     spec = MODEL_REGISTRY["lightgbm"]
@@ -1007,7 +1063,7 @@ def test_optimize_one_model_captures_regression_error_metric():
     split = split_dataset(df, "cible", ["x1", "x2"], "regression", None, 0.2, 42)
     y_train = split.y_train.to_numpy(dtype=float)
     preprocessor_template = build_preprocessor(split.X_train)
-    cv = _make_cv("regression", 3, None)
+    cv = _make_cv("regression", 3, None, 42)
     config = TrainingConfig(optuna_trials=3, cv_folds=3)
 
     spec = MODEL_REGISTRY["lightgbm"]
@@ -1027,7 +1083,7 @@ def test_optimize_one_model_classification_has_no_secondary_metric():
     split = split_dataset(df, "cible", ["f1", "f2"], "classification", None, 0.2, 42)
     y_train = split.y_train.to_numpy()
     preprocessor_template = build_preprocessor(split.X_train)
-    cv = _make_cv("classification", 3, None)
+    cv = _make_cv("classification", 3, None, 42)
     config = TrainingConfig(optuna_trials=3, cv_folds=3)
 
     spec = MODEL_REGISTRY["lightgbm"]

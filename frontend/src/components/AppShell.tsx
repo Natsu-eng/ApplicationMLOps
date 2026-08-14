@@ -1,17 +1,22 @@
 import { type ReactNode, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
-import { Bell, LogOut, Menu, Search, Target, X } from "lucide-react";
+import { HelpCircle, LogOut, Menu, Target, X } from "lucide-react";
 import { useAuth } from "../contexts/AuthContext";
 import { Avatar } from "./ui/Avatar";
 import { Badge } from "./ui/Badge";
+import { HelpModal } from "./HelpModal";
 import { PILLARS, type PillarId } from "../config/pillars";
 
 /** Coquille commune à toutes les pages protégées — sidebar fixe façon SaaS
  * moderne (refonte UI, calquée sur la maquette de référence) : logo en
  * tête, navigation groupée par pilier (ML supervisé actif, non
  * supervisé/vision "Bientôt"), profil utilisateur en pied de sidebar.
- * Barre du haut réduite à une recherche + notifications (visuel seul pour
- * l'instant, aucun des deux n'est câblé — hors périmètre de cette refonte).
+ * Barre du haut réduite à un point d'entrée d'aide (`HelpModal`) — la
+ * recherche et les notifications, visuelles mais jamais câblées, ont été
+ * retirées (AUDIT_ROADMAP.md, H16 : une UI qui a l'air fonctionnelle sans
+ * l'être casse la confiance, contrairement au traitement honnête déjà
+ * appliqué aux piliers "Bientôt"). À réintroduire seulement quand une vraie
+ * fonctionnalité existe derrière.
  *
  * `pillarId` détermine les items de nav affichés (lus depuis le registre des
  * piliers) — omis sur l'écran d'orientation, qui est pilier-agnostique.
@@ -21,6 +26,7 @@ export default function AppShell({ children, pillarId }: { children: ReactNode; 
   const { user, logout } = useAuth();
   const location = useLocation();
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
 
   if (!user) return null;
 
@@ -135,7 +141,7 @@ export default function AppShell({ children, pillarId }: { children: ReactNode; 
       {/* Sidebar mobile — panneau glissant, masqué par défaut */}
       {mobileNavOpen && (
         <div className="fixed inset-0 z-40 lg:hidden">
-          <div className="absolute inset-0 bg-slate-900/40" onClick={() => setMobileNavOpen(false)} />
+          <div className="absolute inset-0 bg-foreground/40" onClick={() => setMobileNavOpen(false)} />
           <aside className="absolute inset-y-0 left-0 w-64 flex flex-col bg-sidebar shadow-xl">
             {sidebarContent}
           </aside>
@@ -153,19 +159,12 @@ export default function AppShell({ children, pillarId }: { children: ReactNode; 
           </button>
 
           <div className="ml-auto flex items-center gap-2">
-            <div className="hidden sm:flex items-center gap-2 w-64 rounded-lg border border-input bg-card px-3 py-1.5 text-sm text-muted-foreground focus-within:ring-2 focus-within:ring-ring/30 transition-shadow">
-              <Search size={14} className="flex-shrink-0" />
-              <input
-                type="search"
-                placeholder="Rechercher…"
-                className="w-full bg-transparent outline-none placeholder:text-muted-foreground"
-              />
-            </div>
             <button
-              aria-label="Notifications"
-              className="flex items-center justify-center h-9 w-9 rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+              onClick={() => setHelpOpen(true)}
+              className="flex items-center gap-1.5 h-9 rounded-lg px-3 text-sm text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
             >
-              <Bell size={16} />
+              <HelpCircle size={16} />
+              <span className="hidden sm:inline">Aide</span>
             </button>
           </div>
         </header>
@@ -174,6 +173,8 @@ export default function AppShell({ children, pillarId }: { children: ReactNode; 
           <div className="max-w-6xl mx-auto">{children}</div>
         </main>
       </div>
+
+      {helpOpen && <HelpModal onClose={() => setHelpOpen(false)} />}
     </div>
   );
 }

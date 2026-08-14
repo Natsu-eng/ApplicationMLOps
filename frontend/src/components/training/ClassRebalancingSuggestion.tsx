@@ -60,14 +60,14 @@ export function ClassRebalancingSuggestion({
 
   return (
     <div className="space-y-2">
-      <p className="text-xs uppercase tracking-wide text-slate-500 flex items-center gap-1.5">
+      <p className="text-xs uppercase tracking-wide text-muted-foreground flex items-center gap-1.5">
         <Scale size={12} className="text-primary" />
         Rééquilibrage des classes suggéré
       </p>
 
       <div
-        className={`rounded-lg border px-3 py-2.5 bg-slate-50 ${
-          approved ? "border-primary/40" : "border-slate-200"
+        className={`rounded-lg border px-3 py-2.5 bg-muted ${
+          approved ? "border-primary/40" : "border-border"
         }`}
       >
         <div className="flex items-start gap-2">
@@ -86,21 +86,21 @@ export function ClassRebalancingSuggestion({
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2 flex-wrap">
                 <Badge variant="accent">Garde-fou</Badge>
-                <p className="text-sm text-slate-800 font-medium">
+                <p className="text-sm text-foreground font-medium">
                   Rééquilibrer l'importance des classes pendant l'entraînement
                 </p>
               </div>
             </div>
             <ChevronDown
               size={14}
-              className={`flex-shrink-0 text-slate-400 transition-transform mt-1 ${expanded ? "rotate-180" : ""}`}
+              className={`flex-shrink-0 text-muted-foreground transition-transform mt-1 ${expanded ? "rotate-180" : ""}`}
             />
           </button>
         </div>
 
-        {expanded && <p className="text-xs text-slate-600 mt-2 pl-6">{explanation}</p>}
+        {expanded && <p className="text-xs text-muted-foreground mt-2 pl-6">{explanation}</p>}
 
-        <p className="text-xs text-slate-600 mt-2 pl-6">
+        <p className="text-xs text-muted-foreground mt-2 pl-6">
           Cochez pour donner plus de poids à la classe rare pendant l'entraînement — aucune ligne n'est
           dupliquée ni supprimée.
         </p>

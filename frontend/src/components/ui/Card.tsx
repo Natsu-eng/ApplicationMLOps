@@ -10,9 +10,9 @@ interface CardProps extends HTMLAttributes<HTMLDivElement> {
 export function Card({ children, interactive = false, className = "", ...rest }: CardProps) {
   return (
     <div
-      className={`rounded-2xl border border-border bg-card shadow-sm ${
+      className={`rounded-2xl border border-border/70 bg-card shadow-md shadow-foreground/[0.04] ${
         interactive
-          ? "transition-all duration-200 hover:border-primary/30 hover:shadow-md hover:shadow-primary/5 hover:-translate-y-0.5"
+          ? "transition-all duration-200 hover:border-primary/30 hover:shadow-lg hover:shadow-primary/10 hover:-translate-y-0.5"
           : ""
       } ${className}`}
       {...rest}

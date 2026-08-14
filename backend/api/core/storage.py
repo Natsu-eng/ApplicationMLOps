@@ -33,3 +33,11 @@ def model_file_path(organization_id: int, training_job_id: int) -> Path:
     org_dir = MODELS_DIR / str(organization_id)
     org_dir.mkdir(parents=True, exist_ok=True)
     return org_dir / f"{training_job_id}.joblib"
+
+
+def cluster_model_file_path(organization_id: int, clustering_job_id: int) -> Path:
+    """Même isolation que `model_file_path`, sous-dossier dédié — Lot 11+
+    (ML non supervisé)."""
+    org_dir = MODELS_DIR / str(organization_id) / "clustering"
+    org_dir.mkdir(parents=True, exist_ok=True)
+    return org_dir / f"{clustering_job_id}.joblib"
