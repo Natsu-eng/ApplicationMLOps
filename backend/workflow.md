@@ -1040,6 +1040,132 @@ toujours en attente) ; pas de registre de modèles versionné (Lot 9) ; pas de
 durcissement SaaS (Lot 10, quotas de jobs concurrents notamment) — ces trois
 derniers points restent priorisés dans l'audit backend qui a précédé ce lot.
 
+## Refonte visuelle globale — sidebar, onglets, palette CVD-safe, cartes colorées (livré)
+
+Frontend uniquement, 3 commits isolés. Retour utilisateur explicite après le
+lot précédent : seule la sidebar plaisait, le reste des pages restait perçu
+comme "tout blanc".
+
+- [x] `index.css` — `--color-background` retinté (bleu-gris visible, teinte
+  258 cohérente avec `--color-primary`/`--color-sidebar`) : le token
+  n'avait, de fait, jamais été appliqué depuis la refonte sidebar
+  (`AppShell` utilise `bg-background`, 0.985 de luminosité, quasi
+  indissociable du blanc des cartes `bg-card` à 1.0).
+- [x] Nouveaux `components/ui/Switch.tsx` (interrupteur pilule, extrait du
+  motif déjà présent dans `ExpertModePanel.tsx`) et `components/ui/Tabs.tsx`
+  (contrôle segmenté) — remplacent respectivement les cases à cocher des
+  vrais réglages ON/OFF et le motif "bordure basse" dupliqué entre
+  `EdaModal.tsx`/`ModelResultModal.tsx`.
+- [x] `theme/charts.ts` — palette catégorielle (6 séries) RE-VALIDÉE avec le
+  script du skill dataviz (`validate_palette.js`) : l'ancien ordre échouait
+  la paire adjacente pink↔teal (ΔE 3.8 en deutéranopie, sous le seuil de 6),
+  jamais vérifié avant. Nouvel ordre validé, bleu de marque conservé en
+  tête. `Heatmap.tsx` — dégradés d'opacité ad hoc remplacés par des rampes à
+  paliers discrets (séquentielle bleu, divergente bleu↔rouge + neutre gris),
+  encre du texte calculée par palier.
+- [x] `ColorIconBadge.tsx` — teinte "rose" (états d'échec, hors rotation
+  déterministe par id) + helpers `accentValueTextClass`/`accentBorderClass`.
+  `ModelResultModal.tsx` — `MetricCard` gagne une teinte par métrique,
+  `Leaderboard` un podium visuel (gagnant en dégradé de marque + trophée,
+  liseré or/argent pour #2/#3).
+- [x] **Correction sur retour direct (capture d'écran)** : une première
+  version colorait les cartes Dashboard/Datasets par STATUT réel plutôt que
+  par identité — en usage réel, la quasi-totalité des datasets/entraînements
+  partagent le même statut au même moment, ce qui rendait les grilles
+  monochromes (pire qu'avant). Revenu à la coloration par identité
+  (`accentColorForId`), le statut réel restant lisible via le `Badge`
+  existant (texte + puce) — deux canaux séparés plutôt que confondus.
+- [x] Table "Résumé par colonne" (`EdaModal.tsx`) retravaillée sur le même
+  retour direct : badge de type coloré avec icône, taux de valeurs
+  manquantes en mini barre de progression par sévérité, grands nombres
+  formatés avec séparateur de milliers (`toLocaleString("fr-FR")` — une
+  colonne identifiant peut avoir un écart-type dans les centaines de
+  millions, illisible sans ce formatage), zébrage + survol de ligne.
+
+**Vérifié** : `tsc -b`, `vite build`, `vitest` (13/13) verts après chaque
+commit. Rendu visuel réel vérifié PARTIELLEMENT par l'utilisateur en cours
+de lot (captures d'écran fournies en session, ayant motivé la correction
+ci-dessus) — pas une revue exhaustive de chaque écran.
+
+## Lot Explicabilité locale — pourquoi CETTE prédiction (livré)
+
+Jusqu'ici, l'explicabilité SHAP (Lot 5, Lot Explicabilité globale) ne
+répondait qu'à "quelles variables comptent EN MOYENNE pour ce modèle" —
+jamais "pourquoi CE cas précis a reçu CETTE prédiction", la question la
+plus naturelle pour un utilisateur qui vient de tester une prédiction
+(`PredictionForm.tsx`, Lot 4a).
+
+- [x] **`services/ml_explainability.py`** (nouveau) — `build_explainer`/
+  `shap_values_per_class` déplacées depuis `services/ml_training.py` pour
+  être PARTAGÉES avec l'inférence, sans risque qu'une copie diverge de
+  l'autre sur la normalisation de la sortie SHAP (bug réel historique du
+  Lot 3 : forme dépendante de la version SHAP/du backend d'arbre).
+  `ml_training.py` conserve des alias locaux (`_build_explainer =
+  build_explainer`) pour ne pas toucher ses nombreux appels existants.
+  Nouvelles fonctions : `select_class_matrix` (choisit la matrice d'UNE
+  classe dans la sortie normalisée), `normalize_base_value` (même
+  normalisation défensive pour `explainer.expected_value`, qui porte la
+  même ambiguïté de forme que `shap_values`).
+- [x] **`services/ml_training.py`** — le bundle persisté gagne
+  `explainer_kind` (routage à l'inférence, même famille que l'explicabilité
+  globale) et `local_explain_background` (fond borné et déjà dense,
+  uniquement pour les familles qui en ont besoin — linear/kernel ;
+  `None` pour "tree", qui couvre tout le catalogue par défaut, donc aucun
+  coût de bundle supplémentaire dans le cas courant).
+- [x] **`services/ml_inference.py::explain_one`** — construit l'explainer
+  adapté à la volée (même routage que l'entraînement), calcule les
+  contributions SHAP de l'observation, bornées à
+  `LOCAL_EXPLAIN_TOP_FEATURES` (10) avec le reste agrégé sous "Autres".
+  Dégrade proprement (`status: "degraded"` + message FR) plutôt que de
+  faire échouer la PRÉDICTION elle-même — un modèle entraîné avant ce lot
+  n'a pas `explainer_kind` dans son bundle, cas rétrocompatible testé
+  explicitement. Câblé dans `predict_one` : classification (explique la
+  classe PRÉDITE, pas les K classes à la fois) et régression.
+- [x] **Bug réel trouvé et corrigé en test** : pour une classification
+  BINAIRE, certaines versions de SHAP renvoient un seul tableau de valeurs
+  pour `explainer.shap_values(...)` — celui de `class_names[1]` (la "classe
+  positive"), quelle que soit la classe réellement prédite pour
+  l'observation. Sans correction, expliquer une observation prédite classe
+  0 affichait des contributions au signe inversé (une variable qui pousse
+  VERS la classe prédite semblait la pousser CONTRE). Détecté en vérifiant
+  empiriquement la propriété fondamentale de SHAP (`base_value +
+  sum(shap_values) == sortie du modèle`, ici en espace logit via sigmoïde)
+  sur un modèle réel — pas supposée correcte. Corrigé par inversion de signe
+  ciblée (`sign = -1` uniquement pour classe prédite = 0, sortie non listée,
+  2 classes), verrouillé par un test qui vérifie LES DEUX classes prédites,
+  pas seulement celle qui fonctionnait déjà par hasard.
+- [x] **API** (`api/routers/training.py`) — `PredictionResponse.explanation`
+  (nouveau, optionnel) : `LocalExplanation` (status/message/base_value/
+  contributions/other_contribution), `LocalContribution`
+  (feature/value/contribution).
+- [x] **Frontend** — `components/training/LocalExplanation.tsx`
+  (nouveau) : barres divergentes centrées sur 0 (rouge = pousse la
+  prédiction vers le haut, bleu = vers le bas — même convention que le
+  beeswarm SHAP déjà utilisé ailleurs, jamais une nouvelle convention
+  concurrente), résumé "base → total" en langage clair. Intégré à
+  `PredictionForm.tsx`, sous le résultat d'une prédiction.
+
+**Vérifié** :
+
+- Suite pytest complète verte (nouveaux tests : `test_ml_explainability.py`
+  — 9 tests unitaires sur la normalisation partagée ; `test_inference.py` —
+  reconstruction exacte en régression, reconstruction de la probabilité de
+  la classe prédite en classification binaire (LES DEUX classes,
+  verrouille le correctif de signe), non-plantage en classification
+  multiclasse réelle (Iris), dégradation propre sur un bundle sans
+  `explainer_kind`).
+- La propriété de reconstruction SHAP (`base_value + Σ contributions ≈
+  sortie du modèle`) est vérifiée QUANTITATIVEMENT sur des modèles réels
+  entraînés de bout en bout, pas seulement testée structurellement — c'est
+  cette vérification qui a révélé le bug de signe binaire ci-dessus.
+- Frontend : `tsc -b`, `vite build`, `vitest` (13/13) verts.
+
+**Scope volontairement limité** : le fond `local_explain_background` n'est
+recalculé qu'à l'entraînement (pas de rétrocompatibilité pour les modèles
+déjà entraînés avant ce lot — dégradation propre, pas de backfill) ;
+explication locale non exposée pour les modèles CQR (intervalle de
+confiance) eux-mêmes, seulement pour la prédiction centrale.
+
 ## Prochains lots (résumé — détail complet dans le diagnostic de migration et les échanges de cadrage)
 
 | Lot | Contenu | Livrable testable |

@@ -351,6 +351,42 @@ libellés gris uniformes ; la sidebar est passée d'un blanc quasi invisible
 Rendu réel non vérifié dans un navigateur (aucun outil disponible dans cet
 environnement) — revue visuelle à faire.*
 
+### Refonte visuelle globale, corrigée en direct sur retour utilisateur
+
+Le fond des pages (hors sidebar) restait quasi blanc malgré le token dédié
+(jamais réellement appliqué depuis la refonte sidebar) — retinté en
+bleu-gris visible, cohérent avec la sidebar. Nouveaux interrupteurs et
+onglets au style "contrôle segmenté" (fond neutre, pastille active en
+relief). Palette de graphiques revalidée pour l'accessibilité daltonienne
+avec l'outil dédié (un ancien réglage échouait un test de séparation des
+couleurs, jamais vérifié avant). Une première version colorait les cartes
+Dataset/Dashboard par statut plutôt que par identité — corrigée en direct
+sur capture d'écran fournie par l'utilisateur : en usage réel, la
+quasi-totalité des éléments partagent le même statut au même moment, ce qui
+rendait les grilles monochromes plutôt que vivantes. La table de résumé de
+l'exploration de données a aussi été retravaillée (badges de type colorés,
+grands nombres lisibles avec séparateurs de milliers).
+
+### Lot Explicabilité locale — pourquoi CETTE prédiction précise
+
+L'explicabilité SHAP existante ne répondait qu'à "quelles variables comptent
+en moyenne pour ce modèle" — jamais "pourquoi ce cas précis a reçu cette
+prédiction", la question la plus naturelle juste après avoir testé une
+prédiction. Le formulaire de prédiction affiche désormais un graphique en
+barres divergentes montrant, variable par variable, ce qui pousse la
+prédiction vers le haut ou vers le bas pour l'observation saisie.
+
+*Bug réel trouvé en testant sur un modèle réel* : pour une classification à
+deux classes, la bibliothèque d'explicabilité peut renvoyer un calcul pour
+une seule des deux classes, quelle que soit celle réellement prédite —
+sans correction, expliquer un cas prédit dans l'autre classe aurait montré
+l'inverse de la réalité (une variable en faveur de la prédiction affichée
+comme y étant opposée). Détecté en vérifiant que la somme des effets
+affichés retombe bien sur la probabilité réellement annoncée par le modèle
+— pas supposé correct — puis corrigé et verrouillé par un test qui
+vérifie les deux classes, pas seulement celle qui fonctionnait déjà par
+hasard.
+
 ---
 
 ## Robustesse — pas juste "ça marche chez moi"
