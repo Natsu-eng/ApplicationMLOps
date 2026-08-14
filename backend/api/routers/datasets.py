@@ -23,6 +23,7 @@ from api.core.database import get_db
 from api.core.models import Dataset, User
 from api.core.storage import dataset_file_path, delete_dataset_file
 from api.routers.auth import get_current_user
+from services.audit import log_action
 from services.data_quality import analyze_data_quality
 from services.dataset_eda import (
     compute_categorical_correlation_matrix,
@@ -545,5 +546,9 @@ def delete_dataset(dataset_id: int, current_user: User = Depends(get_current_use
     dataset = _get_org_dataset(dataset_id, current_user, db)
     if dataset.file_path:
         delete_dataset_file(Path(dataset.file_path))
+    log_action(
+        db, current_user.organization_id, current_user.id, "dataset.deleted",
+        target_type="dataset", target_id=dataset.id, details={"name": dataset.name},
+    )
     db.delete(dataset)
     db.commit()

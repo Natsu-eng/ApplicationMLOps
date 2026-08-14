@@ -109,6 +109,34 @@ def _noop_progress(_step: str, _percent: int) -> None:
     pass
 
 
+# ── Traçabilité de l'environnement (Lot 9/10) ────────────────────────────────
+#
+# Un modèle n'est reproductible/auditable que si on sait AUSSI avec quelles
+# versions de librairies il a été entraîné (au-delà du dataset, de la config
+# et des métriques déjà dans model_card) — les résultats d'un même algorithme
+# peuvent varier d'une version à l'autre de scikit-learn/LightGBM/etc.
+# Capturé une fois par entraînement, jamais recalculé après coup (l'export de
+# l'artefact, Lot 9, avertit déjà que ces versions ne sont pas garanties
+# identiques dans l'environnement de rechargement).
+_ENVIRONMENT_LIBRARIES = ("sklearn", "lightgbm", "xgboost", "catboost", "shap", "optuna", "pandas", "numpy")
+
+
+def _training_environment_versions() -> dict[str, str]:
+    """Version de chaque librairie ML clé, si installée — jamais une
+    exception : une librairie absente/sans `__version__` est simplement
+    omise, la traçabilité reste partielle plutôt qu'un échec de
+    l'entraînement pour un champ purement informatif."""
+    import importlib
+
+    versions: dict[str, str] = {}
+    for lib in _ENVIRONMENT_LIBRARIES:
+        try:
+            versions[lib] = importlib.import_module(lib).__version__
+        except Exception:
+            continue
+    return versions
+
+
 @dataclass
 class TrainingConfig:
     test_size: float = 0.2
@@ -1162,6 +1190,10 @@ def train_and_evaluate(
         "cv_score": float(cv_score),
         "optuna_trials": config.optuna_trials,
         "seed": config.seed,
+        # Lot 9/10 — traçabilité de l'environnement d'entraînement (versions
+        # de librairies), pour la reproductibilité/l'audit d'un modèle promu
+        # en production — voir _training_environment_versions ci-dessus.
+        "environment": _training_environment_versions(),
         "class_names": class_names,
         "metrics": metrics,
         "cqr": cqr_result,

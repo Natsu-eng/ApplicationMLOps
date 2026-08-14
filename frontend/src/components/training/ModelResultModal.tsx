@@ -1,15 +1,17 @@
 import { type ReactNode, useEffect, useState } from "react";
-import { Activity, Calculator, ClipboardList, Gauge, ShieldCheck, Sparkles, Trophy, Wand2 } from "lucide-react";
+import { Activity, Award, Calculator, ClipboardList, Download, Gauge, ShieldCheck, Sparkles, Trophy, Wand2 } from "lucide-react";
 import {
   ApiError,
   api,
   type BootstrapCI,
   type LeaderboardResponse,
   type MLModelDetail,
+  type ModelStage,
   type TrainingJobSummary,
 } from "../../api/client";
 import { Badge } from "../ui/Badge";
 import { BoxPlotChart } from "../ui/BoxPlot";
+import { Button } from "../ui/Button";
 import { Card } from "../ui/Card";
 import { accentSurfaceClass, accentValueTextClass, type AccentColor } from "../ui/ColorIconBadge";
 import { Modal } from "../ui/Modal";
@@ -306,6 +308,76 @@ function Leaderboard({ data }: { data: LeaderboardResponse | null }) {
   );
 }
 
+/** Registre de modèles (Lot 9) — promotion (staging/production) et export
+ * de l'artefact. Un seul modèle "production" à la fois par dataset+cible,
+ * la démotion de l'ancien est gérée côté serveur (voir `promote_model`,
+ * `api/routers/training.py`) : ce composant se contente d'appeler l'API et
+ * de refléter le nouvel état renvoyé, jamais de logique de démotion ici. */
+function ModelRegistryControls({
+  model,
+  jobId,
+  onUpdate,
+}: {
+  model: MLModelDetail;
+  jobId: number;
+  onUpdate: (model: MLModelDetail) => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function setStage(stage: Exclude<ModelStage, null> | "none") {
+    setBusy(true);
+    setError(null);
+    try {
+      onUpdate(await api.training.promoteModel(jobId, stage));
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Action impossible");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const stageLabel =
+    model.stage === "production" ? "En production" : model.stage === "staging" ? "En validation (staging)" : "Non promu";
+  const stageBadgeVariant = model.stage === "production" ? "success" : model.stage === "staging" ? "warning" : "neutral";
+
+  return (
+    <Card className="p-5">
+      <SectionHeader
+        icon={Award}
+        color="violet"
+        label="Registre de modèles"
+        help="Marquez ce modèle comme référence pour ce problème (production), ou en validation (staging) avant de le promouvoir. Un seul modèle en production à la fois par jeu de données et cible — promouvoir un nouveau modèle démet automatiquement l'ancien (repasse en staging, jamais supprimé)."
+      />
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <Badge variant={stageBadgeVariant} dot>{stageLabel}</Badge>
+        <div className="flex items-center gap-2 flex-wrap">
+          {model.stage !== "staging" && (
+            <Button variant="secondary" size="sm" disabled={busy} onClick={() => setStage("staging")}>
+              Mettre en validation
+            </Button>
+          )}
+          {model.stage !== "production" && (
+            <Button size="sm" disabled={busy} onClick={() => setStage("production")}>
+              Promouvoir en production
+            </Button>
+          )}
+          {model.stage && (
+            <Button variant="ghost" size="sm" disabled={busy} onClick={() => setStage("none")}>
+              Retirer
+            </Button>
+          )}
+          <Button variant="secondary" size="sm" onClick={() => api.training.exportModel(jobId)}>
+            <Download size={14} />
+            Exporter l'artefact
+          </Button>
+        </div>
+      </div>
+      {error && <p className="text-xs text-rose-600 mt-2">{error}</p>}
+    </Card>
+  );
+}
+
 /** Contenu du résultat d'un entraînement — sans chrome de modale, pour être
  * réutilisable tel quel dans deux contextes (Lot E1-ter) : la modale
  * (`ModelResultModal`, ouverte depuis le tableau de bord) et la page
@@ -556,6 +628,8 @@ export function ModelResultView({ job }: { job: TrainingJobSummary }) {
 
           {activeTab === "details" && (
             <div className="space-y-5">
+              <ModelRegistryControls model={model} jobId={job.id} onUpdate={setModel} />
+
               <FeatureEngineeringSummary spec={model.feature_engineering} />
 
               <Card className="p-5">

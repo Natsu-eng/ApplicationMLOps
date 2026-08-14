@@ -190,6 +190,12 @@ class MLModel(Base):
     # Courbe d'apprentissage (train-size vs score) — diagnostic de
     # sur/sous-apprentissage complémentaire à delta_r2/accuracy train-test.
     learning_curve_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # Lot 9 — registre de modèles versionné. `stage` : "staging"/"production",
+    # NULL = jamais promu (comportement historique, rétrocompat par absence
+    # comme le reste du projet — voir api/routers/training.py::promote_model
+    # pour la règle "un seul modèle en production par dataset+cible").
+    stage: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    promoted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
 
     organization: Mapped["Organization"] = relationship("Organization")
@@ -244,3 +250,43 @@ class ModelCandidate(Base):
 
     organization: Mapped["Organization"] = relationship("Organization")
     training_job: Mapped["TrainingJob"] = relationship("TrainingJob")
+
+
+class AuditLog(Base):
+    """Journal des actions sensibles (Lot 10 — durcissement SaaS) : qui a
+    fait quoi, quand — ajout/désactivation de membre, suppression de
+    dataset/entraînement, promotion de modèle. Pas un log applicatif complet
+    (déjà couvert par les logs serveur, `logging` standard) : uniquement les
+    actions qu'un `owner` pourrait vouloir auditer après coup ("qui a
+    supprimé ce dataset ?"), consultable depuis l'équipe (`GET /auth/team/
+    audit-log`, réservé au owner comme le reste de la gestion d'équipe).
+
+    `actor_id` NULLABLE avec `ondelete="SET NULL"` : l'entrée doit survivre
+    à la suppression du compte de son auteur (traçabilité de l'action même
+    si l'utilisateur qui l'a faite est parti) — jamais de cascade delete
+    sur ce lien, contrairement au reste du modèle de données."""
+
+    __tablename__ = "audit_logs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    organization_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    actor_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    # Espace de noms pointé "ressource.action" (ex. "dataset.deleted",
+    # "training_job.deleted", "member.added", "model.promoted") — assez
+    # structuré pour filtrer plus tard, assez simple pour rester un champ
+    # texte plutôt qu'une table d'énumération séparée.
+    action: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    target_type: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    target_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    # Contexte additionnel en langage clair (ex. {"dataset_name": "x.csv"}) —
+    # pour rester lisible même après suppression de la ressource elle-même
+    # (le nom d'un dataset supprimé ne serait plus consultable autrement).
+    details_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+    organization: Mapped["Organization"] = relationship("Organization")
+    actor: Mapped[Optional["User"]] = relationship("User")

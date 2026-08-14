@@ -51,6 +51,16 @@ class Settings(BaseSettings):
     cqr_n_strata: int = 5  # strates Mondrian — voir services/ml_training.py
     model_seed: int = 42
 
+    # Durcissement SaaS (Lot 10) — garde-fou technique, pas un plan
+    # tarifaire : un seul worker RQ traite les jobs de TOUTES les
+    # organisations (voir docker-compose.yml) ; sans limite, une
+    # organisation qui enfile beaucoup d'entraînements d'affilée peut
+    # affamer les autres. Valeur de départ prudente, pensée pour un usage BE
+    # normal (quelques entraînements en parallèle au plus) — à revoir si un
+    # vrai modèle de plans/quotas commerciaux est décidé (hors périmètre
+    # technique de ce lot).
+    max_concurrent_jobs_per_org: int = 3
+
     # Journalisation
     log_level: str = "INFO"
 
