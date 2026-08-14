@@ -52,6 +52,35 @@ export function accentBarClass(color: AccentColor): string {
   return ACCENT_BAR_CLASSES[color];
 }
 
+// Encre forte (valeur chiffrée mise en avant, ex. tuile de métrique) — un
+// ton au-dessus du texte -600 des badges, pour porter un gros nombre en gras
+// sans sacrifier le contraste.
+const ACCENT_VALUE_TEXT_CLASSES: Record<AccentColor, string> = {
+  blue: "text-blue-700",
+  teal: "text-teal-700",
+  amber: "text-amber-700",
+  violet: "text-violet-700",
+  rose: "text-rose-700",
+};
+
+export function accentValueTextClass(color: AccentColor): string {
+  return ACCENT_VALUE_TEXT_CLASSES[color];
+}
+
+// Bordure pleine teinte (liseré fin, ex. carte de métrique) — un cran plus
+// affirmé que la bordure -100/-200 des badges/surfaces.
+const ACCENT_BORDER_CLASSES: Record<AccentColor, string> = {
+  blue: "border-blue-200",
+  teal: "border-teal-200",
+  amber: "border-amber-200",
+  violet: "border-violet-200",
+  rose: "border-rose-200",
+};
+
+export function accentBorderClass(color: AccentColor): string {
+  return ACCENT_BORDER_CLASSES[color];
+}
+
 const ACCENT_ROTATION: AccentColor[] = ["blue", "teal", "amber", "violet"];
 
 /** Teinte déterministe à partir d'un identifiant (ex. id de dataset) — pour

@@ -11,6 +11,7 @@ import {
 import { Badge } from "../ui/Badge";
 import { BoxPlotChart } from "../ui/BoxPlot";
 import { Card } from "../ui/Card";
+import { accentSurfaceClass, accentValueTextClass, type AccentColor } from "../ui/ColorIconBadge";
 import { Modal } from "../ui/Modal";
 import { LabelWithHelp } from "../ui/Tooltip";
 import { SectionHeader } from "../ui/SectionHeader";
@@ -66,25 +67,32 @@ function DiagnosticBlock({ status, isEmpty, children }: { status: unknown; isEmp
   return <>{children}</>;
 }
 
-/** Cartes de métriques principales — l'ensemble affiché dépend du type de tâche. */
+/** Cartes de métriques principales — l'ensemble affiché dépend du type de
+ * tâche. Une teinte par métrique (comme les tuiles du dashboard) plutôt
+ * qu'un fond gris uniforme — retour explicite : "des cartes colorées" pour
+ * la page Résultats. La couleur est purement décorative/identitaire (quelle
+ * métrique, pas si elle est bonne ou mauvaise) : jamais rouge/vert, qui
+ * lirait à tort comme un jugement de qualité sur la valeur. */
 function MetricCard({
   label,
   help,
   value,
   ci,
+  color = "blue",
 }: {
   label: string;
   help?: string;
   value: number | null | undefined;
   ci?: BootstrapCI;
+  color?: AccentColor;
 }) {
   if (value === null || value === undefined) return null;
   return (
-    <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+    <div className={`rounded-xl border px-4 py-3 ${accentSurfaceClass(color)}`}>
       <p className="text-xs text-slate-500 mb-1">
         {help ? <LabelWithHelp label={label} help={help} /> : label}
       </p>
-      <p className="text-xl font-semibold text-slate-900 tabular-nums">{formatMetricValue(value)}</p>
+      <p className={`text-xl font-semibold tabular-nums ${accentValueTextClass(color)}`}>{formatMetricValue(value)}</p>
       {ci && (
         <p className="text-[11px] text-slate-400 mt-0.5 tabular-nums">
           IC 95 % [{formatMetricValue(ci.ci_low)} – {formatMetricValue(ci.ci_high)}]
@@ -248,30 +256,39 @@ function Leaderboard({ data }: { data: LeaderboardResponse | null }) {
       )}
 
       <div className="space-y-1.5">
-        {data.candidates.map((c) => (
-          <div
-            key={c.algorithm}
-            className={`flex items-center justify-between gap-3 rounded-lg border px-3 py-2 ${
-              c.is_winner ? "border-primary/20 bg-primary/10" : "border-slate-200 bg-slate-50"
-            }`}
-          >
-            <div className="flex items-center gap-2 min-w-0">
-              <Badge variant={c.is_winner ? "accent" : "neutral"}>#{c.rank}</Badge>
-              <span className="text-sm text-slate-800 truncate">{c.algorithm}</span>
-            </div>
-            <div className="flex items-center gap-3 flex-shrink-0 text-xs">
-              {c.secondary_metric !== null && (
-                <span className="text-slate-500">
-                  {c.secondary_metric_label} :{" "}
-                  <span className="tabular-nums text-slate-700">{c.secondary_metric.toFixed(2)}</span>
+        {data.candidates.map((c) => {
+          // Podium : le gagnant en dégradé de marque, #2/#3 en liseré
+          // or/argent discret — au-delà, une carte neutre. Purement une
+          // hiérarchie de classement (jamais "bon/mauvais modèle" au sens
+          // qualité, tous les candidats sont des choix valides).
+          const podiumBorder =
+            c.rank === 1 ? "border-primary/30 bg-primary/10" : c.rank === 2 ? "border-slate-300 bg-slate-50" : c.rank === 3 ? "border-amber-200 bg-amber-50/60" : "border-slate-200 bg-slate-50";
+          return (
+            <div
+              key={c.algorithm}
+              className={`flex items-center justify-between gap-3 rounded-lg border px-3 py-2 ${podiumBorder}`}
+            >
+              <div className="flex items-center gap-2 min-w-0">
+                <Badge variant={c.is_winner ? "accent" : "neutral"}>#{c.rank}</Badge>
+                <span className={`text-sm truncate ${c.is_winner ? "text-slate-900 font-medium" : "text-slate-800"}`}>
+                  {c.algorithm}
                 </span>
-              )}
-              <span className="tabular-nums text-slate-800 font-medium">
-                {clampUnitScore(c.selection_score).toFixed(3)}
-              </span>
+                {c.is_winner && <Trophy size={13} className="text-amber-500 flex-shrink-0" />}
+              </div>
+              <div className="flex items-center gap-3 flex-shrink-0 text-xs">
+                {c.secondary_metric !== null && (
+                  <span className="text-slate-500">
+                    {c.secondary_metric_label} :{" "}
+                    <span className="tabular-nums text-slate-700">{c.secondary_metric.toFixed(2)}</span>
+                  </span>
+                )}
+                <span className={`tabular-nums font-medium ${c.is_winner ? "text-primary" : "text-slate-800"}`}>
+                  {clampUnitScore(c.selection_score).toFixed(3)}
+                </span>
+              </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
 
       {boxData.length > 1 && (
@@ -361,15 +378,17 @@ export function ModelResultView({ job }: { job: TrainingJobSummary }) {
                           help="Part de la variation de la cible expliquée par le modèle, de 0 à 1. 0,90 = le modèle explique 90 % des écarts observés — plus c'est proche de 1, mieux c'est."
                           value={model.metrics.r2_test as number}
                           ci={isBootstrapCI(model.metrics.r2_bootstrap) ? model.metrics.r2_bootstrap : undefined}
+                          color="blue"
                         />
                         <MetricCard
                           label="RMSE"
                           help="Erreur moyenne de prédiction, dans l'unité de la cible. Plus c'est bas, mieux c'est — à comparer à l'échelle typique de vos valeurs."
                           value={model.metrics.rmse as number}
                           ci={isBootstrapCI(model.metrics.rmse_bootstrap) ? model.metrics.rmse_bootstrap : undefined}
+                          color="teal"
                         />
-                        <MetricCard label="MAE" help="Erreur absolue moyenne — comme le RMSE mais moins sensible aux grosses erreurs isolées." value={model.metrics.mae as number} />
-                        <MetricCard label="Score CV" help="Performance moyenne sur plusieurs découpages des données d'entraînement — plus fiable qu'un seul test, c'est ce score qui a servi à choisir ce modèle." value={model.metrics.cv_score as number} />
+                        <MetricCard label="MAE" help="Erreur absolue moyenne — comme le RMSE mais moins sensible aux grosses erreurs isolées." value={model.metrics.mae as number} color="amber" />
+                        <MetricCard label="Score CV" help="Performance moyenne sur plusieurs découpages des données d'entraînement — plus fiable qu'un seul test, c'est ce score qui a servi à choisir ce modèle." value={model.metrics.cv_score as number} color="violet" />
                       </>
                     ) : (
                       <>
@@ -378,10 +397,11 @@ export function ModelResultView({ job }: { job: TrainingJobSummary }) {
                           help="Pourcentage de prédictions correctes sur le jeu de test."
                           value={model.metrics.accuracy as number}
                           ci={isBootstrapCI(model.metrics.accuracy_bootstrap) ? model.metrics.accuracy_bootstrap : undefined}
+                          color="blue"
                         />
-                        <MetricCard label="F1-score" help="Équilibre entre précision et rappel — utile quand les classes sont déséquilibrées, où la précision seule peut être trompeuse." value={model.metrics.f1 as number} />
-                        <MetricCard label="AUC-ROC" help="Capacité du modèle à distinguer les classes, de 0,5 (hasard) à 1 (parfait)." value={model.metrics.roc_auc as number} />
-                        <MetricCard label="Score CV" help="Performance moyenne sur plusieurs découpages des données d'entraînement — plus fiable qu'un seul test, c'est ce score qui a servi à choisir ce modèle." value={model.metrics.cv_score as number} />
+                        <MetricCard label="F1-score" help="Équilibre entre précision et rappel — utile quand les classes sont déséquilibrées, où la précision seule peut être trompeuse." value={model.metrics.f1 as number} color="teal" />
+                        <MetricCard label="AUC-ROC" help="Capacité du modèle à distinguer les classes, de 0,5 (hasard) à 1 (parfait)." value={model.metrics.roc_auc as number} color="amber" />
+                        <MetricCard label="Score CV" help="Performance moyenne sur plusieurs découpages des données d'entraînement — plus fiable qu'un seul test, c'est ce score qui a servi à choisir ce modèle." value={model.metrics.cv_score as number} color="violet" />
                       </>
                     )}
                   </div>
@@ -517,9 +537,9 @@ export function ModelResultView({ job }: { job: TrainingJobSummary }) {
                     help="Plutôt qu'une seule valeur, le modèle peut donner une fourchette dans laquelle la vraie valeur tombe la plupart du temps — utile pour savoir jusqu'où faire confiance à une prédiction."
                   />
                   <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                    <MetricCard label="Couverture visée" value={model.cqr.target_coverage} />
-                    <MetricCard label="Couverture observée" value={model.cqr.empirical_coverage} />
-                    <MetricCard label="Largeur moyenne" value={model.cqr.mean_interval_width} />
+                    <MetricCard label="Couverture visée" value={model.cqr.target_coverage} color="blue" />
+                    <MetricCard label="Couverture observée" value={model.cqr.empirical_coverage} color="teal" />
+                    <MetricCard label="Largeur moyenne" value={model.cqr.mean_interval_width} color="amber" />
                   </div>
                   <p className="text-xs text-slate-500 mt-2">
                     {formatPercent(model.cqr.empirical_coverage)} des valeurs test tombent dans l'intervalle prédit,
