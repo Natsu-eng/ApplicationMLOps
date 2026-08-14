@@ -798,8 +798,12 @@ def test_cv_estimator_is_pipeline_for_scaling_required_models(monkeypatch):
     config = TrainingConfig(optuna_trials=1, cv_folds=3)
 
     for spec_id in ("svm", "knn", "linear_reg"):
+        # Ces 3 modèles exigent le scaling (SVM/KNN/régression linéaire) —
+        # avant H17 (AUDIT_ROADMAP.md), vérifié via `spec.requires_scaling`,
+        # un champ déclaratif jamais consommé par le moteur (supprimé du
+        # registre) ; le fait qu'ils l'exigent reste vrai, juste plus
+        # encodé comme un champ mort sur `ModelSpec`.
         spec = MODEL_REGISTRY[spec_id]
-        assert spec.requires_scaling
         captured.clear()
         _optimize_one_model(
             spec, split.X_train, y_train, "regression", cv, split.groups_train,
