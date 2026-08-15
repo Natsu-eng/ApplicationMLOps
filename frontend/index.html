@@ -3,7 +3,22 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" type="image/svg+xml" href="/icon.svg" />
     <title>DataLab Pro</title>
+    <script>
+      // Pose data-theme AVANT le premier rendu React — évite un flash de
+      // thème incorrect (clair → sombre) au chargement d'une page si
+      // l'utilisateur a explicitement choisi "sombre" (voir ThemeContext.tsx,
+      // même clé localStorage).
+      (function () {
+        try {
+          var stored = localStorage.getItem("datalab_theme");
+          if (stored === "light" || stored === "dark") {
+            document.documentElement.setAttribute("data-theme", stored);
+          }
+        } catch (e) {}
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

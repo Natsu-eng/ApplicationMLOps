@@ -24,6 +24,7 @@ import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
 import { PageHeader } from "../components/ui/PageHeader";
 import { Select } from "../components/ui/Select";
+import { useConfirmAction } from "../hooks/useConfirmAction";
 import { formatDateTime } from "../utils/format";
 import { buildTrainingJobPayload } from "../utils/trainingPayload";
 
@@ -61,7 +62,7 @@ export default function Training() {
   const [datasetsError, setDatasetsError] = useState<string | null>(null);
   const [activeJob, setActiveJob] = useState<TrainingJobSummary | null>(null);
   const [restoringJob, setRestoringJob] = useState(true);
-  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const confirmDelete = useConfirmAction<true>();
 
   // Persistance de l'entraînement actif à travers un rafraîchissement de
   // page (sessionStorage) — signalé comme "comportement ambigu à clarifier
@@ -130,15 +131,10 @@ export default function Training() {
 
   function resetToConfigure() {
     setActiveJob(null);
-    setConfirmingDelete(false);
   }
 
   async function handleDeleteActiveJob() {
     if (!activeJob) return;
-    if (!confirmingDelete) {
-      setConfirmingDelete(true);
-      return;
-    }
     try {
       await api.training.remove(activeJob.id);
     } catch {
@@ -170,12 +166,12 @@ export default function Training() {
               {(phase === "results" || phase === "failed") && (
                 <button
                   type="button"
-                  onClick={handleDeleteActiveJob}
-                  onMouseLeave={() => setConfirmingDelete(false)}
-                  aria-label={confirmingDelete ? "Confirmer la suppression" : "Supprimer cet entraînement"}
-                  title={confirmingDelete ? "Cliquer à nouveau pour confirmer" : "Supprimer cet entraînement"}
+                  onClick={() => confirmDelete.trigger(true, handleDeleteActiveJob)}
+                  onMouseLeave={confirmDelete.reset}
+                  aria-label={confirmDelete.isPending(true) ? "Confirmer la suppression" : "Supprimer cet entraînement"}
+                  title={confirmDelete.isPending(true) ? "Cliquer à nouveau pour confirmer" : "Supprimer cet entraînement"}
                   className={`p-2 rounded-lg transition-colors ${
-                    confirmingDelete
+                    confirmDelete.isPending(true)
                       ? "text-destructive bg-destructive/15"
                       : "text-muted-foreground hover:text-destructive hover:bg-destructive/10"
                   }`}

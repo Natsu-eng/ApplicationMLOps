@@ -57,7 +57,7 @@ export function LocalExplanationPanel({ explanation }: { explanation: LocalExpla
                       backgroundColor: positive ? CHART_BEESWARM_HIGH : CHART_BEESWARM_LOW,
                     }}
                   />
-                  <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-px h-3 bg-slate-300" />
+                  <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-px h-3 bg-border" />
                 </div>
               </div>
               <span

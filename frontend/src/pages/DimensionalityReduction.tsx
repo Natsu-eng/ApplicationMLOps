@@ -53,15 +53,18 @@ function phaseOf(job: DimensionalityJobSummary | null): Phase {
  * clustering, volontairement sans transmission de label de cluster (couplage
  * nul entre les deux moteurs backend). */
 export default function DimensionalityReduction() {
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [datasets, setDatasets] = useState<DatasetSummary[]>([]);
   const [datasetsError, setDatasetsError] = useState<string | null>(null);
   const [activeJob, setActiveJob] = useState<DimensionalityJobSummary | null>(null);
   const [restoringJob, setRestoringJob] = useState(true);
   const confirmDelete = useConfirmAction<true>();
 
+  // Reprise d'un calcul — priorité au deep-link `?job=` (ex. depuis la page
+  // Historique du pilier non supervisé), sinon la session en cours.
   useEffect(() => {
-    const storedId = sessionStorage.getItem(ACTIVE_JOB_STORAGE_KEY);
+    const queryJobId = searchParams.get("job");
+    const storedId = queryJobId ?? sessionStorage.getItem(ACTIVE_JOB_STORAGE_KEY);
     if (!storedId) {
       setRestoringJob(false);
       return;
@@ -69,14 +72,23 @@ export default function DimensionalityReduction() {
     api.dimensionality
       .getJob(Number(storedId))
       .then(setActiveJob)
-      .catch(() => sessionStorage.removeItem(ACTIVE_JOB_STORAGE_KEY))
+      .catch(() => {
+        sessionStorage.removeItem(ACTIVE_JOB_STORAGE_KEY);
+        setSearchParams({}, { replace: true });
+      })
       .finally(() => setRestoringJob(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
     if (activeJob) sessionStorage.setItem(ACTIVE_JOB_STORAGE_KEY, String(activeJob.id));
     else sessionStorage.removeItem(ACTIVE_JOB_STORAGE_KEY);
   }, [activeJob]);
+
+  function openJob(job: DimensionalityJobSummary) {
+    setActiveJob(job);
+    setSearchParams({ job: String(job.id) }, { replace: false });
+  }
 
   const loadDatasets = useCallback(async () => {
     try {
@@ -108,6 +120,7 @@ export default function DimensionalityReduction() {
 
   function resetToConfigure() {
     setActiveJob(null);
+    setSearchParams({}, { replace: false });
   }
 
   async function handleDeleteActiveJob() {
@@ -177,7 +190,7 @@ export default function DimensionalityReduction() {
           <DimensionalityForm
             datasets={datasets}
             datasetsError={datasetsError}
-            onJobCreated={setActiveJob}
+            onJobCreated={openJob}
             initialDatasetId={searchParams.get("dataset_id")}
             initialFeatures={searchParams.get("features")}
           />
@@ -246,7 +259,7 @@ function DimensionalityForm({
         const preferred = res.algorithms.find((a) => a.is_default);
         if (preferred) setAlgorithmId(preferred.id);
       })
-      .catch(() => setAlgorithms([]));
+      .catch(() => setError("Impossible de charger le catalogue de méthodes — réessayez dans un instant."));
   }, []);
 
   const handleDatasetChange = useCallback(async (id: string, preselect?: Set<string>) => {
@@ -453,6 +466,7 @@ const LOADING_COLUMNS: TableColumn<{ feature: string; pc1: number; pc2: number }
 function DimensionalityResultView({ jobId }: { jobId: number }) {
   const [result, setResult] = useState<DimensionalityResult | null>(null);
   const [points, setPoints] = useState<DimensionalityPoint[]>([]);
+  const [pointsError, setPointsError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [colorByColumn, setColorByColumn] = useState<string>(COLOR_NONE);
   const [colorByData, setColorByData] = useState<DimensionalityColorByResponse | null>(null);
@@ -462,7 +476,10 @@ function DimensionalityResultView({ jobId }: { jobId: number }) {
       .getResult(jobId)
       .then(setResult)
       .catch((err) => setError(err instanceof ApiError ? err.message : "Résultat indisponible"));
-    api.dimensionality.getPoints(jobId).then(setPoints).catch(() => setPoints([]));
+    api.dimensionality
+      .getPoints(jobId)
+      .then(setPoints)
+      .catch((err) => setPointsError(err instanceof ApiError ? err.message : "Impossible de charger les points de la projection"));
   }, [jobId]);
 
   useEffect(() => {
@@ -539,18 +556,22 @@ function DimensionalityResultView({ jobId }: { jobId: number }) {
             </div>
           </div>
         </div>
-        <ResponsiveContainer width="100%" height={360}>
-          <ScatterChart margin={{ top: 10, right: 10, bottom: 10, left: 0 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke={CHART_GRID_STROKE} />
-            <XAxis type="number" dataKey="x" tick={CHART_TICK_STYLE} name="Axe 1" />
-            <YAxis type="number" dataKey="y" tick={CHART_TICK_STYLE} name="Axe 2" />
-            <RechartsTooltip {...CHART_TOOLTIP_STYLE} cursor={{ strokeDasharray: "3 3" }} />
-            {series.length > 1 && <Legend wrapperStyle={{ fontSize: 11 }} />}
-            {series.map((s) => (
-              <Scatter key={s.label} name={s.label} data={s.points} fill={s.color} fillOpacity={0.75} />
-            ))}
-          </ScatterChart>
-        </ResponsiveContainer>
+        {pointsError ? (
+          <p className="text-sm text-destructive text-center py-8">{pointsError}</p>
+        ) : (
+          <ResponsiveContainer width="100%" height={360}>
+            <ScatterChart margin={{ top: 10, right: 10, bottom: 10, left: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke={CHART_GRID_STROKE} />
+              <XAxis type="number" dataKey="x" tick={CHART_TICK_STYLE} name="Axe 1" />
+              <YAxis type="number" dataKey="y" tick={CHART_TICK_STYLE} name="Axe 2" />
+              <RechartsTooltip {...CHART_TOOLTIP_STYLE} cursor={{ strokeDasharray: "3 3" }} />
+              {series.length > 1 && <Legend wrapperStyle={{ fontSize: 11 }} />}
+              {series.map((s) => (
+                <Scatter key={s.label} name={s.label} data={s.points} fill={s.color} fillOpacity={0.75} />
+              ))}
+            </ScatterChart>
+          </ResponsiveContainer>
+        )}
       </Card>
 
       {result.algorithm_id === "pca" && result.loadings.length > 0 && (

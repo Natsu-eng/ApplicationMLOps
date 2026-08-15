@@ -1,95 +1,40 @@
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { Activity, BrainCircuit, Database, FileSpreadsheet, LayoutDashboard, ScrollText, Trash2, Users } from "lucide-react";
+import {
+  Activity,
+  AlertTriangle,
+  BrainCircuit,
+  Database,
+  FileSpreadsheet,
+  LayoutDashboard,
+  ScatterChart,
+  Shapes,
+  Trash2,
+  Users,
+  type LucideIcon,
+} from "lucide-react";
 import {
   ApiError,
   api,
-  type AuditLogEntry,
+  type AnomalyJobSummary,
+  type ClusteringJobSummary,
   type DatasetSummary,
-  type TeamMember,
+  type DimensionalityJobSummary,
+  type JobStatus,
   type TrainingJobSummary,
 } from "../api/client";
 import { useAuth } from "../contexts/AuthContext";
 import AppShell from "../components/AppShell";
 import { StatTile, StatTileRow } from "../components/dashboard/StatTile";
 import ModelResultModal from "../components/training/ModelResultModal";
-import { Avatar } from "../components/ui/Avatar";
-import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
-import { ColorIconBadge, accentColorForId } from "../components/ui/ColorIconBadge";
-import { SectionHeader } from "../components/ui/SectionHeader";
-import { Input } from "../components/ui/Input";
+import { ColorIconBadge, accentColorForId, type AccentColor } from "../components/ui/ColorIconBadge";
+import { ErrorNote } from "../components/ui/ErrorNote";
 import { PageHeader } from "../components/ui/PageHeader";
 import { DatasetStatusBadge, JobStatusBadge } from "../components/ui/StatusBadge";
 import { useConfirmAction } from "../hooks/useConfirmAction";
-import { formatDateTime } from "../utils/format";
-
-const AUDIT_ACTION_LABELS: Record<string, string> = {
-  "member.added": "Membre ajouté",
-  "dataset.deleted": "Dataset supprimé",
-  "training_job.deleted": "Entraînement supprimé",
-  "model.promoted": "Modèle promu",
-};
-
-function auditActionLabel(entry: AuditLogEntry): string {
-  const base = AUDIT_ACTION_LABELS[entry.action] ?? entry.action;
-  if (entry.action === "member.added" && entry.details?.email) return `${base} — ${entry.details.email}`;
-  if (entry.action === "dataset.deleted" && entry.details?.name) return `${base} — ${entry.details.name}`;
-  if (entry.action === "training_job.deleted" && entry.details?.target_column) {
-    return `${base} — cible « ${entry.details.target_column} »`;
-  }
-  if (entry.action === "model.promoted" && entry.details?.stage) {
-    const stage = entry.details.stage;
-    const stageLabel = stage === "production" ? "production" : stage === "staging" ? "validation" : "retiré";
-    return `${base} (${entry.details.algorithm ?? ""}) → ${stageLabel}`;
-  }
-  return base;
-}
-
-/** Journal d'audit (Lot 10, owner uniquement) — actions sensibles de
- * l'équipe (ajout de membre, suppression de dataset/entraînement,
- * promotion de modèle), pas un log applicatif complet (déjà couvert côté
- * serveur) : juste ce qu'un owner voudrait pouvoir vérifier après coup. */
-function AuditLogPanel() {
-  const [entries, setEntries] = useState<AuditLogEntry[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    api.team
-      .auditLog()
-      .then(setEntries)
-      .catch((err) => setError(err instanceof ApiError ? err.message : "Journal indisponible"));
-  }, []);
-
-  return (
-    <>
-      <SectionHeader
-        icon={ScrollText}
-        color="amber"
-        label="Journal d'audit"
-        help="Actions sensibles de l'équipe — ajout de membre, suppression de dataset/entraînement, promotion de modèle. Visible uniquement par le propriétaire de l'organisation."
-      />
-      {error && <p className="text-sm text-destructive">{error}</p>}
-      {entries === null && !error && <p className="text-sm text-muted-foreground">Chargement…</p>}
-      {entries && entries.length === 0 && (
-        <p className="text-sm text-muted-foreground">Aucune action enregistrée pour l'instant.</p>
-      )}
-      {entries && entries.length > 0 && (
-        <ul className="divide-y divide-border max-h-72 overflow-y-auto">
-          {entries.slice(0, 20).map((entry) => (
-            <li key={entry.id} className="py-2 flex items-center justify-between gap-3">
-              <p className="text-sm text-foreground/90 truncate">{auditActionLabel(entry)}</p>
-              <span className="text-xs text-muted-foreground flex-shrink-0">
-                {entry.actor_name ?? "—"} · {formatDateTime(entry.created_at)}
-              </span>
-            </li>
-          ))}
-        </ul>
-      )}
-    </>
-  );
-}
+import { formatDateTime, formatPercent } from "../utils/format";
 
 const ACTIVE_STATUSES = new Set(["queued", "running"]);
 
@@ -104,28 +49,58 @@ function greeting(hour: number): string {
   return "Bonsoir";
 }
 
-/** Page protégée du Lot 1, enrichie au Lot E1-ter : vue d'ensemble de
- * l'activité (datasets, entraînements récents) au-dessus de la gestion
- * d'équipe — le dashboard doit d'abord montrer ce qui se passe, pas
- * seulement qui a accès. */
+type ActivityKind = "supervised" | "clustering" | "dimensionality" | "anomalies";
+
+interface ActivityItem {
+  kind: ActivityKind;
+  id: number;
+  datasetName: string;
+  detailLabel: string;
+  createdAt: string;
+  status: JobStatus;
+  headline: string | null;
+  href: string;
+  /** Uniquement pour "supervised" — ouvre ModelResultModal en place plutôt
+   * que de naviguer, comportement d'origine conservé tel quel. */
+  raw?: TrainingJobSummary;
+}
+
+const ACTIVITY_KIND_META: Record<ActivityKind, { icon: LucideIcon; color: AccentColor; label: string }> = {
+  supervised: { icon: BrainCircuit, color: "violet", label: "Entraînement" },
+  clustering: { icon: Shapes, color: "rose", label: "Clustering" },
+  dimensionality: { icon: ScatterChart, color: "blue", label: "Réduction de dimension" },
+  anomalies: { icon: AlertTriangle, color: "amber", label: "Détection d'anomalies" },
+};
+
+/** Page protégée du Lot 1 — vue d'ensemble de l'ACTIVITÉ ML, pas d'un seul
+ * pilier. Jusqu'ici "Derniers entraînements" ne montrait que le supervisé
+ * (TrainingJob) : un dashboard qui s'annonce général ne peut pas ignorer
+ * clustering/réduction de dimension/anomalies — retour utilisateur direct.
+ * La gestion d'équipe (profil, membres, journal d'audit) a déménagé sur
+ * `/profile` (Lot Profil) : ce n'est pas de l'activité, c'est de
+ * l'administration, elle encombrait cette page sans rapport avec son objet.
+ * Pilier-agnostique (pas de `pillarId` passé à `AppShell`) — épinglé en haut
+ * de la sidebar, accessible depuis n'importe quel pilier sans jamais forcer
+ * un changement de contexte de navigation (bug réel corrigé : cliquer
+ * "Tableau de bord" depuis le pilier non supervisé bascule sinon la sidebar
+ * sur "ML supervisé" par surprise). */
 export default function Dashboard() {
   const { user } = useAuth();
 
-  const [members, setMembers] = useState<TeamMember[] | null>(null);
-  const [membersError, setMembersError] = useState<string | null>(null);
+  const [members, setMembers] = useState<{ id: number }[] | null>(null);
   const [datasets, setDatasets] = useState<DatasetSummary[] | null>(null);
   const [datasetsError, setDatasetsError] = useState<string | null>(null);
   const [jobs, setJobs] = useState<TrainingJobSummary[] | null>(null);
   const [jobsError, setJobsError] = useState<string | null>(null);
+  const [clusteringJobs, setClusteringJobs] = useState<ClusteringJobSummary[] | null>(null);
+  const [dimensionalityJobs, setDimensionalityJobs] = useState<DimensionalityJobSummary[] | null>(null);
+  const [anomalyJobs, setAnomalyJobs] = useState<AnomalyJobSummary[] | null>(null);
+  const [unsupervisedJobsError, setUnsupervisedJobsError] = useState<string | null>(null);
   const [viewingJob, setViewingJob] = useState<TrainingJobSummary | null>(null);
   const confirmDeleteJob = useConfirmAction<number>();
 
-  // Résultat "deep-linkable" (AUDIT_ROADMAP.md, H20/D12 — signalé après le
-  // correctif de persistance de la page Entraînement) : avant ce correctif,
-  // ouvrir un résultat d'entraînement ne changeait jamais l'URL — un
-  // rafraîchissement fermait la modale sans recours, et un lien vers "ce
-  // résultat précis" ne pouvait pas se partager. `?job=<id>` synchronise
-  // l'URL avec la modale ouverte, dans les deux sens.
+  // Résultat "deep-linkable" (AUDIT_ROADMAP.md, H20/D12) — `?job=<id>`
+  // synchronise l'URL avec la modale ouverte, dans les deux sens.
   const [searchParams, setSearchParams] = useSearchParams();
 
   useEffect(() => {
@@ -151,9 +126,10 @@ export default function Dashboard() {
   const loadMembers = useCallback(async () => {
     try {
       setMembers(await api.team.members());
-      setMembersError(null);
-    } catch (err) {
-      setMembersError(err instanceof ApiError ? err.message : "Impossible de charger l'équipe");
+    } catch {
+      // Tuile statistique seulement ici (la gestion d'équipe complète, avec
+      // ses propres erreurs distinctes, vit sur /profile) — un échec reste
+      // silencieux sur la tuile ("—"), sans bannière dupliquée.
     }
   }, []);
 
@@ -163,10 +139,24 @@ export default function Dashboard() {
       setJobsError(null);
     } catch (err) {
       // AUDIT_ROADMAP.md, H4/D3 : distinguer "aucun entraînement" (liste
-      // vide légitime) d'un échec réseau — avant ce correctif, les deux cas
-      // affichaient exactement le même message "Aucun entraînement".
+      // vide légitime) d'un échec réseau.
       setJobsError(err instanceof ApiError ? err.message : "Impossible de charger les entraînements");
     }
+  }, []);
+
+  const loadUnsupervisedJobs = useCallback(() => {
+    api.clustering
+      .listJobs()
+      .then(setClusteringJobs)
+      .catch((err) => setUnsupervisedJobsError(err instanceof ApiError ? err.message : "Impossible de charger l'activité non supervisée"));
+    api.dimensionality
+      .listJobs()
+      .then(setDimensionalityJobs)
+      .catch((err) => setUnsupervisedJobsError(err instanceof ApiError ? err.message : "Impossible de charger l'activité non supervisée"));
+    api.anomalies
+      .listJobs()
+      .then(setAnomalyJobs)
+      .catch((err) => setUnsupervisedJobsError(err instanceof ApiError ? err.message : "Impossible de charger l'activité non supervisée"));
   }, []);
 
   const loadDatasets = useCallback(async () => {
@@ -182,7 +172,8 @@ export default function Dashboard() {
     loadMembers();
     loadDatasets();
     loadJobs();
-  }, [loadMembers, loadDatasets, loadJobs]);
+    loadUnsupervisedJobs();
+  }, [loadMembers, loadDatasets, loadJobs, loadUnsupervisedJobs]);
 
   async function handleDeleteJob(id: number) {
     try {
@@ -193,18 +184,82 @@ export default function Dashboard() {
     }
   }
 
+  const allJobsLoaded = jobs !== null && clusteringJobs !== null && dimensionalityJobs !== null && anomalyJobs !== null;
+  const unsupervisedJobsCount = (clusteringJobs?.length ?? 0) + (dimensionalityJobs?.length ?? 0) + (anomalyJobs?.length ?? 0);
+  const totalJobsCount = (jobs?.length ?? 0) + unsupervisedJobsCount;
+  const activeJobsCount = [jobs, clusteringJobs, dimensionalityJobs, anomalyJobs].reduce(
+    (sum, list) => sum + (list?.filter((j) => ACTIVE_STATUSES.has(j.status)).length ?? 0),
+    0,
+  );
+
+  const activity = useMemo<ActivityItem[]>(() => {
+    const items: ActivityItem[] = [];
+    jobs?.forEach((j) =>
+      items.push({
+        kind: "supervised",
+        id: j.id,
+        datasetName: j.dataset_name ?? "Dataset",
+        detailLabel: `→ ${j.target_column}`,
+        createdAt: j.created_at,
+        status: j.status,
+        headline:
+          j.headline_metric && j.headline_metric.value !== null && j.headline_metric.value !== undefined
+            ? `${j.headline_metric.name} = ${j.headline_metric.value.toFixed(3)}`
+            : null,
+        href: "",
+        raw: j,
+      }),
+    );
+    clusteringJobs?.forEach((j) =>
+      items.push({
+        kind: "clustering",
+        id: j.id,
+        datasetName: j.dataset_name ?? "Dataset",
+        detailLabel: j.n_clusters ? `${j.n_clusters} groupes` : (j.algorithm ?? "Clustering"),
+        createdAt: j.created_at,
+        status: j.status,
+        headline: j.silhouette !== null ? `silhouette = ${j.silhouette.toFixed(3)}` : null,
+        href: `/clustering?job=${j.id}`,
+      }),
+    );
+    dimensionalityJobs?.forEach((j) =>
+      items.push({
+        kind: "dimensionality",
+        id: j.id,
+        datasetName: j.dataset_name ?? "Dataset",
+        detailLabel: j.algorithm ?? "Réduction de dimension",
+        createdAt: j.created_at,
+        status: j.status,
+        headline: j.total_variance_explained !== null ? `variance PCA = ${formatPercent(j.total_variance_explained)}` : null,
+        href: `/reduction-dimension?job=${j.id}`,
+      }),
+    );
+    anomalyJobs?.forEach((j) =>
+      items.push({
+        kind: "anomalies",
+        id: j.id,
+        datasetName: j.dataset_name ?? "Dataset",
+        detailLabel: j.n_anomalies_consensus !== null ? `${j.n_anomalies_consensus} atypiques` : "Détection d'anomalies",
+        createdAt: j.created_at,
+        status: j.status,
+        headline: j.anomaly_rate_consensus !== null ? formatPercent(j.anomaly_rate_consensus) : null,
+        href: `/anomalies?job=${j.id}`,
+      }),
+    );
+    items.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    return items.slice(0, 6);
+  }, [jobs, clusteringJobs, dimensionalityJobs, anomalyJobs]);
+
+  const recentDatasets = datasets?.slice(0, 5) ?? [];
+
   if (!user) return null;
 
-  const recentJobs = jobs?.slice(0, 5) ?? [];
-  const recentDatasets = datasets?.slice(0, 5) ?? [];
-  const activeJobsCount = jobs?.filter((j) => ACTIVE_STATUSES.has(j.status)).length ?? 0;
-
   return (
-    <AppShell pillarId="supervised">
+    <AppShell>
       <PageHeader
         eyebrow="Vue d'ensemble"
         title={`${greeting(new Date().getHours())}, ${user.nom.split(" ")[0]}`}
-        description={`${user.organization_name} — voici l'activité récente de votre équipe.`}
+        description={`${user.organization_name} — l'activité récente de votre équipe, tous piliers confondus.`}
         icon={LayoutDashboard}
         color="blue"
         action={
@@ -217,13 +272,23 @@ export default function Dashboard() {
         }
       />
 
-      <StatTileRow>
+      <StatTileRow wide>
         <StatTile icon={Database} label="Datasets" value={datasets?.length} color="blue" delayMs={0} />
-        <StatTile icon={BrainCircuit} label="Entraînements" value={jobs?.length} color="teal" delayMs={60} />
+        <StatTile
+          icon={Activity}
+          label="Analyses ML"
+          value={allJobsLoaded ? totalJobsCount : undefined}
+          color="teal"
+          delayMs={60}
+          split={[
+            { label: "Supervisé", value: allJobsLoaded ? jobs!.length : undefined },
+            { label: "Non supervisé", value: allJobsLoaded ? unsupervisedJobsCount : undefined },
+          ]}
+        />
         <StatTile
           icon={Activity}
           label="En cours"
-          value={jobs ? activeJobsCount : undefined}
+          value={allJobsLoaded ? activeJobsCount : undefined}
           color="amber"
           delayMs={120}
         />
@@ -232,73 +297,114 @@ export default function Dashboard() {
 
       <div className="grid gap-6 lg:grid-cols-2 mb-10">
         <Card className="p-5">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-sm font-medium text-foreground">Derniers entraînements</h2>
-            <Link to="/training/history" className="text-xs text-primary hover:text-primary/80">
-              Voir tout
-            </Link>
+          <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+            <h2 className="text-sm font-medium text-foreground">Dernière activité</h2>
+            <div className="flex items-center gap-3 text-xs">
+              <Link to="/training/history" className="text-primary hover:text-primary/80">
+                Historique supervisé
+              </Link>
+              <Link to="/non-supervise/historique" className="text-primary hover:text-primary/80">
+                Historique non supervisé
+              </Link>
+            </div>
           </div>
 
-          {jobsError ? (
-            <ErrorNote message={jobsError} />
-          ) : jobs === null ? (
+          {jobsError || unsupervisedJobsError ? (
+            <ErrorNote message={jobsError ?? unsupervisedJobsError ?? ""} />
+          ) : !allJobsLoaded ? (
             <p className="text-sm text-muted-foreground">Chargement…</p>
-          ) : recentJobs.length === 0 ? (
+          ) : activity.length === 0 ? (
             <p className="text-sm text-muted-foreground">
-              Aucun entraînement pour l'instant — lancez-en un depuis{" "}
+              Aucune analyse pour l'instant — lancez-en une depuis{" "}
               <Link to="/training" className="text-primary hover:text-primary/80">
                 Entraînement
+              </Link>{" "}
+              ou un module de{" "}
+              <Link to="/clustering" className="text-primary hover:text-primary/80">
+                ML non supervisé
               </Link>
               .
             </p>
           ) : (
             <ul className="divide-y divide-border">
-              {recentJobs.map((job) => {
-                const isCompleted = job.status === "completed";
-                const pendingDelete = confirmDeleteJob.isPending(job.id);
-                return (
-                  <li
-                    key={job.id}
-                    onClick={() => isCompleted && openJob(job)}
-                    className={`group py-2.5 flex items-center justify-between gap-3 ${
-                      isCompleted ? "cursor-pointer hover:bg-muted/50 -mx-1 px-1 rounded-lg transition-colors" : ""
-                    }`}
-                  >
-                    <div className="flex items-center gap-3 min-w-0">
-                      <ColorIconBadge icon={BrainCircuit} color={accentColorForId(job.id)} size="sm" />
-                      <div className="min-w-0">
-                        <p className="text-sm text-foreground/90 truncate">
-                          {job.dataset_name ?? "Dataset"} <span className="text-muted-foreground">→</span>{" "}
-                          {job.target_column}
-                        </p>
-                        <p className="text-xs text-muted-foreground">{formatDateTime(job.created_at)}</p>
+              {activity.map((item) => {
+                const meta = ACTIVITY_KIND_META[item.kind];
+                const isCompleted = item.status === "completed";
+                const leftContent = (
+                  <div className="flex items-center gap-3 min-w-0">
+                    <ColorIconBadge icon={meta.icon} color={meta.color} size="sm" />
+                    <div className="min-w-0">
+                      <p className="text-sm text-foreground/90 truncate">
+                        {item.datasetName} <span className="text-muted-foreground">·</span> {item.detailLabel}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        {meta.label} · {formatDateTime(item.createdAt)}
+                      </p>
+                    </div>
+                  </div>
+                );
+                const headlineAndStatus = (
+                  <>
+                    {isCompleted && item.headline && (
+                      <span className="text-xs text-muted-foreground tabular-nums">{item.headline}</span>
+                    )}
+                    <JobStatusBadge status={item.status} />
+                  </>
+                );
+                const rowContent = (
+                  <>
+                    {leftContent}
+                    <div className="flex items-center gap-2 flex-shrink-0">{headlineAndStatus}</div>
+                  </>
+                );
+
+                if (item.kind === "supervised") {
+                  const pendingDelete = confirmDeleteJob.isPending(item.id);
+                  return (
+                    <li
+                      key={`supervised-${item.id}`}
+                      onClick={() => isCompleted && item.raw && openJob(item.raw)}
+                      className={`group py-2.5 flex items-center justify-between gap-3 ${
+                        isCompleted ? "cursor-pointer hover:bg-muted/50 -mx-1 px-1 rounded-lg transition-colors" : ""
+                      }`}
+                    >
+                      {leftContent}
+                      <div className="flex items-center gap-2 flex-shrink-0">
+                        {headlineAndStatus}
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            confirmDeleteJob.trigger(item.id, () => handleDeleteJob(item.id));
+                          }}
+                          onMouseLeave={confirmDeleteJob.reset}
+                          aria-label={pendingDelete ? "Confirmer la suppression" : "Supprimer cet entraînement"}
+                          title={pendingDelete ? "Cliquer à nouveau pour confirmer" : "Supprimer cet entraînement"}
+                          className={`flex-shrink-0 h-7 w-7 flex items-center justify-center rounded-md transition-colors ${
+                            pendingDelete
+                              ? "text-destructive bg-destructive/15"
+                              : "text-muted-foreground/50 hover:text-destructive hover:bg-destructive/10"
+                          }`}
+                        >
+                          <Trash2 size={13} />
+                        </button>
                       </div>
-                    </div>
-                    <div className="flex items-center gap-2 flex-shrink-0">
-                      {isCompleted && job.headline_metric && (
-                        <span className="text-xs text-muted-foreground tabular-nums">
-                          {job.headline_metric.name} = {job.headline_metric.value?.toFixed(3) ?? "—"}
-                        </span>
-                      )}
-                      <JobStatusBadge status={job.status} />
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          confirmDeleteJob.trigger(job.id, () => handleDeleteJob(job.id));
-                        }}
-                        onMouseLeave={confirmDeleteJob.reset}
-                        aria-label={pendingDelete ? "Confirmer la suppression" : "Supprimer cet entraînement"}
-                        title={pendingDelete ? "Cliquer à nouveau pour confirmer" : "Supprimer cet entraînement"}
-                        className={`flex-shrink-0 h-7 w-7 flex items-center justify-center rounded-md transition-colors ${
-                          pendingDelete
-                            ? "text-destructive bg-destructive/15"
-                            : "text-muted-foreground/50 hover:text-destructive hover:bg-destructive/10"
-                        }`}
+                    </li>
+                  );
+                }
+
+                return (
+                  <li key={`${item.kind}-${item.id}`}>
+                    {isCompleted ? (
+                      <Link
+                        to={item.href}
+                        className="py-2.5 flex items-center justify-between gap-3 -mx-1 px-1 rounded-lg hover:bg-muted/50 transition-colors"
                       >
-                        <Trash2 size={13} />
-                      </button>
-                    </div>
+                        {rowContent}
+                      </Link>
+                    ) : (
+                      <div className="py-2.5 flex items-center justify-between gap-3">{rowContent}</div>
+                    )}
                   </li>
                 );
               })}
@@ -347,149 +453,7 @@ export default function Dashboard() {
         </Card>
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-3">
-        <Card className="p-5 lg:col-span-1">
-          <div className="flex items-center gap-3 mb-4">
-            <Avatar name={user.nom} />
-            <div className="min-w-0">
-              <p className="font-medium text-foreground truncate">{user.nom}</p>
-              <p className="text-xs text-muted-foreground truncate">{user.email}</p>
-            </div>
-          </div>
-          <RoleBadge role={user.role} />
-        </Card>
-
-        <Card className="p-5 lg:col-span-2">
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center gap-2">
-              <Users size={16} className="text-primary" />
-              <h2 className="text-sm font-medium text-foreground">
-                Équipe — {user.organization_name}
-              </h2>
-            </div>
-            {members && (
-              <Badge variant="neutral">
-                {members.length} membre{members.length > 1 ? "s" : ""}
-              </Badge>
-            )}
-          </div>
-
-          {membersError && <ErrorNote message={membersError} />}
-
-          {members === null && !membersError ? (
-            <p className="text-sm text-muted-foreground">Chargement…</p>
-          ) : (
-            <ul className="divide-y divide-border">
-              {members?.map((member) => (
-                <li key={member.id} className="py-2.5 flex items-center justify-between">
-                  <div className="flex items-center gap-3 min-w-0">
-                    <Avatar name={member.nom} size="sm" />
-                    <div className="min-w-0">
-                      <p className="text-sm text-foreground/90 truncate">{member.nom}</p>
-                      <p className="text-xs text-muted-foreground truncate">{member.email}</p>
-                    </div>
-                  </div>
-                  <RoleBadge role={member.role} />
-                </li>
-              ))}
-            </ul>
-          )}
-        </Card>
-
-        {user.role === "owner" && (
-          <Card className="p-5 lg:col-span-3">
-            <AddMemberForm onMemberAdded={loadMembers} />
-          </Card>
-        )}
-
-        {user.role === "owner" && (
-          <Card className="p-5 lg:col-span-3">
-            <AuditLogPanel />
-          </Card>
-        )}
-      </div>
-
       {viewingJob && <ModelResultModal job={viewingJob} onClose={closeJob} />}
     </AppShell>
-  );
-}
-
-function RoleBadge({ role }: { role: "owner" | "member" }) {
-  return (
-    <Badge variant={role === "owner" ? "accent" : "neutral"}>
-      {role === "owner" ? "Propriétaire" : "Membre"}
-    </Badge>
-  );
-}
-
-function ErrorNote({ message }: { message: string }) {
-  return (
-    <p className="text-sm text-destructive bg-destructive/10 border border-destructive/20 rounded-lg px-3 py-2 mb-3">
-      {message}
-    </p>
-  );
-}
-
-function AddMemberForm({ onMemberAdded }: { onMemberAdded: () => void }) {
-  const [email, setEmail] = useState("");
-  const [nom, setNom] = useState("");
-  const [password, setPassword] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState(false);
-  const [isSubmitting, setIsSubmitting] = useState(false);
-
-  async function handleSubmit(event: FormEvent) {
-    event.preventDefault();
-    setError(null);
-    setSuccess(false);
-    setIsSubmitting(true);
-    try {
-      await api.team.addMember({ email, nom, password });
-      setEmail("");
-      setNom("");
-      setPassword("");
-      setSuccess(true);
-      onMemberAdded();
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Impossible d'ajouter ce membre");
-    } finally {
-      setIsSubmitting(false);
-    }
-  }
-
-  return (
-    <>
-      <h2 className="text-sm font-medium text-foreground mb-4">Ajouter un membre à l'équipe</h2>
-      <form onSubmit={handleSubmit} className="grid sm:grid-cols-3 gap-3 items-start">
-        <Input
-          type="text"
-          placeholder="Nom"
-          required
-          minLength={2}
-          value={nom}
-          onChange={(e) => setNom(e.target.value)}
-        />
-        <Input
-          type="email"
-          placeholder="Email"
-          required
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-        />
-        <Input
-          type="password"
-          placeholder="Mot de passe temporaire"
-          required
-          minLength={8}
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-        />
-        <Button type="submit" disabled={isSubmitting} className="sm:col-span-3">
-          {isSubmitting ? "Ajout…" : "Ajouter"}
-        </Button>
-      </form>
-      {error && <p className="text-sm text-destructive mt-2">{error}</p>}
-      {success && <p className="text-sm text-success mt-2">Membre ajouté.</p>}
-    </>
   );
 }

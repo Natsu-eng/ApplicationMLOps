@@ -43,20 +43,35 @@ function useCountUp(value: number | undefined, durationMs = 800): number | undef
  * animé à l'entrée, légère élévation au survol. Une seule fois par page :
  * les keyframes d'entrée sont injectées par `StatTileRow`, pas ici, pour ne
  * pas dupliquer la balise `<style>` par tuile. */
+interface StatTileSplitPart {
+  label: string;
+  value: number | undefined;
+}
+
 export function StatTile({
   icon,
   label,
   value,
   color,
   delayMs = 0,
+  split,
 }: {
   icon: LucideIcon;
   label: string;
   value: number | undefined;
   color: AccentColor;
   delayMs?: number;
+  /** Scinde la valeur en deux sous-compteurs côte à côte (ex. supervisé vs
+   * non supervisé) dans la MÊME carte — retour utilisateur direct : un total
+   * fusionné est moins parlant qu'un total ventilé par pilier. Le chrome de
+   * la tuile (bord, ombre, barre d'accent, icône) reste identique ;
+   * `label`/`value` deviennent alors purement le fallback tant que `split`
+   * n'est pas fourni. */
+  split?: [StatTileSplitPart, StatTileSplitPart];
 }) {
   const displayValue = useCountUp(value);
+  const displaySplitA = useCountUp(split?.[0]?.value);
+  const displaySplitB = useCountUp(split?.[1]?.value);
 
   return (
     <div
@@ -66,10 +81,23 @@ export function StatTile({
       <div className={`h-1 ${accentBarClass(color)}`} aria-hidden="true" />
       <div className="p-4 flex items-center gap-3">
         <ColorIconBadge icon={icon} color={color} />
-        <div className="min-w-0">
-          <p className="text-xl font-semibold text-foreground tabular-nums">{displayValue ?? "—"}</p>
-          <p className="text-xs text-muted-foreground truncate">{label}</p>
-        </div>
+        {split ? (
+          <div className="flex items-stretch divide-x divide-border min-w-0 flex-1">
+            <div className="pr-3 min-w-0">
+              <p className="text-lg font-semibold text-foreground tabular-nums">{displaySplitA ?? "—"}</p>
+              <p className="text-[11px] text-muted-foreground truncate">{split[0].label}</p>
+            </div>
+            <div className="pl-3 min-w-0">
+              <p className="text-lg font-semibold text-foreground tabular-nums">{displaySplitB ?? "—"}</p>
+              <p className="text-[11px] text-muted-foreground truncate">{split[1].label}</p>
+            </div>
+          </div>
+        ) : (
+          <div className="min-w-0">
+            <p className="text-xl font-semibold text-foreground tabular-nums">{displayValue ?? "—"}</p>
+            <p className="text-xs text-muted-foreground truncate">{label}</p>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -77,10 +105,14 @@ export function StatTile({
 
 /** Conteneur de la rangée de tuiles — porte les keyframes d'entrée (une
  * seule injection pour toute la rangée) et l'échelonnement visuel via
- * `--stat-tile-index` sur chaque enfant. */
-export function StatTileRow({ children }: { children: React.ReactNode }) {
+ * `--stat-tile-index` sur chaque enfant. `wide` : la 2ᵉ tuile (celle qui
+ * porte un `split`, voir Dashboard.tsx) reçoit plus de largeur, les 3 autres
+ * (une seule valeur, pas besoin de place) se resserrent en retour — retour
+ * utilisateur direct : les libellés "Supervisé"/"Non supervisé" tronquaient
+ * dans une grille à 4 colonnes strictement égales. */
+export function StatTileRow({ children, wide = false }: { children: React.ReactNode; wide?: boolean }) {
   return (
-    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4 mb-8">
+    <div className={`grid gap-4 sm:grid-cols-2 mb-8 ${wide ? "lg:grid-cols-[0.95fr_1.25fr_0.8fr_1fr]" : "lg:grid-cols-4"}`}>
       <style>{`
         @keyframes stat-tile-fade-in {
           from { opacity: 0; transform: translateY(6px); }

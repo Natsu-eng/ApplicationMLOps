@@ -20,6 +20,7 @@ from api.core.database import get_db
 from api.core.job_queue import training_queue
 from api.core.models import ClusterCandidateRecord, ClusterModel, ClusteringJob, Dataset, User
 from api.routers.auth import get_current_user
+from services.audit import log_action
 from services.clustering_registry import CLUSTER_REGISTRY, DEFAULT_ALGORITHM_IDS
 from services.datasets import DatasetParsingError, read_dataframe
 from services.job_quota import raise_if_quota_exceeded
@@ -343,5 +344,10 @@ def delete_clustering_job(job_id: int, current_user: User = Depends(get_current_
             Path(job.result.file_path).unlink(missing_ok=True)
         db.delete(job.result)
 
+    log_action(
+        db, current_user.organization_id, current_user.id, "clustering_job.deleted",
+        target_type="clustering_job", target_id=job.id,
+        details={"dataset_id": job.dataset_id, "status": job.status},
+    )
     db.delete(job)
     db.commit()

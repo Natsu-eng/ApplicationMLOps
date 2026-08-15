@@ -25,6 +25,16 @@ from services.ml_preprocessing import TrainingAbortedError, build_preprocessor
 
 ProgressCallback = Callable[[str, int], None]
 
+# Silhouette n'est calculée que sur les points NON-bruit (voir
+# `_compute_cluster_metrics`) — un DBSCAN qui ne rattache qu'une poignée de
+# points très compacts à un cluster et classe tout le reste en bruit peut
+# afficher une silhouette proche de 1 tout en ne structurant presque rien du
+# dataset. Un candidat au-delà de ce budget de bruit n'est jamais élu
+# gagnant sur ce seul critère (AUDIT_PILIER2_ET_REFONTE_UX.md, P2) — il reste
+# visible dans le classement (transparence), juste relégué après les
+# candidats qui respectent le budget.
+MAX_SELECTABLE_NOISE_RATIO = 0.5
+
 
 @dataclass
 class ClusteringConfig:
@@ -162,6 +172,31 @@ def _build_cluster_profiles(X: pd.DataFrame, labels: np.ndarray) -> list[Cluster
     return profiles
 
 
+def _rank_candidates_with_noise_budget(
+    valid: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], bool]:
+    """Classe les candidats évalués sur la silhouette, en excluant du sommet
+    du classement ceux dont le `noise_ratio` dépasse `MAX_SELECTABLE_NOISE_RATIO`
+    (P2 — un DBSCAN qui ne rattache que quelques points très compacts peut
+    afficher une silhouette artificiellement haute, calculée uniquement sur
+    ces points-là). Les candidats disqualifiés restent dans la liste
+    retournée (transparence du leaderboard), simplement relégués après ceux
+    qui respectent le budget. Fonction pure — extraite pour être testée sans
+    recalculer un vrai clustering.
+
+    Retourne (liste_classée, noise_budget_exceeded_for_all) — le second
+    élément est `True` seulement quand AUCUN candidat ne respecte le budget,
+    auquel cas on retombe sur le classement brut plutôt que de ne renvoyer
+    aucun résultat."""
+    selectable = [c for c in valid if c["noise_ratio"] <= MAX_SELECTABLE_NOISE_RATIO]
+    excluded = [c for c in valid if c["noise_ratio"] > MAX_SELECTABLE_NOISE_RATIO]
+    excluded.sort(key=lambda c: c["silhouette"], reverse=True)
+    if selectable:
+        selectable.sort(key=lambda c: c["silhouette"], reverse=True)
+        return selectable + excluded, False
+    return excluded, True
+
+
 def train_and_evaluate_clustering(
     X: pd.DataFrame,
     config: ClusteringConfig,
@@ -253,7 +288,7 @@ def train_and_evaluate_clustering(
     # Davies-Bouldin/Calinski-Harabasz servent à recouper, pas à classer,
     # même logique que le SHAP/permutation qui recoupent sans remplacer le
     # score de sélection principal côté supervisé).
-    valid.sort(key=lambda c: c["silhouette"], reverse=True)
+    valid, noise_budget_exceeded_for_all = _rank_candidates_with_noise_budget(valid)
 
     progress_cb("Sélection du meilleur regroupement", 88)
 
@@ -291,6 +326,9 @@ def train_and_evaluate_clustering(
         "noise_ratio": winner["noise_ratio"],
         "n_candidates_evaluated": len(all_configs),
         "seed": config.seed,
+        # Transparence sur le garde-fou bruit (P2) — jamais silencieux quand
+        # aucune configuration testée ne respecte le budget par défaut.
+        "noise_budget_exceeded_for_all": noise_budget_exceeded_for_all,
     }
 
     progress_cb("Terminé", 100)

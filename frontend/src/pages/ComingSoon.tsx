@@ -1,13 +1,4 @@
-import {
-  Boxes,
-  Crosshair,
-  Layers,
-  Link as LinkIcon,
-  PenLine,
-  ScanSearch,
-  Sparkles,
-  type LucideIcon,
-} from "lucide-react";
+import { Boxes, Crosshair, Link as LinkIcon, PenLine, type LucideIcon } from "lucide-react";
 import { Link } from "react-router-dom";
 import AppShell from "../components/AppShell";
 import { Badge } from "../components/ui/Badge";
@@ -29,28 +20,11 @@ interface PreviewFeature {
  * la navigation, pas pour le contenu marketing d'une page de présentation). */
 const PREVIEW_FEATURES: Record<PillarId, PreviewFeature[]> = {
   supervised: [],
-  unsupervised: [
-    {
-      icon: Boxes,
-      title: "Clustering automatique",
-      description: "K-Means, DBSCAN et clustering hiérarchique avec choix du nombre de groupes assisté.",
-    },
-    {
-      icon: ScanSearch,
-      title: "Détection d'anomalies",
-      description: "Isolez les points atypiques et les comportements inhabituels dans vos jeux de données.",
-    },
-    {
-      icon: Layers,
-      title: "Réduction de dimension",
-      description: "Visualisez vos données en 2D grâce à PCA, t-SNE et UMAP intégrés.",
-    },
-    {
-      icon: Sparkles,
-      title: "Profils de segments",
-      description: "Comprenez chaque groupe avec des descriptions statistiques générées automatiquement.",
-    },
-  ],
+  // Vide, volontairement — ce pilier est actif depuis le Lot 11 (clustering,
+  // réduction de dimension, détection d'anomalies) : le contenu "à venir"
+  // qui vivait ici est devenu faux et n'est de toute façon plus jamais
+  // rendu, App.tsx ne route plus que "vision" vers cette page.
+  unsupervised: [],
   vision: [
     {
       icon: Boxes,

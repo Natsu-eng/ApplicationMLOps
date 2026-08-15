@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import {
   AlertCircle,
   ArrowDown,
@@ -67,9 +67,14 @@ export default function Clustering() {
   const [activeJob, setActiveJob] = useState<ClusteringJobSummary | null>(null);
   const [restoringJob, setRestoringJob] = useState(true);
   const confirmDelete = useConfirmAction<true>();
+  const [searchParams, setSearchParams] = useSearchParams();
 
+  // Reprise d'un clustering — priorité au deep-link `?job=` (ex. depuis la
+  // page Historique du pilier non supervisé), sinon la session en cours
+  // (rafraîchissement pendant un calcul, comportement d'origine).
   useEffect(() => {
-    const storedId = sessionStorage.getItem(ACTIVE_JOB_STORAGE_KEY);
+    const queryJobId = searchParams.get("job");
+    const storedId = queryJobId ?? sessionStorage.getItem(ACTIVE_JOB_STORAGE_KEY);
     if (!storedId) {
       setRestoringJob(false);
       return;
@@ -77,14 +82,23 @@ export default function Clustering() {
     api.clustering
       .getJob(Number(storedId))
       .then(setActiveJob)
-      .catch(() => sessionStorage.removeItem(ACTIVE_JOB_STORAGE_KEY))
+      .catch(() => {
+        sessionStorage.removeItem(ACTIVE_JOB_STORAGE_KEY);
+        setSearchParams({}, { replace: true });
+      })
       .finally(() => setRestoringJob(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
     if (activeJob) sessionStorage.setItem(ACTIVE_JOB_STORAGE_KEY, String(activeJob.id));
     else sessionStorage.removeItem(ACTIVE_JOB_STORAGE_KEY);
   }, [activeJob]);
+
+  function openJob(job: ClusteringJobSummary) {
+    setActiveJob(job);
+    setSearchParams({ job: String(job.id) }, { replace: false });
+  }
 
   const loadDatasets = useCallback(async () => {
     try {
@@ -116,6 +130,7 @@ export default function Clustering() {
 
   function resetToConfigure() {
     setActiveJob(null);
+    setSearchParams({}, { replace: false });
   }
 
   async function handleDeleteActiveJob() {
@@ -182,7 +197,7 @@ export default function Clustering() {
         </div>
       ) : phase === "configure" ? (
         <div className="max-w-2xl mx-auto">
-          <ClusteringForm datasets={datasets} datasetsError={datasetsError} onJobCreated={setActiveJob} />
+          <ClusteringForm datasets={datasets} datasetsError={datasetsError} onJobCreated={openJob} />
         </div>
       ) : phase === "progress" && activeJob ? (
         <Card className="max-w-2xl mx-auto p-8 text-center">
@@ -447,6 +462,7 @@ function ClusteringResultView({ job }: { job: ClusteringJobSummary }) {
   const jobId = job.id;
   const [result, setResult] = useState<ClusteringResult | null>(null);
   const [candidates, setCandidates] = useState<ClusterCandidate[]>([]);
+  const [candidatesError, setCandidatesError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -454,7 +470,10 @@ function ClusteringResultView({ job }: { job: ClusteringJobSummary }) {
       .getResult(jobId)
       .then(setResult)
       .catch((err) => setError(err instanceof ApiError ? err.message : "Résultat indisponible"));
-    api.clustering.getCandidates(jobId).then(setCandidates).catch(() => setCandidates([]));
+    api.clustering
+      .getCandidates(jobId)
+      .then(setCandidates)
+      .catch((err) => setCandidatesError(err instanceof ApiError ? err.message : "Impossible de charger le classement des configurations"));
   }, [jobId]);
 
   if (error) return <p className="text-sm text-destructive text-center">{error}</p>;
@@ -468,8 +487,22 @@ function ClusteringResultView({ job }: { job: ClusteringJobSummary }) {
   const noiseEntry = distribution.find((d) => d.isNoise);
   const isDensityAlgorithm = result.model_card.family === "densite";
 
+  const noiseBudgetExceededForAll = Boolean(result.model_card.noise_budget_exceeded_for_all);
+
   return (
     <div className="max-w-4xl mx-auto space-y-5">
+      {noiseBudgetExceededForAll && (
+        <div className="flex items-start gap-3 text-warning bg-warning/10 border border-warning/20 rounded-lg p-4">
+          <AlertCircle size={18} className="flex-shrink-0 mt-0.5" />
+          <p className="text-sm">
+            Aucune configuration testée ne structure une part suffisante de vos données (plus de la moitié des
+            observations classées atypiques dans chaque cas) — le résultat ci-dessous reste le moins mauvais essai,
+            à interpréter avec prudence. Essayez avec d'autres variables, ou vérifiez qu'une vraie structure de
+            groupes existe dans vos données.
+          </p>
+        </div>
+      )}
+
       <Card className={`p-5 ${accentSurfaceClass("rose")}`}>
         <SectionHeader
           icon={Boxes}
@@ -502,16 +535,20 @@ function ClusteringResultView({ job }: { job: ClusteringJobSummary }) {
         </div>
       </Card>
 
-      {candidates.length > 0 && (
-        <div>
-          <SectionHeader
-            icon={ListChecks}
-            color="blue"
-            label={`Configurations comparées (${candidates.length})`}
-            help="Plusieurs algorithmes et nombres de groupes sont testés à chaque lancement, classés sur le score de silhouette — jamais un seul essai lancé à l'aveugle. ↑ = plus haut est meilleur, ↓ = plus bas est meilleur."
-          />
-          <Table columns={CANDIDATE_COLUMNS} rows={candidates} rowKey={(c) => `${c.algorithm}-${c.rank}`} highlightRow={(c) => c.is_winner} />
-        </div>
+      {candidatesError ? (
+        <p className="text-sm text-destructive text-center">{candidatesError}</p>
+      ) : (
+        candidates.length > 0 && (
+          <div>
+            <SectionHeader
+              icon={ListChecks}
+              color="blue"
+              label={`Configurations comparées (${candidates.length})`}
+              help="Plusieurs algorithmes et nombres de groupes sont testés à chaque lancement, classés sur le score de silhouette — jamais un seul essai lancé à l'aveugle. ↑ = plus haut est meilleur, ↓ = plus bas est meilleur."
+            />
+            <Table columns={CANDIDATE_COLUMNS} rows={candidates} rowKey={(c) => `${c.algorithm}-${c.rank}`} highlightRow={(c) => c.is_winner} />
+          </div>
+        )
       )}
 
       {distribution.length > 0 && (

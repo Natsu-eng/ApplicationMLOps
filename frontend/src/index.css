@@ -43,17 +43,19 @@
   --color-ring: oklch(0.48 0.17 258);
   --color-card: oklch(1 0 0);
   --color-card-foreground: oklch(0.21 0.03 260);
-  /* Canvas de contenu (derrière AppShell, hors sidebar) — REVU (retour
-     utilisateur direct sur captures, 2026-08-14) : la version bleu-gris
-     appuyée précédente (0.94 de luminosité) lisait comme "fade"/terne sur
-     les pages hors sidebar, à l'opposé de l'effet recherché. Retour à un
-     quasi-blanc (0.98), très légèrement teinté (chroma 0.006, même teinte
-     258 que --color-primary/--color-sidebar, pour ne pas devenir un gris
-     neutre) — la séparation canevas/carte se fait désormais par l'OMBRE
-     (voir Card.tsx, shadow renforcée) plutôt que par un écart de couleur de
-     fond, cohérent avec les références SaaS modernes fournies par
-     l'utilisateur (fond quasi blanc, cartes qui se détachent par élévation). */
-  --color-background: oklch(0.98 0.006 258);
+  /* Canvas de contenu (derrière AppShell, hors sidebar) — RÉAJUSTÉ
+     (AUDIT_PILIER2_ET_REFONTE_UX.md, D1, 2026-08-15) : la version quasi-
+     blanche (0.98) qui a suivi le premier essai "bleu-gris terne" (0.94,
+     jugé fade) est retombée dans l'excès inverse — sans second niveau de
+     profondeur entre le fond et les cartes blanches, la séparation ne
+     tenait plus que sur l'ombre, jugée fatigante sur des écrans de résultats
+     denses en usage prolongé. Nouvelle valeur : un cran plus présent (0.955)
+     avec un peu plus de chroma (0.012 vs 0.006) pour rester perçu comme
+     "teinté" plutôt que "gris neutre" — toujours nettement en dessous de la
+     carte (1 0 0 / blanc pur), la hiérarchie fond→carte se lit maintenant à
+     la couleur ET à l'ombre, pas l'ombre seule. Même teinte (258) que
+     --color-primary/--color-sidebar dans les deux cas. */
+  --color-background: oklch(0.955 0.012 258);
   --color-foreground: oklch(0.21 0.03 260);
 
   /* Palette de graphes (théme/charts.ts la consomme via les mêmes valeurs
@@ -91,6 +93,132 @@
    l'identité visuelle, réservé aux moments vitrine. */
 body {
   background-color: var(--color-canvas);
+}
+
+/* Thème sombre — retour utilisateur explicite ("ajoute un mode sombre, plus
+   professionnel"). Bascule manuelle (`ThemeContext`, page Profil >
+   Préférences) qui pose `data-theme="dark"`/`"light"` sur `<html>`, plus
+   respect de la préférence système quand l'utilisateur n'a rien choisi
+   (`data-theme` absent). Seuls les tokens de SURFACE changent (fond, carte,
+   bordure, muted/secondary/accent, primary/ring légèrement éclaircis pour
+   rester lisibles sur fond sombre) — jamais les teintes de marque
+   (--color-brand-700/400, sidebar, graphes) : la sidebar est déjà sombre
+   dans les deux thèmes, la marque doit rester identique partout. Même
+   teinte (258/260) que le thème clair sur chaque token, seule la
+   luminosité change — cohérence d'identité, pas une palette concurrente.
+   Non vérifié visuellement (aucun outil de navigateur disponible dans cet
+   environnement) — valeurs dérivées par calcul OKLCH, à ajuster sur retour
+   utilisateur direct comme chaque itération précédente de ce fichier. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --color-primary: oklch(0.6 0.16 258);
+    --color-primary-foreground: oklch(0.99 0.005 260);
+    --color-secondary: oklch(0.26 0.018 258);
+    --color-secondary-foreground: oklch(0.92 0.01 260);
+    --color-muted: oklch(0.24 0.018 258);
+    --color-muted-foreground: oklch(0.66 0.02 258);
+    --color-accent: oklch(0.28 0.035 255);
+    --color-accent-foreground: oklch(0.88 0.04 258);
+    --color-border: oklch(0.32 0.02 258);
+    --color-input: oklch(0.32 0.02 258);
+    --color-ring: oklch(0.6 0.16 258);
+    --color-card: oklch(0.22 0.016 258);
+    --color-card-foreground: oklch(0.94 0.008 260);
+    --color-background: oklch(0.17 0.014 258);
+    --color-foreground: oklch(0.94 0.008 260);
+    --color-canvas: oklch(0.15 0.012 258);
+
+    /* Palette d'accent (ColorIconBadge.tsx : bg-blue-50, border-teal-200,
+       text-amber-600...) — Tailwind v4 expose tout son palet par défaut en
+       variables CSS (--color-blue-50 etc.), redéfinies ici pour le thème
+       sombre SANS toucher un seul composant : les classes bg-blue-50/
+       border-blue-100/text-blue-700 déjà posées partout (PageHeader, cartes
+       colorées, badges) en héritent automatiquement. Les teintes 50/100/200
+       (pastel quasi-blanc en clair) deviennent un lavis sombre du même ton
+       plutôt qu'un carré délavé sur fond sombre (bug réel signalé sur
+       capture : "les cartes" au sens des bandeaux PageHeader/StatTile). Même
+       formule de luminosité/chroma appliquée aux 5 teintes, seule la teinte
+       (H) change — cohérence garantie entre les couleurs. */
+    --color-blue-50: oklch(0.22 0.045 258);
+    --color-blue-100: oklch(0.28 0.055 258);
+    --color-blue-200: oklch(0.35 0.075 258);
+    --color-blue-400: oklch(0.64 0.14 258);
+    --color-blue-600: oklch(0.72 0.13 258);
+    --color-blue-700: oklch(0.8 0.12 258);
+    --color-teal-50: oklch(0.22 0.045 195);
+    --color-teal-100: oklch(0.28 0.055 195);
+    --color-teal-200: oklch(0.35 0.075 195);
+    --color-teal-400: oklch(0.64 0.14 195);
+    --color-teal-600: oklch(0.72 0.13 195);
+    --color-teal-700: oklch(0.8 0.12 195);
+    --color-amber-50: oklch(0.22 0.045 70);
+    --color-amber-100: oklch(0.28 0.055 70);
+    --color-amber-200: oklch(0.35 0.075 70);
+    --color-amber-400: oklch(0.64 0.14 70);
+    --color-amber-600: oklch(0.72 0.13 70);
+    --color-amber-700: oklch(0.8 0.12 70);
+    --color-violet-50: oklch(0.22 0.045 293);
+    --color-violet-100: oklch(0.28 0.055 293);
+    --color-violet-200: oklch(0.35 0.075 293);
+    --color-violet-400: oklch(0.64 0.14 293);
+    --color-violet-600: oklch(0.72 0.13 293);
+    --color-violet-700: oklch(0.8 0.12 293);
+    --color-rose-50: oklch(0.22 0.045 18);
+    --color-rose-100: oklch(0.28 0.055 18);
+    --color-rose-200: oklch(0.35 0.075 18);
+    --color-rose-400: oklch(0.64 0.14 18);
+    --color-rose-600: oklch(0.72 0.13 18);
+    --color-rose-700: oklch(0.8 0.12 18);
+  }
+}
+:root[data-theme="dark"] {
+  --color-primary: oklch(0.6 0.16 258);
+  --color-primary-foreground: oklch(0.99 0.005 260);
+  --color-secondary: oklch(0.26 0.018 258);
+  --color-secondary-foreground: oklch(0.92 0.01 260);
+  --color-muted: oklch(0.24 0.018 258);
+  --color-muted-foreground: oklch(0.66 0.02 258);
+  --color-accent: oklch(0.28 0.035 255);
+  --color-accent-foreground: oklch(0.88 0.04 258);
+  --color-border: oklch(0.32 0.02 258);
+  --color-input: oklch(0.32 0.02 258);
+  --color-ring: oklch(0.6 0.16 258);
+  --color-card: oklch(0.22 0.016 258);
+  --color-card-foreground: oklch(0.94 0.008 260);
+  --color-background: oklch(0.17 0.014 258);
+  --color-foreground: oklch(0.94 0.008 260);
+  --color-canvas: oklch(0.15 0.012 258);
+
+  --color-blue-50: oklch(0.22 0.045 258);
+  --color-blue-100: oklch(0.28 0.055 258);
+  --color-blue-200: oklch(0.35 0.075 258);
+  --color-blue-400: oklch(0.64 0.14 258);
+  --color-blue-600: oklch(0.72 0.13 258);
+  --color-blue-700: oklch(0.8 0.12 258);
+  --color-teal-50: oklch(0.22 0.045 195);
+  --color-teal-100: oklch(0.28 0.055 195);
+  --color-teal-200: oklch(0.35 0.075 195);
+  --color-teal-400: oklch(0.64 0.14 195);
+  --color-teal-600: oklch(0.72 0.13 195);
+  --color-teal-700: oklch(0.8 0.12 195);
+  --color-amber-50: oklch(0.22 0.045 70);
+  --color-amber-100: oklch(0.28 0.055 70);
+  --color-amber-200: oklch(0.35 0.075 70);
+  --color-amber-400: oklch(0.64 0.14 70);
+  --color-amber-600: oklch(0.72 0.13 70);
+  --color-amber-700: oklch(0.8 0.12 70);
+  --color-violet-50: oklch(0.22 0.045 293);
+  --color-violet-100: oklch(0.28 0.055 293);
+  --color-violet-200: oklch(0.35 0.075 293);
+  --color-violet-400: oklch(0.64 0.14 293);
+  --color-violet-600: oklch(0.72 0.13 293);
+  --color-violet-700: oklch(0.8 0.12 293);
+  --color-rose-50: oklch(0.22 0.045 18);
+  --color-rose-100: oklch(0.28 0.055 18);
+  --color-rose-200: oklch(0.35 0.075 18);
+  --color-rose-400: oklch(0.64 0.14 18);
+  --color-rose-600: oklch(0.72 0.13 18);
+  --color-rose-700: oklch(0.8 0.12 18);
 }
 
 /* Dégradé de marque réutilisable — même direction diagonale que le "D" du
@@ -131,15 +259,3 @@ body {
   }
 }
 
-/* Logo complet DataLab Pro recadré sur la zone icône (le "D" + pictos) —
-   exclut le wordmark et la barre Explorer/Analyser/Prédire/Déployer intégrés
-   à l'image source (1254×1254), qu'on ne veut pas ici : le wordmark et
-   l'accroche sont rendus en texte à côté, pas dupliqués depuis l'image. */
-.auth-logo-crop {
-  width: 168px;
-  height: 128px;
-  background-image: url(/logo.png);
-  background-repeat: no-repeat;
-  background-size: 224px 224px;
-  background-position: -25px -7px;
-}

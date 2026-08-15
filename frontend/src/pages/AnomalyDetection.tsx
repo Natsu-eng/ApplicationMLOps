@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { AlertCircle, AlertTriangle, BarChart3, Loader2, PlayCircle, Search, Trash2 } from "lucide-react";
+import { AlertCircle, AlertTriangle, BarChart3, CheckCircle2, Loader2, PlayCircle, Search, Trash2 } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip as RechartsTooltip, XAxis, YAxis } from "recharts";
 import {
   ApiError,
@@ -44,8 +44,16 @@ const AGREEMENT_LABELS: Record<AnomalyAgreement, string> = {
   both: "Confirmée par les 2 méthodes",
   isolation_forest_only: "Isolation Forest seul",
   lof_only: "LOF seul",
-  none: "Aucune méthode",
+  none: "Non classée comme anomalie",
 };
+
+// Sous ce seuil, un écart-type n'est pas une "contribution" lisible — le
+// backend renvoie toujours les 5 variables au z-score le plus élevé en
+// valeur absolue (services/anomaly_training.py::_build_numeric_deviations),
+// même quand aucune n'est réellement notable (ex. un rang bas, une
+// observation par ailleurs banale). Affichage uniquement — ne change rien
+// au calcul ni au classement.
+const NOT_SIGNIFICANT_Z_THRESHOLD = 0.5;
 
 const AGREEMENT_VARIANTS: Record<AnomalyAgreement, "danger" | "warning" | "neutral"> = {
   both: "danger",
@@ -60,15 +68,18 @@ const AGREEMENT_VARIANTS: Record<AnomalyAgreement, "danger" | "warning" | "neutr
  * voir services/anomaly_registry.py côté backend) — le seul réglage exposé
  * est le nombre d'observations à classer. */
 export default function AnomalyDetection() {
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [datasets, setDatasets] = useState<DatasetSummary[]>([]);
   const [datasetsError, setDatasetsError] = useState<string | null>(null);
   const [activeJob, setActiveJob] = useState<AnomalyJobSummary | null>(null);
   const [restoringJob, setRestoringJob] = useState(true);
   const confirmDelete = useConfirmAction<true>();
 
+  // Reprise d'une détection — priorité au deep-link `?job=` (ex. depuis la
+  // page Historique du pilier non supervisé), sinon la session en cours.
   useEffect(() => {
-    const storedId = sessionStorage.getItem(ACTIVE_JOB_STORAGE_KEY);
+    const queryJobId = searchParams.get("job");
+    const storedId = queryJobId ?? sessionStorage.getItem(ACTIVE_JOB_STORAGE_KEY);
     if (!storedId) {
       setRestoringJob(false);
       return;
@@ -76,14 +87,23 @@ export default function AnomalyDetection() {
     api.anomalies
       .getJob(Number(storedId))
       .then(setActiveJob)
-      .catch(() => sessionStorage.removeItem(ACTIVE_JOB_STORAGE_KEY))
+      .catch(() => {
+        sessionStorage.removeItem(ACTIVE_JOB_STORAGE_KEY);
+        setSearchParams({}, { replace: true });
+      })
       .finally(() => setRestoringJob(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
     if (activeJob) sessionStorage.setItem(ACTIVE_JOB_STORAGE_KEY, String(activeJob.id));
     else sessionStorage.removeItem(ACTIVE_JOB_STORAGE_KEY);
   }, [activeJob]);
+
+  function openJob(job: AnomalyJobSummary) {
+    setActiveJob(job);
+    setSearchParams({ job: String(job.id) }, { replace: false });
+  }
 
   const loadDatasets = useCallback(async () => {
     try {
@@ -115,6 +135,7 @@ export default function AnomalyDetection() {
 
   function resetToConfigure() {
     setActiveJob(null);
+    setSearchParams({}, { replace: false });
   }
 
   async function handleDeleteActiveJob() {
@@ -184,7 +205,7 @@ export default function AnomalyDetection() {
           <AnomalyForm
             datasets={datasets}
             datasetsError={datasetsError}
-            onJobCreated={setActiveJob}
+            onJobCreated={openJob}
             initialDatasetId={searchParams.get("dataset_id")}
             initialFeatures={searchParams.get("features")}
           />
@@ -401,6 +422,7 @@ function topDeviation(obs: AnomalyObservation): string | null {
   const entries = Object.entries(obs.numeric_deviations);
   if (entries.length === 0) return null;
   const [name, stat] = entries[0];
+  if (Math.abs(stat.z_score) < NOT_SIGNIFICANT_Z_THRESHOLD) return null;
   return `${name} (${stat.z_score > 0 ? "+" : ""}${stat.z_score.toFixed(1)}σ)`;
 }
 
@@ -408,16 +430,21 @@ function observationColumns(onOpenDetail: (obs: AnomalyObservation) => void): Ta
   return [
     { key: "rank", header: "#", align: "right" },
     { key: "row_index", header: "Ligne", align: "right", render: (o) => o.row_index + 1 },
-    { key: "consensus_score", header: "Score", align: "right", render: (o) => o.consensus_score.toFixed(3) },
+    {
+      key: "consensus_score",
+      header: "Score d'anomalie",
+      align: "right",
+      render: (o) => o.consensus_score.toFixed(3),
+    },
     {
       key: "agreement",
-      header: "Confiance",
+      header: "Décision",
       render: (o) => <Badge variant={AGREEMENT_VARIANTS[o.agreement]}>{AGREEMENT_LABELS[o.agreement]}</Badge>,
     },
     {
       key: "deviation",
       header: "Variable la plus explicative",
-      render: (o) => topDeviation(o) ?? "—",
+      render: (o) => topDeviation(o) ?? "Aucune contribution significative",
       className: "text-muted-foreground",
     },
     {
@@ -436,6 +463,7 @@ function observationColumns(onOpenDetail: (obs: AnomalyObservation) => void): Ta
 function AnomalyResultView({ jobId }: { jobId: number }) {
   const [result, setResult] = useState<AnomalyResult | null>(null);
   const [observations, setObservations] = useState<AnomalyObservation[]>([]);
+  const [observationsError, setObservationsError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [detailObservation, setDetailObservation] = useState<AnomalyObservation | null>(null);
 
@@ -444,11 +472,19 @@ function AnomalyResultView({ jobId }: { jobId: number }) {
       .getResult(jobId)
       .then(setResult)
       .catch((err) => setError(err instanceof ApiError ? err.message : "Résultat indisponible"));
-    api.anomalies.getObservations(jobId).then(setObservations).catch(() => setObservations([]));
+    api.anomalies
+      .getObservations(jobId)
+      .then(setObservations)
+      .catch((err) => setObservationsError(err instanceof ApiError ? err.message : "Impossible de charger le classement des observations"));
   }, [jobId]);
 
   if (error) return <p className="text-sm text-destructive text-center">{error}</p>;
   if (!result) return <p className="text-sm text-muted-foreground text-center">Chargement…</p>;
+
+  // Comptes entiers, pas les taux (évite toute ambiguïté d'arrondi flottant
+  // sur un "0 %" qui ne serait pas vraiment zéro) — vrai seulement quand
+  // aucune des deux méthodes n'a rien flaggé du tout.
+  const noAnomaliesDetected = result.n_anomalies_isolation_forest === 0 && result.n_anomalies_lof === 0;
 
   const histogramData = result.score_histogram.counts.map((count, i) => ({
     range: `${result.score_histogram.bin_edges[i].toFixed(2)}–${result.score_histogram.bin_edges[i + 1].toFixed(2)}`,
@@ -506,15 +542,33 @@ function AnomalyResultView({ jobId }: { jobId: number }) {
         <SectionHeader
           icon={Search}
           color="rose"
-          label={`Observations les plus atypiques (${observations.length})`}
+          label={
+            noAnomaliesDetected
+              ? `Observations aux scores d'anomalie les plus élevés (${observations.length})`
+              : `Observations les plus atypiques (${observations.length})`
+          }
           help="Classées par score de consensus décroissant — 'Confirmée par les 2 méthodes' est le signal le plus fiable."
         />
-        <Table
-          columns={observationColumns(setDetailObservation)}
-          rows={observations}
-          rowKey={(o) => o.row_index}
-          highlightRow={(o) => o.agreement === "both"}
-        />
+        {noAnomaliesDetected && (
+          <div className="flex items-start gap-3 text-success bg-success/10 border border-success/20 rounded-lg p-4 mb-4">
+            <CheckCircle2 size={18} className="flex-shrink-0 mt-0.5" />
+            <p className="text-sm">
+              Aucune anomalie détectée selon les seuils actuels. Le classement ci-dessous reste affiché à titre
+              indicatif — ce sont les observations les moins "typiques" du lot, pas des anomalies confirmées par
+              Isolation Forest ou LOF.
+            </p>
+          </div>
+        )}
+        {observationsError ? (
+          <p className="text-sm text-destructive text-center">{observationsError}</p>
+        ) : (
+          <Table
+            columns={observationColumns(setDetailObservation)}
+            rows={observations}
+            rowKey={(o) => o.row_index}
+            highlightRow={(o) => o.agreement === "both"}
+          />
+        )}
       </div>
 
       {detailObservation && (

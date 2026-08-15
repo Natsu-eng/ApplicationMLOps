@@ -24,15 +24,15 @@ const STRENGTH_LABEL: Record<Strength, string> = {
   veryStrong: "Très fort",
 };
 const STRENGTH_BAR: Record<Strength, string> = {
-  weak: "bg-rose-500",
-  medium: "bg-amber-500",
-  strong: "bg-emerald-500",
+  weak: "bg-destructive",
+  medium: "bg-warning",
+  strong: "bg-success",
   veryStrong: "bg-primary",
 };
 const STRENGTH_TEXT: Record<Strength, string> = {
-  weak: "text-rose-600",
-  medium: "text-amber-600",
-  strong: "text-emerald-600",
+  weak: "text-destructive",
+  medium: "text-warning",
+  strong: "text-success",
   veryStrong: "text-primary",
 };
 
@@ -41,16 +41,16 @@ export function PasswordStrengthMeter({ password }: { password: string }) {
 
   return (
     <div className="mt-2" aria-live="polite">
-      <div className="h-1.5 w-full rounded-full bg-slate-100 overflow-hidden">
+      <div className="h-1.5 w-full rounded-full bg-muted overflow-hidden">
         <div
           className={`h-full rounded-full transition-all duration-300 ${password ? STRENGTH_BAR[strength] : ""}`}
           style={{ width: `${password ? Math.max(score, 1) * 20 : 0}%` }}
         />
       </div>
-      <p className={`text-xs font-semibold mt-1 ${password ? STRENGTH_TEXT[strength] : "text-slate-400"}`}>
+      <p className={`text-xs font-semibold mt-1 ${password ? STRENGTH_TEXT[strength] : "text-muted-foreground"}`}>
         {password ? STRENGTH_LABEL[strength] : "Choisissez un mot de passe"}
       </p>
-      <p className="text-[11px] text-slate-400 mt-0.5">
+      <p className="text-[11px] text-muted-foreground mt-0.5">
         12+ caractères avec majuscule, minuscule, chiffre et caractère spécial pour un mot de passe robuste.
       </p>
     </div>

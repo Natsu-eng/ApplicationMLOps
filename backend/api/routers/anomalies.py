@@ -31,6 +31,7 @@ from api.core.models import (
 )
 from api.routers.auth import get_current_user
 from services.anomaly_training import DEFAULT_TOP_N, MAX_TOP_N
+from services.audit import log_action
 from services.datasets import DatasetParsingError, read_dataframe
 from services.job_quota import raise_if_quota_exceeded
 from services.job_watchdog import reconcile_stale_jobs
@@ -294,5 +295,10 @@ def delete_anomaly_job(job_id: int, current_user: User = Depends(get_current_use
             Path(job.result.file_path).unlink(missing_ok=True)
         db.delete(job.result)
 
+    log_action(
+        db, current_user.organization_id, current_user.id, "anomaly_job.deleted",
+        target_type="anomaly_job", target_id=job.id,
+        details={"dataset_id": job.dataset_id, "status": job.status},
+    )
     db.delete(job)
     db.commit()

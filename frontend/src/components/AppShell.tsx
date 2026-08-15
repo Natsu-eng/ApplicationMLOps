@@ -1,6 +1,6 @@
 import { type ReactNode, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
-import { HelpCircle, LogOut, Menu, Target, X } from "lucide-react";
+import { HelpCircle, LayoutDashboard, LogOut, Menu, Target, X } from "lucide-react";
 import { useAuth } from "../contexts/AuthContext";
 import { Avatar } from "./ui/Avatar";
 import { Badge } from "./ui/Badge";
@@ -18,10 +18,15 @@ import { PILLARS, type PillarId } from "../config/pillars";
  * appliqué aux piliers "Bientôt"). À réintroduire seulement quand une vraie
  * fonctionnalité existe derrière.
  *
- * `pillarId` détermine les items de nav affichés (lus depuis le registre des
- * piliers) — omis sur l'écran d'orientation, qui est pilier-agnostique.
- * Ajouter un futur pilier ne touche pas ce composant : une entrée dans
- * `config/pillars.ts` suffit. */
+ * `pillarId` détermine QUEL pilier affiche ses modules — "Objectifs" et
+ * "Tableau de bord" restent épinglés en haut, toujours accessibles quel que
+ * soit le pilier actif ; en dessous, seule la section du pilier courant est
+ * affichée (pas les 3 en permanence) — retour utilisateur direct : mieux
+ * vaut choisir son objectif et voir SES modules que tout empiler à chaque
+ * page, un choix qui s'aggraverait avec un 3ᵉ pilier (Vision) actif. Omis
+ * sur l'écran d'orientation, qui est pilier-agnostique. Ajouter un futur
+ * pilier ne touche pas ce composant : une entrée dans `config/pillars.ts`
+ * suffit. */
 export default function AppShell({ children, pillarId }: { children: ReactNode; pillarId?: PillarId }) {
   const { user, logout } = useAuth();
   const location = useLocation();
@@ -34,17 +39,8 @@ export default function AppShell({ children, pillarId }: { children: ReactNode; 
     <>
       <div className="flex h-16 items-center gap-2.5 border-b border-sidebar-border px-4 flex-shrink-0">
         <Link to="/" className="flex items-center gap-2.5 min-w-0" onClick={() => setMobileNavOpen(false)}>
-          <div className="h-7 w-[37px] overflow-hidden flex-shrink-0">
-            <img
-              src="/logo.png"
-              alt="DataLab Pro"
-              className="h-[49px] w-[49px] max-w-none -translate-x-[5.5px] -translate-y-[1.5px]"
-            />
-          </div>
-          <div className="leading-tight min-w-0">
-            <p className="text-[10px] uppercase tracking-widest text-sidebar-highlight font-semibold truncate">DataLab Pro</p>
-            <p className="text-sm text-sidebar-foreground/70 truncate">{user.organization_name}</p>
-          </div>
+          <img src="/icon.svg" alt="" className="h-8 w-8 flex-shrink-0 rounded-lg" />
+          <span className="text-sm font-semibold text-sidebar-foreground truncate">DataLab Pro</span>
         </Link>
       </div>
 
@@ -62,7 +58,20 @@ export default function AppShell({ children, pillarId }: { children: ReactNode; 
           Objectifs
         </Link>
 
-        {PILLARS.map((pillar) => (
+        <Link
+          to="/dashboard"
+          onClick={() => setMobileNavOpen(false)}
+          className={`flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
+            location.pathname === "/dashboard"
+              ? "bg-sidebar-accent text-sidebar-accent-foreground"
+              : "text-sidebar-muted-foreground hover:bg-sidebar-accent/50 hover:text-sidebar-foreground"
+          }`}
+        >
+          <LayoutDashboard size={16} strokeWidth={2} className="flex-shrink-0" />
+          Tableau de bord
+        </Link>
+
+        {PILLARS.filter((pillar) => pillar.id === pillarId).map((pillar) => (
           <div key={pillar.id}>
             <div className="flex items-center justify-between px-3 pt-5 pb-1.5">
               <span
@@ -113,11 +122,17 @@ export default function AppShell({ children, pillarId }: { children: ReactNode; 
 
       <div className="border-t border-sidebar-border p-3 flex-shrink-0">
         <div className="flex items-center gap-2.5 rounded-lg px-2 py-1.5">
-          <Avatar name={user.nom} size="sm" />
-          <div className="flex min-w-0 flex-1 flex-col leading-tight">
-            <span className="truncate text-sm font-medium text-sidebar-foreground">{user.nom}</span>
-            <span className="truncate text-xs text-sidebar-muted-foreground">{user.organization_name}</span>
-          </div>
+          <Link
+            to="/profile"
+            onClick={() => setMobileNavOpen(false)}
+            className="flex items-center gap-2.5 min-w-0 flex-1 rounded-lg -mx-1 px-1 py-0.5 hover:bg-sidebar-accent/50 transition-colors"
+          >
+            <Avatar name={user.nom} size="sm" />
+            <div className="flex min-w-0 flex-1 flex-col leading-tight">
+              <span className="truncate text-sm font-medium text-sidebar-foreground">{user.nom}</span>
+              <span className="truncate text-xs text-sidebar-muted-foreground">{user.organization_name}</span>
+            </div>
+          </Link>
           <button
             onClick={logout}
             aria-label="Déconnexion"

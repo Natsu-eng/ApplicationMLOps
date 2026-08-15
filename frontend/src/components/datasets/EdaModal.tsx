@@ -514,10 +514,10 @@ export default function EdaModal({ dataset, onClose }: { dataset: DatasetSummary
                     label="Pouvoir discriminant d'une variable"
                     help="Boîtes à moustaches d'une variable numérique, une par valeur de la cible — si les boîtes sont nettement séparées, cette variable aide probablement à distinguer les cas."
                   />
-                  <select
+                  <Select
                     value={featureForTarget}
                     onChange={(e) => setFeatureForTarget(e.target.value)}
-                    className="w-full rounded-lg border border-input bg-white px-3 py-2 text-sm text-foreground mb-3 focus:outline-none focus:ring-2 focus:ring-primary/40"
+                    className="mb-3"
                   >
                     <option value="">Choisir une variable numérique…</option>
                     {numericFeatureOptions.map((c) => (
@@ -525,7 +525,7 @@ export default function EdaModal({ dataset, onClose }: { dataset: DatasetSummary
                         {c.name}
                       </option>
                     ))}
-                  </select>
+                  </Select>
                   {featureByTargetBoxData.length > 0 && <BoxPlotChart data={featureByTargetBoxData} height={220} />}
                 </Card>
               )}

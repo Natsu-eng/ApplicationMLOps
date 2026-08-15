@@ -38,11 +38,11 @@ interface Props {
 }
 
 /** Panneau de marque partagé par Login et Register — dégradé bleu→cyan
- * (.bg-brand-gradient, E1), logo recadré sur la zone icône (.auth-logo-crop,
- * exclut le wordmark/la barre "Explorer/Analyser/Prédire/Déployer" intégrés
- * à l'image), motifs ML flottants. Un seul composant qui change de FORME
- * selon la largeur d'écran plutôt que deux variantes : bandeau réduit en
- * haut sous lg, panneau plein à gauche au-delà — jamais complètement masqué. */
+ * (.bg-brand-gradient, E1), monogramme blanc (/icon-mark.svg — glyphe seul,
+ * pas la tuile dégradée : le panneau porte déjà la couleur), motifs ML
+ * flottants. Un seul composant qui change de FORME selon la largeur d'écran
+ * plutôt que deux variantes : bandeau réduit en haut sous lg, panneau plein
+ * à gauche au-delà — jamais complètement masqué. */
 export function AuthBrandPanel({ kicker, heading, tagline }: Props) {
   return (
     <section className="relative overflow-hidden bg-brand-gradient text-white flex flex-col h-36 sm:h-44 lg:h-auto lg:min-h-screen lg:w-[42%] xl:w-[40%] shrink-0 px-6 py-5 lg:p-12">
@@ -70,7 +70,7 @@ export function AuthBrandPanel({ kicker, heading, tagline }: Props) {
       </div>
 
       <div className="relative z-10 flex items-center gap-3 lg:block">
-        <div role="img" aria-label="DataLab Pro" className="auth-logo-crop shrink-0 [filter:brightness(0)_invert(1)]" />
+        <img src="/icon-mark.svg" alt="DataLab Pro" className="h-10 w-10 lg:h-12 lg:w-12 shrink-0" />
         <div className="lg:hidden leading-tight">
           <p className="text-sm font-semibold">DataLab Pro</p>
           <p className="text-xs text-white/70">{kicker}</p>

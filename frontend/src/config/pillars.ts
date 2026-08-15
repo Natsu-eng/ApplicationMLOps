@@ -3,7 +3,6 @@ import {
   BrainCircuit,
   Database,
   History,
-  LayoutDashboard,
   ScanEye,
   ScatterChart,
   Shapes,
@@ -44,9 +43,17 @@ export const PILLARS: Pillar[] = [
       "À partir de vos données passées, estimez une valeur (un prix, une résistance, une durée) ou prédisez une catégorie (conforme ou non, à risque ou non). Idéal quand vous connaissez déjà le résultat sur d'anciens cas et voulez l'anticiper sur de nouveaux.",
     icon: Target,
     status: "active",
-    route: "/dashboard",
+    // Route vers le module d'action du pilier (Entraînement), PAS vers
+    // "/dashboard" — choisir un objectif depuis l'écran d'orientation doit
+    // ouvrir directement ce pilier, jamais rediriger vers la vue d'ensemble
+    // générale (bug réel signalé : "Objectifs sert à ça"). Même principe que
+    // le pilier non supervisé ci-dessous, dont la route pointe déjà sur son
+    // propre module ("/clustering"), pas sur un hub intermédiaire.
+    route: "/training",
+    // "Tableau de bord" n'est PAS ici : épinglé en haut de la sidebar
+    // (AppShell.tsx), toujours accessible quel que soit le pilier actif —
+    // seul ce qui suit reste filtré sur l'objectif choisi.
     navItems: [
-      { to: "/dashboard", label: "Tableau de bord", icon: LayoutDashboard },
       { to: "/datasets", label: "Mes données", icon: Database },
       { to: "/training", label: "Entraînement", icon: BrainCircuit },
       { to: "/training/history", label: "Historique", icon: History },
@@ -67,6 +74,7 @@ export const PILLARS: Pillar[] = [
       { to: "/clustering", label: "Clustering", icon: Shapes },
       { to: "/reduction-dimension", label: "Réduction de dimension", icon: ScatterChart },
       { to: "/anomalies", label: "Détection d'anomalies", icon: AlertTriangle },
+      { to: "/non-supervise/historique", label: "Historique", icon: History },
     ],
   },
   {

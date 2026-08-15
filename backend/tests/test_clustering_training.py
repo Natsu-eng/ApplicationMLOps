@@ -6,7 +6,12 @@ import pandas as pd
 import pytest
 
 from services.clustering_registry import CLUSTER_REGISTRY
-from services.clustering_training import ClusteringConfig, train_and_evaluate_clustering
+from services.clustering_training import (
+    ClusteringConfig,
+    MAX_SELECTABLE_NOISE_RATIO,
+    _rank_candidates_with_noise_budget,
+    train_and_evaluate_clustering,
+)
 from services.ml_preprocessing import TrainingAbortedError
 
 _NOOP = lambda step, pct: None  # noqa: E731
@@ -75,6 +80,55 @@ def test_differentiating_variables_identify_the_real_signal():
     result = train_and_evaluate_clustering(df, ClusteringConfig(seed=42), _NOOP)
     for profile in result.cluster_profiles:
         assert set(profile.differentiating_variables[:2]) == {"x1", "x2"}
+
+
+# ── Garde-fou bruit (AUDIT_PILIER2_ET_REFONTE_UX.md, P2) ──────────────────
+# Un DBSCAN qui ne rattache qu'une poignée de points très compacts à un
+# cluster peut afficher une silhouette artificiellement haute (calculée
+# uniquement sur les points non-bruit) — testé ici en fonction pure, sans
+# recalculer un vrai clustering (le scénario "silhouette haute mais presque
+# tout en bruit" est trivial à construire à la main, pas la peine de le
+# faire émerger d'un vrai fit DBSCAN instable).
+
+
+def _candidate(silhouette: float, noise_ratio: float, label: str) -> dict:
+    return {"silhouette": silhouette, "noise_ratio": noise_ratio, "label": label}
+
+
+def test_noisy_candidate_with_higher_silhouette_is_not_elected_winner():
+    high_noise_but_tight = _candidate(silhouette=0.95, noise_ratio=0.9, label="dbscan_trop_strict")
+    honest_full_coverage = _candidate(silhouette=0.55, noise_ratio=0.0, label="kmeans_honnete")
+
+    ranked, exceeded_for_all = _rank_candidates_with_noise_budget([high_noise_but_tight, honest_full_coverage])
+
+    assert exceeded_for_all is False
+    assert ranked[0]["label"] == "kmeans_honnete"  # gagnant malgré une silhouette plus basse
+    assert ranked[1]["label"] == "dbscan_trop_strict"  # toujours visible, relégué en second
+
+
+def test_noise_budget_respected_candidates_still_ranked_by_silhouette():
+    a = _candidate(silhouette=0.6, noise_ratio=0.1, label="a")
+    b = _candidate(silhouette=0.8, noise_ratio=0.2, label="b")
+    ranked, exceeded_for_all = _rank_candidates_with_noise_budget([a, b])
+    assert exceeded_for_all is False
+    assert [c["label"] for c in ranked] == ["b", "a"]
+
+
+def test_all_candidates_exceeding_noise_budget_falls_back_without_crashing():
+    only_noisy = [
+        _candidate(silhouette=0.9, noise_ratio=0.95, label="x"),
+        _candidate(silhouette=0.7, noise_ratio=0.99, label="y"),
+    ]
+    ranked, exceeded_for_all = _rank_candidates_with_noise_budget(only_noisy)
+    assert exceeded_for_all is True
+    assert [c["label"] for c in ranked] == ["x", "y"]  # retombe sur le tri brut par silhouette
+
+
+def test_boundary_noise_ratio_exactly_at_threshold_is_selectable():
+    at_threshold = _candidate(silhouette=0.5, noise_ratio=MAX_SELECTABLE_NOISE_RATIO, label="pile")
+    ranked, exceeded_for_all = _rank_candidates_with_noise_budget([at_threshold])
+    assert exceeded_for_all is False
+    assert ranked[0]["label"] == "pile"
 
 
 def test_algorithm_ids_restricts_to_explicit_selection():

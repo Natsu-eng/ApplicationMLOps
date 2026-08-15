@@ -259,10 +259,10 @@ export default function TrainingHistory() {
               {CONFIG_ROWS.map((row) => {
                 const differs = comparison.differing_config_fields.includes(row.key);
                 return (
-                  <tr key={row.key} className={`border-t border-border/60 ${differs ? "bg-amber-50/60" : ""}`}>
-                    <td className={`px-3 py-2 text-xs text-muted-foreground sticky left-0 ${differs ? "bg-amber-50" : "bg-card"}`}>
+                  <tr key={row.key} className={`border-t border-border/60 ${differs ? "bg-warning/10" : ""}`}>
+                    <td className={`px-3 py-2 text-xs text-muted-foreground sticky left-0 ${differs ? "bg-warning/15" : "bg-card"}`}>
                       {row.label}
-                      {differs && <span className="ml-1 text-amber-600">●</span>}
+                      {differs && <span className="ml-1 text-warning">●</span>}
                     </td>
                     {comparison.entries.map((e) => (
                       <td key={e.job_id} className="px-3 py-2 text-sm text-foreground">

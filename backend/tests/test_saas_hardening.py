@@ -74,6 +74,63 @@ def test_audit_log_records_training_job_deleted(client):
     assert any(e["action"] == "training_job.deleted" and e["target_id"] == job["id"] for e in entries)
 
 
+# ── Traçabilité du pilier non supervisé (AUDIT_PILIER2_ET_REFONTE_UX.md, P1)
+# — jusqu'ici seul le pilier supervisé traçait ses suppressions, les 3
+# modules non supervisés (clustering, réduction de dimension, anomalies)
+# étaient invisibles du journal d'audit. Petits datasets synthétiques (60
+# lignes), jobs jamais réellement exécutés (RQ mocké, statut "queued") — on
+# vérifie la traçabilité de la suppression, pas le moteur ML.
+
+
+def _upload_unsupervised_dataset(client, headers, name="d.csv", n=60):
+    rows = "\n".join(f"{i},{i * 2},cat{i % 3}" for i in range(n))
+    content = f"x1,x2,categorie\n{rows}\n".encode()
+    resp = client.post("/datasets", headers=headers, files={"file": (name, io.BytesIO(content), "text/csv")})
+    return resp.json()
+
+
+def test_audit_log_records_clustering_job_deleted(client):
+    headers = _register(client)
+    dataset = _upload_unsupervised_dataset(client, headers)
+    with patch("api.routers.clustering.training_queue") as mock_queue:
+        mock_queue.enqueue.return_value.id = "fake-rq-id"
+        job = client.post(
+            "/clustering/jobs", headers=headers, json={"dataset_id": dataset["id"], "feature_columns": ["x1", "x2"]}
+        ).json()
+    client.delete(f"/clustering/jobs/{job['id']}", headers=headers)
+
+    entries = client.get("/auth/team/audit-log", headers=headers).json()
+    assert any(e["action"] == "clustering_job.deleted" and e["target_id"] == job["id"] for e in entries)
+
+
+def test_audit_log_records_dimensionality_job_deleted(client):
+    headers = _register(client)
+    dataset = _upload_unsupervised_dataset(client, headers)
+    with patch("api.routers.dimensionality.training_queue") as mock_queue:
+        mock_queue.enqueue.return_value.id = "fake-rq-id"
+        job = client.post(
+            "/dimensionality/jobs", headers=headers, json={"dataset_id": dataset["id"], "feature_columns": ["x1", "x2"]}
+        ).json()
+    client.delete(f"/dimensionality/jobs/{job['id']}", headers=headers)
+
+    entries = client.get("/auth/team/audit-log", headers=headers).json()
+    assert any(e["action"] == "dimensionality_job.deleted" and e["target_id"] == job["id"] for e in entries)
+
+
+def test_audit_log_records_anomaly_job_deleted(client):
+    headers = _register(client)
+    dataset = _upload_unsupervised_dataset(client, headers)
+    with patch("api.routers.anomalies.training_queue") as mock_queue:
+        mock_queue.enqueue.return_value.id = "fake-rq-id"
+        job = client.post(
+            "/anomalies/jobs", headers=headers, json={"dataset_id": dataset["id"], "feature_columns": ["x1", "x2"]}
+        ).json()
+    client.delete(f"/anomalies/jobs/{job['id']}", headers=headers)
+
+    entries = client.get("/auth/team/audit-log", headers=headers).json()
+    assert any(e["action"] == "anomaly_job.deleted" and e["target_id"] == job["id"] for e in entries)
+
+
 def test_audit_log_records_model_promotion(client, db_session):
     from api.core.models import MLModel, TrainingJob
     import json as _json

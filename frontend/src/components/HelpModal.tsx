@@ -1,4 +1,13 @@
-import { BrainCircuit, ChartColumn, Database, History, LineChart } from "lucide-react";
+import {
+  AlertTriangle,
+  BrainCircuit,
+  ChartColumn,
+  Database,
+  History,
+  LineChart,
+  ScatterChart,
+  Shapes,
+} from "lucide-react";
 import { Modal } from "./ui/Modal";
 import { Card } from "./ui/Card";
 import { ColorIconBadge, type AccentColor } from "./ui/ColorIconBadge";
@@ -10,7 +19,7 @@ interface HelpStep {
   description: string;
 }
 
-const STEPS: HelpStep[] = [
+const SUPERVISED_STEPS: HelpStep[] = [
   {
     icon: Database,
     color: "blue",
@@ -48,26 +57,72 @@ const STEPS: HelpStep[] = [
   },
 ];
 
+const UNSUPERVISED_STEPS: HelpStep[] = [
+  {
+    icon: Shapes,
+    color: "rose",
+    title: "1. Découvrez des groupes (Clustering)",
+    description:
+      "Choisissez un dataset et les variables à analyser. Plusieurs algorithmes et nombres de groupes sont comparés automatiquement, jamais un seul essai — chaque groupe est décrit par ce qui le distingue le plus des autres.",
+  },
+  {
+    icon: ScatterChart,
+    color: "blue",
+    title: "2. Visualisez en 2D (Réduction de dimension)",
+    description:
+      "PCA, t-SNE ou UMAP ramènent vos données à 2 dimensions pour repérer visuellement des groupes ou des points isolés. Attention : t-SNE/UMAP préservent les voisinages locaux, pas les distances globales — jamais une carte fidèle des distances réelles.",
+  },
+  {
+    icon: AlertTriangle,
+    color: "amber",
+    title: "3. Repérez les atypiques (Détection d'anomalies)",
+    description:
+      "Isolation Forest et LOF tournent toujours ensemble — le score de consensus recoupe les deux méthodes, jamais un seul algorithme élu à l'aveugle. Chaque observation classée porte une explication réelle (variables qui s'écartent le plus).",
+  },
+];
+
 /** Premier point d'aide/onboarding du produit (AUDIT_ROADMAP.md, refonte UI)
  * — accessible à tout moment depuis l'AppShell, pas seulement à la première
  * connexion : un rappel du workflow doit rester disponible, pas seulement
- * montré une fois puis perdu. */
+ * montré une fois puis perdu. Étendu (AUDIT_PILIER2_ET_REFONTE_UX.md, D4) au
+ * pilier ML non supervisé — jusqu'ici muet dessus alors qu'il est actif
+ * depuis le Lot 11, un écart visible dès qu'on ouvrait l'Aide depuis
+ * Clustering/DimensionalityReduction/AnomalyDetection. */
 export function HelpModal({ onClose }: { onClose: () => void }) {
   return (
-    <Modal title="Comment utiliser DataLab Pro" onClose={onClose}>
-      <p className="text-sm text-muted-foreground mb-5">
-        Le parcours du ML supervisé, en 5 étapes — de vos données à une prédiction exploitable.
-      </p>
-      <div className="grid gap-3 sm:grid-cols-2">
-        {STEPS.map((step) => (
-          <Card key={step.title} className="p-4 flex items-start gap-3">
-            <ColorIconBadge icon={step.icon} color={step.color} size="sm" />
-            <div className="min-w-0">
-              <p className="text-sm font-medium text-foreground mb-1">{step.title}</p>
-              <p className="text-xs text-muted-foreground leading-relaxed">{step.description}</p>
-            </div>
-          </Card>
-        ))}
+    <Modal title="Comment utiliser DataLab Pro" onClose={onClose} size="xl">
+      <div className="mb-6">
+        <p className="text-sm text-muted-foreground mb-3">
+          Le parcours du ML supervisé, en 5 étapes — de vos données à une prédiction exploitable.
+        </p>
+        <div className="grid gap-3 sm:grid-cols-2">
+          {SUPERVISED_STEPS.map((step) => (
+            <Card key={step.title} className="p-4 flex items-start gap-3">
+              <ColorIconBadge icon={step.icon} color={step.color} size="sm" />
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-foreground mb-1">{step.title}</p>
+                <p className="text-xs text-muted-foreground leading-relaxed">{step.description}</p>
+              </div>
+            </Card>
+          ))}
+        </div>
+      </div>
+
+      <div>
+        <p className="text-sm text-muted-foreground mb-3">
+          Le parcours du ML non supervisé, en 3 modules — sans cible à prédire, pour explorer vos données autrement.
+        </p>
+        <div className="grid gap-3 sm:grid-cols-2">
+          {UNSUPERVISED_STEPS.map((step) => (
+            <Card key={step.title} className="p-4 flex items-start gap-3">
+              <ColorIconBadge icon={step.icon} color={step.color} size="sm" />
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-foreground mb-1">{step.title}</p>
+                <p className="text-xs text-muted-foreground leading-relaxed">{step.description}</p>
+              </div>
+            </Card>
+          ))}
+        </div>
       </div>
     </Modal>
   );

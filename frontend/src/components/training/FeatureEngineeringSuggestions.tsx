@@ -193,7 +193,7 @@ export function FeatureEngineeringSuggestions({
                   <select
                     value={currentStrategy}
                     onChange={(e) => setStrategies((prev) => ({ ...prev, [index]: e.target.value }))}
-                    className="rounded-md border border-input bg-white px-2 py-1 text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
+                    className="rounded-md border border-input bg-card px-2 py-1 text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
                   >
                     {suggestion.choice.options.map((opt) => (
                       <option key={opt} value={opt}>
