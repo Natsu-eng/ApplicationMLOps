@@ -76,6 +76,9 @@ def init_db() -> None:
     # Import local (et non en tête de module) pour éviter l'import circulaire :
     # api.core.models importe déjà `Base` depuis ce fichier.
     from api.core.models import (  # noqa: F401
+        AnomalyJob,
+        AnomalyModel,
+        AnomalyObservationRecord,
         AuditLog,
         ClusterCandidateRecord,
         ClusterModel,

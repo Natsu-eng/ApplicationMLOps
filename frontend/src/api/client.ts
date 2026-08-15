@@ -461,6 +461,61 @@ export interface DimensionalityColorByResponse {
   values: Record<string, number | string | null>;
 }
 
+// ── Détection d'anomalies (Lot 14 — ML non supervisé) ─────────────────────
+
+export interface AnomalyJobCreatePayload {
+  dataset_id: number;
+  feature_columns: string[];
+  top_n?: number;
+  seed?: number;
+}
+
+export interface AnomalyJobSummary {
+  id: number;
+  dataset_id: number;
+  dataset_name: string | null;
+  feature_columns: string[];
+  status: JobStatus;
+  progress_step: string | null;
+  progress_percent: number;
+  error_message: string | null;
+  created_by: string | null;
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+  n_anomalies_consensus: number | null;
+  anomaly_rate_consensus: number | null;
+}
+
+export interface AnomalyResult {
+  n_samples_total: number;
+  n_samples_used: number;
+  sampled: boolean;
+  n_anomalies_isolation_forest: number;
+  n_anomalies_lof: number;
+  n_anomalies_consensus: number;
+  anomaly_rate_isolation_forest: number;
+  anomaly_rate_lof: number;
+  anomaly_rate_consensus: number;
+  score_histogram: { bin_edges: number[]; counts: number[] };
+  model_card: Record<string, unknown>;
+}
+
+export type AnomalyAgreement = "both" | "isolation_forest_only" | "lof_only" | "none";
+
+export interface AnomalyObservation {
+  row_index: number;
+  rank: number;
+  consensus_score: number;
+  score_isolation_forest: number;
+  score_lof: number;
+  is_anomaly_isolation_forest: boolean;
+  is_anomaly_lof: boolean;
+  agreement: AnomalyAgreement;
+  numeric_deviations: Record<string, { value: number; z_score: number }>;
+  categorical_flags: Record<string, { value: string; population_pct: number }>;
+}
+
 export interface TrainingJobCreatePayload {
   dataset_id: number;
   target_column: string;
@@ -871,5 +926,18 @@ export const api = {
     getColorBy: (id: number, column: string) =>
       request<DimensionalityColorByResponse>(`/dimensionality/jobs/${id}/color-by?column=${encodeURIComponent(column)}`),
     remove: (id: number) => request<void>(`/dimensionality/jobs/${id}`, { method: "DELETE" }),
+  },
+
+  anomalies: {
+    createJob: (data: AnomalyJobCreatePayload) =>
+      request<AnomalyJobSummary>("/anomalies/jobs", {
+        method: "POST",
+        body: JSON.stringify(data),
+      }),
+    listJobs: () => request<AnomalyJobSummary[]>("/anomalies/jobs"),
+    getJob: (id: number) => request<AnomalyJobSummary>(`/anomalies/jobs/${id}`),
+    getResult: (id: number) => request<AnomalyResult>(`/anomalies/jobs/${id}/result`),
+    getObservations: (id: number) => request<AnomalyObservation[]>(`/anomalies/jobs/${id}/observations`),
+    remove: (id: number) => request<void>(`/anomalies/jobs/${id}`, { method: "DELETE" }),
   },
 };

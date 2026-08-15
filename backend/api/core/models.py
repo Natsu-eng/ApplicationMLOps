@@ -508,3 +508,105 @@ class DimensionalityPoint(Base):
     row_index: Mapped[int] = mapped_column(Integer, nullable=False)  # position dans le dataset d'origine
     x: Mapped[float] = mapped_column(Float, nullable=False)
     y: Mapped[float] = mapped_column(Float, nullable=False)
+
+
+class AnomalyJob(Base):
+    """Une détection d'anomalies (Lot 14, ML non supervisé) — même
+    mécanisme de tâche de fond que `ClusteringJob`/`DimensionalityJob` (RQ,
+    `training_queue` partagée). Table DÉDIÉE, mêmes conventions
+    d'isolation/de progression. Pas de notion d'algorithme choisi par
+    l'utilisateur (`config_json` ne porte que `top_n`/`seed`) — Isolation
+    Forest et LOF tournent systématiquement ensemble (voir
+    services/anomaly_registry.py)."""
+
+    __tablename__ = "anomaly_jobs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    organization_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    dataset_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("datasets.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    created_by_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    feature_columns_json: Mapped[str] = mapped_column(Text, nullable=False)
+    config_json: Mapped[str] = mapped_column(Text, nullable=False)  # {"top_n":, "seed":}
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="queued", index=True)
+    progress_step: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    progress_percent: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    progress_updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    rq_job_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+    organization: Mapped["Organization"] = relationship("Organization")
+    dataset: Mapped["Dataset"] = relationship("Dataset")
+    created_by: Mapped[Optional["User"]] = relationship("User")
+    result: Mapped[Optional["AnomalyModel"]] = relationship(
+        "AnomalyModel", back_populates="anomaly_job", uselist=False, passive_deletes=True
+    )
+
+
+class AnomalyModel(Base):
+    """Le résultat produit par un `AnomalyJob` réussi — comptages/taux par
+    algorithme et en consensus, histogramme des scores de consensus (même
+    forme que `compute_histogram`, services/dataset_eda.py)."""
+
+    __tablename__ = "anomaly_models"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    organization_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    anomaly_job_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("anomaly_jobs.id", ondelete="CASCADE"), nullable=False, unique=True
+    )
+    n_samples_total: Mapped[int] = mapped_column(Integer, nullable=False)
+    n_samples_used: Mapped[int] = mapped_column(Integer, nullable=False)
+    sampled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    n_anomalies_isolation_forest: Mapped[int] = mapped_column(Integer, nullable=False)
+    n_anomalies_lof: Mapped[int] = mapped_column(Integer, nullable=False)
+    n_anomalies_consensus: Mapped[int] = mapped_column(Integer, nullable=False)
+    anomaly_rate_isolation_forest: Mapped[float] = mapped_column(Float, nullable=False)
+    anomaly_rate_lof: Mapped[float] = mapped_column(Float, nullable=False)
+    anomaly_rate_consensus: Mapped[float] = mapped_column(Float, nullable=False)
+    score_histogram_json: Mapped[str] = mapped_column(Text, nullable=False)  # {"bin_edges":, "counts":}
+    feature_columns_json: Mapped[str] = mapped_column(Text, nullable=False)
+    model_card_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    file_path: Mapped[str] = mapped_column(String(500), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+    organization: Mapped["Organization"] = relationship("Organization")
+    anomaly_job: Mapped["AnomalyJob"] = relationship("AnomalyJob", back_populates="result")
+
+
+class AnomalyObservationRecord(Base):
+    """Une observation classée parmi les plus atypiques d'un `AnomalyJob` —
+    seul le top-N (borné, `MAX_TOP_N`) est persisté, une ligne par
+    observation, même raisonnement que `ClusterCandidateRecord`/
+    `DimensionalityPoint` : requêtable, jamais un JSON agrégé."""
+
+    __tablename__ = "anomaly_observations"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    organization_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    anomaly_job_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("anomaly_jobs.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    row_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    rank: Mapped[int] = mapped_column(Integer, nullable=False)
+    consensus_score: Mapped[float] = mapped_column(Float, nullable=False)
+    score_isolation_forest: Mapped[float] = mapped_column(Float, nullable=False)
+    score_lof: Mapped[float] = mapped_column(Float, nullable=False)
+    is_anomaly_isolation_forest: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    is_anomaly_lof: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    agreement: Mapped[str] = mapped_column(String(30), nullable=False)
+    numeric_deviations_json: Mapped[str] = mapped_column(Text, nullable=False)
+    categorical_flags_json: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

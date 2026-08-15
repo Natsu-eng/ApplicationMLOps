@@ -208,8 +208,6 @@ export default function Clustering() {
 
       {phase === "configure" && (
         <p className="text-xs text-muted-foreground text-center mt-6 max-w-2xl mx-auto">
-          La détection d'anomalies arrive bientôt dans ce pilier — le clustering, les profils de segments et la
-          réduction de dimension sont disponibles dès maintenant.{" "}
           <Link to="/" className="text-primary hover:text-primary/80">
             Voir tous les objectifs
           </Link>
@@ -626,18 +624,26 @@ function ClusteringResultView({ job }: { job: ClusteringJobSummary }) {
         <div className="flex items-start gap-3">
           <ScanSearch size={16} className="text-muted-foreground flex-shrink-0 mt-0.5" />
           <p className="text-xs text-muted-foreground">
-            Visualisez ces mêmes observations en 2 dimensions pour repérer visuellement leur répartition. La
-            détection d'anomalies (cas atypiques) arrive bientôt dans ce pilier.
+            Prolongez l'analyse sur ces mêmes variables : visualisez-les en 2 dimensions, ou repérez les observations
+            les plus atypiques.
           </p>
         </div>
-        <Link
-          to={`/reduction-dimension?dataset_id=${job.dataset_id}&features=${encodeURIComponent(job.feature_columns.join(","))}`}
-        >
-          <Button variant="secondary" size="sm">
-            <ScanSearch size={14} />
-            Visualiser en 2D
-          </Button>
-        </Link>
+        <div className="flex items-center gap-2 flex-shrink-0">
+          <Link
+            to={`/reduction-dimension?dataset_id=${job.dataset_id}&features=${encodeURIComponent(job.feature_columns.join(","))}`}
+          >
+            <Button variant="secondary" size="sm">
+              <ScanSearch size={14} />
+              Visualiser en 2D
+            </Button>
+          </Link>
+          <Link to={`/anomalies?dataset_id=${job.dataset_id}&features=${encodeURIComponent(job.feature_columns.join(","))}`}>
+            <Button variant="secondary" size="sm">
+              <AlertCircle size={14} />
+              Détecter les anomalies
+            </Button>
+          </Link>
+        </div>
       </Card>
     </div>
   );

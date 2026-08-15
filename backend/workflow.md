@@ -1590,6 +1590,186 @@ exposé par API dans ce lot) ; pas de comparaison inter-jobs de clustering
 un navigateur (même limite que tous les lots frontend précédents dans cet
 environnement).
 
+## Lot 13 — Réduction de dimension : PCA/t-SNE/UMAP (livré)
+
+Deuxième module du pilier "ML non supervisé", même principe de séparation
+que le clustering (Lot 11+12) : module backend dédié, aucune notion de
+cible partagée avec le supervisé.
+
+**Bug réel trouvé en testant le clustering en direct dans un navigateur,
+avant même de commencer ce lot** : `frontend/vite.config.ts` proxyait
+`/api`, `/auth`, `/datasets`, `/training` vers le backend en dev, mais
+`/clustering` (ajouté au Lot 11+12) avait été oublié — toute requête
+clustering en dev renvoyait 404. Corrigé, et `/dimensionality`/`/anomalies`
+ajoutés par avance pour ne pas reproduire l'oubli avec les deux nouveaux
+modules de cette session.
+
+- [x] **UMAP — vérification d'installation Windows en tout premier**
+  (risque explicitement accepté par l'utilisateur, à valider avant d'écrire
+  le reste du lot) : `pip install umap-learn` installe par défaut
+  `umap-learn==0.5.12`, qui force `scikit-learn>=1.6` et a upgradé
+  silencieusement le `scikit-learn==1.3.2` épinglé du projet vers `1.9.0` —
+  reverté immédiatement (risque de régression sur tout le pipeline
+  supervisé/clustering déjà testé, joblib persistés avec 1.3.2). Résolu en
+  épinglant `umap-learn==0.5.6` (`requirements.txt`), dont la contrainte
+  réelle n'est que `scikit-learn>=0.22` — vérifié par un fit UMAP réel,
+  aucun impact sur le reste des dépendances.
+- [x] **`services/dimensionality_registry.py`** (nouveau) — `DimensionalitySpec`
+  (id/label/family/`build_estimator`) pour `pca`/`tsne` (toujours présentes)
+  et `umap` (ajoutée seulement si `umap-learn` s'importe, jamais un crash
+  API sinon). Hyperparamètres clippés pour petits datasets (`perplexity`
+  t-SNE < n_samples, `n_neighbors` UMAP < n_samples). `DISTANCE_FIDELITY_NOTES`
+  — texte obligatoire par méthode (exigence du skill senior-ai-saas-engineer,
+  data-science.md) : PCA fidèle aux distances globales, t-SNE/UMAP non.
+- [x] **`services/dimensionality_training.py`** (nouveau) —
+  `train_and_evaluate_dimensionality` : pas de leaderboard façon clustering
+  (aucune métrique de qualité commune entre PCA/t-SNE/UMAP). La PCA est
+  **toujours** calculée en plus de la méthode choisie (variance expliquée,
+  loadings top 15 par magnitude) ; `sklearn.manifold.trustworthiness`
+  calculée sur l'embedding principal ET sur la PCA de référence — mesure
+  réelle et comparable de la qualité d'une projection, jamais un texte
+  inventé. Échantillonnage déterministe (`sample_if_large`,
+  `MAX_ROWS_FOR_EMBEDDING = 5000`, préservation de l'index de ligne
+  d'origine à travers l'échantillonnage) — t-SNE quasi-quadratique et rendu
+  `ScatterChart` poussif au-delà. Dégradation propre (`TrainingAbortedError`)
+  si trop peu de lignes/variables exploitables.
+- [x] **`api/core/models.py`** — `DimensionalityJob`/`DimensionalityModel`/
+  `DimensionalityPoint` (tables dédiées). `DimensionalityPoint` : une ligne
+  par point projeté (pas un JSON agrégé), même raisonnement que
+  `ClusterCandidateRecord` — requêtable, borné par l'échantillonnage.
+- [x] **`workers/dimensionality_worker.py`** (nouveau) — même structure que
+  `clustering_worker.py`.
+- [x] **`api/routers/dimensionality.py`** (nouveau) — `GET /algorithms-catalog`,
+  `POST /jobs`, `GET /jobs`, `GET /jobs/{id}`, `GET /jobs/{id}/result`,
+  `GET /jobs/{id}/points`, `GET /jobs/{id}/color-by?column=` (relit UNE
+  colonne du dataset source à la demande pour les points déjà projetés —
+  calcul léger synchrone, même pattern que `/datasets/{id}/histogram` ;
+  changer la coloration du nuage de points devient instantané, sans
+  relancer un calcul coûteux), `DELETE /jobs/{id}`.
+- [x] **Frontend** — `pages/DimensionalityReduction.tsx` (nouveau) :
+  formulaire dataset + colonnes + méthode, `ScatterChart` Recharts
+  (première utilisation dans le projet, palette `CHART_SERIES_COLORS`),
+  sélecteur de coloration (catégorielle ou numérique binnée en quantiles
+  côté client, `utils/quantileBins.ts`), tableau des loadings PCA. Lien
+  croisé "Visualiser en 2D" depuis un résultat de clustering
+  (`Clustering.tsx`) — dataset et colonnes pré-remplis via query params,
+  **aucun couplage backend** (pas de transmission de label de cluster,
+  décision volontaire pour garder les deux moteurs indépendants).
+  `components/ui/Table.tsx` (nouveau, générique) créé à cette occasion et
+  immédiatement réutilisé pour combler un trou UX préexistant : le tableau
+  des candidats comparés par le clustering était déjà exposé par l'API
+  (Lot 11+12, `GET /clustering/jobs/{id}/candidates`) mais jamais affiché.
+- [x] **Rigueur d'affichage corrigée sur retour direct** (après premier test
+  utilisateur réel en navigateur) : la variance expliquée n'est définie que
+  pour la PCA — retirée de l'affichage principal pour t-SNE/UMAP, isolée
+  dans un bloc "Référence PCA" séparé et distinctement coloré (calculée en
+  plus, à titre de repère, pas la méthode utilisée pour la projection
+  affichée). Tableau des loadings PC1/PC2 masqué pour t-SNE/UMAP (n'a de
+  sens que pour une projection linéaire). "Fidélité de la projection"
+  renommée "Conservation des voisinages" — vérifié contre l'implémentation
+  avant de renommer : `trustworthiness` mesure exactement si les
+  voisinages proches sur la projection l'étaient déjà dans les données
+  d'origine, le nouveau nom est donc plus exact, appliqué uniformément
+  (PCA incluse, même métrique).
+
+**Vérifié** : 34 tests (`test_dimensionality_registry.py` 6 avec
+paramétrage, `test_dimensionality_training.py` 12 avec paramétrage,
+`test_dimensionality_worker.py` 4,
+`test_dimensionality_api.py` 12) — chaque méthode du registre s'exécute
+bout en bout, la PCA identifie la vraie variable porteuse de signal parmi
+du bruit (dataset construit : 2 variables corrélées + 1 indépendante — PC1
+domine grâce à la corrélation partagée, PC2 domine sur la variable
+indépendante, pas juste "ça ne plante pas"), `trustworthiness` toujours
+dans [0, 1], seed propagée aux estimateurs vérifiée sur l'objet fitté,
+échantillonnage exact et déterministe, endpoint `color-by` vérifié de bout
+en bout (job réellement exécuté dans le test, pas mocké). Suite de
+régression du supervisé + clustering rejouée intégralement après ce lot
+(83 tests, aucune casse). `tsc -b`, `vite build`, `npm run lint` (0 erreur),
+`vitest run` (33/33) verts. **Vérifié en conditions réelles dans un
+navigateur par l'utilisateur** (contrairement aux lots précédents,
+limitation levée cette fois) — un second aller-retour direct sur les
+captures d'écran a mené aux corrections de rigueur ci-dessus.
+
+## Lot 14 — Détection d'anomalies tabulaire : Isolation Forest + LOF (livré)
+
+Troisième et dernier module du pilier "ML non supervisé" — les 3 modules
+annoncés dans `config/pillars.ts` sont désormais tous actifs.
+
+- [x] **`services/anomaly_registry.py`** (nouveau) — `AnomalySpec` pour
+  `isolation_forest` et `lof`, `contamination="auto"` toujours (pas de
+  paramètre à régler en mode guidé, cohérent avec le reste du produit).
+  Pas de notion de "sélection d'algorithme" par l'utilisateur : les deux
+  tournent systématiquement ensemble (voir plus bas), donc pas de
+  `GET /algorithms-catalog` pour ce module — écart assumé et documenté par
+  rapport au pattern clustering/réduction de dimension, il n'y a rien à
+  choisir.
+- [x] **`services/anomaly_training.py`** (nouveau) —
+  `train_and_evaluate_anomalies` : Isolation Forest et LOF exécutés
+  **toujours ensemble**, jamais un seul essai à l'aveugle (principe déjà
+  établi par le reste du produit) — sans vérité terrain disponible, il n'y
+  a pas de "gagnant" à élire comme au clustering. Score de **consensus**
+  continu = moyenne des rangs percentiles de chaque algorithme (leurs
+  scores bruts, `score_samples`/`negative_outlier_factor_`, ne sont pas sur
+  la même échelle — seul le rang est comparable). Confiance par observation
+  (`agreement` : `both`/`isolation_forest_only`/`lof_only`/`none`) déduite
+  des deux flags booléens réels, jamais un nombre inventé. Pour chaque
+  observation classée : déviation z-score par variable numérique (top 5
+  |z|, même logique que `differentiating_variables` du clustering) et
+  drapeau des valeurs catégorielles rares (fréquence < 5 % dans
+  l'échantillon analysé) — calculé sur les données D'ORIGINE, pas
+  préprocessées. Échantillonnage déterministe
+  (`MAX_ROWS_FOR_ANOMALY = 20 000`, Isolation Forest/LOF restant efficaces
+  à cette échelle contrairement à t-SNE). Top-N borné
+  (`DEFAULT_TOP_N = 50`, `MAX_TOP_N = 200`).
+- [x] **`api/core/models.py`** — `AnomalyJob`/`AnomalyModel`/
+  `AnomalyObservationRecord` (tables dédiées). `AnomalyObservationRecord` :
+  une ligne par observation classée (top-N seulement, borné), même
+  raisonnement que `ClusterCandidateRecord`/`DimensionalityPoint`.
+- [x] **`workers/anomaly_worker.py`** (nouveau) — même structure que les
+  workers précédents.
+- [x] **`api/routers/anomalies.py`** (nouveau) — `POST /jobs` (`top_n`
+  validé 1..200 via `Field(ge=1, le=200)`), `GET /jobs`, `GET /jobs/{id}`,
+  `GET /jobs/{id}/result`, `GET /jobs/{id}/observations`, `DELETE /jobs/{id}`.
+- [x] **`services/job_quota.py`** (nouveau) — **corrige un oubli réel
+  trouvé en construisant ce lot** : le quota partagé introduit au
+  Lot 11+12 (`clustering.py` comptait `TrainingJob` + `ClusteringJob`
+  ensemble) n'avait jamais été répercuté dans `training.py`, qui ne
+  comptait toujours que les `TrainingJob` actifs — un entraînement
+  supervisé pouvait donc être lancé sans tenir compte des clusterings déjà
+  actifs, rendant le quota partagé contournable depuis un seul des deux
+  côtés. Extrait en helper commun (`count_active_jobs`/
+  `raise_if_quota_exceeded`) avant d'ajouter une 3ᵉ puis 4ᵉ table
+  (réduction de dimension, anomalies) à la liste — pour ne plus jamais
+  dupliquer ce bloc de comptage à la main. `training.py`, `clustering.py`,
+  `dimensionality.py` et `anomalies.py` comptent désormais tous les 4 types
+  de job ensemble.
+- [x] **Frontend** — `pages/AnomalyDetection.tsx` (nouveau) : formulaire
+  dataset + colonnes + nombre d'observations à classer (défaut 50, borné
+  1..200 côté client aussi). Résultats : taux d'anomalies par méthode et en
+  consensus (mis en avant), histogramme Recharts des scores de consensus,
+  tableau des observations classées (`components/ui/Table.tsx`, badge de
+  confiance coloré par niveau d'accord, variable la plus explicative en
+  ligne), modale de détail par observation (déviations complètes,
+  `components/ui/Modal.tsx`). Lien croisé bidirectionnel avec `Clustering.tsx`
+  (dataset + colonnes pré-remplis via query params, même principe que le
+  Lot 13). `config/pillars.ts` : 3ᵉ et dernier item de navigation du pilier
+  non supervisé activé.
+
+**Vérifié** : 30 tests (`test_anomaly_registry.py` 4,
+`test_anomaly_training.py` 12, `test_anomaly_worker.py` 3,
+`test_anomaly_api.py` 11) — dataset construit avec 5 observations injectées
+loin du reste : les 5 apparaissent exactement en tête du classement par
+consensus, les plus extrêmes avec `agreement="both"`, invariant
+mathématique vérifié (taux de consensus toujours ≤ taux de chaque méthode
+prise isolément, c'est une intersection), déviations numériques pointent
+la bonne variable perturbée, valeurs catégorielles rares détectées,
+dégradation propre sur données dégénérées (z-score à 0, jamais NaN), seed
+propagée. Suite de régression complète du pilier non supervisé + supervisé
+rejouée après ce lot (99 tests : clustering + réduction de dimension +
+supervisé + sécurité/auth, aucune casse). `tsc -b`, `vite build`,
+`npm run lint` (0 erreur), `vitest run` (33/33) verts. 376 tests au total
+dans le dépôt à l'issue de ce lot.
+
 ## Prochains lots (résumé — détail complet dans le diagnostic de migration et les échanges de cadrage)
 
 | Lot | Contenu | Livrable testable |

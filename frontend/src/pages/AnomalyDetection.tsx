@@ -1,0 +1,570 @@
+import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { Link, useSearchParams } from "react-router-dom";
+import { AlertCircle, AlertTriangle, BarChart3, Loader2, PlayCircle, Search, Trash2 } from "lucide-react";
+import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip as RechartsTooltip, XAxis, YAxis } from "recharts";
+import {
+  ApiError,
+  api,
+  type AnomalyAgreement,
+  type AnomalyJobSummary,
+  type AnomalyObservation,
+  type AnomalyResult,
+  type ColumnSchema,
+  type DatasetSummary,
+} from "../api/client";
+import AppShell from "../components/AppShell";
+import { Badge } from "../components/ui/Badge";
+import { Button } from "../components/ui/Button";
+import { Card } from "../components/ui/Card";
+import { accentSurfaceClass, accentValueTextClass, type AccentColor } from "../components/ui/ColorIconBadge";
+import { Input } from "../components/ui/Input";
+import { Modal } from "../components/ui/Modal";
+import { PageHeader } from "../components/ui/PageHeader";
+import { SectionHeader } from "../components/ui/SectionHeader";
+import { Select } from "../components/ui/Select";
+import { Table, type TableColumn } from "../components/ui/Table";
+import { useConfirmAction } from "../hooks/useConfirmAction";
+import { CHART_COLOR_PRIMARY, CHART_GRID_STROKE, CHART_TICK_STYLE_SM, CHART_TOOLTIP_STYLE } from "../theme/charts";
+
+const ACTIVE_STATUSES = new Set(["queued", "running"]);
+const POLL_INTERVAL_MS = 3000;
+const ACTIVE_JOB_STORAGE_KEY = "datalab_active_anomaly_job_id";
+const DEFAULT_TOP_N = 50;
+const MAX_TOP_N = 200;
+
+type Phase = "configure" | "progress" | "results" | "failed";
+
+function phaseOf(job: AnomalyJobSummary | null): Phase {
+  if (!job) return "configure";
+  if (ACTIVE_STATUSES.has(job.status)) return "progress";
+  return job.status === "completed" ? "results" : "failed";
+}
+
+const AGREEMENT_LABELS: Record<AnomalyAgreement, string> = {
+  both: "Confirmée par les 2 méthodes",
+  isolation_forest_only: "Isolation Forest seul",
+  lof_only: "LOF seul",
+  none: "Aucune méthode",
+};
+
+const AGREEMENT_VARIANTS: Record<AnomalyAgreement, "danger" | "warning" | "neutral"> = {
+  both: "danger",
+  isolation_forest_only: "warning",
+  lof_only: "warning",
+  none: "neutral",
+};
+
+/** Pilier ML non supervisé — détection d'anomalies (Lot 14). Même
+ * architecture que Clustering.tsx/DimensionalityReduction.tsx. Isolation
+ * Forest et LOF tournent toujours ensemble (jamais de choix d'algorithme,
+ * voir services/anomaly_registry.py côté backend) — le seul réglage exposé
+ * est le nombre d'observations à classer. */
+export default function AnomalyDetection() {
+  const [searchParams] = useSearchParams();
+  const [datasets, setDatasets] = useState<DatasetSummary[]>([]);
+  const [datasetsError, setDatasetsError] = useState<string | null>(null);
+  const [activeJob, setActiveJob] = useState<AnomalyJobSummary | null>(null);
+  const [restoringJob, setRestoringJob] = useState(true);
+  const confirmDelete = useConfirmAction<true>();
+
+  useEffect(() => {
+    const storedId = sessionStorage.getItem(ACTIVE_JOB_STORAGE_KEY);
+    if (!storedId) {
+      setRestoringJob(false);
+      return;
+    }
+    api.anomalies
+      .getJob(Number(storedId))
+      .then(setActiveJob)
+      .catch(() => sessionStorage.removeItem(ACTIVE_JOB_STORAGE_KEY))
+      .finally(() => setRestoringJob(false));
+  }, []);
+
+  useEffect(() => {
+    if (activeJob) sessionStorage.setItem(ACTIVE_JOB_STORAGE_KEY, String(activeJob.id));
+    else sessionStorage.removeItem(ACTIVE_JOB_STORAGE_KEY);
+  }, [activeJob]);
+
+  const loadDatasets = useCallback(async () => {
+    try {
+      const all = await api.datasets.list();
+      setDatasets(all.filter((d) => d.status === "ready"));
+      setDatasetsError(null);
+    } catch (err) {
+      setDatasetsError(err instanceof ApiError ? err.message : "Impossible de charger vos datasets");
+    }
+  }, []);
+
+  useEffect(() => {
+    loadDatasets();
+  }, [loadDatasets]);
+
+  const phase = phaseOf(activeJob);
+
+  useEffect(() => {
+    if (phase !== "progress" || !activeJob) return;
+    const interval = setInterval(async () => {
+      try {
+        setActiveJob(await api.anomalies.getJob(activeJob.id));
+      } catch {
+        // silencieux — nouvelle tentative au prochain tick
+      }
+    }, POLL_INTERVAL_MS);
+    return () => clearInterval(interval);
+  }, [phase, activeJob]);
+
+  function resetToConfigure() {
+    setActiveJob(null);
+  }
+
+  async function handleDeleteActiveJob() {
+    if (!activeJob) return;
+    try {
+      await api.anomalies.remove(activeJob.id);
+    } catch {
+      // best-effort — on repart en configuration dans tous les cas
+    }
+    resetToConfigure();
+  }
+
+  const titles: Record<Phase, string> = {
+    configure: "Repérer les observations atypiques",
+    progress: "Détection en cours",
+    results: "Observations atypiques détectées",
+    failed: "Échec de la détection",
+  };
+
+  return (
+    <AppShell pillarId="unsupervised">
+      <PageHeader
+        eyebrow="ML non supervisé"
+        title={titles[phase]}
+        description={
+          phase === "configure"
+            ? "Repérez les observations qui s'écartent le plus du reste de vos données — deux méthodes complémentaires (Isolation Forest, LOF) sont toujours comparées ensemble."
+            : undefined
+        }
+        icon={AlertTriangle}
+        color="amber"
+        action={
+          phase !== "configure" ? (
+            <div className="flex items-center gap-2">
+              {(phase === "results" || phase === "failed") && (
+                <button
+                  type="button"
+                  onClick={() => confirmDelete.trigger(true, handleDeleteActiveJob)}
+                  onMouseLeave={confirmDelete.reset}
+                  aria-label={confirmDelete.isPending(true) ? "Confirmer la suppression" : "Supprimer cette détection"}
+                  title={confirmDelete.isPending(true) ? "Cliquer à nouveau pour confirmer" : "Supprimer cette détection"}
+                  className={`p-2 rounded-lg transition-colors ${
+                    confirmDelete.isPending(true)
+                      ? "text-destructive bg-destructive/15"
+                      : "text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+                  }`}
+                >
+                  <Trash2 size={16} />
+                </button>
+              )}
+              <Button variant="secondary" size="sm" onClick={resetToConfigure}>
+                <PlayCircle size={14} />
+                Nouvelle détection
+              </Button>
+            </div>
+          ) : undefined
+        }
+      />
+
+      {restoringJob ? (
+        <div className="flex items-center justify-center py-16 text-sm text-muted-foreground gap-2">
+          <Loader2 size={16} className="animate-spin" />
+          Reprise de votre session…
+        </div>
+      ) : phase === "configure" ? (
+        <div className="max-w-2xl mx-auto">
+          <AnomalyForm
+            datasets={datasets}
+            datasetsError={datasetsError}
+            onJobCreated={setActiveJob}
+            initialDatasetId={searchParams.get("dataset_id")}
+            initialFeatures={searchParams.get("features")}
+          />
+        </div>
+      ) : phase === "progress" && activeJob ? (
+        <Card className="max-w-2xl mx-auto p-8 text-center">
+          <Loader2 size={28} className="animate-spin mx-auto mb-4 text-primary" />
+          <p className="text-sm text-foreground mb-1">{activeJob.progress_step ?? "Préparation…"}</p>
+          <div className="w-full h-1.5 rounded-full bg-muted overflow-hidden mt-4">
+            <div
+              className="h-full rounded-full bg-primary transition-all duration-500"
+              style={{ width: `${activeJob.progress_percent}%` }}
+            />
+          </div>
+        </Card>
+      ) : phase === "failed" && activeJob ? (
+        <Card className="max-w-2xl mx-auto p-6">
+          <div className="flex items-start gap-3 text-destructive bg-destructive/10 border border-destructive/20 rounded-lg p-4">
+            <AlertCircle size={18} className="flex-shrink-0 mt-0.5" />
+            <p className="text-sm">{activeJob.error_message ?? "La détection a échoué."}</p>
+          </div>
+        </Card>
+      ) : phase === "results" && activeJob ? (
+        <AnomalyResultView jobId={activeJob.id} />
+      ) : null}
+
+      {phase === "configure" && (
+        <p className="text-xs text-muted-foreground text-center mt-6 max-w-2xl mx-auto">
+          <Link to="/" className="text-primary hover:text-primary/80">
+            Voir tous les objectifs
+          </Link>
+          .
+        </p>
+      )}
+    </AppShell>
+  );
+}
+
+function AnomalyForm({
+  datasets,
+  datasetsError,
+  onJobCreated,
+  initialDatasetId,
+  initialFeatures,
+}: {
+  datasets: DatasetSummary[];
+  datasetsError: string | null;
+  onJobCreated: (job: AnomalyJobSummary) => void;
+  initialDatasetId: string | null;
+  initialFeatures: string | null;
+}) {
+  const [datasetId, setDatasetId] = useState<number | "">("");
+  const [columns, setColumns] = useState<ColumnSchema[]>([]);
+  const [selectedFeatures, setSelectedFeatures] = useState<Set<string>>(new Set());
+  const [topN, setTopN] = useState(DEFAULT_TOP_N);
+  const [error, setError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [prefillApplied, setPrefillApplied] = useState(false);
+
+  const handleDatasetChange = useCallback(async (id: string, preselect?: Set<string>) => {
+    setError(null);
+    if (!id) {
+      setDatasetId("");
+      setColumns([]);
+      setSelectedFeatures(new Set());
+      return;
+    }
+    const numericId = Number(id);
+    setDatasetId(numericId);
+    try {
+      const detail = await api.datasets.get(numericId);
+      setColumns(detail.columns);
+      setSelectedFeatures(preselect && preselect.size > 0 ? preselect : new Set(detail.columns.map((c) => c.name)));
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Impossible de charger les colonnes");
+    }
+  }, []);
+
+  // Pré-remplissage depuis un lien croisé (résultat de clustering) — une
+  // seule fois, dès que la liste de datasets est chargée.
+  useEffect(() => {
+    if (prefillApplied || datasets.length === 0 || !initialDatasetId) return;
+    setPrefillApplied(true);
+    const exists = datasets.some((d) => String(d.id) === initialDatasetId);
+    if (!exists) return;
+    const preselect = new Set((initialFeatures ?? "").split(",").filter(Boolean));
+    handleDatasetChange(initialDatasetId, preselect);
+  }, [datasets, initialDatasetId, initialFeatures, prefillApplied, handleDatasetChange]);
+
+  function toggleFeature(name: string) {
+    setSelectedFeatures((prev) => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      return next;
+    });
+  }
+
+  async function handleSubmit(event: FormEvent) {
+    event.preventDefault();
+    if (!datasetId || selectedFeatures.size === 0) return;
+    setError(null);
+    setIsSubmitting(true);
+    try {
+      const job = await api.anomalies.createJob({
+        dataset_id: datasetId,
+        feature_columns: Array.from(selectedFeatures),
+        top_n: topN,
+      });
+      onJobCreated(job);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Impossible de lancer la détection");
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  if (datasetsError) {
+    return (
+      <Card className="p-5">
+        <p className="text-sm text-destructive bg-destructive/10 border border-destructive/20 rounded-lg px-3 py-2">
+          {datasetsError}
+        </p>
+      </Card>
+    );
+  }
+
+  if (datasets.length === 0) {
+    return (
+      <Card className="p-5">
+        <p className="text-sm text-muted-foreground">
+          Aucun dataset prêt — importez-en un depuis{" "}
+          <Link to="/datasets" className="text-primary hover:text-primary/80">
+            Mes données
+          </Link>
+          .
+        </p>
+      </Card>
+    );
+  }
+
+  return (
+    <Card className="p-5">
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <div>
+          <label htmlFor="anomaly-dataset" className="block text-sm text-muted-foreground mb-1">
+            Jeu de données
+          </label>
+          <Select id="anomaly-dataset" value={datasetId} onChange={(e) => handleDatasetChange(e.target.value)} required>
+            <option value="">Choisir un dataset…</option>
+            {datasets.map((d) => (
+              <option key={d.id} value={d.id}>
+                {d.name} ({d.row_count} lignes)
+              </option>
+            ))}
+          </Select>
+        </div>
+
+        {columns.length > 0 && (
+          <div>
+            <label className="block text-sm text-muted-foreground mb-1.5">
+              Variables à analyser ({selectedFeatures.size} sélectionnée{selectedFeatures.size > 1 ? "s" : ""})
+            </label>
+            <div className="max-h-56 overflow-y-auto rounded-lg border border-border divide-y divide-border/60">
+              {columns.map((c) => (
+                <label
+                  key={c.name}
+                  className="flex items-center gap-2.5 px-3 py-2 text-sm text-foreground/90 hover:bg-muted/50 cursor-pointer transition-colors"
+                >
+                  <input
+                    type="checkbox"
+                    checked={selectedFeatures.has(c.name)}
+                    onChange={() => toggleFeature(c.name)}
+                    className="accent-primary"
+                  />
+                  <span className="flex-1 truncate">{c.name}</span>
+                  <span className="text-xs text-muted-foreground flex-shrink-0">{c.dtype}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <div>
+          <label htmlFor="anomaly-top-n" className="block text-sm text-muted-foreground mb-1">
+            Nombre d'observations à classer
+          </label>
+          <Input
+            id="anomaly-top-n"
+            type="number"
+            min={1}
+            max={MAX_TOP_N}
+            value={topN}
+            onChange={(e) => setTopN(Math.min(MAX_TOP_N, Math.max(1, Number(e.target.value) || 1)))}
+          />
+        </div>
+
+        {error && (
+          <div className="flex items-center gap-2 text-sm text-destructive bg-destructive/10 border border-destructive/20 rounded-lg px-3 py-2">
+            <AlertCircle size={15} className="flex-shrink-0" />
+            {error}
+          </div>
+        )}
+
+        <Button type="submit" disabled={!datasetId || selectedFeatures.size === 0 || isSubmitting} className="w-full">
+          {isSubmitting ? "Lancement…" : "Lancer la détection"}
+        </Button>
+      </form>
+    </Card>
+  );
+}
+
+function topDeviation(obs: AnomalyObservation): string | null {
+  const entries = Object.entries(obs.numeric_deviations);
+  if (entries.length === 0) return null;
+  const [name, stat] = entries[0];
+  return `${name} (${stat.z_score > 0 ? "+" : ""}${stat.z_score.toFixed(1)}σ)`;
+}
+
+function observationColumns(onOpenDetail: (obs: AnomalyObservation) => void): TableColumn<AnomalyObservation>[] {
+  return [
+    { key: "rank", header: "#", align: "right" },
+    { key: "row_index", header: "Ligne", align: "right", render: (o) => o.row_index + 1 },
+    { key: "consensus_score", header: "Score", align: "right", render: (o) => o.consensus_score.toFixed(3) },
+    {
+      key: "agreement",
+      header: "Confiance",
+      render: (o) => <Badge variant={AGREEMENT_VARIANTS[o.agreement]}>{AGREEMENT_LABELS[o.agreement]}</Badge>,
+    },
+    {
+      key: "deviation",
+      header: "Variable la plus explicative",
+      render: (o) => topDeviation(o) ?? "—",
+      className: "text-muted-foreground",
+    },
+    {
+      key: "detail",
+      header: "",
+      align: "right",
+      render: (o) => (
+        <button type="button" onClick={() => onOpenDetail(o)} className="text-primary hover:text-primary/80 text-xs font-medium">
+          Détails
+        </button>
+      ),
+    },
+  ];
+}
+
+function AnomalyResultView({ jobId }: { jobId: number }) {
+  const [result, setResult] = useState<AnomalyResult | null>(null);
+  const [observations, setObservations] = useState<AnomalyObservation[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [detailObservation, setDetailObservation] = useState<AnomalyObservation | null>(null);
+
+  useEffect(() => {
+    api.anomalies
+      .getResult(jobId)
+      .then(setResult)
+      .catch((err) => setError(err instanceof ApiError ? err.message : "Résultat indisponible"));
+    api.anomalies.getObservations(jobId).then(setObservations).catch(() => setObservations([]));
+  }, [jobId]);
+
+  if (error) return <p className="text-sm text-destructive text-center">{error}</p>;
+  if (!result) return <p className="text-sm text-muted-foreground text-center">Chargement…</p>;
+
+  const histogramData = result.score_histogram.counts.map((count, i) => ({
+    range: `${result.score_histogram.bin_edges[i].toFixed(2)}–${result.score_histogram.bin_edges[i + 1].toFixed(2)}`,
+    count,
+  }));
+
+  return (
+    <div className="max-w-4xl mx-auto space-y-5">
+      <Card className={`p-5 ${accentSurfaceClass("amber")}`}>
+        <SectionHeader
+          icon={AlertTriangle}
+          color="amber"
+          label="Taux d'observations atypiques"
+          help="Isolation Forest et LOF sont deux méthodes complémentaires évaluées systématiquement ensemble — le consensus (les deux d'accord) est le signal le plus fiable, jamais un seul essai lancé à l'aveugle."
+        />
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+          <MetricTile label="Isolation Forest" value={`${(result.anomaly_rate_isolation_forest * 100).toFixed(1)} %`} color="blue" />
+          <MetricTile label="LOF" value={`${(result.anomaly_rate_lof * 100).toFixed(1)} %`} color="teal" />
+          <MetricTile label="Consensus (les 2 méthodes)" value={`${(result.anomaly_rate_consensus * 100).toFixed(1)} %`} color="amber" />
+        </div>
+        {result.sampled && (
+          <p className="text-xs text-muted-foreground mt-3">
+            Calculé sur un échantillon de {result.n_samples_used} observations sur {result.n_samples_total} au total
+            (dataset volumineux — échantillonnage déterministe, reproductible).
+          </p>
+        )}
+      </Card>
+
+      <Card className="p-5">
+        <SectionHeader
+          icon={BarChart3}
+          color="blue"
+          label="Distribution des scores de consensus"
+          help="Score continu de 0 à 1 (moyenne des rangs Isolation Forest/LOF) — plus un score est élevé, plus l'observation est atypique par rapport au reste du jeu de données."
+        />
+        <ResponsiveContainer width="100%" height={220}>
+          <BarChart data={histogramData} margin={{ top: 8, right: 8, bottom: 40, left: 0 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke={CHART_GRID_STROKE} vertical={false} />
+            <XAxis
+              dataKey="range"
+              tick={CHART_TICK_STYLE_SM}
+              interval={3}
+              angle={-40}
+              textAnchor="end"
+              height={55}
+            />
+            <YAxis tick={CHART_TICK_STYLE_SM} allowDecimals={false} />
+            <RechartsTooltip {...CHART_TOOLTIP_STYLE} />
+            <Bar dataKey="count" fill={CHART_COLOR_PRIMARY} radius={[3, 3, 0, 0]} isAnimationActive={false} />
+          </BarChart>
+        </ResponsiveContainer>
+      </Card>
+
+      <div>
+        <SectionHeader
+          icon={Search}
+          color="rose"
+          label={`Observations les plus atypiques (${observations.length})`}
+          help="Classées par score de consensus décroissant — 'Confirmée par les 2 méthodes' est le signal le plus fiable."
+        />
+        <Table
+          columns={observationColumns(setDetailObservation)}
+          rows={observations}
+          rowKey={(o) => o.row_index}
+          highlightRow={(o) => o.agreement === "both"}
+        />
+      </div>
+
+      {detailObservation && (
+        <Modal title={`Ligne ${detailObservation.row_index + 1} — détail`} onClose={() => setDetailObservation(null)}>
+          <div className="space-y-4">
+            <div>
+              <p className="text-xs uppercase tracking-wide text-muted-foreground mb-2">Variables numériques les plus déviantes</p>
+              {Object.entries(detailObservation.numeric_deviations).length === 0 ? (
+                <p className="text-sm text-muted-foreground">Aucune variable numérique.</p>
+              ) : (
+                <div className="space-y-1.5">
+                  {Object.entries(detailObservation.numeric_deviations).map(([col, stat]) => (
+                    <div key={col} className="flex items-center justify-between text-sm">
+                      <span className="text-foreground/90">{col}</span>
+                      <span className="text-muted-foreground tabular-nums">
+                        {stat.value.toFixed(2)} ({stat.z_score > 0 ? "+" : ""}
+                        {stat.z_score.toFixed(1)}σ)
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            {Object.entries(detailObservation.categorical_flags).length > 0 && (
+              <div>
+                <p className="text-xs uppercase tracking-wide text-muted-foreground mb-2">Valeurs catégorielles rares</p>
+                <div className="space-y-1.5">
+                  {Object.entries(detailObservation.categorical_flags).map(([col, flag]) => (
+                    <div key={col} className="flex items-center justify-between text-sm">
+                      <span className="text-foreground/90">{col}</span>
+                      <span className="text-muted-foreground">
+                        {flag.value} ({flag.population_pct.toFixed(1)} % de la population)
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+function MetricTile({ label, value, color }: { label: string; value: string; color: AccentColor }) {
+  return (
+    <div className={`rounded-xl border px-4 py-3 ${accentSurfaceClass(color)}`}>
+      <p className="text-xs text-muted-foreground mb-1">{label}</p>
+      <p className={`text-xl font-semibold tabular-nums ${accentValueTextClass(color)}`}>{value}</p>
+    </div>
+  );
+}

@@ -1,4 +1,5 @@
 import {
+  AlertTriangle,
   BrainCircuit,
   Database,
   History,
@@ -57,13 +58,15 @@ export const PILLARS: Pillar[] = [
     description:
       "Repérez des profils similaires ou des cas atypiques, sans savoir à l'avance ce que vous cherchez.",
     icon: Shapes,
-    // Lot 11+ : clustering + profils de segments actifs. Lot 13 : réduction
-    // de dimension active. Détection d'anomalies (Lot 14) reste "à venir".
+    // Lot 11+ : clustering + profils de segments. Lot 13 : réduction de
+    // dimension. Lot 14 : détection d'anomalies. Les 3 modules du pilier
+    // sont désormais actifs.
     status: "active",
     route: "/clustering",
     navItems: [
       { to: "/clustering", label: "Clustering", icon: Shapes },
       { to: "/reduction-dimension", label: "Réduction de dimension", icon: ScatterChart },
+      { to: "/anomalies", label: "Détection d'anomalies", icon: AlertTriangle },
     ],
   },
   {

@@ -1,6 +1,7 @@
 import { Navigate, Route, BrowserRouter as Router, Routes } from "react-router-dom";
 import ProtectedRoute from "./components/ProtectedRoute";
 import { AuthProvider } from "./contexts/AuthContext";
+import AnomalyDetection from "./pages/AnomalyDetection";
 import Clustering from "./pages/Clustering";
 import ComingSoon from "./pages/ComingSoon";
 import Dashboard from "./pages/Dashboard";
@@ -72,6 +73,14 @@ export default function App() {
             element={
               <ProtectedRoute>
                 <DimensionalityReduction />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/anomalies"
+            element={
+              <ProtectedRoute>
+                <AnomalyDetection />
               </ProtectedRoute>
             }
           />

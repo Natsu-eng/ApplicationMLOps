@@ -174,12 +174,12 @@ def create_clustering_job(
     # supervisé) via services/job_quota.py — un seul worker physique traite
     # tous les types de job (voir docker-compose.yml), comptés ensemble
     # contre la même limite.
-    from api.core.models import DimensionalityJob, TrainingJob
+    from api.core.models import AnomalyJob, DimensionalityJob, TrainingJob
 
     raise_if_quota_exceeded(
         db,
         current_user.organization_id,
-        [TrainingJob, ClusteringJob, DimensionalityJob],
+        [TrainingJob, ClusteringJob, DimensionalityJob, AnomalyJob],
         _settings.max_concurrent_jobs_per_org,
     )
 

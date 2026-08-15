@@ -515,10 +515,88 @@ partagés avec le supervisé (un seul worker physique traite les deux).
   correctement dominé par sa vraie catégorie d'origine — pas seulement "ça
   ne plante pas".
 
-*Volontairement pas dans ce lot* (prochaine étape, déjà planifiée) :
+*Volontairement pas dans ce lot* (livré ensuite, voir section suivante) :
 détection d'anomalies tabulaire et réduction de dimension (PCA/t-SNE/UMAP)
 — signalé honnêtement dans la page elle-même plutôt que promis sans être
 livré.
+
+### Lot 13+14 — Réduction de dimension et détection d'anomalies : le pilier non supervisé au complet
+
+Les deux modules manquants du pilier "ML non supervisé" annoncés
+honnêtement par la page Clustering ("arrive bientôt") — chacun un module
+backend séparé, même principe déjà appliqué au clustering (Lot 11+12) :
+aucune notion de cible partagée avec le supervisé, aucun code partagé
+au-delà des utilitaires déjà génériques (préprocesseur, échantillonnage).
+
+**Bug réel trouvé en testant en direct, pas en théorie** : en ouvrant la
+page Clustering dans un vrai navigateur, une erreur 404 est apparue au
+lancement d'un clustering — le proxy de développement Vite (qui redirige
+les appels API du frontend vers le backend) listait `/api`, `/auth`,
+`/datasets`, `/training`, mais avait été oublié pour `/clustering` au
+Lot 11+12. Corrigé, et les préfixes `/dimensionality`/`/anomalies` de ce
+lot ajoutés par avance pour ne pas reproduire le même oubli.
+
+**Réduction de dimension (Lot 13)** — PCA, t-SNE et UMAP :
+
+- UMAP inclus dès ce lot (décision explicite, malgré le risque
+  d'installation sous Windows) — `umap-learn==0.5.6` épinglé volontairement
+  (pas la dernière version) : les versions récentes exigent
+  scikit-learn≥1.6, ce qui aurait forcé une mise à niveau majeure du
+  scikit-learn du projet (1.3.2) et un risque de régression sur tout le
+  pipeline supervisé/clustering déjà testé. Vérifié par un calcul réel
+  avant d'écrire le reste du lot.
+- Pas de "leaderboard" façon clustering : PCA, t-SNE et UMAP n'ont pas de
+  métrique de qualité commune permettant d'élire un gagnant. La PCA est
+  **toujours** calculée en plus de la méthode choisie (variance expliquée,
+  variables les plus contributives) et sert de repère de fidélité
+  (`trustworthiness`, calculée aussi pour la méthode principale) — jamais
+  un texte inventé sur la qualité d'une projection.
+- **Rigueur d'affichage corrigée sur retour direct** : la variance
+  expliquée n'est réellement définie que pour la PCA — elle n'est plus
+  affichée comme une métrique de t-SNE/UMAP, mais isolée dans un bloc
+  "Référence PCA" clairement séparé (calculée en plus, à titre de repère).
+  Le tableau des variables contributives (PC1/PC2) n'a de sens que pour une
+  projection PCA — masqué pour t-SNE/UMAP, dont les axes ne s'interprètent
+  pas de cette façon. "Fidélité de la projection" renommée "Conservation
+  des voisinages" (nom qui correspond réellement à ce que mesure
+  `trustworthiness` : dans quelle mesure les voisinages proches sur la
+  projection l'étaient déjà dans les données d'origine).
+- Note explicative obligatoire sur chaque résultat t-SNE/UMAP : ces
+  méthodes préservent les voisinages locaux mais pas les distances
+  globales — jamais présentées comme une carte fidèle des distances
+  réelles (skill senior-ai-saas-engineer, data-science.md).
+- Nuage de points interactif (Recharts, première utilisation d'un
+  `ScatterChart` dans le projet) avec coloration au choix par n'importe
+  quelle variable analysée (recalcul instantané, endpoint séparé et léger —
+  pas de nouveau calcul coûteux pour changer la couleur).
+- Lien croisé depuis un résultat de clustering ("Visualiser en 2D") —
+  dataset et variables pré-remplis via l'URL, **aucun couplage backend**
+  (pas de transmission des labels de cluster).
+
+**Détection d'anomalies (Lot 14)** — Isolation Forest et LOF :
+
+- Les deux algorithmes tournent **toujours ensemble** (jamais un seul essai
+  à l'aveugle, même principe que le reste du produit) : sans vérité terrain
+  disponible, impossible d'élire un "gagnant" comme au clustering. Un score
+  de consensus continu (moyenne des rangs de chaque méthode — leurs scores
+  bruts ne sont pas sur la même échelle) et un niveau de confiance
+  (confirmée par les deux méthodes / une seule / aucune) recoupent les deux
+  résultats sans jamais inventer de nombre.
+- Chaque observation classée porte une explication réelle : les variables
+  qui s'écartent le plus de la population (écart-type), et les valeurs
+  catégorielles rares — jamais un texte généré sans base statistique.
+- **Correction d'un oubli du Lot 11+12 trouvé en construisant ce lot** : le
+  quota de jobs concurrents partagés supervisé/clustering ne comptait en
+  réalité que dans un sens — créer un entraînement supervisé ignorait les
+  clusterings déjà actifs. Extrait en helper commun
+  (`services/job_quota.py`), réutilisé par les 4 types de job désormais
+  (supervisé, clustering, réduction de dimension, anomalies).
+
+**Vérifié** : 64 nouveaux tests (34 réduction de dimension, 30 anomalies —
+registre, moteur sur des cas construits avec structure connue, worker,
+API), suite de régression complète du pilier non supervisé + supervisé
+rejouée après chaque lot (99 tests, aucune casse), `tsc`/`vite build`/
+`npm run lint`/`vitest` verts à chaque étape.
 
 ---
 
@@ -575,9 +653,7 @@ Identifié explicitement en testant le produit, pas oublié :
 
 | Lot | Contenu |
 | --- | --- |
-| **6-8** | Vision par ordinateur / détection d'anomalies sur images (l'autre grand pilier de l'app historique, pas encore porté) |
-| **13** | Réduction de dimension (PCA/t-SNE/UMAP) — visualisation transversale au clustering et à la détection d'anomalies |
-| **14** | Détection d'anomalies tabulaire (Isolation Forest, LOF) — clustering livré au Lot 11+12, pas encore ce second volet du pilier non supervisé |
+| **6-8** | Vision par ordinateur (l'autre grand pilier de l'app historique, pas encore porté — legacy Streamlit substantiel mais bugué, voir `AUDIT_ROADMAP.md`) |
 
 *Durcissement SaaS commercial restant (plans tarifaires, facturation, quota
 de stockage) : hors périmètre technique, décision produit à cadrer
