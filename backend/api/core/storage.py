@@ -41,3 +41,11 @@ def cluster_model_file_path(organization_id: int, clustering_job_id: int) -> Pat
     org_dir = MODELS_DIR / str(organization_id) / "clustering"
     org_dir.mkdir(parents=True, exist_ok=True)
     return org_dir / f"{clustering_job_id}.joblib"
+
+
+def dimensionality_model_file_path(organization_id: int, dimensionality_job_id: int) -> Path:
+    """Même isolation que `cluster_model_file_path` — Lot 13 (réduction de
+    dimension)."""
+    org_dir = MODELS_DIR / str(organization_id) / "dimensionality"
+    org_dir.mkdir(parents=True, exist_ok=True)
+    return org_dir / f"{dimensionality_job_id}.joblib"

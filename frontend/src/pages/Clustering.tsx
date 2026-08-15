@@ -1,7 +1,29 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
-import { AlertCircle, Boxes, Loader2, PlayCircle, ScanSearch, Shapes, Sparkles, Trash2 } from "lucide-react";
-import { ApiError, api, type ClusteringJobSummary, type ClusteringResult, type ColumnSchema, type DatasetSummary } from "../api/client";
+import {
+  AlertCircle,
+  ArrowDown,
+  ArrowUp,
+  Boxes,
+  CircleDashed,
+  ListChecks,
+  Loader2,
+  PlayCircle,
+  ScanSearch,
+  Shapes,
+  Sparkles,
+  Trash2,
+  Trophy,
+} from "lucide-react";
+import {
+  ApiError,
+  api,
+  type ClusterCandidate,
+  type ClusteringJobSummary,
+  type ClusteringResult,
+  type ColumnSchema,
+  type DatasetSummary,
+} from "../api/client";
 import AppShell from "../components/AppShell";
 import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
@@ -9,7 +31,15 @@ import { ColorIconBadge, accentSurfaceClass, accentValueTextClass, type AccentCo
 import { PageHeader } from "../components/ui/PageHeader";
 import { SectionHeader } from "../components/ui/SectionHeader";
 import { Select } from "../components/ui/Select";
+import { Table, type TableColumn } from "../components/ui/Table";
 import { useConfirmAction } from "../hooks/useConfirmAction";
+import { CHART_SERIES_COLORS } from "../theme/charts";
+import {
+  assessSilhouetteQuality,
+  buildRecommendationExplanation,
+  computeClusterDistribution,
+  type QualityTone,
+} from "../utils/clusterQuality";
 
 const ACTIVE_STATUSES = new Set(["queued", "running"]);
 const POLL_INTERVAL_MS = 3000;
@@ -173,13 +203,13 @@ export default function Clustering() {
           </div>
         </Card>
       ) : phase === "results" && activeJob ? (
-        <ClusteringResultView jobId={activeJob.id} />
+        <ClusteringResultView job={activeJob} />
       ) : null}
 
       {phase === "configure" && (
         <p className="text-xs text-muted-foreground text-center mt-6 max-w-2xl mx-auto">
-          Détection d'anomalies et réduction de dimension arrivent bientôt dans ce pilier — le clustering et les
-          profils de segments sont disponibles dès maintenant.{" "}
+          La détection d'anomalies arrive bientôt dans ce pilier — le clustering, les profils de segments et la
+          réduction de dimension sont disponibles dès maintenant.{" "}
           <Link to="/" className="text-primary hover:text-primary/80">
             Voir tous les objectifs
           </Link>
@@ -336,8 +366,89 @@ function ClusteringForm({
   );
 }
 
-function ClusteringResultView({ jobId }: { jobId: number }) {
+function formatCandidateParams(params: Record<string, unknown>): string {
+  return Object.entries(params)
+    .map(([key, value]) => `${key} = ${typeof value === "number" ? Number(value.toFixed(3)) : value}`)
+    .join(", ");
+}
+
+/** "↑ meilleur"/"↓ meilleur" à côté du nom de la métrique — les 3 métriques
+ * de qualité du clustering ne se lisent pas dans le même sens (silhouette et
+ * Calinski-Harabasz : plus haut = mieux ; Davies-Bouldin : plus bas = mieux),
+ * ambiguïté déjà signalée comme source de confusion. */
+function MetricDirection({ better }: { better: "up" | "down" }) {
+  const Icon = better === "up" ? ArrowUp : ArrowDown;
+  return (
+    <span
+      className="inline-flex items-center text-[10px] text-muted-foreground/80"
+      title={better === "up" ? "Plus haut = meilleur" : "Plus bas = meilleur"}
+    >
+      <Icon size={11} />
+    </span>
+  );
+}
+
+const CANDIDATE_COLUMNS: TableColumn<ClusterCandidate>[] = [
+  {
+    key: "rank",
+    header: "#",
+    render: (c) =>
+      c.is_winner ? (
+        <span className="inline-flex items-center gap-1 text-primary font-semibold">
+          <Trophy size={13} /> {c.rank}
+        </span>
+      ) : (
+        c.rank
+      ),
+  },
+  { key: "algorithm", header: "Algorithme" },
+  { key: "params", header: "Paramètres", render: (c) => formatCandidateParams(c.params), className: "text-muted-foreground" },
+  { key: "n_clusters", header: "Groupes", align: "right" },
+  {
+    key: "silhouette",
+    header: "Silhouette ↑",
+    align: "right",
+    render: (c) => (c.silhouette !== null ? c.silhouette.toFixed(3) : "—"),
+  },
+  {
+    key: "davies_bouldin",
+    header: "Davies-Bouldin ↓",
+    align: "right",
+    render: (c) => (c.davies_bouldin !== null ? c.davies_bouldin.toFixed(3) : "—"),
+  },
+  {
+    key: "calinski_harabasz",
+    header: "Calinski-Harabasz ↑",
+    align: "right",
+    render: (c) => (c.calinski_harabasz !== null ? c.calinski_harabasz.toFixed(0) : "—"),
+  },
+  {
+    key: "noise_ratio",
+    header: "Bruit",
+    align: "right",
+    render: (c) => (c.noise_ratio > 0 ? `${(c.noise_ratio * 100).toFixed(0)} %` : "—"),
+  },
+];
+
+// Fond dédié, propre à la lecture qualitative de la silhouette — distinct du
+// fond de la carte englobante (retour utilisateur direct : un badge posé à
+// même le fond de carte se perdait visuellement). Réutilise la palette
+// d'accent du design system (ColorIconBadge), pas une couleur ad hoc.
+const QUALITY_ACCENT: Record<QualityTone, AccentColor> = {
+  low: "amber",
+  moderate: "blue",
+  good: "teal",
+};
+
+// Palette validée (theme/charts.ts) — jamais une teinte hex ad hoc pour une
+// série de données, même dans une barre empilée custom hors Recharts.
+const DISTRIBUTION_BAR_COLORS = CHART_SERIES_COLORS;
+const DISTRIBUTION_NOISE_COLOR = "#94a3b8"; // slate-400 — neutre, jamais confondu avec un vrai segment
+
+function ClusteringResultView({ job }: { job: ClusteringJobSummary }) {
+  const jobId = job.id;
   const [result, setResult] = useState<ClusteringResult | null>(null);
+  const [candidates, setCandidates] = useState<ClusterCandidate[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -345,10 +456,19 @@ function ClusteringResultView({ jobId }: { jobId: number }) {
       .getResult(jobId)
       .then(setResult)
       .catch((err) => setError(err instanceof ApiError ? err.message : "Résultat indisponible"));
+    api.clustering.getCandidates(jobId).then(setCandidates).catch(() => setCandidates([]));
   }, [jobId]);
 
   if (error) return <p className="text-sm text-destructive text-center">{error}</p>;
   if (!result) return <p className="text-sm text-muted-foreground text-center">Chargement…</p>;
+
+  const winnerCandidate = candidates.find((c) => c.is_winner);
+  const quality = assessSilhouetteQuality(result.metrics.silhouette);
+  const recommendation = winnerCandidate ? buildRecommendationExplanation(winnerCandidate, candidates) : null;
+  const totalSamples = Number(result.model_card.n_samples) || result.profiles.reduce((sum, p) => sum + p.size, 0);
+  const distribution = computeClusterDistribution(result.profiles, totalSamples);
+  const noiseEntry = distribution.find((d) => d.isNoise);
+  const isDensityAlgorithm = result.model_card.family === "densite";
 
   return (
     <div className="max-w-4xl mx-auto space-y-5">
@@ -361,22 +481,89 @@ function ClusteringResultView({ jobId }: { jobId: number }) {
         />
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
           {result.metrics.silhouette !== null && (
-            <MetricTile label="Silhouette" value={result.metrics.silhouette.toFixed(3)} color="rose" />
+            <MetricTile label="Silhouette" direction="up" value={result.metrics.silhouette.toFixed(3)} color="rose" />
           )}
           {result.metrics.davies_bouldin !== null && (
-            <MetricTile label="Davies-Bouldin" value={result.metrics.davies_bouldin.toFixed(3)} color="blue" />
+            <MetricTile label="Davies-Bouldin" direction="down" value={result.metrics.davies_bouldin.toFixed(3)} color="blue" />
           )}
           {result.metrics.calinski_harabasz !== null && (
-            <MetricTile label="Calinski-Harabasz" value={result.metrics.calinski_harabasz.toFixed(0)} color="teal" />
+            <MetricTile label="Calinski-Harabasz" direction="up" value={result.metrics.calinski_harabasz.toFixed(0)} color="teal" />
           )}
         </div>
-        {result.metrics.noise_ratio > 0 && (
-          <p className="text-xs text-muted-foreground mt-3">
-            {(result.metrics.noise_ratio * 100).toFixed(0)} % des observations n'ont été rattachées à aucun groupe
-            (points atypiques, algorithme par densité).
-          </p>
-        )}
+
+        <div className={`rounded-xl border p-3 mt-4 ${accentSurfaceClass(QUALITY_ACCENT[quality.tone])}`}>
+          <span
+            className={`inline-flex items-center text-[11px] font-semibold px-2 py-0.5 rounded-full bg-card/80 ${accentValueTextClass(QUALITY_ACCENT[quality.tone])}`}
+          >
+            {quality.label}
+          </span>
+          <p className="text-xs text-foreground/70 mt-1.5">{quality.caveat}</p>
+          {recommendation && (
+            <p className="text-xs text-foreground/80 mt-2 pt-2 border-t border-border/40">{recommendation}</p>
+          )}
+        </div>
       </Card>
+
+      {candidates.length > 0 && (
+        <div>
+          <SectionHeader
+            icon={ListChecks}
+            color="blue"
+            label={`Configurations comparées (${candidates.length})`}
+            help="Plusieurs algorithmes et nombres de groupes sont testés à chaque lancement, classés sur le score de silhouette — jamais un seul essai lancé à l'aveugle. ↑ = plus haut est meilleur, ↓ = plus bas est meilleur."
+          />
+          <Table columns={CANDIDATE_COLUMNS} rows={candidates} rowKey={(c) => `${c.algorithm}-${c.rank}`} highlightRow={(c) => c.is_winner} />
+        </div>
+      )}
+
+      {distribution.length > 0 && (
+        <Card className="p-5">
+          <SectionHeader
+            icon={CircleDashed}
+            color="amber"
+            label="Répartition"
+            help="Taille de chaque segment retenu, plus les observations non rattachées à un groupe (le cas échéant) — les pourcentages totalisent toujours 100 %."
+          />
+          <div className="flex h-3 rounded-full overflow-hidden mb-4 bg-muted">
+            {distribution.map((d, i) => (
+              <div
+                key={d.id}
+                style={{
+                  width: `${d.pct}%`,
+                  backgroundColor: d.isNoise ? DISTRIBUTION_NOISE_COLOR : DISTRIBUTION_BAR_COLORS[i % DISTRIBUTION_BAR_COLORS.length],
+                }}
+                title={`${d.label} — ${d.count} (${d.pct.toFixed(1)} %)`}
+              />
+            ))}
+          </div>
+          <div className="space-y-2">
+            {distribution.map((d, i) => (
+              <div key={d.id} className="flex items-center gap-2.5 text-sm">
+                <span
+                  className="size-2.5 rounded-full flex-shrink-0"
+                  style={{
+                    backgroundColor: d.isNoise
+                      ? DISTRIBUTION_NOISE_COLOR
+                      : DISTRIBUTION_BAR_COLORS[i % DISTRIBUTION_BAR_COLORS.length],
+                  }}
+                />
+                <span className={`flex-1 ${d.isNoise ? "text-muted-foreground italic" : "text-foreground/90"}`}>{d.label}</span>
+                <span className="text-muted-foreground tabular-nums">{d.count}</span>
+                <span className="font-medium tabular-nums w-14 text-right">{d.pct.toFixed(1)} %</span>
+              </div>
+            ))}
+          </div>
+          {noiseEntry && (
+            <p className="text-xs text-muted-foreground mt-4 pt-3 border-t border-border/60">
+              <strong className="text-foreground/80">Observations atypiques / non rattachées</strong> — {noiseEntry.count}{" "}
+              observation{noiseEntry.count > 1 ? "s" : ""} ({noiseEntry.pct.toFixed(1)} %){" "}
+              {isDensityAlgorithm
+                ? "que l'algorithme par densité retenu (proche des voisinages, type DBSCAN) considère comme du bruit — trop isolées pour appartenir à un groupe, pas nécessairement une anomalie métier."
+                : "non rattachées à un groupe par l'algorithme retenu — à ne pas confondre automatiquement avec une anomalie métier."}
+            </p>
+          )}
+        </Card>
+      )}
 
       <div>
         <SectionHeader icon={Sparkles} color="violet" label="Profils de segments" help="Chaque groupe décrit par sa taille et ce qui le distingue le plus du reste de la population — jamais une simple étiquette numérique." />
@@ -435,21 +622,46 @@ function ClusteringResultView({ jobId }: { jobId: number }) {
         </div>
       </div>
 
-      <Card className="p-4 flex items-start gap-3">
-        <ScanSearch size={16} className="text-muted-foreground flex-shrink-0 mt-0.5" />
-        <p className="text-xs text-muted-foreground">
-          La détection d'anomalies (cas atypiques) et la réduction de dimension (visualisation 2D) arrivent bientôt
-          dans ce pilier.
-        </p>
+      <Card className="p-4 flex items-center justify-between gap-3 flex-wrap">
+        <div className="flex items-start gap-3">
+          <ScanSearch size={16} className="text-muted-foreground flex-shrink-0 mt-0.5" />
+          <p className="text-xs text-muted-foreground">
+            Visualisez ces mêmes observations en 2 dimensions pour repérer visuellement leur répartition. La
+            détection d'anomalies (cas atypiques) arrive bientôt dans ce pilier.
+          </p>
+        </div>
+        <Link
+          to={`/reduction-dimension?dataset_id=${job.dataset_id}&features=${encodeURIComponent(job.feature_columns.join(","))}`}
+        >
+          <Button variant="secondary" size="sm">
+            <ScanSearch size={14} />
+            Visualiser en 2D
+          </Button>
+        </Link>
       </Card>
     </div>
   );
 }
 
-function MetricTile({ label, value, color }: { label: string; value: string; color: AccentColor }) {
+function MetricTile({
+  label,
+  value,
+  color,
+  direction,
+}: {
+  label: string;
+  value: string;
+  color: AccentColor;
+  /** Sens d'amélioration de la métrique — les 3 métriques de clustering ne
+   * se lisent pas toutes dans le même sens, source de confusion signalée. */
+  direction?: "up" | "down";
+}) {
   return (
     <div className={`rounded-xl border px-4 py-3 ${accentSurfaceClass(color)}`}>
-      <p className="text-xs text-muted-foreground mb-1">{label}</p>
+      <p className="text-xs text-muted-foreground mb-1 inline-flex items-center gap-1">
+        {label}
+        {direction && <MetricDirection better={direction} />}
+      </p>
       <p className={`text-xl font-semibold tabular-nums ${accentValueTextClass(color)}`}>{value}</p>
     </div>
   );

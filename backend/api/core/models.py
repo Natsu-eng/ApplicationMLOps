@@ -410,3 +410,101 @@ class ClusterCandidateRecord(Base):
 
     organization: Mapped["Organization"] = relationship("Organization")
     clustering_job: Mapped["ClusteringJob"] = relationship("ClusteringJob")
+
+
+class DimensionalityJob(Base):
+    """Un calcul de réduction de dimension (Lot 13, ML non supervisé) —
+    même mécanisme de tâche de fond que `ClusteringJob` (RQ, `training_queue`
+    partagée). Table DÉDIÉE, même raisonnement que `ClusteringJob` :
+    conventions d'isolation/de progression identiques, mais pas de notion de
+    cible ni de comparaison multi-algorithmes (une seule méthode choisie par
+    job, voir services/dimensionality_registry.py)."""
+
+    __tablename__ = "dimensionality_jobs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    organization_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    dataset_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("datasets.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    created_by_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    feature_columns_json: Mapped[str] = mapped_column(Text, nullable=False)
+    config_json: Mapped[str] = mapped_column(Text, nullable=False)  # {"algorithm_id":, "seed":}
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="queued", index=True)
+    progress_step: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    progress_percent: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    progress_updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    rq_job_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+    organization: Mapped["Organization"] = relationship("Organization")
+    dataset: Mapped["Dataset"] = relationship("Dataset")
+    created_by: Mapped[Optional["User"]] = relationship("User")
+    result: Mapped[Optional["DimensionalityModel"]] = relationship(
+        "DimensionalityModel", back_populates="dimensionality_job", uselist=False, passive_deletes=True
+    )
+
+
+class DimensionalityModel(Base):
+    """Le résultat produit par un `DimensionalityJob` réussi — méthode
+    retenue, variance expliquée/loadings (PCA, toujours calculée en plus de
+    la méthode choisie), mesures de fidélité (`trustworthiness`), note
+    obligatoire sur la fidélité des distances."""
+
+    __tablename__ = "dimensionality_models"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    organization_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    dimensionality_job_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("dimensionality_jobs.id", ondelete="CASCADE"), nullable=False, unique=True
+    )
+    algorithm: Mapped[str] = mapped_column(String(100), nullable=False)
+    algorithm_id: Mapped[str] = mapped_column(String(30), nullable=False)
+    n_samples_total: Mapped[int] = mapped_column(Integer, nullable=False)
+    n_samples_used: Mapped[int] = mapped_column(Integer, nullable=False)
+    sampled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    trustworthiness_primary: Mapped[float] = mapped_column(Float, nullable=False)
+    trustworthiness_pca: Mapped[float] = mapped_column(Float, nullable=False)
+    variance_explained_json: Mapped[str] = mapped_column(Text, nullable=False)  # [ratio_pc1, ratio_pc2]
+    total_variance_explained: Mapped[float] = mapped_column(Float, nullable=False)
+    loadings_json: Mapped[str] = mapped_column(Text, nullable=False)  # [{"feature":, "pc1":, "pc2":}, ...]
+    distance_fidelity_note: Mapped[str] = mapped_column(Text, nullable=False)
+    feature_columns_json: Mapped[str] = mapped_column(Text, nullable=False)
+    model_card_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    file_path: Mapped[str] = mapped_column(String(500), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+    organization: Mapped["Organization"] = relationship("Organization")
+    dimensionality_job: Mapped["DimensionalityJob"] = relationship("DimensionalityJob", back_populates="result")
+
+
+class DimensionalityPoint(Base):
+    """Une observation projetée en 2D par un `DimensionalityJob` — une ligne
+    par point (pas un JSON agrégé), même raisonnement que
+    `ClusterCandidateRecord` : requêtable, borné par l'échantillonnage
+    (`MAX_ROWS_FOR_EMBEDDING`, services/dimensionality_training.py). Pas de
+    `created_at` — table à forte cardinalité (jusqu'à 5000 lignes/job)
+    insérée en une seule transaction, un horodatage par ligne n'apporterait
+    aucune information supplémentaire."""
+
+    __tablename__ = "dimensionality_points"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    organization_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    dimensionality_job_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("dimensionality_jobs.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    row_index: Mapped[int] = mapped_column(Integer, nullable=False)  # position dans le dataset d'origine
+    x: Mapped[float] = mapped_column(Float, nullable=False)
+    y: Mapped[float] = mapped_column(Float, nullable=False)

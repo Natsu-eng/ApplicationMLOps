@@ -5,6 +5,7 @@ import Clustering from "./pages/Clustering";
 import ComingSoon from "./pages/ComingSoon";
 import Dashboard from "./pages/Dashboard";
 import Datasets from "./pages/Datasets";
+import DimensionalityReduction from "./pages/DimensionalityReduction";
 import Login from "./pages/Login";
 import Orientation from "./pages/Orientation";
 import Register from "./pages/Register";
@@ -63,6 +64,14 @@ export default function App() {
             element={
               <ProtectedRoute>
                 <Clustering />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/reduction-dimension"
+            element={
+              <ProtectedRoute>
+                <DimensionalityReduction />
               </ProtectedRoute>
             }
           />

@@ -1,4 +1,14 @@
-import { BrainCircuit, Database, History, LayoutDashboard, ScanEye, Shapes, Target, type LucideIcon } from "lucide-react";
+import {
+  BrainCircuit,
+  Database,
+  History,
+  LayoutDashboard,
+  ScanEye,
+  ScatterChart,
+  Shapes,
+  Target,
+  type LucideIcon,
+} from "lucide-react";
 
 /** Registre unique des piliers du produit — l'écran d'orientation, la
  * navigation (AppShell) et les routes réservées lisent tous ce fichier.
@@ -47,12 +57,14 @@ export const PILLARS: Pillar[] = [
     description:
       "Repérez des profils similaires ou des cas atypiques, sans savoir à l'avance ce que vous cherchez.",
     icon: Shapes,
-    // Lot 11+ : clustering + profils de segments actifs. Détection
-    // d'anomalies et réduction de dimension restent "à venir" — signalé
-    // honnêtement dans la page elle-même (Clustering.tsx), pas ici.
+    // Lot 11+ : clustering + profils de segments actifs. Lot 13 : réduction
+    // de dimension active. Détection d'anomalies (Lot 14) reste "à venir".
     status: "active",
     route: "/clustering",
-    navItems: [{ to: "/clustering", label: "Clustering", icon: Shapes }],
+    navItems: [
+      { to: "/clustering", label: "Clustering", icon: Shapes },
+      { to: "/reduction-dimension", label: "Réduction de dimension", icon: ScatterChart },
+    ],
   },
   {
     id: "vision",

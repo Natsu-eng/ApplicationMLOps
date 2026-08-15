@@ -400,6 +400,67 @@ export interface AlgorithmCatalogEntry {
   is_default: boolean;
 }
 
+// ── Réduction de dimension (Lot 13 — ML non supervisé) ───────────────────
+
+export interface DimensionalityJobCreatePayload {
+  dataset_id: number;
+  feature_columns: string[];
+  algorithm_id?: string;
+  seed?: number;
+}
+
+export interface DimensionalityJobSummary {
+  id: number;
+  dataset_id: number;
+  dataset_name: string | null;
+  feature_columns: string[];
+  algorithm_id: string;
+  status: JobStatus;
+  progress_step: string | null;
+  progress_percent: number;
+  error_message: string | null;
+  created_by: string | null;
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+  algorithm: string | null;
+  total_variance_explained: number | null;
+}
+
+export interface DimensionalityLoading {
+  feature: string;
+  pc1: number;
+  pc2: number;
+}
+
+export interface DimensionalityResult {
+  algorithm: string;
+  algorithm_id: string;
+  n_samples_total: number;
+  n_samples_used: number;
+  sampled: boolean;
+  trustworthiness_primary: number;
+  trustworthiness_pca: number;
+  variance_explained: number[];
+  total_variance_explained: number;
+  loadings: DimensionalityLoading[];
+  distance_fidelity_note: string;
+  feature_columns: string[];
+  model_card: Record<string, unknown>;
+}
+
+export interface DimensionalityPoint {
+  row_index: number;
+  x: number;
+  y: number;
+}
+
+export interface DimensionalityColorByResponse {
+  column: string;
+  kind: "numeric" | "categorical";
+  values: Record<string, number | string | null>;
+}
+
 export interface TrainingJobCreatePayload {
   dataset_id: number;
   target_column: string;
@@ -794,5 +855,21 @@ export const api = {
     getResult: (id: number) => request<ClusteringResult>(`/clustering/jobs/${id}/result`),
     getCandidates: (id: number) => request<ClusterCandidate[]>(`/clustering/jobs/${id}/candidates`),
     remove: (id: number) => request<void>(`/clustering/jobs/${id}`, { method: "DELETE" }),
+  },
+
+  dimensionality: {
+    algorithmsCatalog: () => request<{ algorithms: AlgorithmCatalogEntry[] }>("/dimensionality/algorithms-catalog"),
+    createJob: (data: DimensionalityJobCreatePayload) =>
+      request<DimensionalityJobSummary>("/dimensionality/jobs", {
+        method: "POST",
+        body: JSON.stringify(data),
+      }),
+    listJobs: () => request<DimensionalityJobSummary[]>("/dimensionality/jobs"),
+    getJob: (id: number) => request<DimensionalityJobSummary>(`/dimensionality/jobs/${id}`),
+    getResult: (id: number) => request<DimensionalityResult>(`/dimensionality/jobs/${id}/result`),
+    getPoints: (id: number) => request<DimensionalityPoint[]>(`/dimensionality/jobs/${id}/points`),
+    getColorBy: (id: number, column: string) =>
+      request<DimensionalityColorByResponse>(`/dimensionality/jobs/${id}/color-by?column=${encodeURIComponent(column)}`),
+    remove: (id: number) => request<void>(`/dimensionality/jobs/${id}`, { method: "DELETE" }),
   },
 };

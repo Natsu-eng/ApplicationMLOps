@@ -21,11 +21,12 @@ from sqlalchemy.orm import Session
 from api.core.config import get_settings
 from api.core.database import get_db
 from api.core.job_queue import training_queue
-from api.core.models import Dataset, MLModel, ModelCandidate, TrainingJob, User
+from api.core.models import ClusteringJob, Dataset, DimensionalityJob, MLModel, ModelCandidate, TrainingJob, User
 from api.routers.auth import get_current_user
 from services.audit import log_action
 from services.datasets import DatasetParsingError, read_dataframe
 from services.feature_engineering import CURRENT_SPEC_VERSION
+from services.job_quota import raise_if_quota_exceeded
 from services.job_watchdog import reconcile_stale_jobs
 from services.ml_inference import InferenceError, load_bundle, predict_one
 from services.ml_registry import MODEL_REGISTRY
@@ -415,29 +416,18 @@ def create_training_job(
     # crashé ne doit jamais bloquer indéfiniment un slot de quota.
     reconcile_stale_jobs(db, current_user.organization_id, _settings.stale_job_timeout_minutes)
 
-    # Garde-fou technique (Lot 10) — un seul worker RQ traite les jobs de
-    # TOUTES les organisations : sans limite, une organisation qui enfile
-    # beaucoup d'entraînements d'affilée peut affamer les autres. Vérifié
-    # AVANT toute lecture du dataset (échec rapide, coût minimal).
-    active_jobs_count = (
-        db.query(TrainingJob)
-        .filter(
-            TrainingJob.organization_id == current_user.organization_id,
-            TrainingJob.status.in_(("queued", "running")),
-        )
-        .count()
+    # Garde-fou technique (Lot 10, quota partagé étendu au Lot 13/14 via
+    # services/job_quota.py) — un seul worker RQ traite les jobs de TOUTES
+    # les organisations ET de tous les types (supervisé/clustering/réduction
+    # de dimension/anomalies) : sans compter tous les types ensemble, une
+    # organisation pourrait saturer le worker en cumulant plusieurs types de
+    # jobs actifs. Vérifié AVANT toute lecture du dataset (échec rapide).
+    raise_if_quota_exceeded(
+        db,
+        current_user.organization_id,
+        [TrainingJob, ClusteringJob, DimensionalityJob],
+        _settings.max_concurrent_jobs_per_org,
     )
-    if active_jobs_count >= _settings.max_concurrent_jobs_per_org:
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail={
-                "code": "QUOTA_ENTRAINEMENTS_ATTEINT",
-                "message": (
-                    f"Trop d'entraînements en cours ({active_jobs_count}/{_settings.max_concurrent_jobs_per_org}) — "
-                    "attendez qu'un entraînement se termine, ou supprimez-en un depuis l'historique."
-                ),
-            },
-        )
 
     dataset = (
         db.query(Dataset)

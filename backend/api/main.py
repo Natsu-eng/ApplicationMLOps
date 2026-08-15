@@ -24,6 +24,7 @@ from api.core.database import check_connection, init_db
 from api.routers.auth import router as auth_router
 from api.routers.clustering import router as clustering_router
 from api.routers.datasets import router as datasets_router
+from api.routers.dimensionality import router as dimensionality_router
 from api.routers.training import router as training_router
 
 logging.basicConfig(
@@ -78,6 +79,7 @@ app.include_router(auth_router)
 app.include_router(datasets_router)
 app.include_router(training_router)
 app.include_router(clustering_router)
+app.include_router(dimensionality_router)
 
 
 @app.get("/api/health", tags=["système"])

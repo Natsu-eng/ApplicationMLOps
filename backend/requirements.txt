@@ -36,6 +36,15 @@ shap==0.45.0
 redis==5.0.4
 rq==1.16.2
 
+# ── ML non supervisé — réduction de dimension (Lot 13) ────────────────
+# Épinglé à 0.5.6 volontairement (pas la dernière, 0.5.12) : les releases
+# umap-learn >=0.5.7 exigent scikit-learn>=1.6, ce qui aurait forcé une
+# mise à niveau majeure de scikit-learn (1.3.2 -> 1.9.x) sur tout le
+# projet — risque de régression sur le pipeline supervisé/clustering déjà
+# testé (SHAP, modèles joblib persistés). 0.5.6 ne demande que
+# scikit-learn>=0.22, compatible tel quel, vérifié par un fit réel.
+umap-learn==0.5.6
+
 # ── Tests ──────────────────────────────────────────────────────────
 pytest==8.2.2
 httpx==0.27.2

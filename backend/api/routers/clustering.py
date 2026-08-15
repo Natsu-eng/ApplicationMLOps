@@ -22,6 +22,7 @@ from api.core.models import ClusterCandidateRecord, ClusterModel, ClusteringJob,
 from api.routers.auth import get_current_user
 from services.clustering_registry import CLUSTER_REGISTRY, DEFAULT_ALGORITHM_IDS
 from services.datasets import DatasetParsingError, read_dataframe
+from services.job_quota import raise_if_quota_exceeded
 from services.job_watchdog import reconcile_stale_jobs
 
 router = APIRouter(prefix="/clustering", tags=["clustering"])
@@ -169,35 +170,18 @@ def create_clustering_job(
         db, current_user.organization_id, _settings.stale_job_timeout_minutes, model=ClusteringJob
     )
 
-    # Quota partagé avec le supervisé : un seul worker physique traite les
-    # deux types de job (voir docker-compose.yml) — compter les deux
-    # ensemble contre la même limite, pas une limite séparée qui laisserait
-    # une organisation saturer le worker en cumulant les deux types.
-    from api.core.models import TrainingJob
+    # Quota partagé avec le supervisé (et les autres types de job non
+    # supervisé) via services/job_quota.py — un seul worker physique traite
+    # tous les types de job (voir docker-compose.yml), comptés ensemble
+    # contre la même limite.
+    from api.core.models import DimensionalityJob, TrainingJob
 
-    active_supervised = (
-        db.query(TrainingJob)
-        .filter(TrainingJob.organization_id == current_user.organization_id, TrainingJob.status.in_(("queued", "running")))
-        .count()
+    raise_if_quota_exceeded(
+        db,
+        current_user.organization_id,
+        [TrainingJob, ClusteringJob, DimensionalityJob],
+        _settings.max_concurrent_jobs_per_org,
     )
-    active_clustering = (
-        db.query(ClusteringJob)
-        .filter(ClusteringJob.organization_id == current_user.organization_id, ClusteringJob.status.in_(("queued", "running")))
-        .count()
-    )
-    active_total = active_supervised + active_clustering
-    if active_total >= _settings.max_concurrent_jobs_per_org:
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail={
-                "code": "QUOTA_ENTRAINEMENTS_ATTEINT",
-                "message": (
-                    f"Trop d'entraînements en cours ({active_total}/{_settings.max_concurrent_jobs_per_org}, "
-                    "supervisé et clustering confondus) — attendez qu'un entraînement se termine, ou "
-                    "supprimez-en un depuis l'historique."
-                ),
-            },
-        )
 
     dataset = (
         db.query(Dataset)

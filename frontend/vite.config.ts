@@ -28,6 +28,20 @@ export default defineConfig({
         target: "http://localhost:8000",
         changeOrigin: true,
       },
+      "/clustering": {
+        target: "http://localhost:8000",
+        changeOrigin: true,
+      },
+      // Lot 13/14 (ML non supervisé) — ajoutés par avance pour ne pas
+      // reproduire l'oubli du Lot 11+12 (clustering non proxyé, 404 en dev).
+      "/dimensionality": {
+        target: "http://localhost:8000",
+        changeOrigin: true,
+      },
+      "/anomalies": {
+        target: "http://localhost:8000",
+        changeOrigin: true,
+      },
     },
   },
 });
