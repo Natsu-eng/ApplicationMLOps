@@ -14,13 +14,39 @@ mettre à jour `training.py` en retour (un `TrainingJob` ne comptait alors
 que les autres `TrainingJob`, jamais les `ClusteringJob` actifs) — un oubli
 qui rendait le quota contournable depuis le côté supervisé. Corrigé ici en
 même temps que l'ajout d'une 3ᵉ puis 4ᵉ table, pour ne plus jamais dupliquer
-ce bloc de comptage à la main."""
+ce bloc de comptage à la main.
+
+`ALL_JOB_MODELS` (Lot 15 sous-lot B) va plus loin dans le même sens : avant,
+la liste `[TrainingJob, ClusteringJob, DimensionalityJob, AnomalyJob]` était
+recopiée telle quelle dans CHAQUE router (`training.py`, `clustering.py`,
+`dimensionality.py`, `anomalies.py`) — ajouter un 5ᵉ type de job (vision)
+obligeait à modifier les 4 en même temps, exactement le genre d'oubli déjà
+documenté ci-dessus. Un seul point de vérité désormais : tout router
+d'entraînement importe `ALL_JOB_MODELS` plutôt que de reconstruire la liste."""
 from __future__ import annotations
 
 from typing import Type
 
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
+
+from api.core.models import (
+    AnomalyJob,
+    ClusteringJob,
+    DimensionalityJob,
+    TrainingJob,
+    VisionAnomalyJob,
+    VisionClassificationJob,
+)
+
+ALL_JOB_MODELS: list[Type] = [
+    TrainingJob,
+    ClusteringJob,
+    DimensionalityJob,
+    AnomalyJob,
+    VisionClassificationJob,
+    VisionAnomalyJob,
+]
 
 
 def count_active_jobs(db: Session, organization_id: int, models: list[Type]) -> int:

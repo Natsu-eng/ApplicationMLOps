@@ -610,3 +610,216 @@ class AnomalyObservationRecord(Base):
     numeric_deviations_json: Mapped[str] = mapped_column(Text, nullable=False)
     categorical_flags_json: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class VisionDataset(Base):
+    """Un dataset d'images uploadé (pilier Vision, Lot 15 sous-lot A) —
+    fondation partagée par la classification d'images et la détection
+    d'anomalies visuelles MVTec AD (`structure_type` distingue les deux).
+    Contrairement à `Dataset` (un seul fichier tabulaire), un dataset vision
+    est un dossier d'images extraites du ZIP uploadé — voir
+    `api/core/storage.py::vision_dataset_dir`."""
+
+    __tablename__ = "vision_datasets"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    organization_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    uploaded_by_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    structure_type: Mapped[str] = mapped_column(String(20), nullable=False)  # classification | mvtec_ad
+    storage_dir: Mapped[str] = mapped_column(String(500), nullable=False)
+    n_images: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    n_classes: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    class_distribution_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    validation_report_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="processing")  # processing | ready | error
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+    organization: Mapped["Organization"] = relationship("Organization")
+    uploaded_by: Mapped[Optional["User"]] = relationship("User")
+
+
+class VisionClassificationJob(Base):
+    """Un entraînement de classification d'images par transfer learning
+    (pilier Vision, Lot 15 sous-lot B) — même mécanisme de tâche de fond que
+    `AnomalyJob`/`ClusteringJob` (RQ, `training_queue` partagée). Le dataset
+    source doit être un `VisionDataset` de structure "classification"
+    (vérifié par le router avant l'enfilage)."""
+
+    __tablename__ = "vision_classification_jobs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    organization_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    vision_dataset_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("vision_datasets.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    created_by_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    # {"backbone_id":, "num_epochs":, "batch_size":, "learning_rate":,
+    #  "dropout_rate":, "freeze_backbone":, "unfreeze_after_epoch":, "seed":}
+    config_json: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="queued", index=True)
+    progress_step: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    progress_percent: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    progress_updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    rq_job_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+    organization: Mapped["Organization"] = relationship("Organization")
+    vision_dataset: Mapped["VisionDataset"] = relationship("VisionDataset")
+    created_by: Mapped[Optional["User"]] = relationship("User")
+    result: Mapped[Optional["VisionClassificationModel"]] = relationship(
+        "VisionClassificationModel", back_populates="job", uselist=False, passive_deletes=True
+    )
+
+
+class VisionClassificationModel(Base):
+    """Le résultat produit par un `VisionClassificationJob` réussi —
+    métriques de test, historique d'entraînement (courbes train/val) et
+    exemples de prédictions (corrects ET erronés, skill Computer Vision)."""
+
+    __tablename__ = "vision_classification_models"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    organization_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    vision_classification_job_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("vision_classification_jobs.id", ondelete="CASCADE"), nullable=False, unique=True
+    )
+    backbone_id: Mapped[str] = mapped_column(String(50), nullable=False)
+    class_names_json: Mapped[str] = mapped_column(Text, nullable=False)
+    n_train: Mapped[int] = mapped_column(Integer, nullable=False)
+    n_val: Mapped[int] = mapped_column(Integer, nullable=False)
+    n_test: Mapped[int] = mapped_column(Integer, nullable=False)
+    history_json: Mapped[str] = mapped_column(Text, nullable=False)  # liste de métriques par époque
+    test_accuracy: Mapped[float] = mapped_column(Float, nullable=False)
+    test_precision_macro: Mapped[float] = mapped_column(Float, nullable=False)
+    test_recall_macro: Mapped[float] = mapped_column(Float, nullable=False)
+    test_f1_macro: Mapped[float] = mapped_column(Float, nullable=False)
+    confusion_matrix_json: Mapped[str] = mapped_column(Text, nullable=False)
+    examples_json: Mapped[str] = mapped_column(Text, nullable=False)
+    model_card_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    file_path: Mapped[str] = mapped_column(String(500), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+    organization: Mapped["Organization"] = relationship("Organization")
+    job: Mapped["VisionClassificationJob"] = relationship("VisionClassificationJob", back_populates="result")
+
+
+class VisionAnomalyJob(Base):
+    """Un entraînement de détection d'anomalies visuelles MVTec AD (pilier
+    Vision, Lot 15 sous-lot C) — même mécanisme de tâche de fond que
+    `VisionClassificationJob`. Le dataset source doit être un
+    `VisionDataset` de structure "mvtec_ad" (vérifié par le router avant
+    l'enfilage, revérifié par le worker)."""
+
+    __tablename__ = "vision_anomaly_jobs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    organization_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    vision_dataset_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("vision_datasets.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    created_by_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    # {"model_id":, "num_epochs":, "batch_size":, "learning_rate":, "seed":, "mask_percentile":}
+    config_json: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="queued", index=True)
+    progress_step: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    progress_percent: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    progress_updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    rq_job_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+    organization: Mapped["Organization"] = relationship("Organization")
+    vision_dataset: Mapped["VisionDataset"] = relationship("VisionDataset")
+    created_by: Mapped[Optional["User"]] = relationship("User")
+    result: Mapped[Optional["VisionAnomalyModel"]] = relationship(
+        "VisionAnomalyModel", back_populates="job", uselist=False, passive_deletes=True
+    )
+
+
+class VisionAnomalyModel(Base):
+    """Le résultat produit par un `VisionAnomalyJob` réussi — seuil calibré
+    (J de Youden sur `test/`, correctif du bug #7/#12 : plus un percentile
+    arbitraire sur le train), métriques de détection, historique
+    d'entraînement (reconstruction uniquement, pas de notion d'accuracy
+    pendant l'entraînement — c'est un autoencodeur)."""
+
+    __tablename__ = "vision_anomaly_models"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    organization_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    vision_anomaly_job_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("vision_anomaly_jobs.id", ondelete="CASCADE"), nullable=False, unique=True
+    )
+    model_id: Mapped[str] = mapped_column(String(50), nullable=False)
+    n_train: Mapped[int] = mapped_column(Integer, nullable=False)
+    n_val: Mapped[int] = mapped_column(Integer, nullable=False)
+    n_test: Mapped[int] = mapped_column(Integer, nullable=False)
+    history_json: Mapped[str] = mapped_column(Text, nullable=False)  # liste {epoch, train_loss, val_loss}
+    threshold: Mapped[float] = mapped_column(Float, nullable=False)
+    roc_auc: Mapped[float] = mapped_column(Float, nullable=False)
+    test_accuracy: Mapped[float] = mapped_column(Float, nullable=False)
+    test_precision: Mapped[float] = mapped_column(Float, nullable=False)
+    test_recall: Mapped[float] = mapped_column(Float, nullable=False)
+    test_f1: Mapped[float] = mapped_column(Float, nullable=False)
+    confusion_matrix_json: Mapped[str] = mapped_column(Text, nullable=False)
+    model_card_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    file_path: Mapped[str] = mapped_column(String(500), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+    organization: Mapped["Organization"] = relationship("Organization")
+    job: Mapped["VisionAnomalyJob"] = relationship("VisionAnomalyJob", back_populates="result")
+    examples: Mapped[list["VisionAnomalyExampleRecord"]] = relationship(
+        "VisionAnomalyExampleRecord", back_populates="model", passive_deletes=True
+    )
+
+
+class VisionAnomalyExampleRecord(Base):
+    """Une image d'exemple classée par score d'anomalie décroissant (top-N
+    borné, `MAX_EXAMPLES`) — heatmap ET masque binaire déjà encodés en PNG
+    base64 (`services/vision_localization.py`), directement affichables,
+    déjà réalignés à la taille de l'image originale (correctif des bugs
+    #10/#17). Table dédiée plutôt qu'un JSON agrégé sur `VisionAnomalyModel`
+    — même raisonnement que `AnomalyObservationRecord`."""
+
+    __tablename__ = "vision_anomaly_examples"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    organization_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    vision_anomaly_model_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("vision_anomaly_models.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    relative_path: Mapped[str] = mapped_column(String(500), nullable=False)
+    defect_category: Mapped[str] = mapped_column(String(100), nullable=False)
+    true_label: Mapped[int] = mapped_column(Integer, nullable=False)
+    predicted_label: Mapped[int] = mapped_column(Integer, nullable=False)
+    anomaly_score: Mapped[float] = mapped_column(Float, nullable=False)
+    heatmap_png: Mapped[str] = mapped_column(Text, nullable=False)
+    mask_png: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    model: Mapped["VisionAnomalyModel"] = relationship("VisionAnomalyModel", back_populates="examples")

@@ -84,9 +84,17 @@ async function requestForm<T>(path: string, fields: Record<string, string>): Pro
 /** Upload multipart — ne jamais fixer Content-Type soi-même : le navigateur
  * doit poser la boundary multipart lui-même. */
 async function uploadFile<T>(path: string, file: File): Promise<T> {
+  return uploadFileWithFields<T>(path, file, {});
+}
+
+/** Variante avec champs de formulaire additionnels (ex. `target_label` pour
+ * Grad-CAM, `POST /vision/classification/jobs/{id}/explain`) — même
+ * contrainte Content-Type que `uploadFile`. */
+async function uploadFileWithFields<T>(path: string, file: File, fields: Record<string, string>): Promise<T> {
   const token = getToken();
   const formData = new FormData();
   formData.append("file", file);
+  for (const [key, value] of Object.entries(fields)) formData.append(key, value);
   const res = await fetch(`${BASE_URL}${path}`, {
     method: "POST",
     headers: token ? { Authorization: `Bearer ${token}` } : undefined,
@@ -516,6 +524,173 @@ export interface AnomalyObservation {
   categorical_flags: Record<string, { value: string; population_pct: number }>;
 }
 
+// ── Pilier Vision (Lot 15) ───────────────────────────────────────────────
+
+export type VisionDatasetStructureType = "classification" | "mvtec_ad";
+export type VisionDatasetStatus = "processing" | "ready" | "error";
+
+export interface VisionDatasetSummary {
+  id: number;
+  name: string;
+  structure_type: VisionDatasetStructureType;
+  n_images: number;
+  n_classes: number | null;
+  status: VisionDatasetStatus;
+  error_message: string | null;
+  uploaded_by: string | null;
+  created_at: string;
+}
+
+export interface VisionValidationReport {
+  n_corrupted: number;
+  corrupted_files: string[];
+  n_duplicates: number;
+  duplicate_groups: string[][];
+  n_undersized: number;
+  undersized_files: string[];
+  warnings: string[];
+}
+
+export interface VisionDatasetDetail extends VisionDatasetSummary {
+  class_distribution: Record<string, number>;
+  validation_report: VisionValidationReport;
+}
+
+export interface VisionBackbone {
+  id: string;
+  label: string;
+}
+
+export interface VisionClassificationJobCreatePayload {
+  vision_dataset_id: number;
+  backbone_id?: string;
+  num_epochs?: number;
+  batch_size?: number;
+  learning_rate?: number;
+  dropout_rate?: number;
+  freeze_backbone?: boolean;
+  unfreeze_after_epoch?: number | null;
+  seed?: number;
+}
+
+export interface VisionClassificationJobSummary {
+  id: number;
+  vision_dataset_id: number;
+  vision_dataset_name: string | null;
+  backbone_id: string;
+  status: JobStatus;
+  progress_step: string | null;
+  progress_percent: number;
+  error_message: string | null;
+  created_by: string | null;
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+  test_accuracy: number | null;
+}
+
+export interface VisionEpochMetrics {
+  epoch: number;
+  train_loss: number;
+  train_accuracy: number;
+  val_loss: number;
+  val_accuracy: number;
+}
+
+export interface VisionPredictionExample {
+  relative_path: string;
+  true_label: string;
+  predicted_label: string;
+  confidence: number;
+  correct: boolean;
+}
+
+export interface VisionClassificationResult {
+  backbone_id: string;
+  class_names: string[];
+  n_train: number;
+  n_val: number;
+  n_test: number;
+  history: VisionEpochMetrics[];
+  test_accuracy: number;
+  test_precision_macro: number;
+  test_recall_macro: number;
+  test_f1_macro: number;
+  confusion_matrix: number[][];
+  examples: VisionPredictionExample[];
+  model_card: Record<string, unknown>;
+}
+
+export interface GradCamExplanation {
+  predicted_label: string;
+  probabilities: Record<string, number>;
+  target_label: string;
+  heatmap_png: string;
+}
+
+export interface VisionAnomalyModelOption {
+  id: string;
+  label: string;
+}
+
+export interface VisionAnomalyJobCreatePayload {
+  vision_dataset_id: number;
+  model_id?: string;
+  num_epochs?: number;
+  batch_size?: number;
+  learning_rate?: number;
+  mask_percentile?: number;
+  seed?: number;
+}
+
+export interface VisionAnomalyJobSummary {
+  id: number;
+  vision_dataset_id: number;
+  vision_dataset_name: string | null;
+  model_id: string;
+  status: JobStatus;
+  progress_step: string | null;
+  progress_percent: number;
+  error_message: string | null;
+  created_by: string | null;
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+  roc_auc: number | null;
+}
+
+export interface VisionAnomalyEpochMetrics {
+  epoch: number;
+  train_loss: number;
+  val_loss: number;
+}
+
+export interface VisionAnomalyResult {
+  model_id: string;
+  n_train: number;
+  n_val: number;
+  n_test: number;
+  history: VisionAnomalyEpochMetrics[];
+  threshold: number;
+  roc_auc: number;
+  test_accuracy: number;
+  test_precision: number;
+  test_recall: number;
+  test_f1: number;
+  confusion_matrix: number[][];
+  model_card: Record<string, unknown>;
+}
+
+export interface VisionAnomalyExample {
+  relative_path: string;
+  defect_category: string;
+  true_label: number;
+  predicted_label: number;
+  anomaly_score: number;
+  heatmap_png: string;
+  mask_png: string;
+}
+
 export interface TrainingJobCreatePayload {
   dataset_id: number;
   target_column: string;
@@ -939,5 +1114,45 @@ export const api = {
     getResult: (id: number) => request<AnomalyResult>(`/anomalies/jobs/${id}/result`),
     getObservations: (id: number) => request<AnomalyObservation[]>(`/anomalies/jobs/${id}/observations`),
     remove: (id: number) => request<void>(`/anomalies/jobs/${id}`, { method: "DELETE" }),
+  },
+
+  visionDatasets: {
+    list: () => request<VisionDatasetSummary[]>("/vision/datasets"),
+    upload: (file: File) => uploadFile<VisionDatasetDetail>("/vision/datasets", file),
+    get: (id: number) => request<VisionDatasetDetail>(`/vision/datasets/${id}`),
+    remove: (id: number) => request<void>(`/vision/datasets/${id}`, { method: "DELETE" }),
+  },
+
+  visionClassification: {
+    backbones: () => request<VisionBackbone[]>("/vision/classification/backbones"),
+    createJob: (data: VisionClassificationJobCreatePayload) =>
+      request<VisionClassificationJobSummary>("/vision/classification/jobs", {
+        method: "POST",
+        body: JSON.stringify(data),
+      }),
+    listJobs: () => request<VisionClassificationJobSummary[]>("/vision/classification/jobs"),
+    getJob: (id: number) => request<VisionClassificationJobSummary>(`/vision/classification/jobs/${id}`),
+    getResult: (id: number) => request<VisionClassificationResult>(`/vision/classification/jobs/${id}/result`),
+    explain: (id: number, file: File, targetLabel?: string) =>
+      uploadFileWithFields<GradCamExplanation>(
+        `/vision/classification/jobs/${id}/explain`,
+        file,
+        targetLabel ? { target_label: targetLabel } : {},
+      ),
+    remove: (id: number) => request<void>(`/vision/classification/jobs/${id}`, { method: "DELETE" }),
+  },
+
+  visionAnomalies: {
+    models: () => request<VisionAnomalyModelOption[]>("/vision/anomalies/models"),
+    createJob: (data: VisionAnomalyJobCreatePayload) =>
+      request<VisionAnomalyJobSummary>("/vision/anomalies/jobs", {
+        method: "POST",
+        body: JSON.stringify(data),
+      }),
+    listJobs: () => request<VisionAnomalyJobSummary[]>("/vision/anomalies/jobs"),
+    getJob: (id: number) => request<VisionAnomalyJobSummary>(`/vision/anomalies/jobs/${id}`),
+    getResult: (id: number) => request<VisionAnomalyResult>(`/vision/anomalies/jobs/${id}/result`),
+    getExamples: (id: number) => request<VisionAnomalyExample[]>(`/vision/anomalies/jobs/${id}/examples`),
+    remove: (id: number) => request<void>(`/vision/anomalies/jobs/${id}`, { method: "DELETE" }),
   },
 };

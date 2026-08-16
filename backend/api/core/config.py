@@ -69,6 +69,15 @@ class Settings(BaseSettings):
     # entraînement encore réellement actif, seulement sur un worker disparu.
     stale_job_timeout_minutes: int = 40
 
+    # Upload de datasets d'images (pilier Vision, Lot 15 sous-lot A) — ZIP
+    # décompressé en mémoire côté service (services/vision_datasets.py) : un
+    # dataset MVTec AD réel peut peser plusieurs centaines de Mo (contrairement
+    # aux CSV tabulaires, d'où une limite dédiée plus haute que
+    # max_upload_size_mb). max_vision_dataset_images protège en plus contre les
+    # ZIP bombes (nombre d'entrées, indépendant de la taille compressée).
+    max_vision_upload_size_mb: int = 500
+    max_vision_dataset_images: int = 5000
+
     # Durcissement SaaS (H11, AUDIT_ROADMAP.md) — aucune limite n'existait
     # sur les tentatives de connexion échouées, brute force possible sans
     # borne. Fenêtre glissante par IP cliente, stockée dans Redis (déjà une

@@ -653,7 +653,7 @@ Identifié explicitement en testant le produit, pas oublié :
 
 | Lot | Contenu |
 | --- | --- |
-| **6-8** | Vision par ordinateur (l'autre grand pilier de l'app historique, pas encore porté — legacy Streamlit substantiel mais bugué, voir `AUDIT_ROADMAP.md`) |
+| **15** | Vision par ordinateur — découpé en 4 sous-lots (voir `AUDIT_ROADMAP.md` section H). **Backend + frontend livrés** (2026-08-15/16, A infra dataset, B classification/transfer learning, C anomalies visuelles MVTec AD, D Grad-CAM) — 9 bugs critiques du legacy corrigés pendant le portage du sous-lot C, pas après. Testé avec l'app réelle (serveurs + navigateur) : plusieurs bugs réels trouvés et corrigés (structure MVTec AD officielle avec dossier catégorie englobant + `ground_truth/`, proxy Vite `/vision` manquant, endpoint de service d'image manquant, chemins Windows non portables). 106 tests verts. Détection d'objets/annotation assistée hors périmètre, reportées à un Lot 16+ non cadré. |
 
 *Durcissement SaaS commercial restant (plans tarifaires, facturation, quota
 de stockage) : hors périmètre technique, décision produit à cadrer

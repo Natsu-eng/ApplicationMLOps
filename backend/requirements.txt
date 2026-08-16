@@ -1,3 +1,8 @@
+# Index CPU dédié de PyTorch (lu par pip, PAS un commentaire) — pour
+# torch/torchvision plus bas : garantit une roue CPU, jamais une roue CUDA
+# par défaut (plusieurs Go, inutile — aucun GPU dans docker-compose.yml).
+--extra-index-url https://download.pytorch.org/whl/cpu
+
 # ── Web framework ─────────────────────────────────────────────
 fastapi==0.136.1
 uvicorn[standard]==0.46.0
@@ -44,6 +49,19 @@ rq==1.16.2
 # testé (SHAP, modèles joblib persistés). 0.5.6 ne demande que
 # scikit-learn>=0.22, compatible tel quel, vérifié par un fit réel.
 umap-learn==0.5.6
+
+# ── Pilier Vision — dataset image (Lot 15 sous-lot A) ──────────────────
+# Déjà présent comme dépendance transitive (12.3.0) — épinglé explicitement
+# car désormais une dépendance directe (services/vision_datasets.py).
+pillow==12.3.0
+
+# ── Pilier Vision — classification/transfer learning (Lot 15 sous-lot B) ──
+# CPU only : aucun GPU dans docker-compose.yml (voir AUDIT_ROADMAP.md,
+# diagnostic du chantier Vision) — installé depuis l'index CPU dédié de
+# PyTorch (~125 Mo pour torch seul, à inclure dans le Dockerfile backend :
+# `--index-url https://download.pytorch.org/whl/cpu`).
+torch==2.13.0
+torchvision==0.28.0
 
 # ── Tests ──────────────────────────────────────────────────────────
 pytest==8.2.2

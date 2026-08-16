@@ -1,0 +1,246 @@
+"""Tests de `services/vision_datasets.py` (pilier Vision, Lot 15 sous-lot A)
+— logique pure d'ingestion ZIP, sans DB ni HTTP."""
+from __future__ import annotations
+
+import io
+import zipfile
+
+import pytest
+from PIL import Image
+
+from services.vision_datasets import (
+    MIN_IMAGES_PER_CLASS,
+    MIN_TRAIN_GOOD_IMAGES,
+    VisionDatasetError,
+    analyze_and_extract_vision_zip,
+)
+
+
+def _png_bytes(color=(255, 0, 0), size=(32, 32)) -> bytes:
+    buf = io.BytesIO()
+    Image.new("RGB", size, color).save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def _build_zip(files: dict[str, bytes]) -> bytes:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        for name, content in files.items():
+            zf.writestr(name, content)
+    return buf.getvalue()
+
+
+def _classification_zip(n_per_class=4, n_classes=2) -> bytes:
+    files = {}
+    colors = [(255, 0, 0), (0, 255, 0), (0, 0, 255)]
+    for c in range(n_classes):
+        for i in range(n_per_class):
+            files[f"classe_{c}/img_{i}.png"] = _png_bytes(colors[c % len(colors)])
+    return _build_zip(files)
+
+
+def _mvtec_zip(n_train_good=6, n_test_good=3, n_test_defect=3) -> bytes:
+    files = {}
+    for i in range(n_train_good):
+        files[f"train/good/{i}.png"] = _png_bytes((10, 10, 10))
+    for i in range(n_test_good):
+        files[f"test/good/{i}.png"] = _png_bytes((20, 20, 20))
+    for i in range(n_test_defect):
+        files[f"test/scratch/{i}.png"] = _png_bytes((200, 0, 0))
+    return _build_zip(files)
+
+
+def test_valid_mvtec_ad_structure_with_category_wrapper_detected(tmp_path):
+    """Un téléchargement MVTec AD officiel réel est zippé PAR CATÉGORIE
+    (ex. bottle/train/good/..., bottle/test/...) — bug réel trouvé en testant
+    avec un vrai dataset, pas seulement des fixtures synthétiques sans
+    dossier englobant."""
+    files = {f"bottle/train/good/{i}.png": _png_bytes() for i in range(MIN_TRAIN_GOOD_IMAGES)}
+    files.update({f"bottle/test/good/{i}.png": _png_bytes() for i in range(3)})
+    files.update({f"bottle/test/broken_large/{i}.png": _png_bytes((200, 0, 0)) for i in range(3)})
+    content = _build_zip(files)
+    report = analyze_and_extract_vision_zip(content, tmp_path, max_images=1000, max_uncompressed_bytes=10_000_000)
+    assert report.structure_type == "mvtec_ad"
+    assert report.class_distribution["train/good"] == MIN_TRAIN_GOOD_IMAGES
+    assert report.class_distribution["test/broken_large"] == 3
+    # La catégorie englobante ("bottle") ne doit pas se retrouver dans
+    # l'arborescence extraite — normalisée vers train/good, test/<x>.
+    assert (tmp_path / "train" / "good").exists()
+    assert not (tmp_path / "bottle").exists()
+
+
+def test_ground_truth_folder_ignored_silently(tmp_path):
+    """Le dossier `ground_truth/` (masques de segmentation pixel par pixel)
+    d'un téléchargement MVTec AD officiel doit être ignoré, jamais une
+    erreur de structure ni copié dans le dataset extrait."""
+    files = {f"bottle/train/good/{i}.png": _png_bytes() for i in range(MIN_TRAIN_GOOD_IMAGES)}
+    files.update({f"bottle/test/good/{i}.png": _png_bytes() for i in range(3)})
+    files.update({f"bottle/test/broken_large/{i}.png": _png_bytes((200, 0, 0)) for i in range(3)})
+    files.update({f"bottle/ground_truth/broken_large/{i}_mask.png": _png_bytes((255, 255, 255)) for i in range(3)})
+    content = _build_zip(files)
+    report = analyze_and_extract_vision_zip(content, tmp_path, max_images=1000, max_uncompressed_bytes=10_000_000)
+    assert report.structure_type == "mvtec_ad"
+    assert report.n_images == MIN_TRAIN_GOOD_IMAGES + 6  # ground_truth exclu du compte
+    assert not (tmp_path / "ground_truth").exists()
+    assert not (tmp_path / "bottle" / "ground_truth").exists()
+
+
+def test_multi_category_mvtec_collection_rejected_with_clear_message(tmp_path):
+    """Le dossier MVTec AD officiel complet (bottle/, cable/, capsule/, ...)
+    zippé tel quel doit être refusé avec un message explicite — pas
+    l'erreur générique de structure de classification, trompeuse ici."""
+    files = {}
+    for category in ("bottle", "cable"):
+        files.update({f"{category}/train/good/{i}.png": _png_bytes() for i in range(MIN_TRAIN_GOOD_IMAGES)})
+        files.update({f"{category}/test/good/{i}.png": _png_bytes() for i in range(2)})
+        files.update({f"{category}/test/scratch/{i}.png": _png_bytes((200, 0, 0)) for i in range(2)})
+    content = _build_zip(files)
+    with pytest.raises(VisionDatasetError, match="plusieurs catégories"):
+        analyze_and_extract_vision_zip(content, tmp_path, max_images=1000, max_uncompressed_bytes=10_000_000)
+
+
+def test_valid_classification_structure_detected(tmp_path):
+    content = _classification_zip(n_per_class=4, n_classes=2)
+    report = analyze_and_extract_vision_zip(content, tmp_path, max_images=1000, max_uncompressed_bytes=10_000_000)
+    assert report.structure_type == "classification"
+    assert report.n_classes == 2
+    assert report.n_images == 8
+    assert set(report.class_distribution) == {"classe_0", "classe_1"}
+    assert (tmp_path / "classe_0" / "img_0.png").exists()
+
+
+def test_valid_classification_structure_with_wrapper_folder_detected(tmp_path):
+    """Sélectionner le dossier parent contenant les classes puis
+    "Compresser" (Explorateur Windows/Finder) inclut naturellement ce
+    dossier comme racine du ZIP — bug réel trouvé en testant avec un
+    dataset zippé ainsi (pas seulement des fixtures sans dossier
+    englobant)."""
+    files = {}
+    for c in range(2):
+        for i in range(4):
+            files[f"mon_dataset/classe_{c}/img_{i}.png"] = _png_bytes((50 * c, 50 * c, 50 * c))
+    content = _build_zip(files)
+    report = analyze_and_extract_vision_zip(content, tmp_path, max_images=1000, max_uncompressed_bytes=10_000_000)
+    assert report.structure_type == "classification"
+    assert set(report.class_distribution) == {"classe_0", "classe_1"}
+    assert (tmp_path / "classe_0" / "img_0.png").exists()
+    assert not (tmp_path / "mon_dataset").exists()
+
+
+def test_valid_mvtec_ad_structure_detected(tmp_path):
+    content = _mvtec_zip()
+    report = analyze_and_extract_vision_zip(content, tmp_path, max_images=1000, max_uncompressed_bytes=10_000_000)
+    assert report.structure_type == "mvtec_ad"
+    assert report.n_classes is None
+    assert report.class_distribution["train/good"] == 6
+    assert report.class_distribution["test/good"] == 3
+    assert report.class_distribution["test/scratch"] == 3
+    assert (tmp_path / "train/good").exists()
+
+
+def test_unrecognized_structure_raises(tmp_path):
+    content = _build_zip({"photo1.png": _png_bytes(), "photo2.png": _png_bytes()})
+    with pytest.raises(VisionDatasetError):
+        analyze_and_extract_vision_zip(content, tmp_path, max_images=1000, max_uncompressed_bytes=10_000_000)
+
+
+def test_zip_slip_path_rejected(tmp_path):
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("../../evil.png", _png_bytes())
+    with pytest.raises(VisionDatasetError):
+        analyze_and_extract_vision_zip(buf.getvalue(), tmp_path, max_images=1000, max_uncompressed_bytes=10_000_000)
+
+
+def test_bad_zip_file_rejected(tmp_path):
+    with pytest.raises(VisionDatasetError):
+        analyze_and_extract_vision_zip(b"not a zip", tmp_path, max_images=1000, max_uncompressed_bytes=10_000_000)
+
+
+def test_corrupted_image_excluded_and_reported(tmp_path):
+    files = {f"classe_0/img_{i}.png": _png_bytes() for i in range(MIN_IMAGES_PER_CLASS + 1)}
+    files["classe_0/broken.png"] = b"this is not a real image"
+    files.update({f"classe_1/img_{i}.png": _png_bytes((0, 255, 0)) for i in range(MIN_IMAGES_PER_CLASS)})
+    content = _build_zip(files)
+    report = analyze_and_extract_vision_zip(content, tmp_path, max_images=1000, max_uncompressed_bytes=10_000_000)
+    assert report.n_corrupted == 1
+    assert "classe_0/broken.png" in report.corrupted_files
+    assert any("corrompue" in w for w in report.warnings)
+
+
+def test_duplicate_images_detected(tmp_path):
+    same = _png_bytes((123, 45, 67))
+    files = {
+        "classe_0/a.png": same,
+        "classe_0/b.png": same,
+        "classe_0/c.png": _png_bytes((1, 2, 3)),
+        "classe_1/x.png": _png_bytes((4, 5, 6)),
+        "classe_1/y.png": _png_bytes((7, 8, 9)),
+    }
+    content = _build_zip(files)
+    report = analyze_and_extract_vision_zip(content, tmp_path, max_images=1000, max_uncompressed_bytes=10_000_000)
+    assert report.n_duplicates == 1
+    assert len(report.duplicate_groups) == 1
+    assert set(report.duplicate_groups[0]) == {"classe_0/a.png", "classe_0/b.png"}
+
+
+def test_undersized_image_excluded(tmp_path):
+    files = {f"classe_0/img_{i}.png": _png_bytes(size=(32, 32)) for i in range(MIN_IMAGES_PER_CLASS)}
+    files["classe_0/tiny.png"] = _png_bytes(size=(5, 5))
+    files.update({f"classe_1/img_{i}.png": _png_bytes((0, 0, 255), size=(32, 32)) for i in range(MIN_IMAGES_PER_CLASS)})
+    content = _build_zip(files)
+    report = analyze_and_extract_vision_zip(content, tmp_path, max_images=1000, max_uncompressed_bytes=10_000_000)
+    assert report.n_undersized == 1
+    assert "classe_0/tiny.png" in report.undersized_files
+
+
+def test_class_with_too_few_images_rejected(tmp_path):
+    content = _classification_zip(n_per_class=MIN_IMAGES_PER_CLASS - 1, n_classes=2)
+    with pytest.raises(VisionDatasetError):
+        analyze_and_extract_vision_zip(content, tmp_path, max_images=1000, max_uncompressed_bytes=10_000_000)
+
+
+def test_mvtec_missing_test_good_rejected(tmp_path):
+    files = {f"train/good/{i}.png": _png_bytes() for i in range(MIN_TRAIN_GOOD_IMAGES)}
+    files.update({f"test/scratch/{i}.png": _png_bytes((200, 0, 0)) for i in range(2)})
+    content = _build_zip(files)
+    with pytest.raises(VisionDatasetError):
+        analyze_and_extract_vision_zip(content, tmp_path, max_images=1000, max_uncompressed_bytes=10_000_000)
+
+
+def test_mvtec_train_with_defect_folder_rejected(tmp_path):
+    """train/ ne doit contenir QUE des images normales — un dossier de
+    défaut sous train/ signalerait une fuite de labels d'anomalie dans
+    l'entraînement non supervisé (correctif du bug #1)."""
+    files = {f"train/good/{i}.png": _png_bytes() for i in range(MIN_TRAIN_GOOD_IMAGES)}
+    files.update({f"train/scratch/{i}.png": _png_bytes((200, 0, 0)) for i in range(2)})
+    files.update({f"test/good/{i}.png": _png_bytes() for i in range(2)})
+    files.update({f"test/scratch/{i}.png": _png_bytes((200, 0, 0)) for i in range(2)})
+    content = _build_zip(files)
+    with pytest.raises(VisionDatasetError):
+        analyze_and_extract_vision_zip(content, tmp_path, max_images=1000, max_uncompressed_bytes=10_000_000)
+
+
+def test_too_many_images_rejected(tmp_path):
+    content = _classification_zip(n_per_class=5, n_classes=2)
+    with pytest.raises(VisionDatasetError):
+        analyze_and_extract_vision_zip(content, tmp_path, max_images=3, max_uncompressed_bytes=10_000_000)
+
+
+def test_class_imbalance_warns_but_does_not_block(tmp_path):
+    files = {f"classe_0/img_{i}.png": _png_bytes() for i in range(30)}
+    files.update({f"classe_1/img_{i}.png": _png_bytes((0, 255, 0)) for i in range(2)})
+    content = _build_zip(files)
+    report = analyze_and_extract_vision_zip(content, tmp_path, max_images=1000, max_uncompressed_bytes=10_000_000)
+    assert report.structure_type == "classification"
+    assert any("déséquilibrées" in w for w in report.warnings)
+
+
+def test_non_image_files_ignored(tmp_path):
+    files = {f"classe_0/img_{i}.png": _png_bytes() for i in range(MIN_IMAGES_PER_CLASS)}
+    files.update({f"classe_1/img_{i}.png": _png_bytes((0, 255, 0)) for i in range(MIN_IMAGES_PER_CLASS)})
+    files["classe_0/notes.txt"] = b"pas une image"
+    files["__MACOSX/classe_0/._img_0.png"] = b"metadata macos"
+    content = _build_zip(files)
+    report = analyze_and_extract_vision_zip(content, tmp_path, max_images=1000, max_uncompressed_bytes=10_000_000)
+    assert report.n_images == MIN_IMAGES_PER_CLASS * 2

@@ -17,12 +17,12 @@ from pydantic import BaseModel
 from api.core.config import get_settings
 from api.core.database import get_db
 from api.core.job_queue import training_queue
-from api.core.models import AnomalyJob, ClusteringJob, Dataset, DimensionalityJob, DimensionalityPoint, TrainingJob, User
+from api.core.models import Dataset, DimensionalityJob, DimensionalityPoint, User
 from api.routers.auth import get_current_user
 from services.audit import log_action
 from services.datasets import DatasetParsingError, read_dataframe
 from services.dimensionality_registry import DEFAULT_ALGORITHM_ID, DIMENSIONALITY_REGISTRY
-from services.job_quota import raise_if_quota_exceeded
+from services.job_quota import ALL_JOB_MODELS, raise_if_quota_exceeded
 from services.job_watchdog import reconcile_stale_jobs
 
 router = APIRouter(prefix="/dimensionality", tags=["dimensionality"])
@@ -169,7 +169,7 @@ def create_dimensionality_job(
     raise_if_quota_exceeded(
         db,
         current_user.organization_id,
-        [TrainingJob, ClusteringJob, DimensionalityJob, AnomalyJob],
+        ALL_JOB_MODELS,
         _settings.max_concurrent_jobs_per_org,
     )
 

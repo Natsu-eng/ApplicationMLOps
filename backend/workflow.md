@@ -1770,6 +1770,346 @@ supervisé + sécurité/auth, aucune casse). `tsc -b`, `vite build`,
 `npm run lint` (0 erreur), `vitest run` (33/33) verts. 376 tests au total
 dans le dépôt à l'issue de ce lot.
 
+## Lot 15, sous-lot A — Pilier Vision : infrastructure dataset image (livré)
+
+Premier sous-lot du pilier Vision (4 sous-lots planifiés : A infra dataset →
+B classification/transfer learning → C anomalies visuelles MVTec AD → D
+Grad-CAM — voir `AUDIT_ROADMAP.md` section H). Fondation partagée par B et C
+(les deux ont besoin d'ingérer un dataset d'images), construite une seule
+fois. Aucune réutilisation du legacy Streamlit (`src/`, `orchestrators/`,
+`monitoring/state_managers.STATE`) — module backend entièrement neuf, seule
+l'infra générique (storage, audit) est réutilisée telle quelle.
+
+- [x] **`services/vision_datasets.py`** (nouveau) — logique pure, sans
+  dépendance HTTP, directement testable :
+  - Détection de structure **stricte, jamais devinée en silence** —
+    correctif préventif du bug #1 déjà documenté
+    (`docs/legacy/ANALYSE_COMPLETE_COMPUTER_VISION.md` : un `y_train` MVTec
+    AD mal chargé pouvait faire partir le legacy en mode supervisé par
+    accident). Deux structures reconnues, aucune autre : dossiers de classes
+    (`<classe>/*.png`, ≥2 classes) pour la classification, ou
+    `train/good/` + `test/good/` + `test/<defaut>/` pour MVTec AD — `train/`
+    ne doit contenir QUE des images normales (`good`), `test/` doit contenir
+    `good` et au moins une catégorie de défaut (nécessaire pour calibrer le
+    seuil au sous-lot C, correctif préventif du bug #12).
+  - Validation systématique par image (Pillow `verify()` + réouverture pour
+    lire les dimensions réelles — `verify()` invalide l'objet pour tout
+    usage ultérieur) : images corrompues/tronquées exclues et reportées
+    (jamais bloquant sur une image individuelle), doublons détectés par hash
+    SHA-256 (conservés, signalés), images sous-dimensionnées (<20px)
+    exclues, classes déséquilibrées signalées (ratio >10x) sans bloquer.
+  - Sécurité : protection zip-slip (chemins `..`/absolus rejetés avant toute
+    extraction), protection zip-bombe (cap sur la taille décompressée
+    cumulée ET sur le nombre d'images, indépendamment de la taille
+    compressée de l'archive).
+- [x] **`api/core/models.py`** — `VisionDataset` (table dédiée :
+  `structure_type`, `storage_dir`, `n_images`, `n_classes`,
+  `class_distribution_json`, `validation_report_json`).
+- [x] **`api/core/storage.py`** — `vision_dataset_dir`/
+  `delete_vision_dataset_dir` : un dataset vision est un DOSSIER de
+  nombreuses petites images (pas un fichier unique comme
+  `dataset_file_path`), même isolation disque
+  (`storage/datasets_vision/{organization_id}/{dataset_id}/`).
+- [x] **`api/core/config.py`** — `max_vision_upload_size_mb` (500, plus haut
+  que `max_upload_size_mb` des CSV : un dataset MVTec AD réel pèse
+  facilement plusieurs centaines de Mo), `max_vision_dataset_images` (5000,
+  protection zip-bombe indépendante de la taille).
+- [x] **`api/routers/vision_datasets.py`** (nouveau) — upload **synchrone**
+  (comme les datasets tabulaires, pas de tâche de fond : validation bornée
+  par `max_vision_dataset_images`, de l'ordre de la seconde), `POST`/`GET`
+  (liste)/`GET {id}` (détail + rapport de validation)/`DELETE`. Un ZIP dont
+  la structure n'est pas reconnue reçoit quand même une entrée en base
+  (`status="error"`, message diagnostiqué) plutôt qu'une simple 4xx — même
+  convention que `POST /datasets`.
+- [x] **`requirements.txt`** — `pillow==12.3.0` épinglé explicitement
+  (c'était une dépendance transitive jusqu'ici, devient directe).
+
+**Vérifié** : 22 tests ciblés verts (`test_vision_datasets_service.py` 15 :
+structures valides classification/MVTec AD, structure non reconnue,
+zip-slip, ZIP invalide, image corrompue exclue+reportée, doublons détectés,
+image sous-dimensionnée exclue, classe sous le minimum rejetée, MVTec AD
+sans `test/good` rejeté, `train/` avec dossier de défaut rejeté (fuite de
+labels), trop d'images rejeté, déséquilibre signalé sans bloquer, fichiers
+non-image ignorés ; `test_vision_datasets_api.py` 7 : upload valide,
+extension refusée, archive vide refusée, structure invalide → `status:
+error` avec message, isolation multi-tenant liste/détail, suppression,
+rapport de validation exposé par l'API). **Suite de régression complète du
+dépôt non rejouée dans cette session** (interrompue volontairement après
+plus de 40 minutes — la suite complète prenait ~29 min lors du dernier
+audit à 257 tests, le dépôt en compte désormais ~398 ; à revérifier avant
+le sous-lot B ou via CI, pas de régression suspectée vu la nature additive
+des changements — nouveau modèle/router/service, aucun fichier ML existant
+modifié).
+
+Frontend : aucun (pas de page dédiée pour ce sous-lot — intégration prévue
+au wizard du sous-lot B). Pilier `vision` reste `status: "soon"` dans
+`config/pillars.ts` jusqu'à ce qu'une page réelle existe.
+
+## Lot 15, sous-lot B — Pilier Vision : classification d'images + transfer learning (livré, backend)
+
+Deuxième sous-lot du pilier Vision. Premier module du dépôt à réellement
+entraîner un réseau de neurones (PyTorch/CPU) — aucune notion commune avec
+`ml_training.py` (Optuna, `ColumnTransformer`, SHAP n'ont aucun sens pour des
+images), module séparé de bout en bout, même principe que
+`anomaly_training.py`.
+
+- [x] **`requirements.txt`** — `torch==2.13.0`/`torchvision==0.28.0` (roues
+  CPU, `--extra-index-url https://download.pytorch.org/whl/cpu` ajouté en
+  tête de fichier — évite de récupérer par erreur une roue CUDA de plusieurs
+  Go, aucun GPU dans `docker-compose.yml`).
+- [x] **`services/vision_classification_registry.py`** (nouveau) — 2
+  backbones pré-entraînés ImageNet seulement (`mobilenet_v3_small` par
+  défaut, `resnet18`), volontairement pas les 17 du legacy
+  (`transfer_learning.py` : VGG/EfficientNet/ResNet50+) — impraticables en
+  CPU dans le temps d'un job. `in_features` de la couche remplacée lu
+  dynamiquement sur chaque backbone (jamais codé en dur — diffère entre
+  `resnet.fc` et `mobilenet.classifier[-1]`). Gel/dégel du backbone par
+  sous-modules explicites (`backbone_children`), pas un compteur de couches
+  arbitraire comme le legacy.
+- [x] **`services/vision_classification_training.py`** (nouveau) —
+  `train_and_evaluate_classification` : pipeline `ImageFolder` (structure
+  déjà garantie par le sous-lot A) → split stratifié 70/15/15 (sklearn,
+  seed propagée) → augmentation légère train uniquement (flip/rotation/
+  jitter) → normalisation ImageNet → boucle d'entraînement (transfert
+  learning, backbone gelé par défaut, dégel optionnel à une époque donnée
+  via `unfreeze_after_epoch`) → meilleure époque conservée (`val_loss`
+  minimal, pas la dernière) → évaluation test (accuracy/precision/recall/F1
+  macro, matrice de confusion) → exemples de prédictions **corrects ET
+  erronés** (priorité aux erreurs, skill Computer Vision). Garde-fou de
+  temps interne (`max_training_seconds`, 1500s par défaut — largement sous
+  le timeout RQ de 1800s) : arrête proprement entre deux époques plutôt que
+  de risquer un timeout RQ brutal sur un gros dataset CPU, honnêtement
+  signalé (`model_card["time_capped"]`). Vérification stricte AVANT tout
+  calcul coûteux : ≥2 classes, ≥6 images/classe (minimum pour un split
+  stratifié fiable) — `TrainingAbortedError` réutilisée telle quelle
+  (`services/ml_preprocessing.py`), pas un nouveau type.
+- [x] **`api/core/models.py`** — `VisionClassificationJob`/
+  `VisionClassificationModel` (tables dédiées, mêmes conventions
+  `progress_*`/`status` que les autres jobs).
+- [x] **`api/core/storage.py`** — `vision_classification_model_file_path`
+  (`.pt`, `torch.save`, pas `.joblib`). **Bug réel trouvé et corrigé en
+  écrivant les tests** : `vision_dataset_dir` (sous-lot A) ne nettoyait pas
+  un dossier préexistant avant extraction — invisible en production
+  (séquence Postgres jamais réutilisée) mais reproductible en test SQLite
+  (séquence qui redémarre à 1 après `drop_all`/`create_all` entre deux
+  tests) : un id de dataset réutilisé héritait silencieusement des fichiers
+  MVTec AD d'un test précédent, mélangés aux nouvelles classes de
+  classification (`ImageFolder` détectait alors 4 "classes" au lieu de 2).
+  Corrigé : le dossier est maintenant TOUJOURS vidé avant d'être recréé.
+- [x] **`services/job_quota.py`** — **simplification profitant de l'ajout
+  d'un 5ᵉ type de job** : la liste `[TrainingJob, ClusteringJob,
+  DimensionalityJob, AnomalyJob]` était recopiée à l'identique dans les 4
+  routers existants (risque déjà matérialisé une fois au Lot 14). Extraite
+  en constante unique `ALL_JOB_MODELS` (avec le 5ᵉ type inclus), importée
+  par les 5 routers désormais — un seul endroit à modifier pour le
+  prochain type de job (sous-lot C).
+- [x] **`workers/vision_classification_worker.py`** (nouveau) — même
+  structure que les workers précédents ; rejette explicitement un dataset
+  de structure `mvtec_ad` (message diagnostiqué, pas un crash `ImageFolder`
+  silencieux sur une structure inattendue).
+- [x] **`api/routers/vision_classification.py`** (nouveau) — `GET
+  /backbones`, `POST/GET/DELETE /jobs`, `GET /jobs/{id}/result`. Valide la
+  structure du dataset (`classification`, pas `mvtec_ad`) en défense en
+  profondeur (déjà vérifié par le worker).
+
+**Vérifié** : 30 tests nouveaux, tous verts en isolation (8
+`test_vision_classification_registry.py`, 6
+`test_vision_classification_training.py` — entraînement réel non mocké sur
+mini dataset synthétique, 4 `test_vision_classification_worker.py`, 12
+`test_vision_classification_api.py`, dont le partage du quota avec un job
+tabulaire). Un run concurrent accidentel de deux suites pytest partageant le
+même fichier SQLite de test a produit 3 échecs illusoires (`no such table`,
+422 non levé) — non réels, confirmés en rejouant isolément juste après ;
+leçon retenue : ne jamais lancer deux suites pytest en parallèle sur ce
+dépôt (fichier de test SQLite à chemin fixe, `tests/conftest.py`).
+Entraînement CPU réel mesuré : ~10-25s pour 1-2 époques sur un dataset de 16
+images (mobilenet_v3_small, poids ImageNet déjà en cache local) — nécessite
+un accès réseau au premier téléchargement des poids pré-entraînés
+(`~/.cache/torch/hub/checkpoints/`), à anticiper pour le déploiement
+(pré-télécharger à la construction de l'image Docker, ou volume persistant
+sur le worker).
+
+Frontend : aucun pour ce sous-lot (backend seul) — page à construire dans un
+lot dédié une fois les sous-lots C/D également livrés, ou dans un lot
+frontend séparé à cadrer.
+
+## Lot 15, sous-lot C — Pilier Vision : détection d'anomalies visuelles MVTec AD (livré, backend)
+
+Troisième sous-lot du pilier Vision — le plus bugué du legacy (9 des 18 bugs
+documentés dans `docs/legacy/ANALYSE_COMPLETE_COMPUTER_VISION.md` touchent
+directement ce périmètre). Reconception, pas un simple portage : chaque bug
+corrigé PENDANT l'écriture, pas ajouté après coup.
+
+- [x] **`services/vision_localization.py`** (nouveau, réutilisable tel quel
+  au sous-lot D Grad-CAM) — `generate_binary_mask` (correctif direct du bug
+  **#14** : cette fonction n'existait PAS dans le legacy), `resize_map_to_original`
+  (correctif des bugs **#10/#17** : la carte d'erreur est TOUJOURS
+  réalignée à la taille réelle de l'image source avant toute superposition
+  — testé explicitement : une zone d'erreur au coin haut-gauche reste au
+  coin haut-gauche après resize), `encode_heatmap_png`/`encode_mask_png`
+  (PNG base64 directement affichables, pas de floats bruts à interpréter
+  côté consommateur).
+- [x] **`services/vision_anomaly_registry.py`** (nouveau) — un seul
+  `ConvAutoEncoder`, entièrement convolutif (pas de bottleneck dense — évite
+  par construction toute la classe de bugs de calcul dynamique de
+  `flat_features` du legacy), `IMAGE_SIZE` fixe (128) imposé par le
+  pipeline de données, jamais un resize interne au modèle façon
+  `auto_resize` du legacy (racine du bug **#5**, incohérence de format).
+  Volontairement pas de VAE/denoising/PatchCore/Siamese (legacy en propose
+  4+) — PatchCore notamment impraticable en CPU (recherche de plus proche
+  voisin sur tout le train à chaque inférence).
+- [x] **`services/vision_anomaly_training.py`** (nouveau) —
+  `train_and_evaluate_anomaly_vision` : entraînement sur `train/good/`
+  UNIQUEMENT (reconstruction MSE, split train/val 85/15), pas de
+  normalisation ImageNet (reconstruction comparée directement en espace
+  [0,1] — mélanger normalisé/non-normalisé est précisément le bug **#11**,
+  évité en n'introduisant jamais de normalisation). Évaluation sur `test/`
+  **systématique** : carte d'erreur calculée pour CHAQUE image de test
+  pendant l'évaluation standard, jamais une fonction annexe jamais appelée
+  (correctif direct des bugs **#8/#16**). Seuil de détection **calibré** par
+  J de Youden sur la courbe ROC de `test/` (labels good/défaut toujours
+  disponibles, structure garantie par le sous-lot A) — remplace le
+  percentile fixe arbitraire du legacy (correctif des bugs **#7/#12**,
+  vérifié par test : deux datasets différents produisent deux seuils
+  différents). Même garde-fou de temps interne que le sous-lot B
+  (`max_training_seconds`). 12 exemples conservés (triés par score
+  décroissant), heatmap ET masque déjà encodés et réalignés.
+- [x] **`api/core/models.py`** — `VisionAnomalyJob`/`VisionAnomalyModel`/
+  `VisionAnomalyExampleRecord` (table dédiée pour les exemples, même
+  raisonnement que `AnomalyObservationRecord` : une ligne par exemple,
+  jamais un JSON agrégé contenant des PNG base64).
+- [x] **`api/core/storage.py`** — `vision_anomaly_model_file_path`.
+- [x] **`services/job_quota.py`** — `VisionAnomalyJob` ajouté à
+  `ALL_JOB_MODELS` : un seul endroit modifié (le refactor du sous-lot B a
+  payé immédiatement — sans lui, il aurait fallu retoucher les 5 routers
+  existants un par un).
+- [x] **`workers/vision_anomaly_worker.py`** (nouveau) — rejette
+  explicitement un dataset de structure `classification` (message
+  diagnostiqué).
+- [x] **`api/routers/vision_anomalies.py`** (nouveau) — `GET /models`,
+  `POST/GET/DELETE /jobs`, `GET /jobs/{id}/result`, `GET /jobs/{id}/examples`.
+
+**Vérifié** : 32 tests nouveaux (7 `test_vision_localization.py` — dont un
+test dédié de non-régression pour les bugs #10/#17, 3
+`test_vision_anomaly_registry.py`, 6 `test_vision_anomaly_training.py`
+— entraînement réel non mocké sur mini dataset MVTec AD synthétique, 4
+`test_vision_anomaly_worker.py`, 12 `test_vision_anomaly_api.py`), tous
+verts en isolation. **Deux leçons d'exécution retenues pendant ce
+sous-lot** : (1) un run de suite complète lancé en tâche de fond plus tôt
+dans la session avait été oublié actif — a de nouveau corrompu des tests
+par accès concurrent au même fichier SQLite (mêmes symptômes qu'au
+sous-lot B : 401 au lieu de 404, email "déjà enregistré" sur un
+`_fresh_database` pourtant censé repartir de zéro) — confirmés faux en
+l'arrêtant et en rejouant isolément ; (2) un vrai bug de fixture de test
+(dataset de test à 6 images `train/good`, sous le minimum d'entraînement de
+10) a été trouvé et corrigé au passage, distinct de la corruption.
+
+Frontend : aucun pour ce sous-lot (backend seul, même choix que le
+sous-lot B).
+
+## Lot 15, sous-lot D — Pilier Vision : Grad-CAM (livré, backend) — backend du chantier Vision terminé
+
+Dernier sous-lot backend planifié du pilier Vision. Équivalent visuel de
+SHAP local (`services/ml_explainability.py`) : le legacy mentionnait
+Grad-CAM dans sa documentation historique mais ne l'a jamais branché nulle
+part (aucune trace dans les 4 audits `docs/legacy/`) — première
+implémentation réelle du dépôt.
+
+- [x] **`services/vision_classification_registry.py`** — `gradcam_target_layer`
+  ajouté à `ClassificationBackboneSpec` (dernière couche convolutive avant
+  pooling/classifier — `model.layer4` pour ResNet18, `model.features` pour
+  MobileNetV3-Small), déclaré explicitement par backbone, jamais deviné
+  dynamiquement.
+- [x] **`services/vision_classification_training.py`** — `build_eval_transform()`
+  rendue publique (était privée) : Grad-CAM doit voir exactement la même
+  normalisation que l'entraînement, jamais une transformation reconstruite
+  indépendamment.
+- [x] **`services/vision_gradcam.py`** (nouveau) — `explain_classification_prediction` :
+  hooks forward/backward sur la couche cible, pondération par la moyenne
+  spatiale du gradient (Grad-CAM original, Selvaraju et al. 2017),
+  réutilise intégralement `services/vision_localization.py` (sous-lot C)
+  pour le réalignement à la taille d'image originale et l'encodage PNG — un
+  seul mécanisme de superposition heatmap/image dans tout le module vision.
+  **Bug réel trouvé et corrigé en testant** : avec un backbone gelé (mode
+  par défaut du sous-lot B), l'entrée ET tous les paramètres du backbone
+  ont `requires_grad=False` — le graphe autograd n'est alors jamais
+  construit jusqu'à la couche cible, le hook backward capte un gradient
+  vide/incorrect (silencieux, juste un `UserWarning` PyTorch facile à
+  manquer). Corrigé par `input_tensor.requires_grad_(True)` avant le
+  forward pass — les poids gelés ne sont jamais mis à jour (pas
+  d'`optimizer.step()` dans ce module), seul le graphe est reconnecté.
+  Vérifié explicitement par un test dédié (`std() > 0` sur la heatmap
+  produite — une heatmap dégénérée/plate aurait laissé passer le bug
+  silencieusement).
+- [x] **`api/routers/vision_classification.py`** — `POST /jobs/{id}/explain`
+  (upload image + `target_label` optionnel) : endpoint **synchrone**, seule
+  exception délibérée à la règle "jamais de calcul ML dans la requête HTTP"
+  de ce router — même raisonnement que `POST /training/jobs/{id}/predict`
+  (inférence + SHAP local), un seul forward+backward pass de l'ordre de la
+  seconde, pas un entraînement.
+
+**Vérifié** : 11 tests nouveaux (6 `test_vision_gradcam.py` — dont un test
+dédié de non-régression pour le bug du backbone gelé, un modèle réel
+entraîné une seule fois et réutilisé par tous les tests du fichier
+`scope="module"` pour ne pas répéter l'entraînement à chaque test ; 5 tests
+`/explain` ajoutés à `test_vision_classification_api.py`), tous verts en
+isolation.
+
+Frontend : aucun (backend seul, comme B et C).
+
+**Backend du chantier Vision (Lot 15, sous-lots A→D) terminé** — 97 tests
+au total pour le pilier (`pytest -k vision`, mesuré directement, pas
+recalculé à la main), tous verts en isolation. Le dépôt compte désormais
+478 tests. Détection d'objets/annotation assistée restent hors périmètre
+(Lot 16+, non cadré).
+
+## Lot 15 — Frontend (pages React) + corrections trouvées en test réel
+
+Frontend construit pour les sous-lots A/B/D (`pages/VisionClassification.tsx`
+— upload dataset, wizard transfer learning, résultats, Grad-CAM) et C
+(`pages/VisionAnomalies.tsx` — wizard MVTec AD, résultats, exemples avec
+heatmap/masque), composant partagé `components/vision/VisionDatasetPicker.tsx`
+(upload ZIP + sélection, factorisé une seule fois pour les deux modules),
+`components/vision/VisionImage.tsx` (affichage authentifié d'une image de
+dataset via blob URL — `<img src>` ne peut pas porter de Bearer token).
+Pilier `vision` passé à `status: "active"` dans `config/pillars.ts`.
+
+**Bugs réels trouvés en testant l'app réellement (serveurs + navigateur, pas
+seulement pytest) — leçon déjà tirée pour le pilier supervisé (SHAP
+multiclasse), confirmée à nouveau ici :**
+
+- **`vite.config.ts` n'avait pas `/vision` dans le proxy de dev** — même
+  oubli que Lot 13/14 (déjà signalé en commentaire dans ce fichier), corrigé
+  en l'ajoutant explicitement.
+- **`GET /vision/datasets/{id}/image` manquait entièrement** — les exemples
+  de prédiction (classification) et d'anomalie ne référencent qu'un
+  `relative_path`, aucun endpoint ne servait l'image elle-même. Ajouté
+  (`api/routers/vision_datasets.py`), protection zip-slip par
+  `resolve()`/`parents` vérifiée par test.
+- **Structure MVTec AD réelle non reconnue** — un téléchargement officiel
+  est zippé PAR CATÉGORIE avec un dossier englobant
+  (`bottle/train/good/...`) et un dossier `ground_truth/` (masques pixel),
+  ni l'un ni l'autre géré par le détecteur de structure du sous-lot A (testé
+  jusque-là avec des fixtures synthétiques sans dossier englobant). Corrigé
+  dans `services/vision_datasets.py::_detect_structure` : dossier englobant
+  optionnel détecté et retiré (même mécanisme pour la classification —
+  sélectionner un dossier parent puis "Compresser" est le geste le plus
+  probable d'un utilisateur), `ground_truth/` ignoré silencieusement (aucune
+  métrique pixel/IoU calculée dans ce lot). Le dossier MVTec AD officiel
+  COMPLET (15 catégories à la fois) reçoit maintenant un message dédié
+  ("zippez une seule catégorie") plutôt que l'erreur générique de
+  classification, trompeuse dans ce cas précis.
+- **`relative_path` utilisait des antislashs sous Windows**
+  (`str(Path.relative_to(...))` nu) — invalide dans un contrat d'API
+  JSON/URL portable ; le déploiement cible (Docker/Linux) ne l'aurait jamais
+  révélé. Corrigé (`.as_posix()` explicite) dans les deux moteurs
+  (classification et anomalies visuelles), testé.
+
+Tests supplémentaires pour ces correctifs (image dataset, wrapper MVTec AD,
+wrapper classification, collection multi-catégories rejetée,
+`relative_path` portable). **106 tests au total pour le pilier Vision**
+(`pytest -k vision`, mesuré directement), **487 tests dans le dépôt.**
+
 ## Prochains lots (résumé — détail complet dans le diagnostic de migration et les échanges de cadrage)
 
 | Lot | Contenu | Livrable testable |

@@ -4,7 +4,6 @@ import { AuthProvider } from "./contexts/AuthContext";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import AnomalyDetection from "./pages/AnomalyDetection";
 import Clustering from "./pages/Clustering";
-import ComingSoon from "./pages/ComingSoon";
 import Dashboard from "./pages/Dashboard";
 import Datasets from "./pages/Datasets";
 import DimensionalityReduction from "./pages/DimensionalityReduction";
@@ -15,6 +14,8 @@ import Register from "./pages/Register";
 import Training from "./pages/Training";
 import TrainingHistory from "./pages/TrainingHistory";
 import UnsupervisedHistory from "./pages/UnsupervisedHistory";
+import VisionAnomalies from "./pages/VisionAnomalies";
+import VisionClassification from "./pages/VisionClassification";
 
 export default function App() {
   return (
@@ -104,12 +105,20 @@ export default function App() {
                 </ProtectedRoute>
               }
             />
-            {/* Pilier réservé — non actif, page de présentation uniquement (voir config/pillars.ts) */}
+            <Route path="/vision" element={<Navigate to="/vision/classification" replace />} />
             <Route
-              path="/vision"
+              path="/vision/classification"
               element={
                 <ProtectedRoute>
-                  <ComingSoon pillarId="vision" />
+                  <VisionClassification />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/vision/anomalies"
+              element={
+                <ProtectedRoute>
+                  <VisionAnomalies />
                 </ProtectedRoute>
               }
             />

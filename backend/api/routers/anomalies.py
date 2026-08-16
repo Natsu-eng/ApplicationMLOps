@@ -20,20 +20,12 @@ from pydantic import BaseModel, Field
 from api.core.config import get_settings
 from api.core.database import get_db
 from api.core.job_queue import training_queue
-from api.core.models import (
-    AnomalyJob,
-    AnomalyObservationRecord,
-    ClusteringJob,
-    Dataset,
-    DimensionalityJob,
-    TrainingJob,
-    User,
-)
+from api.core.models import AnomalyJob, AnomalyObservationRecord, Dataset, User
 from api.routers.auth import get_current_user
 from services.anomaly_training import DEFAULT_TOP_N, MAX_TOP_N
 from services.audit import log_action
 from services.datasets import DatasetParsingError, read_dataframe
-from services.job_quota import raise_if_quota_exceeded
+from services.job_quota import ALL_JOB_MODELS, raise_if_quota_exceeded
 from services.job_watchdog import reconcile_stale_jobs
 
 router = APIRouter(prefix="/anomalies", tags=["anomalies"])
@@ -145,7 +137,7 @@ def create_anomaly_job(
     raise_if_quota_exceeded(
         db,
         current_user.organization_id,
-        [TrainingJob, ClusteringJob, DimensionalityJob, AnomalyJob],
+        ALL_JOB_MODELS,
         _settings.max_concurrent_jobs_per_org,
     )
 

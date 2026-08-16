@@ -42,6 +42,12 @@ export default defineConfig({
         target: "http://localhost:8000",
         changeOrigin: true,
       },
+      // Lot 15 (pilier Vision) — même oubli que Lot 13/14 signalé plus haut,
+      // évité ici en l'ajoutant dès l'écriture du frontend, pas après coup.
+      "/vision": {
+        target: "http://localhost:8000",
+        changeOrigin: true,
+      },
     },
   },
 });

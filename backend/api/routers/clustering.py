@@ -23,7 +23,7 @@ from api.routers.auth import get_current_user
 from services.audit import log_action
 from services.clustering_registry import CLUSTER_REGISTRY, DEFAULT_ALGORITHM_IDS
 from services.datasets import DatasetParsingError, read_dataframe
-from services.job_quota import raise_if_quota_exceeded
+from services.job_quota import ALL_JOB_MODELS, raise_if_quota_exceeded
 from services.job_watchdog import reconcile_stale_jobs
 
 router = APIRouter(prefix="/clustering", tags=["clustering"])
@@ -175,12 +175,10 @@ def create_clustering_job(
     # supervisé) via services/job_quota.py — un seul worker physique traite
     # tous les types de job (voir docker-compose.yml), comptés ensemble
     # contre la même limite.
-    from api.core.models import AnomalyJob, DimensionalityJob, TrainingJob
-
     raise_if_quota_exceeded(
         db,
         current_user.organization_id,
-        [TrainingJob, ClusteringJob, DimensionalityJob, AnomalyJob],
+        ALL_JOB_MODELS,
         _settings.max_concurrent_jobs_per_org,
     )
 

@@ -1,0 +1,357 @@
+"""Router classification d'images — pilier Vision, Lot 15 sous-lots B et D.
+
+Mêmes principes que `api/routers/anomalies.py` : isolation systématique par
+`organization_id`, tâche de fond obligatoire (RQ, réutilise
+`training_queue`) pour l'entraînement, jamais de calcul ML dans la requête
+HTTP pour un job. Le dataset source doit être un `VisionDataset` de
+structure "classification" — vérifié ici ET dans le worker (défense en
+profondeur, même principe que la validation dataset des autres routers).
+
+L'endpoint `/explain` (sous-lot D, Grad-CAM) fait exception à "jamais de
+calcul ML dans la requête HTTP" : une seule image, un seul forward+backward
+pass sur un modèle déjà entraîné — de l'ordre de la seconde, même
+raisonnement que `POST /training/jobs/{id}/predict` (inférence + SHAP local,
+`api/routers/training.py`), synchrone lui aussi."""
+from __future__ import annotations
+
+import io
+import json
+from pathlib import Path
+from typing import Any, List, Optional
+
+import torch
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from PIL import Image, UnidentifiedImageError
+from pydantic import BaseModel, Field
+from sqlalchemy.orm import Session
+
+from api.core.config import get_settings
+from api.core.database import get_db
+from api.core.job_queue import training_queue
+from api.core.models import User, VisionClassificationJob, VisionClassificationModel, VisionDataset
+from api.routers.auth import get_current_user
+from services.audit import log_action
+from services.job_quota import ALL_JOB_MODELS, raise_if_quota_exceeded
+from services.job_watchdog import reconcile_stale_jobs
+from services.vision_classification_registry import CLASSIFICATION_BACKBONE_REGISTRY, DEFAULT_BACKBONE_ID
+from services.vision_gradcam import GradCamError, explain_classification_prediction
+
+router = APIRouter(prefix="/vision/classification", tags=["vision"])
+_settings = get_settings()
+
+_VALID_BACKBONE_IDS = {s.id for s in CLASSIFICATION_BACKBONE_REGISTRY}
+
+
+# ── Schémas ──────────────────────────────────────────────────────────────
+
+
+class VisionClassificationJobCreate(BaseModel):
+    vision_dataset_id: int
+    backbone_id: str = DEFAULT_BACKBONE_ID
+    num_epochs: int = Field(default=8, ge=1, le=30)
+    batch_size: int = Field(default=16, ge=1, le=128)
+    learning_rate: float = Field(default=1e-3, gt=0, le=1)
+    dropout_rate: float = Field(default=0.3, ge=0, le=0.9)
+    freeze_backbone: bool = True
+    unfreeze_after_epoch: Optional[int] = Field(default=None, ge=0)
+    seed: Optional[int] = None
+
+
+class BackboneOut(BaseModel):
+    id: str
+    label: str
+
+
+class VisionClassificationJobSummary(BaseModel):
+    id: int
+    vision_dataset_id: int
+    vision_dataset_name: Optional[str] = None
+    backbone_id: str
+    status: str
+    progress_step: Optional[str] = None
+    progress_percent: int
+    error_message: Optional[str] = None
+    created_by: Optional[str] = None
+    created_at: Any
+    started_at: Optional[Any] = None
+    finished_at: Optional[Any] = None
+    test_accuracy: Optional[float] = None
+
+
+class EpochMetricsOut(BaseModel):
+    epoch: int
+    train_loss: float
+    train_accuracy: float
+    val_loss: float
+    val_accuracy: float
+
+
+class PredictionExampleOut(BaseModel):
+    relative_path: str
+    true_label: str
+    predicted_label: str
+    confidence: float
+    correct: bool
+
+
+class GradCamExplanationOut(BaseModel):
+    predicted_label: str
+    probabilities: dict[str, float]
+    target_label: str
+    heatmap_png: str
+
+
+class VisionClassificationResultOut(BaseModel):
+    backbone_id: str
+    class_names: List[str]
+    n_train: int
+    n_val: int
+    n_test: int
+    history: List[EpochMetricsOut]
+    test_accuracy: float
+    test_precision_macro: float
+    test_recall_macro: float
+    test_f1_macro: float
+    confusion_matrix: List[List[int]]
+    examples: List[PredictionExampleOut]
+    model_card: dict[str, Any]
+
+
+# ── Aides ────────────────────────────────────────────────────────────────
+
+
+def _get_org_job(job_id: int, current_user: User, db: Session) -> VisionClassificationJob:
+    job = (
+        db.query(VisionClassificationJob)
+        .filter(
+            VisionClassificationJob.id == job_id,
+            VisionClassificationJob.organization_id == current_user.organization_id,
+        )
+        .first()
+    )
+    if job is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "VISION_CLASSIFICATION_JOB_INTROUVABLE", "message": "Entraînement de classification introuvable"},
+        )
+    return job
+
+
+def _to_summary(job: VisionClassificationJob) -> VisionClassificationJobSummary:
+    config = json.loads(job.config_json)
+    result = job.result
+    return VisionClassificationJobSummary(
+        id=job.id,
+        vision_dataset_id=job.vision_dataset_id,
+        vision_dataset_name=job.vision_dataset.name if job.vision_dataset else None,
+        backbone_id=config.get("backbone_id", DEFAULT_BACKBONE_ID),
+        status=job.status,
+        progress_step=job.progress_step,
+        progress_percent=job.progress_percent,
+        error_message=job.error_message,
+        created_by=job.created_by.nom if job.created_by else None,
+        created_at=job.created_at,
+        started_at=job.started_at,
+        finished_at=job.finished_at,
+        test_accuracy=result.test_accuracy if result else None,
+    )
+
+
+# ── Endpoints ────────────────────────────────────────────────────────────
+
+
+@router.get("/backbones", response_model=List[BackboneOut])
+def list_backbones():
+    return [BackboneOut(id=s.id, label=s.label) for s in CLASSIFICATION_BACKBONE_REGISTRY]
+
+
+@router.post("/jobs", response_model=VisionClassificationJobSummary, status_code=status.HTTP_201_CREATED)
+def create_vision_classification_job(
+    body: VisionClassificationJobCreate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if body.backbone_id not in _VALID_BACKBONE_IDS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": "BACKBONE_INCONNU", "message": f"Backbone inconnu : {body.backbone_id}"},
+        )
+
+    reconcile_stale_jobs(
+        db, current_user.organization_id, _settings.stale_job_timeout_minutes, model=VisionClassificationJob
+    )
+    raise_if_quota_exceeded(db, current_user.organization_id, ALL_JOB_MODELS, _settings.max_concurrent_jobs_per_org)
+
+    dataset = (
+        db.query(VisionDataset)
+        .filter(VisionDataset.id == body.vision_dataset_id, VisionDataset.organization_id == current_user.organization_id)
+        .first()
+    )
+    if dataset is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "VISION_DATASET_INTROUVABLE", "message": "Dataset d'images introuvable"},
+        )
+    if dataset.status != "ready":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"code": "VISION_DATASET_NON_PRET", "message": "Ce dataset n'a pas pu être validé"},
+        )
+    if dataset.structure_type != "classification":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "VISION_DATASET_STRUCTURE_INVALIDE",
+                "message": "Ce dataset n'a pas une structure de classification (dossiers de classes)",
+            },
+        )
+
+    config = {
+        "backbone_id": body.backbone_id,
+        "num_epochs": body.num_epochs,
+        "batch_size": body.batch_size,
+        "learning_rate": body.learning_rate,
+        "dropout_rate": body.dropout_rate,
+        "freeze_backbone": body.freeze_backbone,
+        "unfreeze_after_epoch": body.unfreeze_after_epoch,
+        "seed": body.seed if body.seed is not None else _settings.model_seed,
+    }
+
+    job = VisionClassificationJob(
+        organization_id=current_user.organization_id,
+        vision_dataset_id=dataset.id,
+        created_by_id=current_user.id,
+        config_json=json.dumps(config),
+        status="queued",
+    )
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+
+    from workers.vision_classification_worker import run_vision_classification_job
+
+    rq_job = training_queue.enqueue(run_vision_classification_job, job.id, job_timeout=1800)
+    job.rq_job_id = rq_job.id
+    db.commit()
+    db.refresh(job)
+
+    return _to_summary(job)
+
+
+@router.get("/jobs", response_model=List[VisionClassificationJobSummary])
+def list_vision_classification_jobs(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    jobs = (
+        db.query(VisionClassificationJob)
+        .filter(VisionClassificationJob.organization_id == current_user.organization_id)
+        .order_by(VisionClassificationJob.created_at.desc())
+        .all()
+    )
+    return [_to_summary(j) for j in jobs]
+
+
+@router.get("/jobs/{job_id}", response_model=VisionClassificationJobSummary)
+def get_vision_classification_job(job_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    return _to_summary(_get_org_job(job_id, current_user, db))
+
+
+@router.get("/jobs/{job_id}/result", response_model=VisionClassificationResultOut)
+def get_vision_classification_result(job_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    job = _get_org_job(job_id, current_user, db)
+    if job.result is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "RESULTAT_INDISPONIBLE", "message": "Cet entraînement n'a pas encore de résultat"},
+        )
+    result = job.result
+    return VisionClassificationResultOut(
+        backbone_id=result.backbone_id,
+        class_names=json.loads(result.class_names_json),
+        n_train=result.n_train,
+        n_val=result.n_val,
+        n_test=result.n_test,
+        history=[EpochMetricsOut(**m) for m in json.loads(result.history_json)],
+        test_accuracy=result.test_accuracy,
+        test_precision_macro=result.test_precision_macro,
+        test_recall_macro=result.test_recall_macro,
+        test_f1_macro=result.test_f1_macro,
+        confusion_matrix=json.loads(result.confusion_matrix_json),
+        examples=[PredictionExampleOut(**e) for e in json.loads(result.examples_json)],
+        model_card=json.loads(result.model_card_json or "{}"),
+    )
+
+
+@router.post("/jobs/{job_id}/explain", response_model=GradCamExplanationOut)
+async def explain_vision_classification_prediction(
+    job_id: int,
+    file: UploadFile = File(...),
+    target_label: Optional[str] = Form(default=None),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Grad-CAM (sous-lot D) — pourquoi ce modèle prédit cette classe pour
+    cette image précise. Synchrone (voir docstring du module) : un seul
+    forward+backward pass sur un modèle déjà entraîné."""
+    job = _get_org_job(job_id, current_user, db)
+    if job.result is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "RESULTAT_INDISPONIBLE", "message": "Cet entraînement n'a pas encore de résultat"},
+        )
+
+    content = await file.read()
+    try:
+        image = Image.open(io.BytesIO(content))
+        image.load()
+    except (UnidentifiedImageError, OSError):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": "IMAGE_INVALIDE", "message": "Impossible de lire cette image"},
+        )
+
+    # weights_only=False : sûr ici car ce fichier est écrit par notre propre
+    # worker (torch.save du state_dict + métadonnées dans
+    # workers/vision_classification_worker.py), jamais un fichier fourni par
+    # l'utilisateur — pas de désérialisation de pickle non fiable.
+    artifact = torch.load(job.result.file_path, weights_only=False)
+    try:
+        explanation = explain_classification_prediction(artifact, image, target_label)
+    except GradCamError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": "CLASSE_INCONNUE", "message": str(exc)},
+        )
+
+    return GradCamExplanationOut(
+        predicted_label=explanation.predicted_label,
+        probabilities=explanation.probabilities,
+        target_label=explanation.target_label,
+        heatmap_png=explanation.heatmap_png,
+    )
+
+
+@router.delete("/jobs/{job_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_vision_classification_job(job_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    job = _get_org_job(job_id, current_user, db)
+
+    if job.status in ("queued", "running") and job.rq_job_id:
+        try:
+            from rq.job import Job as RQJob
+
+            rq_job = RQJob.fetch(job.rq_job_id, connection=training_queue.connection)
+            rq_job.cancel()
+            rq_job.delete()
+        except Exception:
+            pass
+
+    if job.result:
+        if job.result.file_path:
+            Path(job.result.file_path).unlink(missing_ok=True)
+        db.delete(job.result)
+
+    log_action(
+        db, current_user.organization_id, current_user.id, "vision_classification_job.deleted",
+        target_type="vision_classification_job", target_id=job.id,
+        details={"vision_dataset_id": job.vision_dataset_id, "status": job.status},
+    )
+    db.delete(job)
+    db.commit()

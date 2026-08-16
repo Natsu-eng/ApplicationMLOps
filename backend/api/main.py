@@ -27,6 +27,9 @@ from api.routers.clustering import router as clustering_router
 from api.routers.datasets import router as datasets_router
 from api.routers.dimensionality import router as dimensionality_router
 from api.routers.training import router as training_router
+from api.routers.vision_anomalies import router as vision_anomalies_router
+from api.routers.vision_classification import router as vision_classification_router
+from api.routers.vision_datasets import router as vision_datasets_router
 
 logging.basicConfig(
     level=logging.INFO,
@@ -82,6 +85,9 @@ app.include_router(training_router)
 app.include_router(clustering_router)
 app.include_router(dimensionality_router)
 app.include_router(anomalies_router)
+app.include_router(vision_datasets_router)
+app.include_router(vision_classification_router)
+app.include_router(vision_anomalies_router)
 
 
 @app.get("/api/health", tags=["système"])

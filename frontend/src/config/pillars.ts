@@ -1,11 +1,13 @@
 import {
   AlertTriangle,
   BrainCircuit,
+  Boxes,
   Database,
   History,
   ScanEye,
   ScatterChart,
   Shapes,
+  Sparkles,
   Target,
   type LucideIcon,
 } from "lucide-react";
@@ -82,8 +84,14 @@ export const PILLARS: Pillar[] = [
     title: "Analyser des images",
     description: "Classez des images ou détectez des défauts à partir de photos ou de scans.",
     icon: ScanEye,
-    status: "soon",
-    route: "/vision",
-    navItems: [],
+    // Lot 15 : classification d'images (transfer learning, Grad-CAM) et
+    // détection d'anomalies visuelles MVTec AD actives. Détection d'objets
+    // et annotation assistée hors périmètre (Lot 16+, non cadré).
+    status: "active",
+    route: "/vision/classification",
+    navItems: [
+      { to: "/vision/classification", label: "Classification d'images", icon: Boxes },
+      { to: "/vision/anomalies", label: "Anomalies visuelles", icon: Sparkles },
+    ],
   },
 ];

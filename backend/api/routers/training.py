@@ -21,12 +21,12 @@ from sqlalchemy.orm import Session
 from api.core.config import get_settings
 from api.core.database import get_db
 from api.core.job_queue import training_queue
-from api.core.models import AnomalyJob, ClusteringJob, Dataset, DimensionalityJob, MLModel, ModelCandidate, TrainingJob, User
+from api.core.models import Dataset, MLModel, ModelCandidate, TrainingJob, User
 from api.routers.auth import get_current_user
 from services.audit import log_action
 from services.datasets import DatasetParsingError, read_dataframe
 from services.feature_engineering import CURRENT_SPEC_VERSION
-from services.job_quota import raise_if_quota_exceeded
+from services.job_quota import ALL_JOB_MODELS, raise_if_quota_exceeded
 from services.job_watchdog import reconcile_stale_jobs
 from services.ml_inference import InferenceError, load_bundle, predict_one
 from services.ml_registry import MODEL_REGISTRY
@@ -425,7 +425,7 @@ def create_training_job(
     raise_if_quota_exceeded(
         db,
         current_user.organization_id,
-        [TrainingJob, ClusteringJob, DimensionalityJob, AnomalyJob],
+        ALL_JOB_MODELS,
         _settings.max_concurrent_jobs_per_org,
     )
 
