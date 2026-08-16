@@ -37,6 +37,31 @@ interface ErrorDetail {
   message?: string;
 }
 
+/** Décision pure — testable sans `window` (Lot 0.3, correctif C5,
+ * AUDIT_DATALAB_2026-08-16.md) : jamais rediriger si on est déjà sur
+ * l'écran de connexion, sinon boucle de redirection. Extraite de l'effet de
+ * bord `handleUnauthorized` ci-dessous car ce dépôt n'a pas d'environnement
+ * de test `jsdom` (`window` indisponible dans les tests Vitest) — seule la
+ * logique de décision est testée, jamais la navigation réelle. */
+export function shouldRedirectToLogin(pathname: string): boolean {
+  return !pathname.startsWith("/login");
+}
+
+/** Traitement centralisé du 401 (Lot 0.3) — appelé par TOUS les chemins qui
+ * atteignent l'API, pas seulement `request()` : `uploadFile`/
+ * `uploadFileWithFields`, `exportModel` (fetch direct pour un blob) et
+ * `components/vision/VisionImage.tsx` (fetch direct hors du client API)
+ * font chacun leur propre `fetch`, donc chacun doit appeler ce helper.
+ * Jamais déclenché sur l'échec de connexion lui-même : `/auth/login` passe
+ * par `requestForm()`, qui n'appelle pas ce helper (et ne renvoie de toute
+ * façon jamais 401 — identifiants incorrects = 400, voir routers/auth.py). */
+export function handleUnauthorized(): void {
+  clearToken();
+  if (typeof window !== "undefined" && shouldRedirectToLogin(window.location.pathname)) {
+    window.location.href = "/login?expired=1";
+  }
+}
+
 async function extractError(res: Response): Promise<ApiError> {
   let detail: ErrorDetail | string | undefined;
   try {
@@ -65,6 +90,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
       ...options.headers,
     },
   });
+  if (res.status === 401) handleUnauthorized();
   if (!res.ok) throw await extractError(res);
   if (res.status === 204) return undefined as T;
   return res.json() as Promise<T>;
@@ -100,6 +126,7 @@ async function uploadFileWithFields<T>(path: string, file: File, fields: Record<
     headers: token ? { Authorization: `Bearer ${token}` } : undefined,
     body: formData,
   });
+  if (res.status === 401) handleUnauthorized();
   if (!res.ok) throw await extractError(res);
   return res.json() as Promise<T>;
 }
@@ -1081,6 +1108,7 @@ export const api = {
       const res = await fetch(`${BASE_URL}/training/jobs/${jobId}/model/export`, {
         headers: token ? { Authorization: `Bearer ${token}` } : undefined,
       });
+      if (res.status === 401) handleUnauthorized();
       if (!res.ok) throw await extractError(res);
       const blob = await res.blob();
       const disposition = res.headers.get("content-disposition") ?? "";

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { BASE_URL, getToken } from "../../api/client";
+import { BASE_URL, getToken, handleUnauthorized } from "../../api/client";
 
 /** Affiche une image individuelle d'un dataset vision — l'endpoint
  * `GET /vision/datasets/{id}/image` exige un Bearer token, qu'une balise
@@ -29,7 +29,13 @@ export function VisionImage({
     fetch(`${BASE_URL}/vision/datasets/${datasetId}/image?path=${encodeURIComponent(path)}`, {
       headers: token ? { Authorization: `Bearer ${token}` } : undefined,
     })
-      .then((res) => (res.ok ? res.blob() : Promise.reject(new Error("image indisponible"))))
+      .then((res) => {
+        // Lot 0.3 (correctif C5) — sans ce traitement, un token expiré
+        // laissait la galerie afficher "Image indisponible" indéfiniment
+        // sans jamais déconnecter l'utilisateur.
+        if (res.status === 401) handleUnauthorized();
+        return res.ok ? res.blob() : Promise.reject(new Error("image indisponible"));
+      })
       .then((blob) => {
         if (cancelled) return;
         objectUrl = URL.createObjectURL(blob);

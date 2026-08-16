@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { ApiError } from "../api/client";
 import { AuthBrandPanel } from "../components/auth/AuthBrandPanel";
 import { Button } from "../components/ui/Button";
@@ -10,6 +10,11 @@ import { useAuth } from "../contexts/AuthContext";
 export default function Login() {
   const { login } = useAuth();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  // Lot 0.3 (correctif C5, AUDIT_DATALAB_2026-08-16.md) — posé par
+  // handleUnauthorized() (api/client.ts) lors d'une redirection sur 401,
+  // jamais par un lien direct construit par l'utilisateur.
+  const sessionExpired = searchParams.get("expired") === "1";
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -47,6 +52,12 @@ export default function Login() {
 
           <Card className="p-6">
             <form onSubmit={handleSubmit} className="space-y-4">
+              {sessionExpired && (
+                <p className="text-sm text-warning bg-warning/10 border border-warning/20 rounded-lg px-3 py-2">
+                  Votre session a expiré, reconnectez-vous.
+                </p>
+              )}
+
               <div>
                 <label htmlFor="email" className="block text-sm text-muted-foreground mb-1">
                   Email
