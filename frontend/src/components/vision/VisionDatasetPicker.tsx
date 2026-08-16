@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type DragEvent } from "react";
-import { AlertCircle, UploadCloud } from "lucide-react";
+import { AlertCircle, Images, UploadCloud } from "lucide-react";
 import {
   ApiError,
   api,
@@ -10,6 +10,7 @@ import {
 import { Card } from "../ui/Card";
 import { Button } from "../ui/Button";
 import { Select } from "../ui/Select";
+import { VisionDatasetExplorer } from "./VisionDatasetExplorer";
 
 const STRUCTURE_LABELS: Record<VisionDatasetStructureType, string> = {
   classification: "un dossier par classe",
@@ -34,6 +35,7 @@ export function VisionDatasetPicker({
   const [isUploading, setIsUploading] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const [selectedDetail, setSelectedDetail] = useState<VisionDatasetDetail | null>(null);
+  const [exploring, setExploring] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const load = useCallback(async () => {
@@ -156,11 +158,23 @@ export function VisionDatasetPicker({
 
       {selectedDetail && (
         <div className="rounded-lg border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
-          {selectedDetail.n_images} images
-          {selectedDetail.n_classes ? `, ${selectedDetail.n_classes} classes` : ""} —{" "}
-          {Object.entries(selectedDetail.class_distribution)
-            .map(([name, count]) => `${name} (${count})`)
-            .join(" · ")}
+          <div className="flex items-start justify-between gap-3">
+            <p>
+              {selectedDetail.n_images} images
+              {selectedDetail.n_classes ? `, ${selectedDetail.n_classes} classes` : ""} —{" "}
+              {Object.entries(selectedDetail.class_distribution)
+                .map(([name, count]) => `${name} (${count})`)
+                .join(" · ")}
+            </p>
+            <button
+              type="button"
+              onClick={() => setExploring(true)}
+              className="flex-shrink-0 inline-flex items-center gap-1 text-primary hover:text-primary/80 font-medium"
+            >
+              <Images size={12} />
+              Explorer
+            </button>
+          </div>
           {selectedDetail.validation_report.warnings.length > 0 && (
             <ul className="mt-1.5 space-y-0.5">
               {selectedDetail.validation_report.warnings.map((w) => (
@@ -171,6 +185,10 @@ export function VisionDatasetPicker({
             </ul>
           )}
         </div>
+      )}
+
+      {exploring && selectedDetail && (
+        <VisionDatasetExplorer dataset={selectedDetail} onClose={() => setExploring(false)} />
       )}
     </div>
   );

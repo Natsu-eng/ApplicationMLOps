@@ -43,9 +43,9 @@ from services.ml_preprocessing import TrainingAbortedError
 from services.vision_anomaly_registry import IMAGE_SIZE, get_anomaly_model_spec
 from services.vision_localization import (
     DEFAULT_MASK_PERCENTILE,
-    encode_heatmap_png,
     encode_mask_png,
     generate_binary_mask,
+    overlay_heatmap_on_image,
     resize_map_to_original,
 )
 
@@ -250,8 +250,13 @@ def train_and_evaluate_anomaly_vision(
     examples: list[AnomalyExample] = []
     for i in order[:MAX_EXAMPLES]:
         abs_path, class_idx = test_folder.samples[i]
-        with Image.open(abs_path) as original_image:
-            original_size = original_image.size  # (largeur, hauteur)
+        with Image.open(abs_path) as raw_image:
+            # .convert("RGB") décode entièrement l'image en mémoire — reste
+            # valide après la fermeture du fichier, contrairement à
+            # `raw_image` (nécessaire pour la superposition ci-dessous, pas
+            # seulement `.size` comme avant le Lot 16A).
+            original_image = raw_image.convert("RGB")
+        original_size = original_image.size  # (largeur, hauteur)
         error_map_original_size = resize_map_to_original(all_error_maps[i], original_size)
         mask = generate_binary_mask(error_map_original_size, config.mask_percentile)
         examples.append(
@@ -263,7 +268,10 @@ def train_and_evaluate_anomaly_vision(
                 true_label=all_true_labels[i],
                 predicted_label=predicted_labels[i],
                 anomaly_score=float(all_scores[i]),
-                heatmap_png=encode_heatmap_png(error_map_original_size),
+                # Superposition (Lot 16A) — remplace la heatmap seule,
+                # directement lisible sur l'image source (zones rouges =
+                # plus forte contribution à l'anomalie détectée).
+                heatmap_png=overlay_heatmap_on_image(original_image, error_map_original_size),
                 mask_png=encode_mask_png(mask),
             )
         )

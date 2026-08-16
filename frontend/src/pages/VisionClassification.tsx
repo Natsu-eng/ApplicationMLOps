@@ -459,7 +459,7 @@ function GradCamPanel({ jobId }: { jobId: number }) {
 
       {explanation && previewUrl && (
         <div className="mt-4 space-y-3">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <Badge variant="primary">Prédiction : {explanation.predicted_label}</Badge>
             {Object.entries(explanation.probabilities).map(([label, proba]) => (
               <Badge key={label} variant="neutral">
@@ -467,18 +467,22 @@ function GradCamPanel({ jobId }: { jobId: number }) {
               </Badge>
             ))}
           </div>
-          <div className="grid grid-cols-2 gap-3 max-w-md">
-            <div>
-              <p className="text-xs text-muted-foreground mb-1">Image</p>
-              <img src={previewUrl} alt="image soumise" className="w-full aspect-square object-cover rounded-lg border border-border" />
-            </div>
-            <div>
-              <p className="text-xs text-muted-foreground mb-1">Zones importantes</p>
-              <img
-                src={explanation.heatmap_png}
-                alt="carte Grad-CAM"
-                className="w-full aspect-square object-cover rounded-lg border border-border"
+          <div className="max-w-sm">
+            <img
+              src={explanation.heatmap_png}
+              alt="Image avec carte de chaleur Grad-CAM superposée"
+              className="w-full aspect-square object-cover rounded-lg border border-border"
+            />
+            <div className="flex items-center gap-2 mt-2">
+              <span
+                className="inline-block h-2 w-16 rounded-full flex-shrink-0"
+                style={{ background: "linear-gradient(to right, #0000cc, #00cc66, #cc0000)" }}
+                aria-hidden="true"
               />
+              <p className="text-xs text-muted-foreground">
+                Bleu = faible influence · Rouge = zones qui ont le plus influencé la classe "
+                {explanation.target_label}"
+              </p>
             </div>
           </div>
         </div>

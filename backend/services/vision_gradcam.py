@@ -22,7 +22,7 @@ from PIL import Image
 
 from services.vision_classification_registry import get_backbone_spec
 from services.vision_classification_training import build_eval_transform
-from services.vision_localization import encode_heatmap_png, resize_map_to_original
+from services.vision_localization import overlay_heatmap_on_image, resize_map_to_original
 
 
 class GradCamError(ValueError):
@@ -119,5 +119,8 @@ def explain_classification_prediction(
         predicted_label=class_names[predicted_idx],
         probabilities={name: float(probabilities[i]) for i, name in enumerate(class_names)},
         target_label=class_names[target_idx],
-        heatmap_png=encode_heatmap_png(cam_original_size),
+        # Superposition (Lot 16A) — remplace la heatmap seule : les zones
+        # rouges de l'image superposée sont celles qui ont le plus influencé
+        # la prédiction, directement lisibles sur la photo elle-même.
+        heatmap_png=overlay_heatmap_on_image(image, cam_original_size),
     )

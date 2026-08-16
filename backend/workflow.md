@@ -2110,6 +2110,98 @@ wrapper classification, collection multi-catégories rejetée,
 `relative_path` portable). **106 tests au total pour le pilier Vision**
 (`pytest -k vision`, mesuré directement), **487 tests dans le dépôt.**
 
+## Lot 16 — Durcissement du pilier Vision (en cours)
+
+Le pilier Vision (Lot 15) a été livré par une session parallèle pendant que
+cette session travaillait sur le pilier non supervisé tabulaire (Lot 13/14).
+Un audit à froid — vérifié directement dans le code, pas seulement dans ce
+fichier — a montré un backend réellement soigné mais une expérience
+utilisateur en retrait par rapport au pilier tabulaire déjà livré. Lot
+découpé en sous-lots indépendants, même principe que Lot 15 A→D.
+
+### Lot 16A — Heatmaps colorées et superposées (livré)
+
+Retour utilisateur direct en testant l'app réellement : la heatmap
+Grad-CAM/anomalies visuelles était en niveaux de gris, jamais la carte
+rouge/bleu standard (Selvaraju et al. 2017), et affichée à côté de l'image
+source plutôt que superposée.
+
+- [x] **`services/vision_localization.py`** — `_apply_colormap` (palette
+  "jet", approximation par fonctions triangulaires, aucune dépendance
+  supplémentaire) appliquée dans `encode_heatmap_png` (désormais un PNG
+  couleur, plus jamais niveaux de gris). Nouvelle fonction
+  `overlay_heatmap_on_image` (alpha-blend sur l'image source) — remplace
+  l'affichage côte à côte pour les deux usages qui partagent ce module.
+  `generate_binary_mask`/`resize_map_to_original` INCHANGÉES (continuent
+  d'opérer sur la carte brute float32, avant toute colorisation — le
+  calibrage de seuil déjà testé ne dépend jamais du rendu visuel).
+- [x] **`services/vision_gradcam.py`** — branché sur `overlay_heatmap_on_image`
+  (l'image source `PIL.Image` était déjà un paramètre de la fonction).
+- [x] **`services/vision_anomaly_training.py`** — le `with Image.open(...)`
+  qui ne lisait que `.size` avant fermeture du fichier lit maintenant
+  `.convert("RGB")` (décode entièrement en mémoire, reste valide après
+  fermeture) pour pouvoir superposer.
+- [x] **Frontend** — `GradCamPanel` (`VisionClassification.tsx`) et
+  `AnomalyExampleCard` (`VisionAnomalies.tsx`) affichent l'image superposée
+  unique (plus deux images côte à côte) avec une légende explicite
+  (dégradé bleu→rouge + texte "Bleu = faible influence · Rouge = zones qui
+  ont le plus influencé...").
+
+**Vérifié** : 15 tests (`test_vision_localization.py`, 4 nouveaux —
+non-régression du masque binaire/réalignement, palette réellement colorée
+pas R=G=B, superposition de bonne taille, rejet si carte non réalignée,
+blend visible dans la zone chaude). Suite `pytest -k vision` complète
+rejouée (110 tests, aucune casse). `tsc -b`/`npm run lint`/`vitest run`
+(33/33)/`vite build` verts.
+
+### Lot 16B — Traçabilité sur le Dashboard (livré)
+
+`created_by` était déjà porté par les 4 types de job résumé
+(`TrainingJobSummary`/`ClusteringJobSummary`/`DimensionalityJobSummary`/
+`AnomalyJobSummary`) mais jamais repris dans `ActivityItem` du flux
+"Dernière activité" — aucune traçabilité "qui a fait quoi" visible côté
+Dashboard alors que la donnée existait déjà.
+
+- [x] `frontend/src/pages/Dashboard.tsx` — `ActivityItem.createdBy`
+  ajouté, propagé dans les 4 `.forEach`, affiché dans le sous-titre de
+  chaque ligne d'activité. **Aucun changement backend.**
+
+**Vérifié** : `tsc -b`/`npm run lint`/`vitest run` (33/33) verts.
+
+### Lot 16C — Exploration complète des datasets Vision (livré)
+
+Le rapport de qualité (images corrompues, doublons, sous-dimensionnées,
+déséquilibre de classes >10x) est calculé intégralement depuis le Lot 15
+sous-lot A (`VisionDatasetReport`) et déjà exposé en entier par l'API
+(`VisionDatasetDetail.validation_report`) — le vrai manque était l'absence
+de galerie d'images et l'exposition partielle côté UI (seuls les
+`warnings` étaient affichés, jamais le détail des fichiers concernés).
+
+- [x] **`api/routers/vision_datasets.py`** — nouvel endpoint `GET
+  /vision/datasets/{id}/images?class_name=` : liste les fichiers d'une
+  classe/bucket en parcourant `storage_dir` à la demande (pas de nouvelle
+  table, les images sont déjà extraites sur disque à l'upload), plafonné à
+  `MAX_GALLERY_IMAGES_PER_CLASS = 60` (`total` reste le compte réel).
+  Même protection anti-traversée de répertoire que `GET .../image`.
+- [x] **Frontend** — `components/vision/VisionDatasetExplorer.tsx`
+  (nouveau, modale 2 onglets façon `EdaModal.tsx`) : "Aperçu" (galerie de
+  miniatures par classe, `VisionImage.tsx` déjà existant réutilisé tel
+  quel) et "Qualité" (rapport de validation complet — fichiers corrompus,
+  doublons, sous-dimensionnés, pas seulement les avertissements résumés).
+  Bouton "Explorer" ajouté dans `VisionDatasetPicker.tsx`, disponible dès
+  qu'un dataset est sélectionné (upload ou choix dans la liste).
+
+**Vérifié** : 6 tests nouveaux (`test_vision_datasets_api.py`, 17 au
+total dans ce fichier) — liste correcte par classe, plafond respecté avec
+`total` réel préservé, 404 classe inconnue, rejet de traversée de
+répertoire, isolation multi-tenant. `tsc -b`/`npm run lint`/`vitest run`
+(33/33)/`vite build` verts.
+
+**Reste à faire** (voir le plan de session) : wizard par étapes + mode
+expert complet (16D), pages "Mes données Vision"/Historique (16E),
+catalogue élargi + indicateur "lent" + note d'évolution GPU (16F),
+métriques binaire vs multiclasse (16G).
+
 ## Prochains lots (résumé — détail complet dans le diagnostic de migration et les échanges de cadrage)
 
 | Lot | Contenu | Livrable testable |

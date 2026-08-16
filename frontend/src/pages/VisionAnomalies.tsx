@@ -404,13 +404,25 @@ function AnomalyExampleCard({ example, datasetId }: { example: VisionAnomalyExam
           />
         </div>
         <div>
-          <p className="text-[10px] text-muted-foreground mb-1">Carte de chaleur</p>
-          <img src={example.heatmap_png} alt="carte d'erreur" className="w-full aspect-square object-cover rounded-lg border border-border" />
+          <p className="text-[10px] text-muted-foreground mb-1">Zones erronées (superposées)</p>
+          <img
+            src={example.heatmap_png}
+            alt="Image avec carte d'erreur superposée"
+            className="w-full aspect-square object-cover rounded-lg border border-border"
+          />
         </div>
         <div>
           <p className="text-[10px] text-muted-foreground mb-1">Masque du défaut</p>
           <img src={example.mask_png} alt="masque binaire" className="w-full aspect-square object-cover rounded-lg border border-border" />
         </div>
+      </div>
+      <div className="flex items-center gap-2 mt-2">
+        <span
+          className="inline-block h-1.5 w-10 rounded-full flex-shrink-0"
+          style={{ background: "linear-gradient(to right, #0000cc, #00cc66, #cc0000)" }}
+          aria-hidden="true"
+        />
+        <p className="text-[10px] text-muted-foreground">Bleu = normal · Rouge = zone la plus atypique</p>
       </div>
       <p className="text-xs text-muted-foreground mt-2 tabular-nums">Score d'anomalie : {example.anomaly_score.toFixed(4)}</p>
     </Card>

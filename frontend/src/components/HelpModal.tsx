@@ -4,6 +4,7 @@ import {
   ChartColumn,
   Database,
   History,
+  Images,
   LineChart,
   ScatterChart,
   Shapes,
@@ -81,13 +82,29 @@ const UNSUPERVISED_STEPS: HelpStep[] = [
   },
 ];
 
+const VISION_STEPS: HelpStep[] = [
+  {
+    icon: Images,
+    color: "teal",
+    title: "1. Classifiez vos images",
+    description:
+      "Importez un ZIP organisé en dossiers de classes, explorez les images avant d'entraîner (galerie, rapport de qualité), puis laissez DataLab comparer les architectures pré-entraînées disponibles. Chaque prédiction peut être expliquée visuellement (Grad-CAM) : les zones rouges sont celles qui ont le plus influencé la classe prédite.",
+  },
+  {
+    icon: AlertTriangle,
+    color: "violet",
+    title: "2. Détectez les défauts visuels",
+    description:
+      "Structure MVTec AD (images normales pour l'entraînement, normales + défectueuses pour le test) : le modèle apprend à reconstruire une image normale, un écart important signale un défaut. Le seuil de détection est calibré automatiquement, jamais deviné.",
+  },
+];
+
 /** Premier point d'aide/onboarding du produit (AUDIT_ROADMAP.md, refonte UI)
  * — accessible à tout moment depuis l'AppShell, pas seulement à la première
  * connexion : un rappel du workflow doit rester disponible, pas seulement
  * montré une fois puis perdu. Étendu (AUDIT_PILIER2_ET_REFONTE_UX.md, D4) au
- * pilier ML non supervisé — jusqu'ici muet dessus alors qu'il est actif
- * depuis le Lot 11, un écart visible dès qu'on ouvrait l'Aide depuis
- * Clustering/DimensionalityReduction/AnomalyDetection. */
+ * pilier ML non supervisé, puis (Lot 16) au pilier Vision — chacun muet sur
+ * l'Aide dès son activation si non ajouté ici en même temps que la page. */
 export function HelpModal({ onClose }: { onClose: () => void }) {
   return (
     <Modal title="Comment utiliser DataLab Pro" onClose={onClose} size="xl">
@@ -108,12 +125,29 @@ export function HelpModal({ onClose }: { onClose: () => void }) {
         </div>
       </div>
 
-      <div>
+      <div className="mb-6">
         <p className="text-sm text-muted-foreground mb-3">
           Le parcours du ML non supervisé, en 3 modules — sans cible à prédire, pour explorer vos données autrement.
         </p>
         <div className="grid gap-3 sm:grid-cols-2">
           {UNSUPERVISED_STEPS.map((step) => (
+            <Card key={step.title} className="p-4 flex items-start gap-3">
+              <ColorIconBadge icon={step.icon} color={step.color} size="sm" />
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-foreground mb-1">{step.title}</p>
+                <p className="text-xs text-muted-foreground leading-relaxed">{step.description}</p>
+              </div>
+            </Card>
+          ))}
+        </div>
+      </div>
+
+      <div>
+        <p className="text-sm text-muted-foreground mb-3">
+          Le parcours Vision, en 2 modules — pour analyser des images plutôt que des tableaux de données.
+        </p>
+        <div className="grid gap-3 sm:grid-cols-2">
+          {VISION_STEPS.map((step) => (
             <Card key={step.title} className="p-4 flex items-start gap-3">
               <ColorIconBadge icon={step.icon} color={step.color} size="sm" />
               <div className="min-w-0">

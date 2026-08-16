@@ -4,11 +4,13 @@ import {
   Activity,
   AlertTriangle,
   BrainCircuit,
+  Boxes,
   Database,
   FileSpreadsheet,
   LayoutDashboard,
   ScatterChart,
   Shapes,
+  Sparkles,
   Trash2,
   Users,
   type LucideIcon,
@@ -22,6 +24,8 @@ import {
   type DimensionalityJobSummary,
   type JobStatus,
   type TrainingJobSummary,
+  type VisionAnomalyJobSummary,
+  type VisionClassificationJobSummary,
 } from "../api/client";
 import { useAuth } from "../contexts/AuthContext";
 import AppShell from "../components/AppShell";
@@ -49,7 +53,7 @@ function greeting(hour: number): string {
   return "Bonsoir";
 }
 
-type ActivityKind = "supervised" | "clustering" | "dimensionality" | "anomalies";
+type ActivityKind = "supervised" | "clustering" | "dimensionality" | "anomalies" | "vision_classification" | "vision_anomalies";
 
 interface ActivityItem {
   kind: ActivityKind;
@@ -60,6 +64,9 @@ interface ActivityItem {
   status: JobStatus;
   headline: string | null;
   href: string;
+  /** Traçabilité (Lot 16B) — déjà porté par les 4 types de job résumé
+   * (`created_by`), jamais affiché jusqu'ici sur le flux d'activité. */
+  createdBy: string | null;
   /** Uniquement pour "supervised" — ouvre ModelResultModal en place plutôt
    * que de naviguer, comportement d'origine conservé tel quel. */
   raw?: TrainingJobSummary;
@@ -70,6 +77,8 @@ const ACTIVITY_KIND_META: Record<ActivityKind, { icon: LucideIcon; color: Accent
   clustering: { icon: Shapes, color: "rose", label: "Clustering" },
   dimensionality: { icon: ScatterChart, color: "blue", label: "Réduction de dimension" },
   anomalies: { icon: AlertTriangle, color: "amber", label: "Détection d'anomalies" },
+  vision_classification: { icon: Boxes, color: "teal", label: "Classification d'images" },
+  vision_anomalies: { icon: Sparkles, color: "violet", label: "Anomalies visuelles" },
 };
 
 /** Page protégée du Lot 1 — vue d'ensemble de l'ACTIVITÉ ML, pas d'un seul
@@ -96,6 +105,9 @@ export default function Dashboard() {
   const [dimensionalityJobs, setDimensionalityJobs] = useState<DimensionalityJobSummary[] | null>(null);
   const [anomalyJobs, setAnomalyJobs] = useState<AnomalyJobSummary[] | null>(null);
   const [unsupervisedJobsError, setUnsupervisedJobsError] = useState<string | null>(null);
+  const [visionClassificationJobs, setVisionClassificationJobs] = useState<VisionClassificationJobSummary[] | null>(null);
+  const [visionAnomalyJobs, setVisionAnomalyJobs] = useState<VisionAnomalyJobSummary[] | null>(null);
+  const [visionJobsError, setVisionJobsError] = useState<string | null>(null);
   const [viewingJob, setViewingJob] = useState<TrainingJobSummary | null>(null);
   const confirmDeleteJob = useConfirmAction<number>();
 
@@ -159,6 +171,17 @@ export default function Dashboard() {
       .catch((err) => setUnsupervisedJobsError(err instanceof ApiError ? err.message : "Impossible de charger l'activité non supervisée"));
   }, []);
 
+  const loadVisionJobs = useCallback(() => {
+    api.visionClassification
+      .listJobs()
+      .then(setVisionClassificationJobs)
+      .catch((err) => setVisionJobsError(err instanceof ApiError ? err.message : "Impossible de charger l'activité Vision"));
+    api.visionAnomalies
+      .listJobs()
+      .then(setVisionAnomalyJobs)
+      .catch((err) => setVisionJobsError(err instanceof ApiError ? err.message : "Impossible de charger l'activité Vision"));
+  }, []);
+
   const loadDatasets = useCallback(async () => {
     try {
       setDatasets(await api.datasets.list());
@@ -173,7 +196,8 @@ export default function Dashboard() {
     loadDatasets();
     loadJobs();
     loadUnsupervisedJobs();
-  }, [loadMembers, loadDatasets, loadJobs, loadUnsupervisedJobs]);
+    loadVisionJobs();
+  }, [loadMembers, loadDatasets, loadJobs, loadUnsupervisedJobs, loadVisionJobs]);
 
   async function handleDeleteJob(id: number) {
     try {
@@ -184,10 +208,17 @@ export default function Dashboard() {
     }
   }
 
-  const allJobsLoaded = jobs !== null && clusteringJobs !== null && dimensionalityJobs !== null && anomalyJobs !== null;
+  const allJobsLoaded =
+    jobs !== null &&
+    clusteringJobs !== null &&
+    dimensionalityJobs !== null &&
+    anomalyJobs !== null &&
+    visionClassificationJobs !== null &&
+    visionAnomalyJobs !== null;
   const unsupervisedJobsCount = (clusteringJobs?.length ?? 0) + (dimensionalityJobs?.length ?? 0) + (anomalyJobs?.length ?? 0);
-  const totalJobsCount = (jobs?.length ?? 0) + unsupervisedJobsCount;
-  const activeJobsCount = [jobs, clusteringJobs, dimensionalityJobs, anomalyJobs].reduce(
+  const visionJobsCount = (visionClassificationJobs?.length ?? 0) + (visionAnomalyJobs?.length ?? 0);
+  const totalJobsCount = (jobs?.length ?? 0) + unsupervisedJobsCount + visionJobsCount;
+  const activeJobsCount = [jobs, clusteringJobs, dimensionalityJobs, anomalyJobs, visionClassificationJobs, visionAnomalyJobs].reduce(
     (sum, list) => sum + (list?.filter((j) => ACTIVE_STATUSES.has(j.status)).length ?? 0),
     0,
   );
@@ -207,6 +238,7 @@ export default function Dashboard() {
             ? `${j.headline_metric.name} = ${j.headline_metric.value.toFixed(3)}`
             : null,
         href: "",
+        createdBy: j.created_by,
         raw: j,
       }),
     );
@@ -220,6 +252,7 @@ export default function Dashboard() {
         status: j.status,
         headline: j.silhouette !== null ? `silhouette = ${j.silhouette.toFixed(3)}` : null,
         href: `/clustering?job=${j.id}`,
+        createdBy: j.created_by,
       }),
     );
     dimensionalityJobs?.forEach((j) =>
@@ -232,6 +265,7 @@ export default function Dashboard() {
         status: j.status,
         headline: j.total_variance_explained !== null ? `variance PCA = ${formatPercent(j.total_variance_explained)}` : null,
         href: `/reduction-dimension?job=${j.id}`,
+        createdBy: j.created_by,
       }),
     );
     anomalyJobs?.forEach((j) =>
@@ -244,11 +278,38 @@ export default function Dashboard() {
         status: j.status,
         headline: j.anomaly_rate_consensus !== null ? formatPercent(j.anomaly_rate_consensus) : null,
         href: `/anomalies?job=${j.id}`,
+        createdBy: j.created_by,
+      }),
+    );
+    visionClassificationJobs?.forEach((j) =>
+      items.push({
+        kind: "vision_classification",
+        id: j.id,
+        datasetName: j.vision_dataset_name ?? "Dataset",
+        detailLabel: j.backbone_id,
+        createdAt: j.created_at,
+        status: j.status,
+        headline: j.test_accuracy !== null ? `exactitude = ${formatPercent(j.test_accuracy)}` : null,
+        href: `/vision/classification?job=${j.id}`,
+        createdBy: j.created_by,
+      }),
+    );
+    visionAnomalyJobs?.forEach((j) =>
+      items.push({
+        kind: "vision_anomalies",
+        id: j.id,
+        datasetName: j.vision_dataset_name ?? "Dataset",
+        detailLabel: j.model_id,
+        createdAt: j.created_at,
+        status: j.status,
+        headline: j.roc_auc !== null ? `AUC = ${j.roc_auc.toFixed(3)}` : null,
+        href: `/vision/anomalies?job=${j.id}`,
+        createdBy: j.created_by,
       }),
     );
     items.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
     return items.slice(0, 6);
-  }, [jobs, clusteringJobs, dimensionalityJobs, anomalyJobs]);
+  }, [jobs, clusteringJobs, dimensionalityJobs, anomalyJobs, visionClassificationJobs, visionAnomalyJobs]);
 
   const recentDatasets = datasets?.slice(0, 5) ?? [];
 
@@ -283,6 +344,7 @@ export default function Dashboard() {
           split={[
             { label: "Supervisé", value: allJobsLoaded ? jobs!.length : undefined },
             { label: "Non supervisé", value: allJobsLoaded ? unsupervisedJobsCount : undefined },
+            { label: "Vision", value: allJobsLoaded ? visionJobsCount : undefined },
           ]}
         />
         <StatTile
@@ -306,11 +368,14 @@ export default function Dashboard() {
               <Link to="/non-supervise/historique" className="text-primary hover:text-primary/80">
                 Historique non supervisé
               </Link>
+              <Link to="/vision/historique" className="text-primary hover:text-primary/80">
+                Historique Vision
+              </Link>
             </div>
           </div>
 
-          {jobsError || unsupervisedJobsError ? (
-            <ErrorNote message={jobsError ?? unsupervisedJobsError ?? ""} />
+          {jobsError || unsupervisedJobsError || visionJobsError ? (
+            <ErrorNote message={jobsError ?? unsupervisedJobsError ?? visionJobsError ?? ""} />
           ) : !allJobsLoaded ? (
             <p className="text-sm text-muted-foreground">Chargement…</p>
           ) : activity.length === 0 ? (
@@ -318,10 +383,14 @@ export default function Dashboard() {
               Aucune analyse pour l'instant — lancez-en une depuis{" "}
               <Link to="/training" className="text-primary hover:text-primary/80">
                 Entraînement
-              </Link>{" "}
-              ou un module de{" "}
+              </Link>
+              , un module de{" "}
               <Link to="/clustering" className="text-primary hover:text-primary/80">
                 ML non supervisé
+              </Link>
+              , ou{" "}
+              <Link to="/vision/classification" className="text-primary hover:text-primary/80">
+                Vision
               </Link>
               .
             </p>
@@ -337,9 +406,16 @@ export default function Dashboard() {
                       <p className="text-sm text-foreground/90 truncate">
                         {item.datasetName} <span className="text-muted-foreground">·</span> {item.detailLabel}
                       </p>
-                      <p className="text-xs text-muted-foreground">
-                        {meta.label} · {formatDateTime(item.createdAt)}
-                      </p>
+                      <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                        <span className="truncate">
+                          {meta.label} · {formatDateTime(item.createdAt)}
+                        </span>
+                        {item.createdBy && (
+                          <span className="flex-shrink-0 whitespace-nowrap text-foreground/70">
+                            · {item.createdBy}
+                          </span>
+                        )}
+                      </div>
                     </div>
                   </div>
                 );

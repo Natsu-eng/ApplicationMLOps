@@ -39,6 +39,11 @@ backend/storage/datasets/*
 backend/storage/models/*
 !backend/storage/models/.gitkeep
 
+# Datasets d'images uploadés (pilier Vision, Lot 15) — jamais dans git,
+# même raisonnement que backend/storage/datasets/ ci-dessus.
+backend/storage/datasets_vision/*
+!backend/storage/datasets_vision/.gitkeep
+
 # CatBoost écrit ses logs d'entraînement dans le répertoire courant (Lot 3)
 catboost_info/
 

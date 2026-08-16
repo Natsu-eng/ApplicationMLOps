@@ -33,6 +33,10 @@ export interface Pillar {
   status: "active" | "soon";
   /** Route vers laquelle la carte d'orientation navigue. */
   route: string;
+  /** 3 cas d'usage concrets affichés en puces sur la carte d'orientation
+   * (Lot 16) — rend l'objectif tangible pour un utilisateur non expert,
+   * plutôt que la seule description générique. */
+  examples: string[];
   /** Items de nav affichés dans AppShell quand ce pilier est actif — vide tant que le pilier n'a pas d'écrans réels. */
   navItems: PillarNavItem[];
 }
@@ -44,6 +48,7 @@ export const PILLARS: Pillar[] = [
     description:
       "À partir de vos données passées, estimez une valeur (un prix, une résistance, une durée) ou prédisez une catégorie (conforme ou non, à risque ou non). Idéal quand vous connaissez déjà le résultat sur d'anciens cas et voulez l'anticiper sur de nouveaux.",
     icon: Target,
+    examples: ["Prédiction de défaillance", "Estimation de durée de vie", "Classification de pièces conformes"],
     status: "active",
     // Route vers le module d'action du pilier (Entraînement), PAS vers
     // "/dashboard" — choisir un objectif depuis l'écran d'orientation doit
@@ -67,6 +72,7 @@ export const PILLARS: Pillar[] = [
     description:
       "Repérez des profils similaires ou des cas atypiques, sans savoir à l'avance ce que vous cherchez.",
     icon: Shapes,
+    examples: ["Segmentation d'équipements similaires", "Visualisation 2D d'un jeu de données", "Détection de mesures atypiques"],
     // Lot 11+ : clustering + profils de segments. Lot 13 : réduction de
     // dimension. Lot 14 : détection d'anomalies. Les 3 modules du pilier
     // sont désormais actifs.
@@ -84,14 +90,17 @@ export const PILLARS: Pillar[] = [
     title: "Analyser des images",
     description: "Classez des images ou détectez des défauts à partir de photos ou de scans.",
     icon: ScanEye,
+    examples: ["Contrôle qualité visuel", "Tri automatique de pièces", "Détection de défauts de fabrication"],
     // Lot 15 : classification d'images (transfer learning, Grad-CAM) et
     // détection d'anomalies visuelles MVTec AD actives. Détection d'objets
     // et annotation assistée hors périmètre (Lot 16+, non cadré).
     status: "active",
     route: "/vision/classification",
     navItems: [
+      { to: "/vision/datasets", label: "Mes données", icon: Database },
       { to: "/vision/classification", label: "Classification d'images", icon: Boxes },
       { to: "/vision/anomalies", label: "Anomalies visuelles", icon: Sparkles },
+      { to: "/vision/historique", label: "Historique", icon: History },
     ],
   },
 ];

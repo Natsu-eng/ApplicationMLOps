@@ -27,7 +27,17 @@ export function PillarCard({ pillar }: { pillar: Pillar }) {
           <Icon size={20} strokeWidth={2} />
         </div>
         <h2 className="text-base font-medium text-foreground mb-2">{pillar.title}</h2>
-        <p className="text-sm text-muted-foreground leading-relaxed flex-1">{pillar.description}</p>
+        <p className="text-sm text-muted-foreground leading-relaxed">{pillar.description}</p>
+        {pillar.examples.length > 0 && (
+          <ul className="mt-3 space-y-1.5 flex-1">
+            {pillar.examples.map((example) => (
+              <li key={example} className="flex items-center gap-2 text-xs text-foreground/80">
+                <span className={`size-1.5 rounded-full flex-shrink-0 ${isActive ? "bg-primary" : "bg-muted-foreground"}`} />
+                {example}
+              </li>
+            ))}
+          </ul>
+        )}
         <div className="mt-5">
           {isActive ? (
             <span className="inline-flex items-center gap-1.5 text-sm font-medium text-primary">

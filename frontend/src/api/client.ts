@@ -556,6 +556,12 @@ export interface VisionDatasetDetail extends VisionDatasetSummary {
   validation_report: VisionValidationReport;
 }
 
+export interface VisionDatasetImageList {
+  class_name: string;
+  total: number;
+  paths: string[];
+}
+
 export interface VisionBackbone {
   id: string;
   label: string;
@@ -1120,6 +1126,8 @@ export const api = {
     list: () => request<VisionDatasetSummary[]>("/vision/datasets"),
     upload: (file: File) => uploadFile<VisionDatasetDetail>("/vision/datasets", file),
     get: (id: number) => request<VisionDatasetDetail>(`/vision/datasets/${id}`),
+    listImages: (id: number, className: string) =>
+      request<VisionDatasetImageList>(`/vision/datasets/${id}/images?class_name=${encodeURIComponent(className)}`),
     remove: (id: number) => request<void>(`/vision/datasets/${id}`, { method: "DELETE" }),
   },
 

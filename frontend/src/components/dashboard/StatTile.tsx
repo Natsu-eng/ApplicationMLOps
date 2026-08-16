@@ -61,17 +61,21 @@ export function StatTile({
   value: number | undefined;
   color: AccentColor;
   delayMs?: number;
-  /** Scinde la valeur en deux sous-compteurs côte à côte (ex. supervisé vs
-   * non supervisé) dans la MÊME carte — retour utilisateur direct : un total
-   * fusionné est moins parlant qu'un total ventilé par pilier. Le chrome de
-   * la tuile (bord, ombre, barre d'accent, icône) reste identique ;
-   * `label`/`value` deviennent alors purement le fallback tant que `split`
-   * n'est pas fourni. */
-  split?: [StatTileSplitPart, StatTileSplitPart];
+  /** Scinde la valeur en sous-compteurs côte à côte (ex. supervisé / non
+   * supervisé / vision) dans la MÊME carte — retour utilisateur direct : un
+   * total fusionné est moins parlant qu'un total ventilé par pilier. Le
+   * chrome de la tuile (bord, ombre, barre d'accent, icône) reste
+   * identique ; `label`/`value` deviennent alors purement le fallback tant
+   * que `split` n'est pas fourni. 3 parts fixes (pas un tableau générique) :
+   * les hooks `useCountUp` ci-dessous doivent rester appelés un nombre fixe
+   * de fois à chaque rendu (règle des hooks), pas dans une boucle de
+   * longueur variable — étendu de 2 à 3 au Lot 16 (pilier Vision). */
+  split?: [StatTileSplitPart, StatTileSplitPart, StatTileSplitPart];
 }) {
   const displayValue = useCountUp(value);
   const displaySplitA = useCountUp(split?.[0]?.value);
   const displaySplitB = useCountUp(split?.[1]?.value);
+  const displaySplitC = useCountUp(split?.[2]?.value);
 
   return (
     <div
@@ -83,13 +87,17 @@ export function StatTile({
         <ColorIconBadge icon={icon} color={color} />
         {split ? (
           <div className="flex items-stretch divide-x divide-border min-w-0 flex-1">
-            <div className="pr-3 min-w-0">
+            <div className="pr-2 min-w-0">
               <p className="text-lg font-semibold text-foreground tabular-nums">{displaySplitA ?? "—"}</p>
               <p className="text-[11px] text-muted-foreground truncate">{split[0].label}</p>
             </div>
-            <div className="pl-3 min-w-0">
+            <div className="px-2 min-w-0">
               <p className="text-lg font-semibold text-foreground tabular-nums">{displaySplitB ?? "—"}</p>
               <p className="text-[11px] text-muted-foreground truncate">{split[1].label}</p>
+            </div>
+            <div className="pl-2 min-w-0">
+              <p className="text-lg font-semibold text-foreground tabular-nums">{displaySplitC ?? "—"}</p>
+              <p className="text-[11px] text-muted-foreground truncate">{split[2].label}</p>
             </div>
           </div>
         ) : (
@@ -109,10 +117,12 @@ export function StatTile({
  * porte un `split`, voir Dashboard.tsx) reçoit plus de largeur, les 3 autres
  * (une seule valeur, pas besoin de place) se resserrent en retour — retour
  * utilisateur direct : les libellés "Supervisé"/"Non supervisé" tronquaient
- * dans une grille à 4 colonnes strictement égales. */
+ * dans une grille à 4 colonnes strictement égales. Part élargie à nouveau
+ * (Lot 16) : le split est passé de 2 à 3 sous-compteurs (pilier Vision
+ * ajouté). */
 export function StatTileRow({ children, wide = false }: { children: React.ReactNode; wide?: boolean }) {
   return (
-    <div className={`grid gap-4 sm:grid-cols-2 mb-8 ${wide ? "lg:grid-cols-[0.95fr_1.25fr_0.8fr_1fr]" : "lg:grid-cols-4"}`}>
+    <div className={`grid gap-4 sm:grid-cols-2 mb-8 ${wide ? "lg:grid-cols-[0.9fr_1.35fr_0.75fr_0.9fr]" : "lg:grid-cols-4"}`}>
       <style>{`
         @keyframes stat-tile-fade-in {
           from { opacity: 0; transform: translateY(6px); }

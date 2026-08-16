@@ -16,6 +16,8 @@ import TrainingHistory from "./pages/TrainingHistory";
 import UnsupervisedHistory from "./pages/UnsupervisedHistory";
 import VisionAnomalies from "./pages/VisionAnomalies";
 import VisionClassification from "./pages/VisionClassification";
+import VisionDatasets from "./pages/VisionDatasets";
+import VisionHistory from "./pages/VisionHistory";
 
 export default function App() {
   return (
@@ -107,6 +109,14 @@ export default function App() {
             />
             <Route path="/vision" element={<Navigate to="/vision/classification" replace />} />
             <Route
+              path="/vision/datasets"
+              element={
+                <ProtectedRoute>
+                  <VisionDatasets />
+                </ProtectedRoute>
+              }
+            />
+            <Route
               path="/vision/classification"
               element={
                 <ProtectedRoute>
@@ -119,6 +129,14 @@ export default function App() {
               element={
                 <ProtectedRoute>
                   <VisionAnomalies />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/vision/historique"
+              element={
+                <ProtectedRoute>
+                  <VisionHistory />
                 </ProtectedRoute>
               }
             />

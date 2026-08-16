@@ -598,6 +598,40 @@ API), suite de régression complète du pilier non supervisé + supervisé
 rejouée après chaque lot (99 tests, aucune casse), `tsc`/`vite build`/
 `npm run lint`/`vitest` verts à chaque étape.
 
+*Note de dérive documentaire* : le pilier Vision (Lot 15 — classification
+d'images, transfer learning, détection d'anomalies visuelles MVTec AD,
+Grad-CAM) a été livré entre-temps par une session parallèle, en détail dans
+`backend/workflow.md`, mais jamais narré ici — à corriger dans une passe
+dédiée plutôt que reconstitué approximativement dans ce lot.
+
+### Lot 16 — Durcissement du pilier Vision (en cours)
+
+Un audit à froid du pilier Vision fraîchement livré (vérifié dans le code,
+pas seulement dans la documentation) a montré un backend réellement soigné
+mais une expérience utilisateur en retrait par rapport au pilier tabulaire
+déjà livré — heatmaps en niveaux de gris jamais superposées, aucune
+traçabilité "qui a fait quoi" sur le Dashboard, aucune exploration visuelle
+des datasets avant d'entraîner. Lot découpé en sous-lots indépendants,
+détail technique complet dans `backend/workflow.md`.
+
+- **16A (livré)** — Heatmaps Grad-CAM et anomalies visuelles colorées
+  (palette rouge/bleu standard) et réellement superposées à l'image
+  d'origine, plus jamais niveaux de gris côte à côte — retour utilisateur
+  direct après test réel en navigateur.
+- **16B (livré)** — Le Dashboard affiche désormais qui a lancé chaque
+  analyse (donnée déjà disponible côté API, jamais reprise côté UI
+  jusqu'ici).
+- **16C (livré)** — Exploration complète d'un dataset Vision avant de
+  lancer un entraînement : galerie de miniatures par classe, et le rapport
+  de qualité (déjà calculé à l'upload — images corrompues, doublons,
+  sous-dimensionnées, déséquilibre) désormais affiché en détail, pas
+  seulement résumé en une ligne.
+- **Reste à faire** : wizard par étapes + mode expert exposant tous les
+  paramètres déjà acceptés par l'API (16D), pages "Mes données Vision" et
+  Historique (16E), catalogue de modèles élargi avec indicateur "lent" et
+  note d'évolution vers un déploiement GPU (16F), métriques dédiées à la
+  classification binaire — ROC/AUC/seuil (16G).
+
 ---
 
 ## Robustesse — pas juste "ça marche chez moi"

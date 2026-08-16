@@ -167,3 +167,57 @@ def test_get_image_isolated_between_organizations(client):
         f"/vision/datasets/{dataset_a['id']}/image", headers=headers_b, params={"path": "classe_0/img_0.png"}
     )
     assert resp.status_code == 404
+
+
+def test_list_images_returns_paths_for_class(client):
+    headers = _register(client)
+    dataset = _upload_vision_dataset(client, headers, _classification_zip_bytes(n_per_class=4)).json()
+
+    resp = client.get(f"/vision/datasets/{dataset['id']}/images", headers=headers, params={"class_name": "classe_0"})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["class_name"] == "classe_0"
+    assert body["total"] == 4
+    assert len(body["paths"]) == 4
+    assert all(p.startswith("classe_0/") for p in body["paths"])
+
+
+def test_list_images_caps_at_gallery_limit(client):
+    headers = _register(client)
+    dataset = _upload_vision_dataset(client, headers, _classification_zip_bytes(n_per_class=80)).json()
+
+    resp = client.get(f"/vision/datasets/{dataset['id']}/images", headers=headers, params={"class_name": "classe_0"})
+    body = resp.json()
+    assert body["total"] == 80
+    assert len(body["paths"]) == 60  # MAX_GALLERY_IMAGES_PER_CLASS
+
+
+def test_list_images_404_for_unknown_class(client):
+    headers = _register(client)
+    dataset = _upload_vision_dataset(client, headers, _classification_zip_bytes()).json()
+
+    resp = client.get(f"/vision/datasets/{dataset['id']}/images", headers=headers, params={"class_name": "classe_inexistante"})
+    assert resp.status_code == 404
+    assert resp.json()["detail"]["code"] == "CLASSE_INTROUVABLE"
+
+
+def test_list_images_rejects_path_traversal(client):
+    headers = _register(client)
+    dataset = _upload_vision_dataset(client, headers, _classification_zip_bytes()).json()
+
+    resp = client.get(
+        f"/vision/datasets/{dataset['id']}/images", headers=headers, params={"class_name": "../../../../etc"}
+    )
+    assert resp.status_code == 404
+    assert resp.json()["detail"]["code"] == "CLASSE_INTROUVABLE"
+
+
+def test_list_images_isolated_between_organizations(client):
+    headers_a = _register(client, "a@bureau-a.fr", "Bureau A")
+    dataset_a = _upload_vision_dataset(client, headers_a, _classification_zip_bytes()).json()
+
+    headers_b = _register(client, "b@bureau-b.fr", "Bureau B")
+    resp = client.get(
+        f"/vision/datasets/{dataset_a['id']}/images", headers=headers_b, params={"class_name": "classe_0"}
+    )
+    assert resp.status_code == 404

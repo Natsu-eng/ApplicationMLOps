@@ -15,7 +15,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -39,6 +39,11 @@ router = APIRouter(prefix="/vision/datasets", tags=["vision"])
 _settings = get_settings()
 _MAX_UPLOAD_BYTES = _settings.max_vision_upload_size_mb * 1024 * 1024
 
+# Exploration (Lot 16C) — galerie de miniatures par classe, plafonnée pour
+# ne jamais renvoyer des milliers de chemins d'un coup (une classe MVTec AD
+# peut en compter plusieurs centaines).
+MAX_GALLERY_IMAGES_PER_CLASS = 60
+
 
 # ── Schémas ──────────────────────────────────────────────────────────────
 
@@ -58,6 +63,16 @@ class VisionDatasetSummary(BaseModel):
 class VisionDatasetDetail(VisionDatasetSummary):
     class_distribution: dict[str, int] = {}
     validation_report: dict = {}
+
+
+class VisionDatasetImageList(BaseModel):
+    class_name: str
+    total: int
+    # Chemins relatifs (`relative_path`) prêts à être passés tels quels à
+    # GET /{dataset_id}/image?path=... — plafonné à MAX_GALLERY_IMAGES_PER_CLASS,
+    # `total` reste le compte réel pour que le frontend puisse afficher
+    # "60 sur 340 images affichées" plutôt qu'un compte tronqué silencieux.
+    paths: List[str]
 
 
 def _to_summary(dataset: VisionDataset) -> VisionDatasetSummary:
@@ -218,6 +233,32 @@ def get_vision_dataset_image(
             detail={"code": "IMAGE_INTROUVABLE", "message": "Image introuvable dans ce dataset"},
         )
     return FileResponse(target)
+
+
+@router.get("/{dataset_id}/images", response_model=VisionDatasetImageList)
+def list_vision_dataset_images(
+    dataset_id: int,
+    class_name: str = Query(...),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Liste les images d'UNE classe (ou d'un bucket MVTec AD, ex.
+    "train/good") pour la galerie d'exploration (Lot 16C) — parcourt le
+    disque à la demande, aucune nouvelle table : les fichiers sont déjà
+    extraits sur `storage_dir` au moment de l'upload
+    (`services/vision_datasets.py::analyze_and_extract_vision_zip`). Même
+    protection contre la traversée de répertoire que `GET .../image`."""
+    dataset = _get_org_dataset(dataset_id, current_user, db)
+    base_dir = Path(dataset.storage_dir).resolve()
+    bucket_dir = (base_dir / class_name).resolve()
+    if base_dir not in bucket_dir.parents or not bucket_dir.is_dir():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "CLASSE_INTROUVABLE", "message": f"Classe introuvable dans ce dataset : {class_name}"},
+        )
+    files = sorted(p for p in bucket_dir.iterdir() if p.is_file())
+    paths = [p.relative_to(base_dir).as_posix() for p in files[:MAX_GALLERY_IMAGES_PER_CLASS]]
+    return VisionDatasetImageList(class_name=class_name, total=len(files), paths=paths)
 
 
 @router.delete("/{dataset_id}", status_code=status.HTTP_204_NO_CONTENT)
