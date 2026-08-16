@@ -9,6 +9,9 @@
 #   frontend — React buildé + Nginx (port 80 public)
 #
 # Démarrage : docker compose up -d --build
+# Plusieurs workers (Lot 1.3, correctif C7 — isolation par job via fork,
+# jobs de plusieurs organisations traités en parallèle) :
+#   docker compose up -d --scale worker=3
 # ═══════════════════════════════════════════════════════════════════════════
 
 services:
@@ -82,13 +85,26 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     image: datalab-backend:latest
-    container_name: datalab_worker
+    # Pas de container_name fixe (Lot 1.3, correctif C7) : un nom fixe
+    # empêche plusieurs répliques (deux conteneurs ne peuvent pas partager
+    # le même nom). `deploy.replicas` ci-dessous fixe le défaut à 2 sans
+    # action manuelle ; `docker compose up -d --scale worker=N` reste
+    # disponible pour ajuster ponctuellement. Isolation par fork réelle
+    # sous Linux (voir workers/run_worker.py) — plusieurs répliques servent
+    # maintenant à quelque chose (avant, un seul worker traitait tous les
+    # jobs de toutes les organisations un par un, un seul à la fois).
+    deploy:
+      replicas: 2
     command: ["python", "-m", "workers.run_worker"]
     env_file: backend/.env
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
       REDIS_URL: redis://redis:6379/0
       PYTHONUNBUFFERED: "1"
+      # "fork" explicite : ce conteneur tourne sous Linux, Worker classique
+      # + isolation par fork (voir workers/run_worker.py). Ne JAMAIS mettre
+      # "simple" ici — réservé au développement local Windows.
+      RQ_WORKER_MODE: fork
     volumes:
       # Même volume que le backend : le worker écrit les artefacts de modèles,
       # l'API les sert — un seul système de fichiers partagé (Lot 9 : stockage
