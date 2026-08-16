@@ -1,0 +1,97 @@
+name: CI
+
+# Lot 0.4 (AUDIT_DATALAB_2026-08-16.md, C4) — aucun filet n'existait avant.
+# Déclenché sur push ET pull_request : une PR doit être vérifiée avant fusion,
+# pas seulement le push qui la crée.
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+# Un nouveau push sur la même branche annule le run précédent encore en
+# cours — évite de payer deux fois le même travail (torch CPU est lourd).
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+
+    # Redis réel requis : `is_rate_limited()` (api/core/rate_limit.py) est
+    # fail-open (retourne "non limité" si Redis est injoignable), donc
+    # tests/test_auth.py::test_login_blocked_after_too_many_failed_attempts
+    # (qui attend un 429 après dépassement du seuil) échouerait silencieusement
+    # sans Redis réellement accessible — vérifié en conditions réelles avant
+    # d'écrire ce fichier (DECISIONS.md, D0.2), pas supposé.
+    #
+    # Postgres n'est PAS nécessaire : tests/conftest.py réécrit DATABASE_URL
+    # vers un SQLite temporaire avant tout import de api.core.*, la suite ne
+    # touche jamais une vraie base Postgres.
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: backend/requirements.txt
+
+      # lightgbm (backend/requirements.txt) dépend de libgomp au runtime,
+      # comme dans backend/Dockerfile.
+      - name: Installer les dépendances système
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libgomp1
+
+      - name: Installer les dépendances Python
+        working-directory: backend
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: pytest
+        working-directory: backend
+        env:
+          REDIS_URL: redis://localhost:6379/0
+        run: pytest
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Installer les dépendances
+        working-directory: frontend
+        run: npm ci
+
+      - name: Vérification des types (tsc)
+        working-directory: frontend
+        run: npx tsc -b
+
+      - name: Lint
+        working-directory: frontend
+        run: npm run lint
+
+      - name: Tests
+        working-directory: frontend
+        run: npm run test
+
+      - name: Build
+        working-directory: frontend
+        run: npm run build
