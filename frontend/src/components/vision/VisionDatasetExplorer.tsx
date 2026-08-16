@@ -123,19 +123,30 @@ function DatasetQualityReport({ dataset }: { dataset: VisionDatasetDetail }) {
       <QualityFileList title={`Images corrompues ou illisibles (${report.n_corrupted})`} files={report.corrupted_files} />
       <QualityFileList title={`Images trop petites (${report.n_undersized})`} files={report.undersized_files} />
 
-      {report.duplicate_groups.length > 0 && (
+      {(report.duplicate_removed_files?.length ?? 0) > 0 && (
+        <QualityFileList
+          title={`Doublons exclus (${report.n_duplicates_removed ?? 0}) — une seule copie conservée par doublon`}
+          files={report.duplicate_removed_files ?? []}
+        />
+      )}
+
+      {(report.label_conflicts?.length ?? 0) > 0 && (
         <div>
           <p className="text-xs uppercase tracking-wide text-muted-foreground mb-1.5">
-            Doublons détectés ({report.n_duplicates}) — conservés, à revoir manuellement
+            Conflits d'étiquette — mêmes images trouvées dans des classes différentes, toutes exclues
           </p>
           <div className="max-h-32 overflow-y-auto rounded-lg border border-border divide-y divide-border/60">
-            {report.duplicate_groups.map((group, i) => (
+            {report.label_conflicts!.map((conflict, i) => (
               <p key={i} className="text-xs text-foreground/80 font-mono px-2 py-1 truncate">
-                {group.join(" = ")}
+                {conflict.categories.join(" ↔ ")} : {conflict.paths.join(" = ")}
               </p>
             ))}
           </div>
         </div>
+      )}
+
+      {report.duplicate_detection_note && (
+        <p className="text-xs text-muted-foreground italic">{report.duplicate_detection_note}</p>
       )}
     </div>
   );

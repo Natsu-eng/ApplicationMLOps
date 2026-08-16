@@ -176,8 +176,16 @@ async def upload_vision_dataset(
         dataset.validation_report_json = json.dumps({
             "n_corrupted": report.n_corrupted,
             "corrupted_files": report.corrupted_files,
-            "n_duplicates": report.n_duplicates,
-            "duplicate_groups": report.duplicate_groups,
+            # Lot 0.1 (correctif C1) — renommés depuis n_duplicates/duplicate_groups :
+            # les champs ci-dessous décrivent désormais des exclusions réelles, plus
+            # des doublons "conservés". Les datasets uploadés avant ce correctif
+            # gardent l'ancienne forme dans leur validation_report_json existant
+            # (rétrocompatibilité par absence — le frontend traite ces champs comme
+            # optionnels).
+            "n_duplicates_removed": report.n_duplicates_removed,
+            "duplicate_removed_files": report.duplicate_removed_files,
+            "label_conflicts": report.label_conflicts,
+            "duplicate_detection_note": report.duplicate_detection_note,
             "n_undersized": report.n_undersized,
             "undersized_files": report.undersized_files,
             "warnings": report.warnings,

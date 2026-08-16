@@ -20,9 +20,16 @@ def _register(client, email="owner@bureau.fr", org="Bureau"):
     return {"Authorization": f"Bearer {resp['access_token']}"}
 
 
-def _png_bytes(color=(255, 0, 0), size=(48, 48)) -> bytes:
+def _png_bytes(color=(255, 0, 0), size=(48, 48), variant: int = 0) -> bytes:
+    """`variant` rend deux images de même couleur bit-à-bit distinctes —
+    nécessaire depuis la déduplication à l'ingestion (Lot 0.1, correctif
+    C1) : sans lui, les images "différentes" de ces fixtures étaient en
+    réalité des doublons exacts, désormais réduits à une seule copie."""
+    img = Image.new("RGB", size, color)
+    if variant:
+        img.putpixel((0, 0), (variant % 256, (variant * 7) % 256, (variant * 13) % 256))
     buf = io.BytesIO()
-    Image.new("RGB", size, color).save(buf, format="PNG")
+    img.save(buf, format="PNG")
     return buf.getvalue()
 
 
@@ -32,7 +39,7 @@ def _classification_zip_bytes(n_per_class=8, n_classes=2) -> bytes:
     with zipfile.ZipFile(buf, "w") as zf:
         for c in range(n_classes):
             for i in range(n_per_class):
-                zf.writestr(f"classe_{c}/img_{i}.png", _png_bytes(colors[c % len(colors)]))
+                zf.writestr(f"classe_{c}/img_{i}.png", _png_bytes(colors[c % len(colors)], variant=i + 1))
     return buf.getvalue()
 
 
@@ -95,11 +102,11 @@ def test_create_job_rejects_mvtec_dataset(client):
     headers = _register(client)
     files = {}
     for i in range(6):
-        files[f"train/good/{i}.png"] = _png_bytes((10, 10, 10))
+        files[f"train/good/{i}.png"] = _png_bytes((10, 10, 10), variant=i + 1)
     for i in range(3):
-        files[f"test/good/{i}.png"] = _png_bytes((20, 20, 20))
+        files[f"test/good/{i}.png"] = _png_bytes((20, 20, 20), variant=i + 1)
     for i in range(3):
-        files[f"test/scratch/{i}.png"] = _png_bytes((200, 0, 0))
+        files[f"test/scratch/{i}.png"] = _png_bytes((200, 0, 0), variant=i + 1)
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as zf:
         for name, content in files.items():

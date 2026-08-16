@@ -16,9 +16,17 @@ from services.vision_datasets import (
 )
 
 
-def _png_bytes(color=(255, 0, 0), size=(32, 32)) -> bytes:
+def _png_bytes(color=(255, 0, 0), size=(32, 32), variant: int = 0) -> bytes:
+    """`variant` rend deux images de même couleur bit-à-bit distinctes —
+    nécessaire depuis la déduplication (Lot 0.1, correctif C1) : deux
+    appels avec la même couleur et sans variant produiraient un PNG
+    strictement identique, désormais détecté (à raison) comme un vrai
+    doublon plutôt que comme deux images distinctes du même jeu de test."""
+    img = Image.new("RGB", size, color)
+    if variant:
+        img.putpixel((0, 0), (variant % 256, (variant * 7) % 256, (variant * 13) % 256))
     buf = io.BytesIO()
-    Image.new("RGB", size, color).save(buf, format="PNG")
+    img.save(buf, format="PNG")
     return buf.getvalue()
 
 
@@ -35,18 +43,18 @@ def _classification_zip(n_per_class=4, n_classes=2) -> bytes:
     colors = [(255, 0, 0), (0, 255, 0), (0, 0, 255)]
     for c in range(n_classes):
         for i in range(n_per_class):
-            files[f"classe_{c}/img_{i}.png"] = _png_bytes(colors[c % len(colors)])
+            files[f"classe_{c}/img_{i}.png"] = _png_bytes(colors[c % len(colors)], variant=i + 1)
     return _build_zip(files)
 
 
 def _mvtec_zip(n_train_good=6, n_test_good=3, n_test_defect=3) -> bytes:
     files = {}
     for i in range(n_train_good):
-        files[f"train/good/{i}.png"] = _png_bytes((10, 10, 10))
+        files[f"train/good/{i}.png"] = _png_bytes((10, 10, 10), variant=i + 1)
     for i in range(n_test_good):
-        files[f"test/good/{i}.png"] = _png_bytes((20, 20, 20))
+        files[f"test/good/{i}.png"] = _png_bytes((20, 20, 20), variant=i + 1)
     for i in range(n_test_defect):
-        files[f"test/scratch/{i}.png"] = _png_bytes((200, 0, 0))
+        files[f"test/scratch/{i}.png"] = _png_bytes((200, 0, 0), variant=i + 1)
     return _build_zip(files)
 
 
@@ -55,9 +63,9 @@ def test_valid_mvtec_ad_structure_with_category_wrapper_detected(tmp_path):
     (ex. bottle/train/good/..., bottle/test/...) — bug réel trouvé en testant
     avec un vrai dataset, pas seulement des fixtures synthétiques sans
     dossier englobant."""
-    files = {f"bottle/train/good/{i}.png": _png_bytes() for i in range(MIN_TRAIN_GOOD_IMAGES)}
-    files.update({f"bottle/test/good/{i}.png": _png_bytes() for i in range(3)})
-    files.update({f"bottle/test/broken_large/{i}.png": _png_bytes((200, 0, 0)) for i in range(3)})
+    files = {f"bottle/train/good/{i}.png": _png_bytes((10, 10, 10), variant=i + 1) for i in range(MIN_TRAIN_GOOD_IMAGES)}
+    files.update({f"bottle/test/good/{i}.png": _png_bytes((20, 20, 20), variant=i + 1) for i in range(3)})
+    files.update({f"bottle/test/broken_large/{i}.png": _png_bytes((200, 0, 0), variant=i + 1) for i in range(3)})
     content = _build_zip(files)
     report = analyze_and_extract_vision_zip(content, tmp_path, max_images=1000, max_uncompressed_bytes=10_000_000)
     assert report.structure_type == "mvtec_ad"
@@ -73,10 +81,10 @@ def test_ground_truth_folder_ignored_silently(tmp_path):
     """Le dossier `ground_truth/` (masques de segmentation pixel par pixel)
     d'un téléchargement MVTec AD officiel doit être ignoré, jamais une
     erreur de structure ni copié dans le dataset extrait."""
-    files = {f"bottle/train/good/{i}.png": _png_bytes() for i in range(MIN_TRAIN_GOOD_IMAGES)}
-    files.update({f"bottle/test/good/{i}.png": _png_bytes() for i in range(3)})
-    files.update({f"bottle/test/broken_large/{i}.png": _png_bytes((200, 0, 0)) for i in range(3)})
-    files.update({f"bottle/ground_truth/broken_large/{i}_mask.png": _png_bytes((255, 255, 255)) for i in range(3)})
+    files = {f"bottle/train/good/{i}.png": _png_bytes((10, 10, 10), variant=i + 1) for i in range(MIN_TRAIN_GOOD_IMAGES)}
+    files.update({f"bottle/test/good/{i}.png": _png_bytes((20, 20, 20), variant=i + 1) for i in range(3)})
+    files.update({f"bottle/test/broken_large/{i}.png": _png_bytes((200, 0, 0), variant=i + 1) for i in range(3)})
+    files.update({f"bottle/ground_truth/broken_large/{i}_mask.png": _png_bytes((255, 255, 255), variant=i + 1) for i in range(3)})
     content = _build_zip(files)
     report = analyze_and_extract_vision_zip(content, tmp_path, max_images=1000, max_uncompressed_bytes=10_000_000)
     assert report.structure_type == "mvtec_ad"
@@ -118,7 +126,7 @@ def test_valid_classification_structure_with_wrapper_folder_detected(tmp_path):
     files = {}
     for c in range(2):
         for i in range(4):
-            files[f"mon_dataset/classe_{c}/img_{i}.png"] = _png_bytes((50 * c, 50 * c, 50 * c))
+            files[f"mon_dataset/classe_{c}/img_{i}.png"] = _png_bytes((50 * c, 50 * c, 50 * c), variant=i + 1)
     content = _build_zip(files)
     report = analyze_and_extract_vision_zip(content, tmp_path, max_images=1000, max_uncompressed_bytes=10_000_000)
     assert report.structure_type == "classification"
@@ -158,9 +166,9 @@ def test_bad_zip_file_rejected(tmp_path):
 
 
 def test_corrupted_image_excluded_and_reported(tmp_path):
-    files = {f"classe_0/img_{i}.png": _png_bytes() for i in range(MIN_IMAGES_PER_CLASS + 1)}
+    files = {f"classe_0/img_{i}.png": _png_bytes(variant=i + 1) for i in range(MIN_IMAGES_PER_CLASS + 1)}
     files["classe_0/broken.png"] = b"this is not a real image"
-    files.update({f"classe_1/img_{i}.png": _png_bytes((0, 255, 0)) for i in range(MIN_IMAGES_PER_CLASS)})
+    files.update({f"classe_1/img_{i}.png": _png_bytes((0, 255, 0), variant=i + 1) for i in range(MIN_IMAGES_PER_CLASS)})
     content = _build_zip(files)
     report = analyze_and_extract_vision_zip(content, tmp_path, max_images=1000, max_uncompressed_bytes=10_000_000)
     assert report.n_corrupted == 1
@@ -168,7 +176,12 @@ def test_corrupted_image_excluded_and_reported(tmp_path):
     assert any("corrompue" in w for w in report.warnings)
 
 
-def test_duplicate_images_detected(tmp_path):
+def test_duplicate_images_excluded_not_just_flagged(tmp_path):
+    """Correctif C1 (AUDIT_DATALAB_2026-08-16.md) — avant, un doublon était
+    compté mais TOUJOURS copié sur disque ("conservé, à revoir
+    manuellement"). Maintenant une seule copie survit réellement : le
+    fichier exclu n'existe pas sur disque, `class_distribution` (qui pilote
+    ensuite le split d'entraînement) ne le compte plus."""
     same = _png_bytes((123, 45, 67))
     files = {
         "classe_0/a.png": same,
@@ -179,15 +192,112 @@ def test_duplicate_images_detected(tmp_path):
     }
     content = _build_zip(files)
     report = analyze_and_extract_vision_zip(content, tmp_path, max_images=1000, max_uncompressed_bytes=10_000_000)
-    assert report.n_duplicates == 1
-    assert len(report.duplicate_groups) == 1
-    assert set(report.duplicate_groups[0]) == {"classe_0/a.png", "classe_0/b.png"}
+    assert report.n_duplicates_removed == 1
+    assert report.duplicate_removed_files == ["classe_0/b.png"]  # "a" < "b" : la première triée survit
+    assert (tmp_path / "classe_0" / "a.png").exists()
+    assert not (tmp_path / "classe_0" / "b.png").exists()
+    # class_distribution reflète le disque réel : 2 images (a, c), pas 3.
+    assert report.class_distribution["classe_0"] == 2
+    assert report.n_images == 4  # 2 (classe_0) + 2 (classe_1), pas 5
+    assert report.duplicate_detection_note  # limite SHA-256 toujours documentée
+
+
+def test_dedup_can_push_class_below_minimum_with_explicit_message(tmp_path):
+    """La déduplication peut faire passer une classe sous le seuil minimum
+    alors qu'elle le respectait avant exclusion des doublons — c'est le bon
+    comportement, mais le message doit dire explicitement que c'est la
+    déduplication qui en est responsable, sinon l'utilisateur ne comprend
+    pas pourquoi un import qui passait avant est refusé."""
+    same = _png_bytes((9, 9, 9))
+    # Exactement MIN_IMAGES_PER_CLASS fichiers, mais deux sont des doublons
+    # bit-à-bit : après déduplication, il n'en reste que MIN_IMAGES_PER_CLASS - 1.
+    files = {"classe_0/a.png": same, "classe_0/b.png": same}
+    files.update({f"classe_0/img_{i}.png": _png_bytes((i, i, i)) for i in range(MIN_IMAGES_PER_CLASS - 2)})
+    files.update({f"classe_1/img_{i}.png": _png_bytes((100 + i, 0, 0)) for i in range(MIN_IMAGES_PER_CLASS)})
+    content = _build_zip(files)
+    with pytest.raises(VisionDatasetError, match="déduplication|doublons"):
+        analyze_and_extract_vision_zip(content, tmp_path, max_images=1000, max_uncompressed_bytes=10_000_000)
+
+
+def test_mvtec_train_test_duplicate_keeps_train_excludes_test(tmp_path):
+    """LE test central du correctif C1 : une image bit-à-bit identique
+    présente à la fois dans train/good et test/good est exactement la fuite
+    corrigée. La copie de train/ doit survivre, celle de test/ doit être
+    exclue — jamais l'inverse, jamais laissé au hasard de l'ordre
+    d'itération des buckets. Après ce correctif, aucun hash ne peut plus
+    apparaître des deux côtés du split train/test."""
+    leaked = _png_bytes((77, 77, 77))
+    files = {"train/good/leaked.png": leaked, "test/good/leaked.png": leaked}
+    files.update({f"train/good/{i}.png": _png_bytes((i, i, i)) for i in range(MIN_TRAIN_GOOD_IMAGES)})
+    files.update({f"test/good/{i}.png": _png_bytes((50 + i, 0, 0)) for i in range(2)})
+    files.update({f"test/scratch/{i}.png": _png_bytes((200, 0, 0)) for i in range(2)})
+    content = _build_zip(files)
+    report = analyze_and_extract_vision_zip(content, tmp_path, max_images=1000, max_uncompressed_bytes=10_000_000)
+
+    assert (tmp_path / "train" / "good" / "leaked.png").exists()
+    assert not (tmp_path / "test" / "good" / "leaked.png").exists()
+    assert "test/good/leaked.png" in report.duplicate_removed_files
+    assert "train/good/leaked.png" not in report.duplicate_removed_files
+
+    # Preuve directe qu'aucun hash n'apparaît des deux côtés : les empreintes
+    # des fichiers réellement extraits sous train/ et test/ sont disjointes.
+    import hashlib as _hashlib
+
+    train_hashes = {
+        _hashlib.sha256(p.read_bytes()).hexdigest() for p in (tmp_path / "train").rglob("*.png")
+    }
+    test_hashes = {
+        _hashlib.sha256(p.read_bytes()).hexdigest() for p in (tmp_path / "test").rglob("*.png")
+    }
+    assert train_hashes.isdisjoint(test_hashes)
+
+
+def test_cross_class_duplicate_is_label_conflict_not_dedup(tmp_path):
+    """La même image bit-à-bit présente dans DEUX classes différentes n'est
+    pas un doublon à trancher (garder une copie au hasard fausserait la
+    classe survivante) : c'est un conflit d'étiquette, les deux copies
+    doivent être exclues."""
+    ambiguous = _png_bytes((5, 5, 5))
+    files = {"classe_0/a.png": ambiguous, "classe_1/a.png": ambiguous}
+    files.update({f"classe_0/extra_{i}.png": _png_bytes((10 + i, 0, 0)) for i in range(MIN_IMAGES_PER_CLASS)})
+    files.update({f"classe_1/extra_{i}.png": _png_bytes((0, 10 + i, 0)) for i in range(MIN_IMAGES_PER_CLASS)})
+    content = _build_zip(files)
+    report = analyze_and_extract_vision_zip(content, tmp_path, max_images=1000, max_uncompressed_bytes=10_000_000)
+
+    assert not (tmp_path / "classe_0" / "a.png").exists()
+    assert not (tmp_path / "classe_1" / "a.png").exists()
+    assert len(report.label_conflicts) == 1
+    assert report.label_conflicts[0]["categories"] == ["classe_0", "classe_1"]
+    assert set(report.label_conflicts[0]["paths"]) == {"classe_0/a.png", "classe_1/a.png"}
+    assert report.n_duplicates_removed == 0  # ce n'est pas comptabilisé comme un doublon bénin
+    assert any("classes différentes" in w for w in report.warnings)
+
+
+def test_mvtec_same_category_duplicate_within_test_is_benign_dedup(tmp_path):
+    """Un doublon entre test/good et test/scratch (catégories différentes,
+    toutes deux dans test/) est un conflit d'étiquette, pas une fuite
+    train/test — la règle "on garde train/" ne s'applique qu'à la MÊME
+    catégorie présente des deux côtés du split."""
+    ambiguous = _png_bytes((88, 88, 88))
+    files = {"test/good/x.png": ambiguous, "test/scratch/x.png": ambiguous}
+    files.update({f"train/good/{i}.png": _png_bytes((i, i, i)) for i in range(MIN_TRAIN_GOOD_IMAGES)})
+    files.update({f"test/good/{i}.png": _png_bytes((50 + i, 0, 0)) for i in range(2)})
+    files.update({f"test/scratch/{i}.png": _png_bytes((200, 0, 0)) for i in range(2)})
+    content = _build_zip(files)
+    report = analyze_and_extract_vision_zip(content, tmp_path, max_images=1000, max_uncompressed_bytes=10_000_000)
+
+    assert not (tmp_path / "test" / "good" / "x.png").exists()
+    assert not (tmp_path / "test" / "scratch" / "x.png").exists()
+    assert len(report.label_conflicts) == 1
+    assert report.label_conflicts[0]["categories"] == ["good", "scratch"]
 
 
 def test_undersized_image_excluded(tmp_path):
-    files = {f"classe_0/img_{i}.png": _png_bytes(size=(32, 32)) for i in range(MIN_IMAGES_PER_CLASS)}
+    files = {f"classe_0/img_{i}.png": _png_bytes(size=(32, 32), variant=i + 1) for i in range(MIN_IMAGES_PER_CLASS)}
     files["classe_0/tiny.png"] = _png_bytes(size=(5, 5))
-    files.update({f"classe_1/img_{i}.png": _png_bytes((0, 0, 255), size=(32, 32)) for i in range(MIN_IMAGES_PER_CLASS)})
+    files.update(
+        {f"classe_1/img_{i}.png": _png_bytes((0, 0, 255), size=(32, 32), variant=i + 1) for i in range(MIN_IMAGES_PER_CLASS)}
+    )
     content = _build_zip(files)
     report = analyze_and_extract_vision_zip(content, tmp_path, max_images=1000, max_uncompressed_bytes=10_000_000)
     assert report.n_undersized == 1
@@ -228,8 +338,8 @@ def test_too_many_images_rejected(tmp_path):
 
 
 def test_class_imbalance_warns_but_does_not_block(tmp_path):
-    files = {f"classe_0/img_{i}.png": _png_bytes() for i in range(30)}
-    files.update({f"classe_1/img_{i}.png": _png_bytes((0, 255, 0)) for i in range(2)})
+    files = {f"classe_0/img_{i}.png": _png_bytes(variant=i + 1) for i in range(30)}
+    files.update({f"classe_1/img_{i}.png": _png_bytes((0, 255, 0), variant=i + 1) for i in range(2)})
     content = _build_zip(files)
     report = analyze_and_extract_vision_zip(content, tmp_path, max_images=1000, max_uncompressed_bytes=10_000_000)
     assert report.structure_type == "classification"
@@ -237,8 +347,8 @@ def test_class_imbalance_warns_but_does_not_block(tmp_path):
 
 
 def test_non_image_files_ignored(tmp_path):
-    files = {f"classe_0/img_{i}.png": _png_bytes() for i in range(MIN_IMAGES_PER_CLASS)}
-    files.update({f"classe_1/img_{i}.png": _png_bytes((0, 255, 0)) for i in range(MIN_IMAGES_PER_CLASS)})
+    files = {f"classe_0/img_{i}.png": _png_bytes(variant=i + 1) for i in range(MIN_IMAGES_PER_CLASS)}
+    files.update({f"classe_1/img_{i}.png": _png_bytes((0, 255, 0), variant=i + 1) for i in range(MIN_IMAGES_PER_CLASS)})
     files["classe_0/notes.txt"] = b"pas une image"
     files["__MACOSX/classe_0/._img_0.png"] = b"metadata macos"
     content = _build_zip(files)

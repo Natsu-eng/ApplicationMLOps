@@ -541,11 +541,23 @@ export interface VisionDatasetSummary {
   created_at: string;
 }
 
+export interface VisionLabelConflictGroup {
+  categories: string[];
+  paths: string[];
+}
+
 export interface VisionValidationReport {
   n_corrupted: number;
   corrupted_files: string[];
-  n_duplicates: number;
-  duplicate_groups: string[][];
+  // Lot 0.1 (correctif C1, AUDIT_DATALAB_2026-08-16.md) — absents sur les
+  // datasets uploadés avant ce correctif (rétrocompatibilité par absence,
+  // l'ancienne forme du rapport avait n_duplicates/duplicate_groups à la
+  // place, jamais réaffichée : elle décrivait des doublons "conservés",
+  // plus d'actualité depuis la déduplication à l'ingestion).
+  n_duplicates_removed?: number;
+  duplicate_removed_files?: string[];
+  label_conflicts?: VisionLabelConflictGroup[];
+  duplicate_detection_note?: string;
   n_undersized: number;
   undersized_files: string[];
   warnings: string[];

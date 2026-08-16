@@ -20,8 +20,15 @@ def _register(client, email="owner@bureau.fr", org="Bureau"):
     return {"Authorization": f"Bearer {resp['access_token']}"}
 
 
-def _png_bytes(color=(120, 120, 120), size=(48, 48)) -> bytes:
-    rng = np.random.default_rng(0)
+def _png_bytes(color=(120, 120, 120), size=(48, 48), variant: int = 0) -> bytes:
+    """`variant` rend deux images de même couleur/bruit bit-à-bit distinctes
+    — nécessaire depuis la déduplication à l'ingestion (Lot 0.1, correctif
+    C1) : la graine fixe (`default_rng(0)`) produisait avant ce correctif le
+    même bruit à chaque appel, donc des images "différentes" en réalité
+    identiques, y compris entre train/good et test/good (exactement la
+    fuite corrigée par C1 — sans `variant`, cette fixture la déclenchait
+    involontairement)."""
+    rng = np.random.default_rng(variant)
     arr = np.full((size[1], size[0], 3), color, dtype=np.uint8)
     noise = rng.integers(-10, 10, (size[1], size[0], 3))
     arr = np.clip(arr.astype(int) + noise, 0, 255).astype(np.uint8)
@@ -34,11 +41,11 @@ def _mvtec_zip_bytes(n_train_good=12, n_test_good=3, n_test_defect=3) -> bytes:
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as zf:
         for i in range(n_train_good):
-            zf.writestr(f"train/good/{i}.png", _png_bytes((120, 120, 120)))
+            zf.writestr(f"train/good/{i}.png", _png_bytes((120, 120, 120), variant=i + 1))
         for i in range(n_test_good):
-            zf.writestr(f"test/good/{i}.png", _png_bytes((120, 120, 120)))
+            zf.writestr(f"test/good/{i}.png", _png_bytes((120, 120, 120), variant=1000 + i))
         for i in range(n_test_defect):
-            zf.writestr(f"test/scratch/{i}.png", _png_bytes((220, 20, 20)))
+            zf.writestr(f"test/scratch/{i}.png", _png_bytes((220, 20, 20), variant=2000 + i))
     return buf.getvalue()
 
 
@@ -47,7 +54,7 @@ def _classification_zip_bytes(n_per_class=4, n_classes=2) -> bytes:
     with zipfile.ZipFile(buf, "w") as zf:
         for c in range(n_classes):
             for i in range(n_per_class):
-                zf.writestr(f"classe_{c}/img_{i}.png", _png_bytes((10 * c, 10 * c, 10 * c)))
+                zf.writestr(f"classe_{c}/img_{i}.png", _png_bytes((10 * c, 10 * c, 10 * c), variant=i + 1))
     return buf.getvalue()
 
 

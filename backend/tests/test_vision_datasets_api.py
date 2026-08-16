@@ -15,9 +15,15 @@ def _register(client, email="owner@bureau.fr", org="Bureau"):
     return {"Authorization": f"Bearer {resp['access_token']}"}
 
 
-def _png_bytes(color=(255, 0, 0), size=(32, 32)) -> bytes:
+def _png_bytes(color=(255, 0, 0), size=(32, 32), variant: int = 0) -> bytes:
+    """`variant` rend deux images de même couleur bit-à-bit distinctes —
+    nécessaire depuis la déduplication (Lot 0.1, correctif C1) : voir
+    test_vision_datasets_service.py::_png_bytes pour le raisonnement complet."""
+    img = Image.new("RGB", size, color)
+    if variant:
+        img.putpixel((0, 0), (variant % 256, (variant * 7) % 256, (variant * 13) % 256))
     buf = io.BytesIO()
-    Image.new("RGB", size, color).save(buf, format="PNG")
+    img.save(buf, format="PNG")
     return buf.getvalue()
 
 
@@ -34,7 +40,7 @@ def _classification_zip_bytes(n_per_class=4, n_classes=2) -> bytes:
     colors = [(255, 0, 0), (0, 255, 0), (0, 0, 255)]
     for c in range(n_classes):
         for i in range(n_per_class):
-            files[f"classe_{c}/img_{i}.png"] = _png_bytes(colors[c % len(colors)])
+            files[f"classe_{c}/img_{i}.png"] = _png_bytes(colors[c % len(colors)], variant=i + 1)
     return _build_zip(files)
 
 
@@ -117,9 +123,9 @@ def test_delete_dataset_removes_it_and_its_files(client):
 
 def test_get_dataset_detail_includes_validation_report(client):
     headers = _register(client)
-    files = {f"classe_0/img_{i}.png": _png_bytes() for i in range(4)}
+    files = {f"classe_0/img_{i}.png": _png_bytes(variant=i + 1) for i in range(4)}
     files["classe_0/broken.png"] = b"not an image"
-    files.update({f"classe_1/img_{i}.png": _png_bytes((0, 255, 0)) for i in range(4)})
+    files.update({f"classe_1/img_{i}.png": _png_bytes((0, 255, 0), variant=i + 1) for i in range(4)})
     content = _build_zip(files)
     dataset = _upload_vision_dataset(client, headers, content).json()
 
