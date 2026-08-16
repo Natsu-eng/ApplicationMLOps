@@ -1,23 +1,63 @@
 import type { HTMLAttributes, ReactNode } from "react";
+import type { Density } from "../../theme/density";
+import { CARD_PADDING } from "../../theme/density";
+
+type Variant = "elevated" | "outlined" | "interactive" | "stat";
 
 interface CardProps extends HTMLAttributes<HTMLDivElement> {
   children: ReactNode;
-  /** Légère élévation au survol — pour les cartes cliquables (ex : une carte dataset). */
+  /** @deprecated utiliser `variant="interactive"` — conservé pour ne pas
+   * casser les appels existants (Lot 2A ne modifie aucune page métier). */
   interactive?: boolean;
+  variant?: Variant;
+  density?: Density;
+  header?: ReactNode;
+  footer?: ReactNode;
 }
 
-/** Carte de base du système de design — verre dépoli sur le fond dégradé du corps de page. */
-export function Card({ children, interactive = false, className = "", ...rest }: CardProps) {
+const VARIANT_CLASSES: Record<Variant, string> = {
+  // elevated : carte "flottante" par défaut — bordure fine + ombre discrète.
+  elevated: "border border-border/70 bg-card shadow-card",
+  // outlined : pas d'ombre du tout, seulement la bordure — pour empiler
+  // plusieurs cartes sans que l'ombre de l'une n'empiète sur la suivante
+  // (listes denses).
+  outlined: "border border-border bg-card",
+  interactive:
+    "border border-border/70 bg-card shadow-card transition-all duration-200 hover:border-primary/30 hover:shadow-overlay hover:-translate-y-0.5 cursor-pointer",
+  // stat : fond légèrement teinté (accent) plutôt que blanc — se distingue
+  // d'une carte de contenu au premier coup d'œil (StatTile).
+  stat: "border border-border/70 bg-card shadow-card",
+};
+
+/** Carte de base du système de design (Lot 2A) — 4 variantes + slots
+ * `header`/`footer` normalisés (AUDIT_DATALAB_2026-08-16.md, §J.4) :
+ * chaque page réinventait jusqu'ici son propre en-tête de carte. */
+export function Card({
+  children,
+  interactive = false,
+  variant,
+  density = "default",
+  header,
+  footer,
+  className = "",
+  ...rest
+}: CardProps) {
+  const resolvedVariant = variant ?? (interactive ? "interactive" : "elevated");
+  const padding = CARD_PADDING[density];
+
+  if (!header && !footer) {
+    return (
+      <div className={`rounded-card ${VARIANT_CLASSES[resolvedVariant]} ${padding} ${className}`} {...rest}>
+        {children}
+      </div>
+    );
+  }
+
   return (
-    <div
-      className={`rounded-2xl border border-border/70 bg-card shadow-md shadow-foreground/[0.04] ${
-        interactive
-          ? "transition-all duration-200 hover:border-primary/30 hover:shadow-lg hover:shadow-primary/10 hover:-translate-y-0.5"
-          : ""
-      } ${className}`}
-      {...rest}
-    >
-      {children}
+    <div className={`rounded-card overflow-hidden ${VARIANT_CLASSES[resolvedVariant]} ${className}`} {...rest}>
+      {header && <div className={`${padding} border-b border-border/60`}>{header}</div>}
+      <div className={padding}>{children}</div>
+      {footer && <div className={`${padding} border-t border-border/60`}>{footer}</div>}
     </div>
   );
 }

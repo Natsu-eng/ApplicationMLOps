@@ -29,6 +29,17 @@ export const CHART_TICK_COLOR = "#64748b"; // slate-500 — contraste correct su
 export const CHART_TICK_COLOR_MUTED = "#334155"; // slate-700 — plus foncé que le tick standard (voir note ci-dessus)
 export const CHART_REFERENCE_STROKE = "#94a3b8"; // slate-400
 
+// Hauteurs normalisées (Lot 2A, AUDIT_DATALAB_2026-08-16.md §J.4) — avant
+// ce lot, 180/200/220/240/360 coexistaient sans raison d'écarter l'un ou
+// l'autre. Trois tailles, usage prescrit : SM pour un graphe secondaire
+// dans une grille dense (EDA), MD pour un graphe principal de carte, LG
+// pour un graphe qui porte seul tout le contenu d'une page (projection 2D).
+// Nouveau code seulement — appliquer aux graphes existants est le travail
+// du Lot 2B, pas de celui-ci (aucune page métier modifiée ici).
+export const CHART_HEIGHT_SM = 200;
+export const CHART_HEIGHT_MD = 260;
+export const CHART_HEIGHT_LG = 360;
+
 export const CHART_TICK_STYLE = { fill: CHART_TICK_COLOR, fontSize: 11 };
 export const CHART_TICK_STYLE_SM = { fill: CHART_TICK_COLOR, fontSize: 10 };
 export const CHART_TICK_STYLE_MUTED = { fill: CHART_TICK_COLOR_MUTED, fontSize: 11 };

@@ -261,6 +261,71 @@ Conformément au cadrage : ce point touche toute la chaîne d'authentification
 adapter). Coût et impacts présentés séparément dans le rapport de fin de
 lot — implémentation non commencée, en attente d'arbitrage.
 
+## Lot 2A
+
+### D2.1 — Contraste des tokens sémantiques : vérifié par le calcul, deux bugs réels trouvés en sombre
+
+**Méthode** : conversion OKLCH → sRGB linéaire → luminance relative → ratio
+WCAG, implémentée directement (formules de référence, aucune dépendance
+ajoutée) plutôt que devinée à l'œil. Script conservé dans le scratchpad de
+session, résultats reproduits ci-dessous.
+
+**Trouvé en vérifiant, pas supposé** :
+1. `--color-destructive`/`--color-warning`/`--color-success` n'avaient
+   JAMAIS été redéfinies pour le mode sombre — le thème sombre réutilisait
+   silencieusement les valeurs calibrées pour un fond blanc (L 0.58/0.56/
+   0.53), qui tombent à 3.96–4.01:1 sur `--color-card` en sombre (sous le
+   seuil AA 4.5:1 texte normal). `--color-primary` avait bien une valeur
+   sombre dédiée (0.6) mais elle aussi sous le seuil (4.33:1).
+2. **Un même token ne peut pas satisfaire deux rôles à la fois en sombre** :
+   "texte de la couleur sur une carte" veut un L PLUS HAUT (≥0.59–0.64
+   selon la teinte) ; "texte blanc sur un remplissage plein de cette
+   couleur" (ex. `Button variant="destructive"`) veut un L PLUS BAS
+   (≤0.54–0.585) pour que le blanc garde 4.5:1. Les deux plages ne se
+   recoupent pas.
+
+**Retenu** :
+- `--color-primary/destructive/warning/success` (mode sombre) relevés à
+  0.62/0.64/0.63/0.60 — texte lisible sur `--color-card` (4.65–4.77:1,
+  marge incluse).
+- Nouveaux tokens `--color-{nom}-solid` (mode sombre uniquement — en clair,
+  ils valent la même chose que le token de base, pas de divergence) :
+  0.53/0.555/0.53/0.51 — pour un remplissage plein + texte blanc dessus
+  (`Button variant="destructive"` migré vers `bg-destructive-solid`).
+  5.07–5.32:1 avec le texte blanc, marge incluse.
+- `--color-info`/`--color-info-foreground` ajoutés (4ᵉ sémantique demandée
+  par l'audit, hue 230 — distincte de primary/258) : 5.42:1 en clair,
+  4.69:1 en sombre (rôle texte) / 4.71:1 (rôle solid + blanc).
+
+**Non fait dans ce lot (2B)** : les usages PAGE existants de `bg-primary
+text-white`/`bg-success text-white` (ex. `Training.tsx`, indicateurs
+d'étape) continuent d'utiliser le token "texte" (maintenant plus clair en
+sombre, donc leur contraste ne s'améliore ni ne se dégrade par rapport à
+avant ce lot — toujours non vérifié). Migrer ces usages vers les tokens
+`-solid` appropriés est un travail de page, hors périmètre 2A ("aucune
+page métier modifiée").
+**Remise en cause si** : le Lot 2B révèle d'autres combinaisons
+texte/fond non couvertes par cette vérification ponctuelle — étendre le
+script de vérification plutôt que revalider à l'œil.
+
+### D2.2 — Périmètre du critère « plus aucune taille arbitraire »
+
+L'audit liste, comme critère de fin du Lot 2A : « plus aucune taille
+arbitraire de type `text-[11px]` ne doit subsister ». 19 fichiers de
+pages/composants métier utilisent aujourd'hui ce motif (`grep -rn
+"text-\["`) — les migrer TOUS entrerait en contradiction directe avec
+l'autre exigence du même lot : « aucune page métier modifiée ».
+**Retenu** : le critère s'applique aux PRIMITIVES (`components/ui/*`) et à
+la page `/design` elle-même — reconstruites dans ce lot sans aucune taille
+arbitraire (`text-overline` remplace explicitement le motif `text-[11px]`
+partout où il apparaissait dans les primitives touchées : `Table`,
+`StatTile`, `Tabs`). Les 19 fichiers métier restants sont balisés pour le
+Lot 2B, qui applique le système page par page.
+**Remise en cause si** : l'utilisateur, à la revue de `/design`, indique
+que le critère visait bien un balayage complet immédiat — dans ce cas
+c'est un changement de périmètre du 2A à traiter avant le 2B, pas un
+oubli à corriger silencieusement.
+
 ### D0.3 — Terminologie "MVTec AD" dans le pilier anomalies visuelles
 
 **Trouvé, non traité (hors périmètre Lot 0)** : `structure_type ==

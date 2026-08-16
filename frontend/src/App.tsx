@@ -6,6 +6,7 @@ import AnomalyDetection from "./pages/AnomalyDetection";
 import Clustering from "./pages/Clustering";
 import Dashboard from "./pages/Dashboard";
 import Datasets from "./pages/Datasets";
+import DesignSystem from "./pages/DesignSystem";
 import DimensionalityReduction from "./pages/DimensionalityReduction";
 import Login from "./pages/Login";
 import Orientation from "./pages/Orientation";
@@ -137,6 +138,16 @@ export default function App() {
               element={
                 <ProtectedRoute>
                   <VisionHistory />
+                </ProtectedRoute>
+              }
+            />
+            {/* Lot 2A — page de style guide, protégée mais jamais liée
+                depuis la navigation (accès direct par URL uniquement). */}
+            <Route
+              path="/design"
+              element={
+                <ProtectedRoute>
+                  <DesignSystem />
                 </ProtectedRoute>
               }
             />

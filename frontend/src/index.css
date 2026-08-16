@@ -38,6 +38,29 @@
   --color-warning-foreground: oklch(0.32 0.09 65);
   --color-success: oklch(0.53 0.15 155);
   --color-success-foreground: oklch(0.99 0.005 260);
+  /* "info" (Lot 2A, AUDIT_DATALAB_2026-08-16.md §J.4) — 4ᵉ sémantique
+     demandée par l'audit aux côtés de success/warning/destructive.
+     Hue 230, distincte de --color-primary (258) pour rester lisible côte à
+     côte (ex. deux badges de statut différents) : bleu-cyan plus froid,
+     jamais confondu avec l'accent de marque. Vérifié par le calcul
+     (OKLCH → sRGB → luminance relative WCAG), voir /design : 5.42:1 sur
+     --color-card en clair. */
+  --color-info: oklch(0.5 0.16 230);
+  --color-info-foreground: oklch(0.99 0.005 260);
+
+  /* Variantes "solid" (Lot 2A) — pour un remplissage plein avec texte
+     blanc dessus (ex. Button variant="destructive") : trouvé en vérifiant
+     les contrastes que la même luminosité ne peut PAS satisfaire à la fois
+     "texte de la couleur sur une carte" ET "texte blanc sur un
+     remplissage de cette couleur" en mode sombre (les deux usages
+     demandent des directions opposées) — voir DECISIONS.md. En clair, les
+     deux rôles coïncident (mêmes valeurs) : la divergence n'existe qu'en
+     sombre, redéfinie plus bas. */
+  --color-primary-solid: var(--color-primary);
+  --color-destructive-solid: var(--color-destructive);
+  --color-warning-solid: var(--color-warning);
+  --color-success-solid: var(--color-success);
+  --color-info-solid: var(--color-info);
   --color-border: oklch(0.923 0.006 260);
   --color-input: oklch(0.923 0.006 260);
   --color-ring: oklch(0.48 0.17 258);
@@ -86,7 +109,74 @@
      sombre qu'un bleu profond, sans devenir un troisième accent concurrent
      ailleurs dans l'app (usage strictement limité à la sidebar). */
   --color-sidebar-highlight: oklch(0.83 0.14 200);
+
+  /* ─────────────────────────────────────────────────────────────────────
+     Lot 2A — Fondation du design system (AUDIT_DATALAB_2026-08-16.md, §J.4)
+     Direction : sobre, dense, technique, confiante — l'instrument de
+     mesure, pas l'application grand public. La couleur reste un outil de
+     sens (statut, série, sévérité), jamais une décoration.
+     ───────────────────────────────────────────────────────────────────── */
+
+  /* Échelle typographique — 6 rôles nommés, jamais de taille arbitraire
+     (text-[11px]...) dans les primitives à partir de ce lot. Alignée sur
+     les tailles Tailwind déjà répandues dans le code existant (14px/12px)
+     pour que le Lot 2B (application aux pages) soit une substitution
+     directe, pas une renégociation de tailles. `overline` remplace
+     spécifiquement le motif text-[11px] disséminé (en-têtes de tableau,
+     badges, libellés secondaires). Les chiffres de métrique s'écrivent
+     TOUJOURS avec la classe utilitaire Tailwind `tabular-nums` en plus du
+     rôle typographique — jamais une exception, voir /design. */
+  --text-display: 2rem; /* 32px — chiffre clé, en-tête de verdict */
+  --text-display--line-height: 1.15;
+  --text-display--font-weight: 700;
+  --text-display--letter-spacing: -0.02em;
+
+  --text-title: 1.375rem; /* 22px — titre de page/section */
+  --text-title--line-height: 1.3;
+  --text-title--font-weight: 600;
+  --text-title--letter-spacing: -0.01em;
+
+  --text-subtitle: 1rem; /* 16px — en-tête de carte, sous-section */
+  --text-subtitle--line-height: 1.4;
+  --text-subtitle--font-weight: 600;
+
+  --text-body: 0.875rem; /* 14px — texte courant (= text-sm existant) */
+  --text-body--line-height: 1.55;
+  --text-body--font-weight: 400;
+
+  --text-caption: 0.75rem; /* 12px — aide, méta-donnée (= text-xs existant) */
+  --text-caption--line-height: 1.4;
+  --text-caption--font-weight: 400;
+
+  --text-overline: 0.6875rem; /* 11px — étiquette majuscule, en-tête de colonne */
+  --text-overline--line-height: 1.3;
+  --text-overline--font-weight: 600;
+  --text-overline--letter-spacing: 0.06em;
+
+  /* Rayons — 3 niveaux maximum, usage prescrit (jamais un 4ᵉ rayon ajouté
+     à l'œil). control = boutons/inputs/badges ; card = cartes/panneaux ;
+     sheet = modales/grandes surfaces de recouvrement. */
+  --radius-control: 0.5rem;
+  --radius-card: 0.75rem;
+  --radius-sheet: 1rem;
+
+  /* Élévation — 3 niveaux maximum, quasi plate (jamais d'ombre lourde) :
+     la hiérarchie visuelle vient d'abord de la couleur de fond et de la
+     bordure, l'ombre n'est qu'un renfort discret. control = éléments
+     interactifs au repos (boutons, inputs) ; card = cartes sur le canvas ;
+     overlay = modales/popovers, seul niveau où l'ombre porte réellement. */
+  --shadow-control: 0 1px 2px oklch(0.21 0.03 260 / 0.05);
+  --shadow-card: 0 1px 2px oklch(0.21 0.03 260 / 0.04), 0 1px 6px oklch(0.21 0.03 260 / 0.05);
+  --shadow-overlay: 0 4px 12px oklch(0.21 0.03 260 / 0.10), 0 12px 32px oklch(0.21 0.03 260 / 0.14);
 }
+
+/* Mouvement — deux durées sanctionnées (utilitaires Tailwind natifs
+   duration-150/duration-200, jamais une 3ᵉ valeur choisie à l'œil) + une
+   seule courbe d'accélération (ease-out, natif). Aucune animation
+   décorative : uniquement retour d'état (survol, apparition, transition
+   d'onglet). `prefers-reduced-motion` déjà respecté ailleurs dans ce
+   fichier (.hero-term, stat-tile-enter) — même règle pour tout nouveau
+   mouvement introduit par ce lot. */
 
 /* Fond global — plat, neutre et calme (thème clair). Pas de dégradé vif en
    fond : c'est le dégradé de marque (.bg-brand-gradient) qui porte
@@ -111,7 +201,15 @@ body {
    utilisateur direct comme chaque itération précédente de ce fichier. */
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --color-primary: oklch(0.6 0.16 258);
+    /* primary/destructive/warning/success/info : L relevé par rapport au
+       clair (0.6 vs 0.48 pour primary, etc.) — nécessaire pour rester
+       lisibles en TEXTE sur --color-card en sombre (fond bien plus sombre
+       qu'en clair). Vérifié par le calcul (≥4.5:1 sur --color-card à
+       chacune de ces valeurs, voir DECISIONS.md) — les valeurs d'origine
+       (destructive/warning/success non redéfinies en sombre avant ce lot,
+       donc réutilisant les valeurs claires 0.58/0.56/0.53) tombaient sous
+       4:1, jamais vérifié jusqu'ici. */
+    --color-primary: oklch(0.62 0.16 258);
     --color-primary-foreground: oklch(0.99 0.005 260);
     --color-secondary: oklch(0.26 0.018 258);
     --color-secondary-foreground: oklch(0.92 0.01 260);
@@ -119,6 +217,20 @@ body {
     --color-muted-foreground: oklch(0.66 0.02 258);
     --color-accent: oklch(0.28 0.035 255);
     --color-accent-foreground: oklch(0.88 0.04 258);
+    --color-destructive: oklch(0.64 0.21 25);
+    --color-warning: oklch(0.63 0.16 65);
+    --color-success: oklch(0.6 0.15 155);
+    --color-info: oklch(0.6 0.15 230);
+    --color-info-foreground: oklch(0.99 0.005 260);
+    /* Rôle "solid" (remplissage plein + texte blanc dessus) — direction
+       OPPOSÉE du texte ci-dessus : doit rester plus sombre pour que le
+       texte blanc garde 4.5:1 (une même valeur ne peut satisfaire les deux
+       rôles à la fois en sombre, voir la note dans le bloc @theme). */
+    --color-primary-solid: oklch(0.53 0.16 258);
+    --color-destructive-solid: oklch(0.555 0.21 25);
+    --color-warning-solid: oklch(0.53 0.16 65);
+    --color-success-solid: oklch(0.51 0.15 155);
+    --color-info-solid: oklch(0.53 0.15 230);
     --color-border: oklch(0.32 0.02 258);
     --color-input: oklch(0.32 0.02 258);
     --color-ring: oklch(0.6 0.16 258);
@@ -172,7 +284,9 @@ body {
   }
 }
 :root[data-theme="dark"] {
-  --color-primary: oklch(0.6 0.16 258);
+  /* Miroir exact du bloc @media ci-dessus (bascule manuelle vs préférence
+     système) — voir ses commentaires pour le raisonnement des valeurs. */
+  --color-primary: oklch(0.62 0.16 258);
   --color-primary-foreground: oklch(0.99 0.005 260);
   --color-secondary: oklch(0.26 0.018 258);
   --color-secondary-foreground: oklch(0.92 0.01 260);
@@ -180,6 +294,16 @@ body {
   --color-muted-foreground: oklch(0.66 0.02 258);
   --color-accent: oklch(0.28 0.035 255);
   --color-accent-foreground: oklch(0.88 0.04 258);
+  --color-destructive: oklch(0.64 0.21 25);
+  --color-warning: oklch(0.63 0.16 65);
+  --color-success: oklch(0.6 0.15 155);
+  --color-info: oklch(0.6 0.15 230);
+  --color-info-foreground: oklch(0.99 0.005 260);
+  --color-primary-solid: oklch(0.53 0.16 258);
+  --color-destructive-solid: oklch(0.555 0.21 25);
+  --color-warning-solid: oklch(0.53 0.16 65);
+  --color-success-solid: oklch(0.51 0.15 155);
+  --color-info-solid: oklch(0.53 0.15 230);
   --color-border: oklch(0.32 0.02 258);
   --color-input: oklch(0.32 0.02 258);
   --color-ring: oklch(0.6 0.16 258);
