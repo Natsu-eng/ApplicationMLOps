@@ -9,8 +9,10 @@ from PIL import Image
 
 from services.ml_preprocessing import TrainingAbortedError
 from services.vision_anomaly_training import (
+    MIN_IMAGES_PER_CATEGORY_FOR_CALIBRATION_SPLIT,
     MIN_TRAIN_GOOD_FOR_TRAINING,
     AnomalyVisionConfig,
+    _split_calibration_evaluation,
     train_and_evaluate_anomaly_vision,
 )
 
@@ -103,6 +105,72 @@ def test_time_budget_stops_training_early(tmp_path):
 
     assert result.model_card["time_capped"] is True
     assert result.model_card["num_epochs_run"] < 10
+
+
+def test_split_calibration_evaluation_disjoint_when_enough_images():
+    """Correctif C2 (AUDIT_DATALAB_2026-08-16.md) — preuve directe que le
+    seuil est calibré sur des images qui ne servent pas au calcul des
+    métriques rapportées : les deux sous-ensembles sont disjoints et
+    couvrent exactement les indices d'origine."""
+    categories = ["good"] * 8 + ["scratch"] * 8
+    calibration_idx, evaluation_idx, biased = _split_calibration_evaluation(categories, seed=0)
+    assert biased is False
+    assert set(calibration_idx).isdisjoint(evaluation_idx)
+    assert sorted(calibration_idx + evaluation_idx) == list(range(16))
+    # 50/50 stratifié sur deux catégories de taille paire égale : exactement 8/8.
+    assert len(calibration_idx) == 8
+    assert len(evaluation_idx) == 8
+
+
+def test_split_calibration_evaluation_falls_back_when_category_too_small():
+    """Le cas "trop petit" doit être un nombre, pas une intuition — en
+    dessous de MIN_IMAGES_PER_CATEGORY_FOR_CALIBRATION_SPLIT pour UNE SEULE
+    catégorie, repli explicite sur les mêmes indices des deux côtés
+    (biaisé, mais honnêtement signalé), jamais un split déséquilibré
+    silencieux."""
+    categories = ["good"] * 8 + ["scratch"] * (MIN_IMAGES_PER_CATEGORY_FOR_CALIBRATION_SPLIT - 1)
+    calibration_idx, evaluation_idx, biased = _split_calibration_evaluation(categories, seed=0)
+    assert biased is True
+    expected = list(range(len(categories)))
+    assert calibration_idx == expected
+    assert evaluation_idx == expected
+
+
+def test_calibration_split_used_end_to_end_when_dataset_large_enough(tmp_path):
+    """Bout en bout : avec assez d'images de test par catégorie, le seuil
+    est calibré sur une partie de test/, les métriques rapportées viennent
+    de l'autre partie — jamais du même sous-ensemble."""
+    _write_mvtec_dataset(
+        tmp_path, n_test_good=MIN_IMAGES_PER_CATEGORY_FOR_CALIBRATION_SPLIT, n_test_defect=MIN_IMAGES_PER_CATEGORY_FOR_CALIBRATION_SPLIT
+    )
+    config = AnomalyVisionConfig(num_epochs=2, batch_size=4)
+
+    result = train_and_evaluate_anomaly_vision(tmp_path, config, _noop_progress)
+
+    assert result.model_card["threshold_calibration_status"] == "ok"
+    assert result.model_card["threshold_calibration_message"] is None
+    assert result.n_calibration is not None and result.n_evaluation is not None
+    assert result.n_calibration + result.n_evaluation == result.n_test
+    assert result.n_calibration > 0 and result.n_evaluation > 0
+    # Chaque exemple présenté vient de l'évaluation — jamais une image ayant
+    # servi à calibrer le seuil présentée comme une prédiction non vue.
+    assert len(result.examples) > 0
+
+
+def test_calibration_falls_back_and_flags_bias_on_small_dataset(tmp_path):
+    """Le jeu de test par défaut des fixtures (4 good + 4 scratch) est sous
+    le plancher MIN_IMAGES_PER_CATEGORY_FOR_CALIBRATION_SPLIT=6 — repli
+    attendu, explicitement signalé, jamais silencieux. C'est le cas
+    FRÉQUENT sur MVTec AD réel (plusieurs sous-types de défaut ont moins de
+    10 images de test), pas un cas rare à traiter à la légère."""
+    _write_mvtec_dataset(tmp_path, n_test_good=4, n_test_defect=4)
+    config = AnomalyVisionConfig(num_epochs=2, batch_size=4)
+
+    result = train_and_evaluate_anomaly_vision(tmp_path, config, _noop_progress)
+
+    assert result.model_card["threshold_calibration_status"] == "degraded"
+    assert isinstance(result.model_card["threshold_calibration_message"], str)
+    assert result.n_calibration == result.n_evaluation == result.n_test
 
 
 def test_threshold_is_calibrated_not_a_fixed_percentile(tmp_path):

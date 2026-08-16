@@ -688,6 +688,12 @@ export interface VisionAnomalyResult {
   n_train: number;
   n_val: number;
   n_test: number;
+  // Lot 0.2 (correctif C2, AUDIT_DATALAB_2026-08-16.md) — absents sur les
+  // modèles entraînés avant ce correctif (rétrocompatibilité par absence).
+  // model_card.threshold_calibration_status ("ok"/"degraded") +
+  // .threshold_calibration_message portent l'explication à afficher.
+  n_calibration?: number | null;
+  n_evaluation?: number | null;
   history: VisionAnomalyEpochMetrics[];
   threshold: number;
   roc_auc: number;

@@ -26,6 +26,7 @@ Corrige directement plusieurs des 9 bugs critiques déjà documentés dans
 from __future__ import annotations
 
 import time
+from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
@@ -35,6 +36,7 @@ import torch
 import torch.nn as nn
 from PIL import Image
 from sklearn.metrics import confusion_matrix, f1_score, precision_score, recall_score, roc_auc_score, roc_curve
+from sklearn.model_selection import train_test_split
 from torch.utils.data import DataLoader, Dataset, random_split
 from torchvision import transforms
 from torchvision.datasets import ImageFolder
@@ -57,6 +59,18 @@ ProgressCallback = Callable[[str, int], None]
 # l'ENTRAÎNEMENT, pas seulement la validité structurelle du dataset.
 MIN_TRAIN_GOOD_FOR_TRAINING = 10
 MAX_EXAMPLES = 12
+
+# Correctif C2 (AUDIT_DATALAB_2026-08-16.md) — en dessous de ce nombre
+# d'images PAR CATÉGORIE (good ou un défaut nommé), un découpage stratifié
+# calibration/évaluation à 50/50 n'a plus de sens statistique (moins de 3
+# points de chaque côté). 6 = 2 x 3 : 3 est déjà un plancher bas, mais c'est
+# la limite en dessous de laquelle un seuil ou une métrique par catégorie
+# devient un artefact de hasard plutôt qu'une mesure. Repli explicite sur
+# l'ancien comportement (biaisé, signalé dans model_card) en dessous de ce
+# seuil — voir DECISIONS.md D0.4. Ce repli n'est PAS un cas rare : plusieurs
+# catégories MVTec AD officielles ont des sous-types de défaut à moins de
+# 10 images de test, donc en dessous de ce plancher une fois divisées par 2.
+MIN_IMAGES_PER_CATEGORY_FOR_CALIBRATION_SPLIT = 6
 
 
 @dataclass
@@ -94,6 +108,13 @@ class AnomalyVisionResult:
     n_train: int
     n_val: int
     n_test: int
+    # Correctif C2 — n_test reste la taille totale de test/ (inchangé,
+    # rétrocompatibilité par absence pour les enregistrements existants).
+    # n_calibration/n_evaluation précisent comment ce total a été utilisé :
+    # deux sous-ensembles disjoints (découpage honnête) ou le même ensemble
+    # réutilisé deux fois (repli biaisé, voir model_card["threshold_calibration_status"]).
+    n_calibration: int
+    n_evaluation: int
     history: list[EpochMetrics]
     threshold: float
     roc_auc: float
@@ -113,6 +134,44 @@ def _build_transform() -> transforms.Compose:
     # espace normalisé et l'espace [0,1] est précisément le bug #11 déjà
     # documenté, évité ici en n'introduisant jamais de normalisation.
     return transforms.Compose([transforms.Resize((IMAGE_SIZE, IMAGE_SIZE)), transforms.ToTensor()])
+
+
+def _split_calibration_evaluation(
+    categories: list[str], seed: int
+) -> tuple[list[int], list[int], bool]:
+    """Découpe les indices de test/ en calibration (sert à choisir le seuil
+    par J de Youden) et évaluation (sert à calculer les métriques
+    rapportées) — correctif C2 (AUDIT_DATALAB_2026-08-16.md) : avant, le
+    seuil était calibré ET évalué sur le même jeu, biais optimiste
+    systématique sur toutes les métriques ponctuelles (accuracy, precision,
+    recall, f1 — `roc_auc` restait valide, indépendant du seuil, mais est
+    désormais lui aussi calculé sur l'évaluation seule pour que tous les
+    chiffres rapportés viennent du même sous-ensemble non vu).
+
+    Stratifié par catégorie ("good" compris) à 50/50 pour que chaque
+    catégorie soit représentée des deux côtés avec au moins
+    MIN_IMAGES_PER_CATEGORY_FOR_CALIBRATION_SPLIT // 2 images — un 50/50
+    évite toute ambiguïté d'arrondi (contrairement à un split asymétrique,
+    où une petite catégorie pourrait tomber sous le plancher par arrondi
+    même après le filtre ci-dessous).
+
+    Repli explicite si une catégorie a moins de
+    MIN_IMAGES_PER_CATEGORY_FOR_CALIBRATION_SPLIT images : retourne les
+    MÊMES indices des deux côtés (`biased=True`) plutôt qu'un découpage
+    déséquilibré silencieux — un seuil calibré sur 1 ou 2 images n'aurait
+    aucun sens. Le repli doit être irréprochable, pas un cas dégradé
+    secondaire : plusieurs catégories MVTec AD officielles ont moins de 10
+    images de test par sous-type de défaut (voir DECISIONS.md D0.4)."""
+    counts = Counter(categories)
+    if min(counts.values()) < MIN_IMAGES_PER_CATEGORY_FOR_CALIBRATION_SPLIT:
+        all_idx = list(range(len(categories)))
+        return all_idx, all_idx, True
+
+    indices = list(range(len(categories)))
+    calibration_idx, evaluation_idx = train_test_split(
+        indices, test_size=0.5, stratify=categories, random_state=seed
+    )
+    return sorted(calibration_idx), sorted(evaluation_idx), False
 
 
 class _UnlabeledImageDataset(Dataset):
@@ -231,22 +290,47 @@ def train_and_evaluate_anomaly_vision(
             all_true_labels.extend((class_indices != good_class_idx).long().tolist())
             all_error_maps.extend([e.numpy() for e in error_maps])
 
+    class_names = {idx: name for name, idx in test_folder.class_to_idx.items()}
+    # Aligné index à index avec all_scores/all_true_labels/all_error_maps —
+    # test_loader itère dans l'ordre du dataset (shuffle=False), donc
+    # test_folder.samples[i] correspond bien au i-ème score.
+    all_categories = [class_names[class_idx] for _, class_idx in test_folder.samples]
+
     progress_cb("Calibration du seuil de détection", 85)
-    fpr, tpr, roc_thresholds = roc_curve(all_true_labels, all_scores)
+    # Correctif C2 — le seuil est calibré sur la calibration UNIQUEMENT ;
+    # toutes les métriques rapportées (roc_auc compris) viennent de
+    # l'évaluation UNIQUEMENT, jamais du même sous-ensemble que la
+    # calibration (sauf repli explicite, signalé ci-dessous).
+    calibration_idx, evaluation_idx, threshold_calibration_biased = _split_calibration_evaluation(
+        all_categories, config.seed
+    )
+
+    calibration_scores = [all_scores[i] for i in calibration_idx]
+    calibration_labels = [all_true_labels[i] for i in calibration_idx]
+    fpr, tpr, roc_thresholds = roc_curve(calibration_labels, calibration_scores)
     youden_j = tpr - fpr
     threshold = float(roc_thresholds[int(np.argmax(youden_j))])
-    roc_auc = float(roc_auc_score(all_true_labels, all_scores))
 
-    predicted_labels = [1 if s > threshold else 0 for s in all_scores]
-    test_accuracy = sum(1 for t, p in zip(all_true_labels, predicted_labels) if t == p) / len(all_true_labels)
-    test_precision = float(precision_score(all_true_labels, predicted_labels, zero_division=0))
-    test_recall = float(recall_score(all_true_labels, predicted_labels, zero_division=0))
-    test_f1 = float(f1_score(all_true_labels, predicted_labels, zero_division=0))
-    conf_matrix = confusion_matrix(all_true_labels, predicted_labels, labels=[0, 1])
+    evaluation_scores = [all_scores[i] for i in evaluation_idx]
+    evaluation_labels = [all_true_labels[i] for i in evaluation_idx]
+    roc_auc = float(roc_auc_score(evaluation_labels, evaluation_scores))
+    evaluation_predicted_labels = [1 if s > threshold else 0 for s in evaluation_scores]
+    test_accuracy = sum(1 for t, p in zip(evaluation_labels, evaluation_predicted_labels) if t == p) / len(
+        evaluation_labels
+    )
+    test_precision = float(precision_score(evaluation_labels, evaluation_predicted_labels, zero_division=0))
+    test_recall = float(recall_score(evaluation_labels, evaluation_predicted_labels, zero_division=0))
+    test_f1 = float(f1_score(evaluation_labels, evaluation_predicted_labels, zero_division=0))
+    conf_matrix = confusion_matrix(evaluation_labels, evaluation_predicted_labels, labels=[0, 1])
 
     progress_cb("Génération des cartes de localisation", 95)
-    class_names = {idx: name for name, idx in test_folder.class_to_idx.items()}
-    order = np.argsort(all_scores)[::-1]  # du plus anormal au plus normal
+    # Les exemples présentés dans l'UI viennent TOUJOURS de l'évaluation,
+    # jamais de la calibration — une image ayant servi à fixer le seuil ne
+    # doit jamais être présentée comme une prédiction sur donnée non vue.
+    # En repli biaisé, evaluation_idx == tous les indices (voir
+    # _split_calibration_evaluation) : l'honnêteté vient alors du drapeau
+    # model_card ci-dessous, pas d'une restriction supplémentaire ici.
+    order = sorted(evaluation_idx, key=lambda i: all_scores[i], reverse=True)
     examples: list[AnomalyExample] = []
     for i in order[:MAX_EXAMPLES]:
         abs_path, class_idx = test_folder.samples[i]
@@ -266,7 +350,7 @@ def train_and_evaluate_anomaly_vision(
                 relative_path=Path(abs_path).relative_to(dataset_dir).as_posix(),
                 defect_category=class_names[class_idx],
                 true_label=all_true_labels[i],
-                predicted_label=predicted_labels[i],
+                predicted_label=1 if all_scores[i] > threshold else 0,
                 anomaly_score=float(all_scores[i]),
                 # Superposition (Lot 16A) — remplace la heatmap seule,
                 # directement lisible sur l'image source (zones rouges =
@@ -278,7 +362,7 @@ def train_and_evaluate_anomaly_vision(
 
     progress_cb("Terminé", 100)
 
-    model_card = {
+    model_card: dict[str, Any] = {
         "model_id": config.model_id,
         "image_size": IMAGE_SIZE,
         "num_epochs_requested": config.num_epochs,
@@ -288,6 +372,21 @@ def train_and_evaluate_anomaly_vision(
         "mask_percentile": config.mask_percentile,
         "n_defect_categories": len(class_names) - 1,  # toutes sauf "good"
         "defect_categories": sorted(name for name in class_names.values() if name != "good"),
+        # Correctif C2 — motif dégradation honnête déjà en usage ailleurs
+        # dans le projet (explainability_status, calibration_status...).
+        "threshold_calibration_status": "degraded" if threshold_calibration_biased else "ok",
+        "threshold_calibration_message": (
+            "Le jeu de test est trop petit pour un découpage calibration/évaluation fiable par "
+            "catégorie (au moins "
+            f"{MIN_IMAGES_PER_CATEGORY_FOR_CALIBRATION_SPLIT} images par catégorie sont nécessaires) : "
+            "le seuil de détection a été calibré sur les mêmes images que celles utilisées pour les "
+            "métriques ci-dessus, qui sont donc optimistes. Importez davantage d'images de test pour "
+            "un diagnostic non biaisé."
+        )
+        if threshold_calibration_biased
+        else None,
+        "calibration_category_counts": dict(Counter(all_categories[i] for i in calibration_idx)),
+        "evaluation_category_counts": dict(Counter(all_categories[i] for i in evaluation_idx)),
     }
 
     return AnomalyVisionResult(
@@ -295,6 +394,8 @@ def train_and_evaluate_anomaly_vision(
         n_train=n_train,
         n_val=n_val,
         n_test=len(test_folder),
+        n_calibration=len(calibration_idx),
+        n_evaluation=len(evaluation_idx),
         history=history,
         threshold=threshold,
         roc_auc=roc_auc,

@@ -78,6 +78,10 @@ class VisionAnomalyResultOut(BaseModel):
     n_train: int
     n_val: int
     n_test: int
+    # Lot 0.2 (correctif C2) — absents (None) sur les modèles entraînés
+    # avant ce correctif, rétrocompatibilité par absence.
+    n_calibration: Optional[int] = None
+    n_evaluation: Optional[int] = None
     history: List[AnomalyEpochMetricsOut]
     threshold: float
     roc_auc: float
@@ -245,6 +249,8 @@ def get_vision_anomaly_result(job_id: int, current_user: User = Depends(get_curr
         n_train=result.n_train,
         n_val=result.n_val,
         n_test=result.n_test,
+        n_calibration=result.n_calibration,
+        n_evaluation=result.n_evaluation,
         history=[AnomalyEpochMetricsOut(**m) for m in json.loads(result.history_json)],
         threshold=result.threshold,
         roc_auc=result.roc_auc,

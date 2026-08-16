@@ -115,6 +115,11 @@ def init_db() -> None:
     # étape de progression). Permet de repérer un job "running" dont le
     # worker a crashé sans jamais le marquer "failed" (services/job_watchdog.py).
     _add_column_if_missing("training_jobs", "progress_updated_at", "TIMESTAMP")
+    # Lot 0.2 (correctif C2, AUDIT_DATALAB_2026-08-16.md) — taille des
+    # sous-ensembles calibration/évaluation du seuil de détection MVTec AD.
+    # NULL sur les modèles entraînés avant ce correctif.
+    _add_column_if_missing("vision_anomaly_models", "n_calibration", "INTEGER")
+    _add_column_if_missing("vision_anomaly_models", "n_evaluation", "INTEGER")
     logger.info("[DB] Prête (%s)", "SQLite" if _is_sqlite else "PostgreSQL")
 
 

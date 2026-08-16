@@ -777,6 +777,12 @@ class VisionAnomalyModel(Base):
     n_train: Mapped[int] = mapped_column(Integer, nullable=False)
     n_val: Mapped[int] = mapped_column(Integer, nullable=False)
     n_test: Mapped[int] = mapped_column(Integer, nullable=False)
+    # Correctif C2 (AUDIT_DATALAB_2026-08-16.md, Lot 0.2) — NULL sur les
+    # modèles entraînés avant ce correctif (rétrocompatibilité par absence,
+    # même motif que les colonnes ci-dessous) : n_test seul ne dit pas si le
+    # seuil a été calibré sur un sous-ensemble distinct de celui évalué.
+    n_calibration: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    n_evaluation: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     history_json: Mapped[str] = mapped_column(Text, nullable=False)  # liste {epoch, train_loss, val_loss}
     threshold: Mapped[float] = mapped_column(Float, nullable=False)
     roc_auc: Mapped[float] = mapped_column(Float, nullable=False)

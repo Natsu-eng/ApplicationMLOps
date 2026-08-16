@@ -86,6 +86,8 @@ def run_vision_anomaly_job(job_id: int) -> None:
                 n_train=result.n_train,
                 n_val=result.n_val,
                 n_test=result.n_test,
+                n_calibration=result.n_calibration,
+                n_evaluation=result.n_evaluation,
                 history_json=json.dumps([vars(m) for m in result.history]),
                 threshold=result.threshold,
                 roc_auc=result.roc_auc,

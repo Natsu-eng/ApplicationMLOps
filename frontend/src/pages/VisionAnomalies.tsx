@@ -319,14 +319,28 @@ function AnomalyVisionResultView({ jobId, datasetId }: { jobId: number; datasetI
     "Perte (validation)": h.val_loss,
   }));
 
+  // Lot 0.2 (correctif C2, AUDIT_DATALAB_2026-08-16.md) — absent (undefined)
+  // sur les modèles entraînés avant ce correctif : pas de bannière dans ce
+  // cas, rétrocompatibilité par absence plutôt qu'une alerte inventée.
+  const calibrationStatus = result.model_card.threshold_calibration_status;
+  const calibrationMessage = result.model_card.threshold_calibration_message;
+  const calibrationBiased = calibrationStatus === "degraded" && typeof calibrationMessage === "string";
+
   return (
     <div className="max-w-4xl mx-auto space-y-5">
+      {calibrationBiased && (
+        <div className="rounded-lg border border-warning/20 bg-warning/10 p-3 flex items-start gap-2">
+          <AlertTriangle size={16} className="flex-shrink-0 mt-0.5 text-warning" />
+          <p className="text-sm text-warning">{calibrationMessage}</p>
+        </div>
+      )}
+
       <Card className={`p-5 ${accentSurfaceClass("amber")}`}>
         <SectionHeader
           icon={Target}
           color="amber"
           label="Performance de détection"
-          help="Le seuil de détection est calibré automatiquement (J de Youden) sur les images de test étiquetées bonnes/défectueuses — jamais un seuil fixe arbitraire."
+          help="Le seuil de détection est calibré automatiquement (J de Youden) sur une partie des images de test (calibration), puis les métriques ci-dessous sont calculées sur l'autre partie (évaluation) — jamais sur les mêmes images que celles ayant servi à choisir le seuil."
         />
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           <MetricTile label="ROC-AUC" value={result.roc_auc.toFixed(3)} color="amber" />
@@ -336,6 +350,9 @@ function AnomalyVisionResultView({ jobId, datasetId }: { jobId: number; datasetI
         </div>
         <p className="text-xs text-muted-foreground mt-3">
           {result.n_train} images normales d'entraînement · {result.n_val} de validation · {result.n_test} de test
+          {result.n_calibration != null &&
+            result.n_evaluation != null &&
+            ` (${result.n_calibration} pour la calibration du seuil, ${result.n_evaluation} pour l'évaluation)`}
           {Array.isArray(result.model_card.defect_categories) &&
             ` — catégories de défaut : ${(result.model_card.defect_categories as string[]).join(", ")}`}
           .{Boolean(result.model_card.time_capped) && " Entraînement arrêté par le garde-fou de temps CPU."}
