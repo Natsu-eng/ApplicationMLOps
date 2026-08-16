@@ -11,6 +11,12 @@ gunicorn==23.0.0
 # ── Base de données ───────────────────────────────────────────
 sqlalchemy==2.0.49
 psycopg2-binary==2.9.11
+# Lot 1.1 (correctif C3, AUDIT_DATALAB_2026-08-16.md) — remplace
+# `_add_column_if_missing` (migration additive maison, incapable de
+# renommer/supprimer/revenir en arrière). Seule dépendance standard pour
+# des migrations de schéma SQLAlchemy versionnées ; écrire l'équivalent à
+# la main serait moins fiable et non testé par une communauté externe.
+alembic==1.19.1
 
 # ── Configuration ─────────────────────────────────────────────
 pydantic==2.13.3

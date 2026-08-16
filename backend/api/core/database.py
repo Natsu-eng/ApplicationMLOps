@@ -54,11 +54,13 @@ def get_db():
 
 
 def _add_column_if_missing(table: str, column: str, column_sql_type: str) -> None:
-    """Ajoute une colonne à une table déjà existante si elle est absente —
-    migration idempotente maison plutôt qu'Alembic (voir ARCHITECTURE.md).
-    `create_all()` ne modifie jamais une table existante, seulement les
-    tables manquantes : sans ça, ajouter un champ à un modèle ORM casserait
-    silencieusement toute base créée avant l'ajout."""
+    """GELÉ depuis le Lot 1.1 (correctif C3, AUDIT_DATALAB_2026-08-16.md) —
+    remplacé par Alembic (`run_migrations()` ci-dessous). Ne plus y ajouter
+    d'appel : toute évolution de schéma passe désormais par
+    `alembic revision --autogenerate`, voir `backend/alembic/versions/`.
+    Conservée uniquement pour référence historique (les colonnes qu'elle
+    ajoutait sont maintenant des colonnes normales de `api/core/models.py`,
+    créées par la révision initiale `594bce594adf`)."""
     inspector = inspect(engine)
     if table not in inspector.get_table_names():
         return  # la table sera créée avec la bonne colonne par create_all()
@@ -70,56 +72,74 @@ def _add_column_if_missing(table: str, column: str, column_sql_type: str) -> Non
     logger.info("[DB] Migration : colonne %s.%s ajoutée", table, column)
 
 
-def init_db() -> None:
-    """Crée les tables déclarées par les modèles ORM enregistrés sur `Base`,
-    puis applique les migrations additives connues (voir `_add_column_if_missing`)."""
-    # Import local (et non en tête de module) pour éviter l'import circulaire :
-    # api.core.models importe déjà `Base` depuis ce fichier.
-    from api.core.models import (  # noqa: F401
-        AnomalyJob,
-        AnomalyModel,
-        AnomalyObservationRecord,
-        AuditLog,
-        ClusterCandidateRecord,
-        ClusterModel,
-        ClusteringJob,
-        Dataset,
-        DimensionalityJob,
-        DimensionalityModel,
-        DimensionalityPoint,
-        MLModel,
-        ModelCandidate,
-        Organization,
-        TrainingJob,
-        User,
-    )
+def _alembic_config(db_url: str | None = None):
+    """Config Alembic pointée sur `backend/alembic.ini` — utilisée aussi
+    bien au démarrage de l'API (`run_migrations`) que par les scripts/tests
+    qui doivent piloter Alembic par programme plutôt qu'en ligne de commande.
+    `db_url` explicite (voir `alembic/env.py::_database_url`) : permet aux
+    tests de pointer une base isolée sans toucher `DATABASE_URL`/la config
+    applicative globale."""
+    from alembic.config import Config
 
-    Base.metadata.create_all(bind=engine)
-    _add_column_if_missing("ml_models", "feature_schema_json", "TEXT")
-    _add_column_if_missing("ml_models", "evaluation_json", "TEXT")
-    _add_column_if_missing("ml_models", "feature_engineering_json", "TEXT")
-    _add_column_if_missing("training_jobs", "feature_engineering_json", "TEXT")
-    # Lot Explicabilité globale — beeswarm SHAP, importance par permutation,
-    # calibration, courbe d'apprentissage. NULL sur les modèles déjà
-    # entraînés (rétrocompat) : le frontend affiche "réentraînez pour
-    # l'obtenir" plutôt que de planter.
-    _add_column_if_missing("ml_models", "shap_beeswarm_json", "TEXT")
-    _add_column_if_missing("ml_models", "permutation_importance_json", "TEXT")
-    _add_column_if_missing("ml_models", "calibration_json", "TEXT")
-    _add_column_if_missing("ml_models", "learning_curve_json", "TEXT")
-    # Lot 9 — registre de modèles versionné (stage/promoted_at, NULL = jamais promu).
-    _add_column_if_missing("ml_models", "stage", "VARCHAR(20)")
-    _add_column_if_missing("ml_models", "promoted_at", "TIMESTAMP")
-    # Durcissement SaaS (AUDIT_ROADMAP.md, H2) — horodatage du dernier
-    # signal de vie écrit par le worker (job.status="running" ou chaque
-    # étape de progression). Permet de repérer un job "running" dont le
-    # worker a crashé sans jamais le marquer "failed" (services/job_watchdog.py).
-    _add_column_if_missing("training_jobs", "progress_updated_at", "TIMESTAMP")
-    # Lot 0.2 (correctif C2, AUDIT_DATALAB_2026-08-16.md) — taille des
-    # sous-ensembles calibration/évaluation du seuil de détection MVTec AD.
-    # NULL sur les modèles entraînés avant ce correctif.
-    _add_column_if_missing("vision_anomaly_models", "n_calibration", "INTEGER")
-    _add_column_if_missing("vision_anomaly_models", "n_evaluation", "INTEGER")
+    backend_dir = Path(__file__).resolve().parent.parent.parent
+    cfg = Config(str(backend_dir / "alembic.ini"))
+    cfg.set_main_option("script_location", str(backend_dir / "alembic"))
+    if db_url:
+        cfg.set_main_option("sqlalchemy.url", db_url)
+    return cfg
+
+
+def run_migrations(db_url: str | None = None) -> None:
+    """Amène le schéma à la révision `head` — remplace
+    `Base.metadata.create_all()` + `_add_column_if_missing` (Lot 1.1,
+    correctif C3). `db_url` optionnel : par défaut la base applicative
+    (`_db_url`/`engine` de ce module) ; permet aux tests de cibler une base
+    isolée (`tests/test_alembic_migration.py`).
+
+    Deux cas distincts, jamais confondus :
+    - **Base neuve** (aucune des 22 tables n'existe) : `alembic upgrade
+      head` crée tout le schéma depuis la révision initiale.
+    - **Base déjà en service** (tables déjà présentes, pas de table
+      `alembic_version` — c'est-à-dire toute base créée avant ce lot par
+      l'ancien `Base.metadata.create_all()`) : rejouer la révision initiale
+      échouerait (`CREATE TABLE` sur une table déjà existante). On marque
+      donc cette révision comme déjà appliquée via `alembic stamp head`,
+      SANS exécuter son SQL — les données existantes ne sont jamais
+      touchées. Testé avec de vraies données dans
+      `tests/test_alembic_migration.py::test_existing_pre_alembic_database_is_stamped_not_recreated`.
+    """
+    from alembic import command
+
+    target_engine = create_engine(db_url) if db_url else engine
+    cfg = _alembic_config(db_url)
+    inspector = inspect(target_engine)
+    existing_tables = set(inspector.get_table_names())
+    is_pre_alembic_database = "alembic_version" not in existing_tables and "organizations" in existing_tables
+
+    if is_pre_alembic_database:
+        command.stamp(cfg, "head")
+        logger.info(
+            "[DB] Base pré-Alembic détectée (tables déjà présentes, jamais migrée) — "
+            "révision initiale marquée appliquée sans rejeu"
+        )
+    else:
+        command.upgrade(cfg, "head")
+
+    if db_url:
+        target_engine.dispose()
+
+
+def init_db() -> None:
+    """Crée/met à jour le schéma via Alembic (voir `run_migrations()`)."""
+    # Import local (et non en tête de module) pour éviter l'import circulaire :
+    # api.core.models importe déjà `Base` depuis ce fichier. Import conservé
+    # ici (même si `run_migrations` ne s'appuie plus sur `Base.metadata`
+    # directement) car `env.py` d'Alembic importe lui aussi `api.core.models`
+    # — le garder ici documente que TOUTES les tables doivent être
+    # enregistrées avant toute opération de schéma.
+    from api.core import models  # noqa: F401
+
+    run_migrations()
     logger.info("[DB] Prête (%s)", "SQLite" if _is_sqlite else "PostgreSQL")
 
 
