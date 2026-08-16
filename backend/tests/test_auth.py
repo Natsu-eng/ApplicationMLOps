@@ -33,6 +33,30 @@ def test_register_duplicate_email_rejected(client):
     assert resp.json()["detail"]["code"] == "AUTH_EMAIL_DEJA_UTILISE"
 
 
+def test_register_blocked_after_too_many_attempts(client):
+    """Lot 1.4 (§C.2.7/§D.4, AUDIT_DATALAB_2026-08-16.md) — avant, seul
+    /auth/login était limité ; /register pouvait être spammé sans aucune
+    borne. Même mécanisme (fenêtre glissante par IP), étendu ici."""
+    from api.core.config import get_settings
+
+    limit = get_settings().register_rate_limit_max_attempts
+    responses = [
+        client.post(
+            "/auth/register",
+            json={"email": f"spam{i}@bureau.fr", "nom": "Spam", "password": "motdepasse123", "organization_name": "Bureau"},
+        )
+        for i in range(limit)
+    ]
+    assert all(r.status_code == 201 for r in responses)
+
+    blocked = client.post(
+        "/auth/register",
+        json={"email": "encoreun@bureau.fr", "nom": "Spam", "password": "motdepasse123", "organization_name": "Bureau"},
+    )
+    assert blocked.status_code == 429
+    assert blocked.json()["detail"]["code"] == "TROP_DE_REQUETES"
+
+
 def test_login_wrong_password_rejected(client):
     client.post(
         "/auth/register",
@@ -88,10 +112,19 @@ def test_login_success_resets_rate_limit_counter(client):
 
 
 def test_login_rate_limit_isolated_by_client_and_never_blocks_registration(client):
-    """La limite porte sur /auth/login (brute force de mot de passe), jamais
-    sur /auth/register — un pic d'inscriptions légitimes ne doit jamais être
-    confondu avec une attaque par force brute sur un mot de passe."""
-    for i in range(15):
+    """La limite de LOGIN (brute force de mot de passe) ne doit jamais
+    s'appliquer à /register — un pic d'inscriptions légitimes ne doit
+    jamais être confondu avec une attaque par force brute sur un mot de
+    passe. /register a sa PROPRE limite depuis le Lot 1.4 (correctif
+    §C.2.7/§D.4, register_rate_limit_max_attempts) — ce test reste dans
+    cette limite pour isoler ce qu'il vérifie réellement (l'absence
+    d'interférence avec le compteur de login), voir
+    test_register_blocked_after_too_many_attempts pour la limite propre à
+    /register elle-même."""
+    from api.core.config import get_settings
+
+    limit = get_settings().register_rate_limit_max_attempts
+    for i in range(limit):
         resp = client.post(
             "/auth/register",
             json={

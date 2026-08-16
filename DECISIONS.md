@@ -139,6 +139,128 @@ jamais 401 dans ce backend (identifiants incorrects → 400, trop de
 tentatives → 429, voir `routers/auth.py`), vérifié dans le code avant
 d'écrire cette décision.
 
+## Lot 1
+
+### D1.1 — Migration initiale Alembic autogénérée contre SQLite, pas Postgres
+
+**Question** : contre quelle base générer la révision initiale (`alembic
+revision --autogenerate`) — un Postgres jetable, ou SQLite ?
+**Retenu** : SQLite vierge (`tests/test_alembic_migration.py` le
+revérifie). Les opérations Alembic (`op.create_table`, `op.create_index`...)
+sont compilées par dialecte AU MOMENT de l'exécution, pas à la génération —
+le même script produit du DDL Postgres correct quand `alembic upgrade
+head` tourne réellement contre Postgres (vérifié : la révision a été
+appliquée avec succès contre le Postgres réel de développement via le
+chemin `stamp`, voir D1.2).
+**Écarté** : instancier un Postgres jetable juste pour l'autogénération —
+coût d'infra superflu, aucun gain de fidélité pour une révision qui ne
+fait que du CREATE TABLE (pas d'ALTER, où des différences de dialecte
+pourraient réellement compter).
+
+### D1.2 — Chemin de migration d'une base existante : `stamp`, jamais un rejeu
+
+**Contexte** : ce dépôt a une vraie base Postgres de développement locale,
+déjà peuplée (2 organisations, 3 utilisateurs, 13 datasets, 13
+entraînements — données de sessions de test précédentes), créée par
+l'ancien `Base.metadata.create_all()`. Occasion de tester le chemin
+"base déjà en service" en conditions réelles, pas seulement en théorie.
+**Retenu** : `run_migrations()` détecte ce cas (tables présentes, pas de
+table `alembic_version`) et exécute `alembic stamp head` — marque la
+révision comme appliquée SANS rejouer son SQL. Testé avec de vraies
+données dans `test_alembic_migration.py` (schéma créé hors Alembic, une
+ligne insérée, migration appliquée, donnée toujours là, aucune exception).
+**Écarté** : un `upgrade head` inconditionnel — testé explicitement qu'il
+échoue sur une base existante (`CREATE TABLE` sur une table déjà là), ce
+qui justifie la détection plutôt que de la supposer nécessaire.
+
+### D1.3 — Sauvegarde/restauration testée par SCHÉMA jetable, pas base jetable
+
+**Découvert en testant, pas supposé** : le rôle applicatif `datalab` n'a
+PAS le privilège `CREATEDB` (`rolcreatedb = false`, vérifié par requête
+directe sur `pg_roles`) — cohérent avec le principe de moindre privilège
+qu'on attendrait d'un déploiement réel, mais ça invalidait mon premier
+essai (créer une base Postgres jetable pour le cycle de test
+sauvegarde/restauration).
+**Retenu** : isolation par SCHÉMA (`CREATE SCHEMA`/`DROP SCHEMA`, que le
+rôle applicatif peut faire dans sa propre base) plutôt que par base
+séparée. `pg_dump --schema=...` restreint le dump au schéma de test ;
+`pg_restore --clean --if-exists` ne touche que les objets présents dans le
+dump (jamais `public`, jamais les données réelles). Le test simule une
+vraie perte (DROP SCHEMA) avant de prouver la restauration, pas juste un
+aller-retour dump/restore sur un schéma toujours intact.
+**Effet de bord corrigé en testant** : `restore_storage()` extrayait
+l'archive en supposant que le nom de dossier interne fixe de l'archive
+("storage/", voir `backup_storage`) correspondait au nom du dossier cible
+demandé par l'appelant — faux dès que `target_dir` porte un autre nom
+(exactement le cas du test). Corrigé pour extraire le contenu directement
+dans `target_dir`, quel que soit son nom.
+**Remise en cause si** : le rôle applicatif obtient un jour `CREATEDB` pour
+une autre raison — l'isolation par base séparée deviendrait alors plus
+simple et plus proche d'une vraie restauration complète (base entière, pas
+un schéma), et vaudrait la peine d'être reconsidérée.
+
+### D1.4 — Mode worker piloté par variable d'environnement, repli sur détection plateforme
+
+**Retenu** : `RQ_WORKER_MODE=fork|simple`, explicite en priorité ; à
+défaut, détecté depuis `sys.platform` ("simple" est le SEUL mode
+fonctionnel sous Windows, jamais un choix arbitraire — `os.fork()` n'y
+existe pas). `docker-compose.yml` fixe `RQ_WORKER_MODE=fork` explicitement
+pour le service `worker` (jamais un repli implicite en production, même
+si la détection plateforme donnerait le même résultat sous Linux).
+**`deploy.replicas: 2`** dans `docker-compose.yml` plutôt que documenter
+uniquement `--scale` : le défaut doit déjà être multi-worker sans action
+manuelle — l'audit demandait explicitement "passe le service worker à
+plusieurs répliques dans docker-compose.yml", pas seulement rendre le
+scaling possible.
+**Écarté** : détection automatique sans variable d'environnement (juste
+`sys.platform`) — l'audit demande explicitement un pilotage par variable
+d'environnement, et un override explicite reste utile pour forcer "simple"
+en diagnostic même sous Linux.
+
+### D1.5 — Rate-limiting étendu : compteurs indépendants par action, mêmes limites configurables
+
+**Retenu** : `rate_limit_dependency(action, max_attempts, window_seconds)`
+généralise le mécanisme de `/auth/login` (déjà en place) à `/register`, aux
+deux endpoints d'upload (tabulaire et vision — compteurs INDÉPENDANTS,
+`dataset_upload` vs `vision_dataset_upload`, pour qu'épuiser l'un ne
+bloque pas l'autre) et à `/explain`. Limites par défaut définies dans
+`Settings` (10/h, 30/h, 30/h, 20/h respectivement), même convention que
+`login_rate_limit_max_attempts` existant.
+**Connu et accepté** : les limites sont capturées comme valeurs fixes à
+l'import du module (`_upload_rate_limit = rate_limit_dependency(...)` au
+niveau module), pas relues dynamiquement par requête — cohérent avec le
+mécanisme `/auth/login` déjà en place (même limite), documenté dans les
+tests (qui exercent la vraie valeur par défaut plutôt que de la
+monkeypatcher, ce qui ne fonctionnerait pas ici).
+
+### D1.6 — torch.load : `weights_only=True` suffit, vérifié empiriquement, pas de restructuration
+
+**Question** : l'audit suggère de restructurer l'artefact vision
+(`state_dict` d'un côté, métadonnées JSON de l'autre) pour permettre
+`weights_only=True`.
+**Vérifié avant de décider** : un test direct (dict avec `state_dict`
+PyTorch + `backbone_id`/`class_names`/`dropout_rate` en types Python
+simples, sauvegardé puis rechargé) montre que `weights_only=True` charge
+cet artefact SANS AUCUNE modification de structure — l'allowlist par
+défaut de torch 2.13 couvre déjà les tenseurs, `OrderedDict` et les types
+Python de base.
+**Retenu** : juste changer `weights_only=False` → `True`, sans toucher au
+format de l'artefact. Plus simple que ce que l'audit envisageait, et
+vérifié plutôt que supposé.
+**`joblib.load` (bundle tabulaire)** : pas d'équivalent `weights_only` en
+pickle/joblib — documenté comme risque connu et accepté (frontière de
+confiance : fichier écrit uniquement par notre worker), pas de correctif
+technique possible sans changer complètement de format de sérialisation
+(hors périmètre de ce lot).
+
+### D1.7 — JWT en cookie httpOnly : coût présenté, pas implémenté (Arrêt B)
+
+Conformément au cadrage : ce point touche toute la chaîne d'authentification
+(migration `localStorage` → cookie `httpOnly`/`SameSite=Strict`, jeton CSRF
+à introduire, `client.ts` et `AuthContext.tsx` à revoir, tests d'auth à
+adapter). Coût et impacts présentés séparément dans le rapport de fin de
+lot — implémentation non commencée, en attente d'arbitrage.
+
 ### D0.3 — Terminologie "MVTec AD" dans le pilier anomalies visuelles
 
 **Trouvé, non traité (hors périmètre Lot 0)** : `structure_type ==

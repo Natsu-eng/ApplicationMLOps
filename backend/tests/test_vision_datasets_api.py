@@ -62,6 +62,22 @@ def test_upload_valid_classification_dataset(client):
     assert set(body["class_distribution"]) == {"classe_0", "classe_1"}
 
 
+def test_upload_blocked_after_too_many_attempts(client):
+    """Lot 1.4 (§C.2.7/§D.4, AUDIT_DATALAB_2026-08-16.md) — même correctif
+    que le dataset tabulaire (test_datasets.py), compteur indépendant
+    ("vision_dataset_upload" vs "dataset_upload")."""
+    from api.core.config import get_settings
+
+    headers = _register(client)
+    limit = get_settings().upload_rate_limit_max_attempts
+    responses = [_upload_vision_dataset(client, headers, _classification_zip_bytes()) for _ in range(limit)]
+    assert all(r.status_code == 201 for r in responses)
+
+    blocked = _upload_vision_dataset(client, headers, _classification_zip_bytes())
+    assert blocked.status_code == 429
+    assert blocked.json()["detail"]["code"] == "TROP_DE_REQUETES"
+
+
 def test_upload_rejects_non_zip_extension(client):
     headers = _register(client)
     resp = client.post(

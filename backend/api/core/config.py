@@ -86,6 +86,27 @@ class Settings(BaseSettings):
     login_rate_limit_max_attempts: int = 10
     login_rate_limit_window_seconds: int = 900  # 15 minutes
 
+    # Lot 1.4 (§C.2.7/§D.4, AUDIT_DATALAB_2026-08-16.md) — même mécanisme
+    # que le login (core/rate_limit.py::rate_limit_dependency), étendu aux
+    # endpoints jusqu'ici non protégés : /register (spam de comptes),
+    # uploads (tabulaire + vision), /explain (charge un modèle torch à
+    # chaque appel, le plus coûteux des trois par requête).
+    register_rate_limit_max_attempts: int = 10
+    register_rate_limit_window_seconds: int = 3600  # 1 heure
+    upload_rate_limit_max_attempts: int = 30
+    upload_rate_limit_window_seconds: int = 3600  # 1 heure
+    explain_rate_limit_max_attempts: int = 20
+    explain_rate_limit_window_seconds: int = 3600  # 1 heure
+
+    # Lot 1.4 (§C.2.7, AUDIT_DATALAB_2026-08-16.md) — POST /training/jobs/{id}/predict
+    # acceptait un dictionnaire JSON arbitraire, sans aucune limite de
+    # taille. 2 Mo est largement suffisant pour toute charge JSON légitime
+    # de cette API (les payloads volumineux passent par les endpoints
+    # d'upload multipart, dotés de leurs propres limites dédiées — voir
+    # api/main.py::MaxJsonBodySizeMiddleware, qui ne s'applique qu'aux
+    # requêtes Content-Type: application/json).
+    max_json_body_size_mb: int = 2
+
     # Journalisation
     log_level: str = "INFO"
 

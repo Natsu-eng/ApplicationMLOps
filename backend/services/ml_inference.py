@@ -35,6 +35,18 @@ class InferenceError(ValueError):
 
 
 def load_bundle(file_path: str) -> dict[str, Any]:
+    # Lot 1.4 (§C.2.7/R11, AUDIT_DATALAB_2026-08-16.md) — même risque que
+    # torch.load côté vision (api/routers/vision_classification.py) : ce
+    # fichier n'est aujourd'hui écrit que par notre propre worker
+    # (services/ml_training.py), jamais par un import utilisateur, mais
+    # `joblib.load` reste un pickle non restreint (exécution de code
+    # arbitraire si le fichier venait d'ailleurs). Contrairement à
+    # `torch.load`, joblib/pickle n'a PAS d'équivalent `weights_only=True` —
+    # aucune restructuration ne referme ce risque ici, seule une frontière
+    # de confiance (jamais de fichier fourni par un utilisateur passé à
+    # cette fonction) le tient aujourd'hui. Si l'import de modèle externe
+    # devient une fonctionnalité réelle (hors périmètre actuel), ce point
+    # devra être retraité en profondeur (format non-pickle, ou sandboxing).
     if not Path(file_path).exists():
         raise InferenceError("Artefact du modèle introuvable sur le serveur")
     return joblib.load(file_path)

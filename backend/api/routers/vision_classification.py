@@ -29,6 +29,7 @@ from api.core.config import get_settings
 from api.core.database import get_db
 from api.core.job_queue import training_queue
 from api.core.models import User, VisionClassificationJob, VisionClassificationModel, VisionDataset
+from api.core.rate_limit import rate_limit_dependency
 from api.routers.auth import get_current_user
 from services.audit import log_action
 from services.job_quota import ALL_JOB_MODELS, raise_if_quota_exceeded
@@ -280,7 +281,14 @@ def get_vision_classification_result(job_id: int, current_user: User = Depends(g
     )
 
 
-@router.post("/jobs/{job_id}/explain", response_model=GradCamExplanationOut)
+_explain_rate_limit = rate_limit_dependency(
+    "vision_explain", _settings.explain_rate_limit_max_attempts, _settings.explain_rate_limit_window_seconds
+)
+
+
+@router.post(
+    "/jobs/{job_id}/explain", response_model=GradCamExplanationOut, dependencies=[Depends(_explain_rate_limit)]
+)
 async def explain_vision_classification_prediction(
     job_id: int,
     file: UploadFile = File(...),
@@ -308,11 +316,17 @@ async def explain_vision_classification_prediction(
             detail={"code": "IMAGE_INVALIDE", "message": "Impossible de lire cette image"},
         )
 
-    # weights_only=False : sûr ici car ce fichier est écrit par notre propre
-    # worker (torch.save du state_dict + métadonnées dans
-    # workers/vision_classification_worker.py), jamais un fichier fourni par
-    # l'utilisateur — pas de désérialisation de pickle non fiable.
-    artifact = torch.load(job.result.file_path, weights_only=False)
+    # Lot 1.4 (§C.2.7/R11, AUDIT_DATALAB_2026-08-16.md) — weights_only=True
+    # (au lieu de False) : le fichier n'est aujourd'hui écrit que par notre
+    # propre worker, jamais par un import utilisateur, mais un pickle non
+    # restreint reste une bombe à retardement le jour où ça changerait.
+    # Vérifié empiriquement : l'artefact ({"backbone_id": str, "class_names":
+    # list[str], "dropout_rate": float, "state_dict": OrderedDict[str,
+    # Tensor]} — voir vision_classification_training.py) ne contient que des
+    # types couverts par l'allowlist par défaut de weights_only=True (torch
+    # 2.13), donc PAS besoin de séparer state_dict et métadonnées en deux
+    # fichiers — juste ce changement suffit à fermer le risque.
+    artifact = torch.load(job.result.file_path, weights_only=True)
     try:
         explanation = explain_classification_prediction(artifact, image, target_label)
     except GradCamError as exc:

@@ -27,6 +27,21 @@ def test_upload_csv_computes_schema(client):
     assert {c["name"] for c in body["columns"]} == {"a", "b"}
 
 
+def test_upload_blocked_after_too_many_attempts(client):
+    """Lot 1.4 (§C.2.7/§D.4, AUDIT_DATALAB_2026-08-16.md) — l'upload n'avait
+    jusqu'ici aucune limite de débit (contrairement à /auth/login)."""
+    from api.core.config import get_settings
+
+    headers = _register(client)
+    limit = get_settings().upload_rate_limit_max_attempts
+    responses = [client.post("/datasets", headers=headers, files=_csv_file()) for _ in range(limit)]
+    assert all(r.status_code == 201 for r in responses)
+
+    blocked = client.post("/datasets", headers=headers, files=_csv_file())
+    assert blocked.status_code == 429
+    assert blocked.json()["detail"]["code"] == "TROP_DE_REQUETES"
+
+
 def test_upload_rejects_unsupported_extension(client):
     headers = _register(client)
     resp = client.post(

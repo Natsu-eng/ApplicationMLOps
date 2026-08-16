@@ -206,6 +206,38 @@ def test_result_after_completion(client, db_session):
     assert job_resp.json()["test_accuracy"] is not None
 
 
+def test_explain_blocked_after_too_many_attempts(client, db_session):
+    """Lot 1.4 (§C.2.7/§D.4, AUDIT_DATALAB_2026-08-16.md) — /explain charge
+    un modèle torch à chaque appel, le plus coûteux des endpoints étendus
+    par ce correctif, et n'avait jusqu'ici aucune limite."""
+    from api.core.config import get_settings
+
+    headers = _register(client)
+    dataset = _upload_vision_dataset(client, headers)
+    job = _create_job(client, headers, dataset["id"]).json()
+    run_vision_classification_job(job["id"])
+    db_session.expire_all()
+
+    limit = get_settings().explain_rate_limit_max_attempts
+    responses = [
+        client.post(
+            f"/vision/classification/jobs/{job['id']}/explain",
+            headers=headers,
+            files={"file": ("test.png", io.BytesIO(_png_bytes()), "image/png")},
+        )
+        for _ in range(limit)
+    ]
+    assert all(r.status_code == 200 for r in responses)
+
+    blocked = client.post(
+        f"/vision/classification/jobs/{job['id']}/explain",
+        headers=headers,
+        files={"file": ("test.png", io.BytesIO(_png_bytes()), "image/png")},
+    )
+    assert blocked.status_code == 429
+    assert blocked.json()["detail"]["code"] == "TROP_DE_REQUETES"
+
+
 def test_explain_returns_gradcam_heatmap(client, db_session):
     """Sous-lot D (Grad-CAM) — endpoint synchrone, mêmes conventions que
     `POST /training/jobs/{id}/predict`."""

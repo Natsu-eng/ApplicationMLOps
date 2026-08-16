@@ -21,6 +21,7 @@ from sqlalchemy.orm import Session
 from api.core.config import get_settings
 from api.core.database import get_db
 from api.core.models import Dataset, User
+from api.core.rate_limit import rate_limit_dependency
 from api.core.storage import dataset_file_path, delete_dataset_file
 from api.routers.auth import get_current_user
 from services.audit import log_action
@@ -234,7 +235,14 @@ def _get_org_dataset(dataset_id: int, current_user: User, db: Session) -> Datase
 
 # ── Endpoints ────────────────────────────────────────────────────────────────
 
-@router.post("", response_model=DatasetDetail, status_code=status.HTTP_201_CREATED)
+_upload_rate_limit = rate_limit_dependency(
+    "dataset_upload", _settings.upload_rate_limit_max_attempts, _settings.upload_rate_limit_window_seconds
+)
+
+
+@router.post(
+    "", response_model=DatasetDetail, status_code=status.HTTP_201_CREATED, dependencies=[Depends(_upload_rate_limit)]
+)
 async def upload_dataset(
     file: UploadFile = File(...),
     current_user: User = Depends(get_current_user),

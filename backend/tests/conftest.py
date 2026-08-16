@@ -62,18 +62,25 @@ def _fresh_database() -> Iterator[None]:
 
 @pytest.fixture(autouse=True)
 def _fresh_rate_limit_counters() -> Iterator[None]:
-    """Nettoie les compteurs Redis de rate-limiting (H11, AUDIT_ROADMAP.md)
-    avant CHAQUE test — sans ça, `TestClient` rapporte toujours la même IP
-    simulée ("testclient"), donc le compteur `login_attempts:testclient`
-    s'accumulerait silencieusement d'un test à l'autre sur toute la suite
-    (même catégorie de risque que l'isolation DB ci-dessus, voir H1).
+    """Nettoie les compteurs Redis de rate-limiting (H11, AUDIT_ROADMAP.md ;
+    généralisé Lot 1.4, `core/rate_limit.py::rate_limit_dependency`) avant
+    CHAQUE test — sans ça, `TestClient` rapporte toujours la même IP
+    simulée ("testclient"), donc un compteur comme `login_attempts:testclient`
+    ou `rate_limit:register:testclient` s'accumulerait silencieusement d'un
+    test à l'autre sur toute la suite (même catégorie de risque que
+    l'isolation DB ci-dessus, voir H1 — constaté en pratique au Lot 1.4 :
+    `rate_limit:register:*` non nettoyé faisait échouer en cascade tout
+    test appelant `_register()` après le 10ᵉ de la suite). `login_attempts:*`
+    et `rate_limit:*` sont deux préfixes distincts (l'historique H11
+    précède la généralisation Lot 1.4), les deux doivent être nettoyés.
     Échec ouvert si Redis est indisponible pendant les tests — la suite ne
     doit jamais dépendre d'un Redis local pour s'exécuter."""
     from api.core.job_queue import redis_conn
 
     try:
-        for key in redis_conn.scan_iter("login_attempts:*"):
-            redis_conn.delete(key)
+        for pattern in ("login_attempts:*", "rate_limit:*"):
+            for key in redis_conn.scan_iter(pattern):
+                redis_conn.delete(key)
     except Exception:
         pass
     yield

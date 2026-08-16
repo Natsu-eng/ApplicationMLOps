@@ -22,7 +22,7 @@ from api.core.config import get_settings
 from api.core.database import get_db
 from api.core.job_queue import redis_conn
 from api.core.models import AuditLog, Organization, User
-from api.core.rate_limit import is_rate_limited, reset_rate_limit
+from api.core.rate_limit import is_rate_limited, rate_limit_dependency, reset_rate_limit
 from api.core.security import create_access_token, decode_token, hash_password, verify_password
 from services.audit import log_action
 
@@ -137,7 +137,15 @@ def require_owner(current_user: User = Depends(get_current_user)) -> User:
 
 # ── Endpoints — compte personnel ──────────────────────────────────────────────
 
-@router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
+_register_rate_limit = rate_limit_dependency(
+    "register", _settings.register_rate_limit_max_attempts, _settings.register_rate_limit_window_seconds
+)
+
+
+@router.post(
+    "/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(_register_rate_limit)],
+)
 def register(body: RegisterRequest, db: Session = Depends(get_db)):
     """Crée une nouvelle organisation et son premier utilisateur (owner)."""
     if db.query(User).filter(User.email == body.email).first():

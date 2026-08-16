@@ -18,6 +18,9 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
+from starlette.responses import JSONResponse
 
 from api.core.config import get_settings
 from api.core.database import check_connection, init_db
@@ -40,6 +43,45 @@ logging.basicConfig(
 logger = logging.getLogger("datalab.api")
 
 settings = get_settings()
+
+
+class MaxJsonBodySizeMiddleware(BaseHTTPMiddleware):
+    """Rejette un corps JSON trop volumineux avant de le laisser atteindre
+    l'endpoint (Lot 1.4, §C.2.7, AUDIT_DATALAB_2026-08-16.md) —
+    `POST /training/jobs/{id}/predict` accepte un dictionnaire arbitraire,
+    sans aucune borne jusqu'ici.
+
+    Scopé à `Content-Type: application/json` uniquement : les uploads
+    (`multipart/form-data`) ont déjà leurs propres limites dédiées, plus
+    élevées (`max_upload_size_mb`, `max_vision_upload_size_mb`), vérifiées
+    plus loin dans leurs endpoints respectifs — cette middleware ne doit
+    jamais les bloquer.
+
+    Vérifie `Content-Length` — fourni par tout client HTTP standard pour un
+    corps JSON. Un client contournant délibérément cet en-tête (transfer
+    chunked) échappe à cette vérification : hors du modèle de menace visé
+    ici (requête accidentellement/naïvement trop grande), une défense plus
+    stricte relèverait d'un reverse proxy (`client_max_body_size` nginx)."""
+
+    def __init__(self, app, max_bytes: int):
+        super().__init__(app)
+        self.max_bytes = max_bytes
+
+    async def dispatch(self, request: Request, call_next):
+        content_type = request.headers.get("content-type", "")
+        if content_type.startswith("application/json"):
+            content_length = request.headers.get("content-length")
+            if content_length is not None and int(content_length) > self.max_bytes:
+                return JSONResponse(
+                    status_code=413,
+                    content={
+                        "detail": {
+                            "code": "CORPS_TROP_VOLUMINEUX",
+                            "message": f"Corps de requête trop volumineux (max {self.max_bytes // (1024 * 1024)} Mo)",
+                        }
+                    },
+                )
+        return await call_next(request)
 
 
 @asynccontextmanager
@@ -71,13 +113,23 @@ _allowed_origins = list({
     "http://127.0.0.1:5173",
     settings.frontend_url,
 })
+# Lot 1.4 (§C.2.7/§D.4, AUDIT_DATALAB_2026-08-16.md) — méthodes/en-têtes
+# resserrés à ce que l'API utilise réellement (GET/POST/PATCH/DELETE,
+# Authorization + Content-Type) plutôt que "*". Les origines étaient déjà
+# explicites (pas de risque critique), mais un "*" sur méthodes/en-têtes
+# n'a aucune justification ici. `expose_headers` : `Content-Disposition`
+# doit être lisible côté JS pour `api.training.exportModel()`
+# (frontend/src/api/client.ts), qui lit le nom de fichier suggéré par le
+# serveur — invisible en JS cross-origin sans cette exposition explicite.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_allowed_origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PATCH", "DELETE"],
+    allow_headers=["Authorization", "Content-Type"],
+    expose_headers=["Content-Disposition"],
 )
+app.add_middleware(MaxJsonBodySizeMiddleware, max_bytes=settings.max_json_body_size_mb * 1024 * 1024)
 
 app.include_router(auth_router)
 app.include_router(datasets_router)
