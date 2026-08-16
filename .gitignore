@@ -68,4 +68,9 @@ notebooks/*.parquet
 mvtec/
 src/data/mvtec_ad/
 
+# Sauvegardes locales (Lot 1.2, correctif C6) — dumps Postgres + archives de
+# stockage, jamais dans git (volumineux, contiennent des données réelles).
+backend/backups/*
+!backend/backups/.gitkeep
+
 
