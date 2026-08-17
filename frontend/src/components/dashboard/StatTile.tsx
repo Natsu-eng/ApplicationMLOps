@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { LucideIcon } from "lucide-react";
 import { Link } from "react-router-dom";
 import { Minus, TrendingDown, TrendingUp } from "lucide-react";
-import { ColorIconBadge, accentBarClass, type AccentColor } from "../ui/ColorIconBadge";
+import { ColorIconBadge, type AccentColor } from "../ui/ColorIconBadge";
 
 const REDUCED_MOTION_QUERY = "(prefers-reduced-motion: reduce)";
 
@@ -105,54 +105,61 @@ export function StatTile({
   const displaySplitB = useCountUp(split?.[1]?.value);
   const displaySplitC = useCountUp(split?.[2]?.value);
 
-  const content = (
-    <>
-      <div className={`h-1 ${accentBarClass(color)}`} aria-hidden="true" />
-      <div className="p-4 flex items-center gap-3">
-        <ColorIconBadge icon={icon} color={color} />
-        {loading ? (
-          <div className="min-w-0 flex-1 space-y-1.5">
-            <div className="h-5 w-16 rounded bg-muted animate-pulse" />
-            <div className="h-3 w-24 rounded bg-muted animate-pulse" />
-          </div>
-        ) : split ? (
-          <div className="flex items-stretch divide-x divide-border min-w-0 flex-1">
-            <div className="pr-2 min-w-0">
-              <p className="text-subtitle text-foreground tabular-nums">{displaySplitA ?? "—"}</p>
-              <p className="text-overline uppercase text-muted-foreground truncate">{split[0].label}</p>
-            </div>
-            <div className="px-2 min-w-0">
-              <p className="text-subtitle text-foreground tabular-nums">{displaySplitB ?? "—"}</p>
-              <p className="text-overline uppercase text-muted-foreground truncate">{split[1].label}</p>
-            </div>
-            <div className="pl-2 min-w-0">
-              <p className="text-subtitle text-foreground tabular-nums">{displaySplitC ?? "—"}</p>
-              <p className="text-overline uppercase text-muted-foreground truncate">{split[2].label}</p>
-            </div>
-          </div>
-        ) : (
-          <div className="min-w-0 flex-1">
-            <div className="flex items-baseline gap-2">
-              <p className="text-title text-foreground tabular-nums">{displayValue ?? "—"}</p>
-              {trend && (
-                <span
-                  className={`inline-flex items-center gap-0.5 text-caption tabular-nums ${
-                    trend.direction === "flat" ? "text-muted-foreground" : "text-foreground/70"
-                  }`}
-                >
-                  {(() => {
-                    const TrendIcon = TREND_ICON[trend.direction];
-                    return <TrendIcon size={12} aria-hidden="true" />;
-                  })()}
-                  {trend.label}
-                </span>
-              )}
-            </div>
-            <p className="text-caption text-muted-foreground truncate">{label}</p>
-          </div>
+  // Composition refaite (retour utilisateur, Lot 2A) — l'ancienne mise en
+  // page (icône + bloc chiffre/libellé côte à côte sur UNE ligne, plus une
+  // barre colorée en haut de tuile) cassait sous contrainte réelle : le
+  // libellé tronquait ("Modèles entr…"), le delta passait à la ligne à
+  // côté du chiffre faute de place. Refaite en 3 lignes empilées, chacune
+  // sur toute la largeur de la tuile — plus aucune compétition d'espace
+  // entre icône/chiffre/delta/libellé : (1) icône seule, (2) chiffre
+  // dominant + delta aligné à côté, (3) libellé sur sa propre ligne
+  // complète, jamais tronqué. Barre colorée supprimée (motif daté) :
+  // l'identité de couleur reste portée par l'icône seule.
+  const content = loading ? (
+    <div className="p-4 space-y-2.5">
+      <div className="h-8 w-8 rounded-control bg-muted animate-pulse" />
+      <div className="h-7 w-20 rounded bg-muted animate-pulse" />
+      <div className="h-3.5 w-28 rounded bg-muted animate-pulse" />
+    </div>
+  ) : split ? (
+    <div className="p-4 space-y-3">
+      <ColorIconBadge icon={icon} color={color} size="sm" />
+      <div className="flex items-stretch divide-x divide-border">
+        <div className="pr-3 min-w-0">
+          <p className="text-title text-foreground tabular-nums leading-none">{displaySplitA ?? "—"}</p>
+          <p className="text-caption text-muted-foreground mt-1.5">{split[0].label}</p>
+        </div>
+        <div className="px-3 min-w-0">
+          <p className="text-title text-foreground tabular-nums leading-none">{displaySplitB ?? "—"}</p>
+          <p className="text-caption text-muted-foreground mt-1.5">{split[1].label}</p>
+        </div>
+        <div className="pl-3 min-w-0">
+          <p className="text-title text-foreground tabular-nums leading-none">{displaySplitC ?? "—"}</p>
+          <p className="text-caption text-muted-foreground mt-1.5">{split[2].label}</p>
+        </div>
+      </div>
+    </div>
+  ) : (
+    <div className="p-4 space-y-2">
+      <ColorIconBadge icon={icon} color={color} size="sm" />
+      <div className="flex items-baseline gap-2">
+        <p className="text-display text-foreground tabular-nums leading-none">{displayValue ?? "—"}</p>
+        {trend && (
+          <span
+            className={`inline-flex items-center gap-0.5 text-caption tabular-nums flex-shrink-0 ${
+              trend.direction === "flat" ? "text-muted-foreground" : "text-foreground/70"
+            }`}
+          >
+            {(() => {
+              const TrendIcon = TREND_ICON[trend.direction];
+              return <TrendIcon size={12} aria-hidden="true" />;
+            })()}
+            {trend.label}
+          </span>
         )}
       </div>
-    </>
+      <p className="text-caption text-muted-foreground">{label}</p>
+    </div>
   );
 
   const chromeClass =

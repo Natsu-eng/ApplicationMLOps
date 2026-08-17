@@ -22,21 +22,27 @@
   --color-muted-foreground: oklch(0.53 0.02 260);
   --color-accent: oklch(0.955 0.015 250);
   --color-accent-foreground: oklch(0.4 0.09 258);
-  --color-destructive: oklch(0.58 0.21 25);
+  /* destructive/warning (retour utilisateur, Lot 2A) : L ET C ajustés en
+     DEUX temps successifs, tous deux vérifiés par le calcul (OKLCH → sRGB
+     → luminance relative WCAG) —
+     (1) clarté corrigée : la version H15 (0.58/0.56) n'avait été vérifiée
+     que contre --color-card (blanc pur, 4.82:1) — jamais contre
+     --color-background (0.955 0.012 258, légèrement teinté), où elle
+     tombait à 4.18–4.23:1, sous le seuil AA 4.5:1 texte normal ;
+     (2) chroma abaissé (0.21→0.15 destructive, 0.16→0.12 warning) : les
+     aplats à chroma maximale étaient jugés criards. Baisser le chroma
+     seul aurait fait retomber sous 4.5:1 sur background (testé : 4.40 et
+     4.49) — la clarté a donc été réajustée en conséquence (0.545/0.530),
+     jamais laissée dériver sans revérification. Résultat final : ≥4.5:1
+     sur --color-card ET --color-background. Détail du calcul :
+     DECISIONS.md, Lot 2A. `success` : clarté seule ajustée (0.53→0.510,
+     même raisonnement que destructive/warning point 1) — chroma non
+     signalé comme criard, laissé inchangé. */
+  --color-destructive: oklch(0.545 0.15 25);
   --color-destructive-foreground: oklch(0.99 0.005 260);
-  /* Luminosité réduite (0.72→0.56, 0.62→0.53) par rapport à la version
-     d'origine — AUDIT_ROADMAP.md, H15 : `text-warning`/`text-success` sont
-     utilisés comme couleur de TEXTE (Badge à 11px, MetricCard, StatTile),
-     pas seulement comme fond — vérifié au contrastomètre (calcul WCAG
-     direct sur les valeurs OKLCH, pas un outil visuel) : la version
-     d'origine tombait à 2.57:1 (warning) et 3.40:1 (success) sur fond
-     blanc, sous le seuil AA texte normal (4.5:1). Nouvelles valeurs à
-     4.82:1 sur blanc, teinte (H) et chroma (C) inchangés — même identité de
-     couleur, juste plus lisible. `--color-chart-3`/`--color-chart-4`
-     (theme/charts.ts) sont des tokens séparés, non affectés. */
-  --color-warning: oklch(0.56 0.16 65);
+  --color-warning: oklch(0.53 0.12 65);
   --color-warning-foreground: oklch(0.32 0.09 65);
-  --color-success: oklch(0.53 0.15 155);
+  --color-success: oklch(0.51 0.15 155);
   --color-success-foreground: oklch(0.99 0.005 260);
   /* "info" (Lot 2A, AUDIT_DATALAB_2026-08-16.md §J.4) — 4ᵉ sémantique
      demandée par l'audit aux côtés de success/warning/destructive.
@@ -153,6 +159,14 @@
   --text-overline--font-weight: 600;
   --text-overline--letter-spacing: 0.06em;
 
+  /* Famille typographique unique (retour utilisateur, Lot 2A correctif 6) —
+     le titre hero (AuthBrandPanel) était en serif, tout le reste en
+     sans-serif : incohérent, jamais un choix délibéré. Tranché pour le
+     sans-serif (déjà dominant partout ailleurs) — aucun webfont chargé
+     dans ce projet, la pile ne fait donc que documenter explicitement le
+     choix système déjà utilisé par défaut, pas une nouvelle dépendance. */
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+
   /* Rayons — 3 niveaux maximum, usage prescrit (jamais un 4ᵉ rayon ajouté
      à l'œil). control = boutons/inputs/badges ; card = cartes/panneaux ;
      sheet = modales/grandes surfaces de recouvrement. */
@@ -183,6 +197,7 @@
    l'identité visuelle, réservé aux moments vitrine. */
 body {
   background-color: var(--color-canvas);
+  font-family: var(--font-sans);
 }
 
 /* Thème sombre — retour utilisateur explicite ("ajoute un mode sombre, plus
@@ -217,8 +232,8 @@ body {
     --color-muted-foreground: oklch(0.66 0.02 258);
     --color-accent: oklch(0.28 0.035 255);
     --color-accent-foreground: oklch(0.88 0.04 258);
-    --color-destructive: oklch(0.64 0.21 25);
-    --color-warning: oklch(0.63 0.16 65);
+    --color-destructive: oklch(0.64 0.15 25);
+    --color-warning: oklch(0.63 0.12 65);
     --color-success: oklch(0.6 0.15 155);
     --color-info: oklch(0.6 0.15 230);
     --color-info-foreground: oklch(0.99 0.005 260);
@@ -226,11 +241,11 @@ body {
        OPPOSÉE du texte ci-dessus : doit rester plus sombre pour que le
        texte blanc garde 4.5:1 (une même valeur ne peut satisfaire les deux
        rôles à la fois en sombre, voir la note dans le bloc @theme). */
-    --color-primary-solid: oklch(0.53 0.16 258);
-    --color-destructive-solid: oklch(0.555 0.21 25);
-    --color-warning-solid: oklch(0.53 0.16 65);
-    --color-success-solid: oklch(0.51 0.15 155);
-    --color-info-solid: oklch(0.53 0.15 230);
+    --color-primary-solid: oklch(0.53 0.12 258);
+    --color-destructive-solid: oklch(0.555 0.15 25);
+    --color-warning-solid: oklch(0.53 0.12 65);
+    --color-success-solid: oklch(0.51 0.11 155);
+    --color-info-solid: oklch(0.53 0.11 230);
     --color-border: oklch(0.32 0.02 258);
     --color-input: oklch(0.32 0.02 258);
     --color-ring: oklch(0.6 0.16 258);
@@ -294,16 +309,16 @@ body {
   --color-muted-foreground: oklch(0.66 0.02 258);
   --color-accent: oklch(0.28 0.035 255);
   --color-accent-foreground: oklch(0.88 0.04 258);
-  --color-destructive: oklch(0.64 0.21 25);
-  --color-warning: oklch(0.63 0.16 65);
+  --color-destructive: oklch(0.64 0.15 25);
+  --color-warning: oklch(0.63 0.12 65);
   --color-success: oklch(0.6 0.15 155);
   --color-info: oklch(0.6 0.15 230);
   --color-info-foreground: oklch(0.99 0.005 260);
-  --color-primary-solid: oklch(0.53 0.16 258);
-  --color-destructive-solid: oklch(0.555 0.21 25);
-  --color-warning-solid: oklch(0.53 0.16 65);
-  --color-success-solid: oklch(0.51 0.15 155);
-  --color-info-solid: oklch(0.53 0.15 230);
+  --color-primary-solid: oklch(0.53 0.12 258);
+  --color-destructive-solid: oklch(0.555 0.15 25);
+  --color-warning-solid: oklch(0.53 0.12 65);
+  --color-success-solid: oklch(0.51 0.11 155);
+  --color-info-solid: oklch(0.53 0.11 230);
   --color-border: oklch(0.32 0.02 258);
   --color-input: oklch(0.32 0.02 258);
   --color-ring: oklch(0.6 0.16 258);

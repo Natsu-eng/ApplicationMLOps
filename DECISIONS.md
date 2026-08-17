@@ -343,3 +343,60 @@ utilisée par des enregistrements existants), les labels frontend et la
 documentation — plus large que "arrêter les métriques fausses" (Lot 0).
 **À traiter** : lors du Lot 6A (wizard Vision) ou Lot 7 (produit), au
 moment de retravailler l'UX du pilier anomalies visuelles.
+
+### D2.3 — Correctifs Arrêt A (direction visuelle refusée en premier passage)
+
+**Question** : le premier rendu du Lot 2A a été jugé « techniquement
+correct mais générique » — 6 corrections demandées avant toute nouvelle
+tentative de validation, plus une démonstration sur la page Tableau de
+bord (et uniquement celle-ci) avant d'aller plus loin.
+
+**Retenu** :
+1. **Palette catégorielle reconstruite** (`theme/charts.ts`) — l'ancienne
+   (bleu roi/orange/vert menthe/jaune/rose/vert foncé) confondait les
+   séries 3 et 6 (deux verts) et plaçait orange/jaune en teintes
+   adjacentes. Nouvelle séquence ancrée sur Okabe-Ito puis affinée par
+   recherche gloutonne en OKLab pour maximiser le ΔE minimal entre paires,
+   vérifié simultanément en mode clair, sombre et simulation
+   deutéranopie : ΔE min. 15,6 (vision normale) / 13,1 (deutéranopie),
+   contre 3,8 pour l'ancienne palette. Limitée à 6 séries.
+2. **Désaturation des remplissages pleins** — `--color-destructive`,
+   `--color-warning`, `--color-success` et leurs variantes `-solid`
+   étaient à chroma quasi maximal. Chroma réduit en clair (0.58→0.560,
+   0.56→0.545, 0.53→0.510) en conservant les ratios de contraste déjà
+   validés (≥4.5:1, carte ET fond — voir script de vérification étendu).
+3. **Nesting de conteneurs** — vérifié sur Dashboard.tsx : la page ne
+   présentait pas l'anti-motif page→section→carte→sous-carte décrit par
+   l'audit (déjà page→Card→liste à filets `divide-y`, sans sous-carte).
+   Aucun changement structurel nécessaire ; seuls les deux titres de
+   section ad hoc (`text-sm font-medium`) ont été alignés sur la nouvelle
+   hiérarchie typographique (`text-subtitle`, point 4).
+4. **Hiérarchie de sections** — `PageHeader` migré vers `text-title`,
+   `SectionHeader` vers `text-subtitle` (était `text-sm font-medium`,
+   `mb-3`→`mb-4`) : les deux niveaux se distinguent maintenant clairement
+   en taille/poids/espacement, plus une hiérarchie plate.
+5. **StatTile recomposé** — l'ancienne mise en page (icône + bloc
+   chiffre/libellé côte à côte + barre colorée en haut) cassait sous
+   contrainte réelle (libellé tronqué, delta qui repasse à la ligne).
+   Refaite en lignes empilées pleine largeur (icône seule / chiffre
+   dominant + delta aligné / libellé complet) ; barre d'accent supprimée,
+   l'identité de couleur reste portée par l'icône.
+6. **Typographie unifiée** — `--font-sans` défini une fois dans
+   `index.css` et appliqué à `body` ; `font-serif` retiré du titre héros
+   (`AuthBrandPanel`) et de `PageHeader`, seuls endroits où il subsistait.
+
+**Démonstration** : système appliqué à `frontend/src/pages/Dashboard.tsx`
+uniquement (titres de section alignés sur `text-subtitle` ; le reste de
+la page héritait déjà des primitives corrigées ci-dessus sans changement
+propre à la page). Les 16 autres pages restent inchangées, réservées au
+Lot 2B. Gate complet relancé et vert (tsc, lint 0 erreur, 42/42 tests,
+build).
+
+**Écarté** : retoucher `Card.tsx` (les 4 variantes existantes,
+notamment `outlined`, couvrent déjà le besoin de filets sans ombre —
+aucune page de démonstration n'a exposé de cas que la primitive actuelle
+ne couvre pas).
+
+**Remise en cause si** : en appliquant le système à une page du Lot 2B,
+l'anti-motif page→section→carte→sous-carte apparaît réellement (contrairement
+à Dashboard) — alors `Card.tsx` devra être revu à ce moment-là, pas avant.
