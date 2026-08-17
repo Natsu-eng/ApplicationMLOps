@@ -257,6 +257,45 @@ class ModelCandidate(Base):
     training_job: Mapped["TrainingJob"] = relationship("TrainingJob")
 
 
+class Prediction(Base):
+    """Une prédiction individuelle produite par
+    `POST /training/jobs/{id}/predict` (Lot 5, correctif I2,
+    AUDIT_DATALAB_2026-08-16.md §I2).
+
+    Avant ce lot, chaque prédiction disparaissait sitôt la réponse HTTP
+    envoyée : aucune trace de CE qui a été demandé, CE qui a été répondu,
+    ni PAR QUI — un incident ("le modèle a mal prédit pour ce dossier")
+    ne pouvait pas être investigué après coup. Remonte au modèle (donc au
+    run d'entraînement, au dataset, à l'organisation) via `ml_model_id` —
+    jamais dupliqué ici.
+
+    `output_json` capture prédiction + probabilités + intervalle CQR
+    (tout ce que l'audit désigne par "sortie" et "intervalle") — jamais
+    `explanation` (SHAP local) : recalculable à la demande depuis le
+    bundle + `input_json`, volumineuse, pas une donnée qui fait foi (voir
+    services/ml_inference.py::explain_one, appelé sans persistance)."""
+
+    __tablename__ = "predictions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    organization_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    ml_model_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("ml_models.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    requested_by_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    input_json: Mapped[str] = mapped_column(Text, nullable=False)
+    output_json: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+    organization: Mapped["Organization"] = relationship("Organization")
+    ml_model: Mapped["MLModel"] = relationship("MLModel")
+    requested_by: Mapped[Optional["User"]] = relationship("User")
+
+
 class AuditLog(Base):
     """Journal des actions sensibles (Lot 10 — durcissement SaaS) : qui a
     fait quoi, quand — ajout/désactivation de membre, suppression de

@@ -343,3 +343,108 @@ utilisée par des enregistrements existants), les labels frontend et la
 documentation — plus large que "arrêter les métriques fausses" (Lot 0).
 **À traiter** : lors du Lot 6A (wizard Vision) ou Lot 7 (produit), au
 moment de retravailler l'UX du pilier anomalies visuelles.
+
+## Lot 5 — Traçabilité (Phase 4 de l'audit, correctif I2)
+
+Branche `lot-5-tracability`, basée sur `main` (avant les Lots 2A/3/4,
+sur des branches séparées non encore fusionnées — voir D4.5/D4.8/D4.9
+sur `lot-4-perf` pour le même avertissement de réconciliation à venir).
+Phase 4 complète de l'audit (I2, P1, P2, I5) traitée en plusieurs
+correctifs séquentiels sur cette même branche, même découpage que
+Lot 4 (I3/I4/I6/I7).
+
+### D5.1 — Table `Prediction` dédiée, jamais un JSON sur `MLModel`
+
+**Question** : I2 (AUDIT_DATALAB_2026-08-16.md §I2) demande de persister
+chaque prédiction (`POST /training/jobs/{id}/predict`) — jusqu'ici
+perdue sitôt la réponse HTTP envoyée, rendant impossible d'investiguer
+après coup "le modèle a mal prédit pour ce dossier". Une table dédiée ou
+un journal générique (réutiliser `AuditLog`) ?
+**Retenu** : table `Prediction` dédiée (`api/core/models.py`) —
+`organization_id`, `ml_model_id`, `requested_by_id`, `input_json`,
+`output_json`, `created_at`. `output_json` capture prédiction +
+probabilités + intervalle CQR (tout ce que l'audit désigne par "sortie"
+et "intervalle"), **jamais** `explanation` (SHAP local) : recalculable à
+la demande depuis le bundle + `input_json` (voir
+`services/ml_inference.py::explain_one`), volumineuse, pas une donnée
+qui fait foi — persister une valeur recalculable à l'identique aurait
+été de la duplication sans bénéfice de traçabilité.
+**Écarté** : réutiliser `AuditLog` (`services/audit.py`) — explicitement
+scopé aux "actions sensibles" (suppression, promotion, ajout de membre),
+volontairement minimal ; une prédiction est le chemin ROUTINE de
+l'application, pas une action de gouvernance. Le détourner aurait rendu
+`AuditLog` bruyant (potentiellement des centaines de lignes par heure)
+pour un usage qui n'est pas le sien.
+**Vérifié, pas supposé** : migration Alembic (`0860f4355873`) générée
+par autogénération contre une base neuve, testée upgrade → vérification
+du schéma réel (colonnes + index) → downgrade → vérification que la
+table disparaît → ré-upgrade, avant tout commit (voir méthodologie de
+session, `_as_aware_utc` déjà établi dans `job_watchdog.py`).
+
+### D5.2 — Rétention par purge à la demande, jamais un scheduler dédié
+
+**Question** : I2 demande "+ rétention" — sans borne, `predictions`
+grossirait indéfiniment, et `input_json` peut contenir des données
+personnelles saisies par l'utilisateur (aucune raison de les garder
+indéfiniment).
+**Retenu** : même principe que `services/job_watchdog.py::reconcile_stale_jobs`
+(déjà en place, Lot AUDIT_ROADMAP.md H2) — une purge à la demande,
+appelée juste avant d'enregistrer une nouvelle prédiction de la MÊME
+organisation (`services/prediction_retention.py::purge_old_predictions`,
+`Settings.prediction_retention_days = 90`). Une prédiction jamais
+réutilisée est donc purgée au plus tard à la prochaine prédiction de sa
+propre organisation — pas de process séparé, pas de dépendance nouvelle
+(Celery beat ou équivalent), cohérent avec "pas de scheduler dédié" déjà
+choisi pour les jobs orphelins.
+**Écarté** : un script de purge lancé par un cron externe (comme
+`backend/scripts/smoke_test_docker.py` sur la branche
+`fix-api-prefix-routing`) — aurait exigé une tâche cron/Task Scheduler
+en plus de l'application elle-même, jamais garantie de tourner (pas
+d'infrastructure de planification existante dans ce projet) ; la purge à
+la demande, elle, s'exécute à coup sûr dès qu'une organisation redevient
+active.
+**Vérifié, pas supposé** : comparaison de dates faite en PYTHON, jamais
+par un filtre SQL sur `created_at` — un filtre SQL direct aurait paru
+fonctionner en local (SQLite) tout en étant fiable différemment en
+production (PostgreSQL), le même écart de fuseau horaire que
+`job_watchdog.py::_as_aware_utc` documente déjà. Constaté concrètement
+en écrivant `test_old_predictions_are_purged_on_the_next_prediction`
+(`TypeError: can't compare offset-naive and offset-aware datetimes` —
+sur l'assertion du TEST, pas sur la purge elle-même, qui utilisait déjà
+`_as_aware_utc` en interne).
+**Remise en cause si** : le volume de prédictions par organisation
+devient assez élevé pour que "charger tous les id/created_at de
+l'organisation à chaque prédiction" devienne mesurablement coûteux — un
+index composite `(organization_id, created_at)` ou un vrai job planifié
+deviendrait alors justifié.
+
+### D5.3 — Historique `GET /training/jobs/{id}/predictions` : `limit` simple, pas encore le curseur du Lot 4
+
+**Question** : comment exposer l'historique des prédictions d'un job ?
+**Retenu** : `GET /training/jobs/{job_id}/predictions`, un paramètre
+`limit` simple (défaut 50, max 500), tri par `id` décroissant (même
+raison qu'ailleurs dans le projet : `id` est sans ambiguïté, jamais
+`created_at`, voir D4.2 sur `lot-4-perf`).
+**Écarté** : la pagination par curseur de `api/core/pagination.py`
+(Lot 4/I3) — ce module vit sur `lot-4-perf`, une branche distincte non
+fusionnée au moment de ce lot ; le dupliquer ici aurait créé deux
+implémentations concurrentes du même mécanisme. La rétention (D5.2)
+borne déjà la taille de cette table dans le temps, rendant un simple
+`limit` suffisant pour l'instant.
+**Remise en cause si** : au moment de fusionner `lot-4-perf` et
+`lot-5-tracability`, harmoniser cet endpoint sur `paginate_by_id` comme
+les autres listes — à traiter EXPLICITEMENT à ce moment (même avertissement
+que D4.5 pour `Dashboard.tsx`), pas anticipé ici.
+
+### D5.4 — Pas de surface frontend pour I2 dans ce lot
+
+**Question** : faut-il un onglet "Historique des prédictions" dans
+`ModelResultModal.tsx` pour ce correctif ?
+**Retenu** : non — la colonne "Fichiers concernés" d'I2 dans l'audit ne
+liste que `models.py`/`training.py` (contrairement à I1, explicitement
+"back + front"). Le backend est prêt (persistance + endpoint), la
+surface frontend est un chantier séparé, cohérent avec le traitement de
+P6 (pagination UI) différé au Lot 4 (D4.1).
+**Remise en cause si** : un utilisateur/le produit demande explicitement
+cette vue — à ce moment, un nouvel onglet dans `ModelResultModal.tsx`
+consommant `GET /training/jobs/{id}/predictions` (déjà prêt côté API).

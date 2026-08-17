@@ -21,7 +21,7 @@ from sqlalchemy.orm import Session
 from api.core.config import get_settings
 from api.core.database import get_db
 from api.core.job_queue import training_queue
-from api.core.models import Dataset, MLModel, ModelCandidate, TrainingJob, User
+from api.core.models import Dataset, MLModel, ModelCandidate, Prediction, TrainingJob, User
 from api.routers.auth import get_current_user
 from services.audit import log_action
 from services.datasets import DatasetParsingError, read_dataframe
@@ -29,6 +29,7 @@ from services.feature_engineering import CURRENT_SPEC_VERSION
 from services.job_quota import ALL_JOB_MODELS, raise_if_quota_exceeded
 from services.job_watchdog import reconcile_stale_jobs
 from services.ml_inference import InferenceError, load_bundle, predict_one
+from services.prediction_retention import purge_old_predictions
 from services.ml_registry import MODEL_REGISTRY
 from services.ml_task import detect_task_type
 from services.ml_training import selection_metric_label
@@ -281,6 +282,23 @@ class PredictionResponse(BaseModel):
     probabilities: Optional[dict[str, float]] = None
     interval: Optional[dict[str, float]] = None
     explanation: Optional[LocalExplanation] = None
+
+
+class PredictionHistoryEntry(BaseModel):
+    """Une prédiction passée (Lot 5, correctif I2) — mêmes champs que
+    `PredictionResponse`, jamais `explanation` (jamais persistée, voir
+    `api/core/models.py::Prediction`)."""
+    id: int
+    input: dict[str, Any]
+    prediction: Any
+    probabilities: Optional[dict[str, float]] = None
+    interval: Optional[dict[str, float]] = None
+    requested_by: Optional[str] = None
+    created_at: datetime
+
+
+class PredictionHistoryResponse(BaseModel):
+    entries: List[PredictionHistoryEntry]
 
 
 # ── Aides internes ───────────────────────────────────────────────────────────
@@ -849,7 +867,13 @@ def predict_with_model(
 
     Referme la boucle ouverte au Lot 3 : entraîner un modèle ne servait à
     rien tant qu'il ne pouvait pas être réutilisé (voir workflow.md, Lot 4).
-    """
+
+    Lot 5 (correctif I2) — chaque prédiction réussie est persistée
+    (`Prediction`, voir `api/core/models.py`) : entrée, sortie
+    (prédiction + probabilités + intervalle, jamais `explanation` —
+    recalculable, voir `PredictionHistoryEntry`), modèle, utilisateur,
+    date. Une prédiction en échec (`InferenceError`) n'a rien à
+    persister — il n'y a pas de sortie."""
     job = _get_org_job(job_id, current_user, db)
     if job.status != "completed" or job.model is None:
         raise HTTPException(
@@ -867,7 +891,60 @@ def predict_with_model(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={"code": "PREDICTION_IMPOSSIBLE", "message": str(exc)},
         )
+
+    purge_old_predictions(db, current_user.organization_id, _settings.prediction_retention_days)
+    output = {k: v for k, v in result.items() if k != "explanation"}
+    db.add(Prediction(
+        organization_id=current_user.organization_id,
+        ml_model_id=model.id,
+        requested_by_id=current_user.id,
+        input_json=json.dumps(body.data),
+        output_json=json.dumps(output),
+    ))
+    db.commit()
+
     return PredictionResponse(**result)
+
+
+@router.get("/jobs/{job_id}/predictions", response_model=PredictionHistoryResponse)
+def list_job_predictions(
+    job_id: int,
+    limit: int = Query(50, ge=1, le=500),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Historique des prédictions faites avec le modèle de ce job (Lot 5,
+    correctif I2) — traçabilité : qui a demandé quoi, avec quelle réponse,
+    quand. Les plus récentes d'abord.
+
+    Pas de curseur ici (contrairement aux listes de jobs, Lot 4/I3, sur
+    une branche distincte au moment de ce lot) — un simple `limit` borné,
+    suffisant tant que la rétention (`services/prediction_retention.py`)
+    plafonne déjà la taille de cette table dans le temps ; à harmoniser
+    avec `api/core/pagination.py` si les deux lots fusionnent."""
+    job = _get_org_job(job_id, current_user, db)
+    if job.model is None:
+        return PredictionHistoryResponse(entries=[])
+    rows = (
+        db.query(Prediction)
+        .filter(Prediction.ml_model_id == job.model.id, Prediction.organization_id == current_user.organization_id)
+        .order_by(Prediction.id.desc())
+        .limit(limit)
+        .all()
+    )
+    entries = []
+    for row in rows:
+        output = json.loads(row.output_json)
+        entries.append(PredictionHistoryEntry(
+            id=row.id,
+            input=json.loads(row.input_json),
+            prediction=output.get("prediction"),
+            probabilities=output.get("probabilities"),
+            interval=output.get("interval"),
+            requested_by=row.requested_by.nom if row.requested_by else None,
+            created_at=row.created_at,
+        ))
+    return PredictionHistoryResponse(entries=entries)
 
 
 @router.delete("/jobs/{job_id}", status_code=status.HTTP_204_NO_CONTENT)

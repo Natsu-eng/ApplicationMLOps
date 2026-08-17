@@ -107,6 +107,16 @@ class Settings(BaseSettings):
     # requêtes Content-Type: application/json).
     max_json_body_size_mb: int = 2
 
+    # Traçabilité des prédictions (Lot 5, correctif I2,
+    # AUDIT_DATALAB_2026-08-16.md §I2) — au-delà de ce délai, une
+    # prédiction est purgée à la prochaine requête de sa propre
+    # organisation (voir services/prediction_retention.py, même principe
+    # que services/job_watchdog.py : pas de scheduler dédié, purge à la
+    # demande). 90 jours : assez pour investiguer un incident, sans
+    # accumuler indéfiniment des données personnelles potentiellement
+    # sensibles saisies dans `input_json`.
+    prediction_retention_days: int = 90
+
     # Journalisation
     log_level: str = "INFO"
 
