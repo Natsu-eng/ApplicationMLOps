@@ -9,7 +9,7 @@ from PIL import Image
 
 def _register(client, email="owner@bureau.fr", org="Bureau"):
     resp = client.post(
-        "/auth/register",
+        "/api/auth/register",
         json={"email": email, "nom": "Owner", "password": "motdepasse123", "organization_name": org},
     ).json()
     return {"Authorization": f"Bearer {resp['access_token']}"}
@@ -46,7 +46,7 @@ def _classification_zip_bytes(n_per_class=4, n_classes=2) -> bytes:
 
 def _upload_vision_dataset(client, headers, content: bytes, name="dataset.zip"):
     return client.post(
-        "/vision/datasets", headers=headers, files={"file": (name, io.BytesIO(content), "application/zip")}
+        "/api/vision/datasets", headers=headers, files={"file": (name, io.BytesIO(content), "application/zip")}
     )
 
 
@@ -81,7 +81,7 @@ def test_upload_blocked_after_too_many_attempts(client):
 def test_upload_rejects_non_zip_extension(client):
     headers = _register(client)
     resp = client.post(
-        "/vision/datasets", headers=headers, files={"file": ("dataset.png", io.BytesIO(b"x"), "image/png")}
+        "/api/vision/datasets", headers=headers, files={"file": ("dataset.png", io.BytesIO(b"x"), "image/png")}
     )
     assert resp.status_code == 400
     assert resp.json()["detail"]["code"] == "VISION_DATASET_FORMAT_NON_SUPPORTE"
@@ -90,7 +90,7 @@ def test_upload_rejects_non_zip_extension(client):
 def test_upload_rejects_empty_archive(client):
     headers = _register(client)
     resp = client.post(
-        "/vision/datasets", headers=headers, files={"file": ("dataset.zip", io.BytesIO(b""), "application/zip")}
+        "/api/vision/datasets", headers=headers, files={"file": ("dataset.zip", io.BytesIO(b""), "application/zip")}
     )
     assert resp.status_code == 400
     assert resp.json()["detail"]["code"] == "VISION_DATASET_FICHIER_VIDE"
@@ -114,7 +114,7 @@ def test_list_datasets_isolated_between_organizations(client):
     _upload_vision_dataset(client, headers_a, _classification_zip_bytes())
 
     headers_b = _register(client, "b@bureau-b.fr", "Bureau B")
-    resp = client.get("/vision/datasets", headers=headers_b)
+    resp = client.get("/api/vision/datasets", headers=headers_b)
     assert resp.status_code == 200
     assert resp.json() == []
 
@@ -124,7 +124,7 @@ def test_get_dataset_404_for_other_organization(client):
     dataset = _upload_vision_dataset(client, headers_a, _classification_zip_bytes()).json()
 
     headers_b = _register(client, "b@bureau-b.fr", "Bureau B")
-    resp = client.get(f"/vision/datasets/{dataset['id']}", headers=headers_b)
+    resp = client.get(f"/api/vision/datasets/{dataset['id']}", headers=headers_b)
     assert resp.status_code == 404
 
 
@@ -132,9 +132,9 @@ def test_delete_dataset_removes_it_and_its_files(client):
     headers = _register(client)
     dataset = _upload_vision_dataset(client, headers, _classification_zip_bytes()).json()
 
-    resp = client.delete(f"/vision/datasets/{dataset['id']}", headers=headers)
+    resp = client.delete(f"/api/vision/datasets/{dataset['id']}", headers=headers)
     assert resp.status_code == 204
-    assert client.get(f"/vision/datasets/{dataset['id']}", headers=headers).status_code == 404
+    assert client.get(f"/api/vision/datasets/{dataset['id']}", headers=headers).status_code == 404
 
 
 def test_get_dataset_detail_includes_validation_report(client):
@@ -145,7 +145,7 @@ def test_get_dataset_detail_includes_validation_report(client):
     content = _build_zip(files)
     dataset = _upload_vision_dataset(client, headers, content).json()
 
-    resp = client.get(f"/vision/datasets/{dataset['id']}", headers=headers)
+    resp = client.get(f"/api/vision/datasets/{dataset['id']}", headers=headers)
     assert resp.status_code == 200
     body = resp.json()
     assert body["validation_report"]["n_corrupted"] == 1
@@ -155,7 +155,7 @@ def test_get_image_returns_file(client):
     headers = _register(client)
     dataset = _upload_vision_dataset(client, headers, _classification_zip_bytes()).json()
 
-    resp = client.get(f"/vision/datasets/{dataset['id']}/image", headers=headers, params={"path": "classe_0/img_0.png"})
+    resp = client.get(f"/api/vision/datasets/{dataset['id']}/image", headers=headers, params={"path": "classe_0/img_0.png"})
     assert resp.status_code == 200
     assert resp.headers["content-type"] == "image/png"
 
@@ -164,7 +164,7 @@ def test_get_image_404_for_unknown_path(client):
     headers = _register(client)
     dataset = _upload_vision_dataset(client, headers, _classification_zip_bytes()).json()
 
-    resp = client.get(f"/vision/datasets/{dataset['id']}/image", headers=headers, params={"path": "classe_0/nope.png"})
+    resp = client.get(f"/api/vision/datasets/{dataset['id']}/image", headers=headers, params={"path": "classe_0/nope.png"})
     assert resp.status_code == 404
     assert resp.json()["detail"]["code"] == "IMAGE_INTROUVABLE"
 
@@ -174,7 +174,7 @@ def test_get_image_rejects_path_traversal(client):
     dataset = _upload_vision_dataset(client, headers, _classification_zip_bytes()).json()
 
     resp = client.get(
-        f"/vision/datasets/{dataset['id']}/image", headers=headers, params={"path": "../../../../etc/passwd"}
+        f"/api/vision/datasets/{dataset['id']}/image", headers=headers, params={"path": "../../../../etc/passwd"}
     )
     assert resp.status_code == 404
     assert resp.json()["detail"]["code"] == "IMAGE_INTROUVABLE"
@@ -186,7 +186,7 @@ def test_get_image_isolated_between_organizations(client):
 
     headers_b = _register(client, "b@bureau-b.fr", "Bureau B")
     resp = client.get(
-        f"/vision/datasets/{dataset_a['id']}/image", headers=headers_b, params={"path": "classe_0/img_0.png"}
+        f"/api/vision/datasets/{dataset_a['id']}/image", headers=headers_b, params={"path": "classe_0/img_0.png"}
     )
     assert resp.status_code == 404
 
@@ -195,7 +195,7 @@ def test_list_images_returns_paths_for_class(client):
     headers = _register(client)
     dataset = _upload_vision_dataset(client, headers, _classification_zip_bytes(n_per_class=4)).json()
 
-    resp = client.get(f"/vision/datasets/{dataset['id']}/images", headers=headers, params={"class_name": "classe_0"})
+    resp = client.get(f"/api/vision/datasets/{dataset['id']}/images", headers=headers, params={"class_name": "classe_0"})
     assert resp.status_code == 200
     body = resp.json()
     assert body["class_name"] == "classe_0"
@@ -208,7 +208,7 @@ def test_list_images_caps_at_gallery_limit(client):
     headers = _register(client)
     dataset = _upload_vision_dataset(client, headers, _classification_zip_bytes(n_per_class=80)).json()
 
-    resp = client.get(f"/vision/datasets/{dataset['id']}/images", headers=headers, params={"class_name": "classe_0"})
+    resp = client.get(f"/api/vision/datasets/{dataset['id']}/images", headers=headers, params={"class_name": "classe_0"})
     body = resp.json()
     assert body["total"] == 80
     assert len(body["paths"]) == 60  # MAX_GALLERY_IMAGES_PER_CLASS
@@ -218,7 +218,7 @@ def test_list_images_404_for_unknown_class(client):
     headers = _register(client)
     dataset = _upload_vision_dataset(client, headers, _classification_zip_bytes()).json()
 
-    resp = client.get(f"/vision/datasets/{dataset['id']}/images", headers=headers, params={"class_name": "classe_inexistante"})
+    resp = client.get(f"/api/vision/datasets/{dataset['id']}/images", headers=headers, params={"class_name": "classe_inexistante"})
     assert resp.status_code == 404
     assert resp.json()["detail"]["code"] == "CLASSE_INTROUVABLE"
 
@@ -228,7 +228,7 @@ def test_list_images_rejects_path_traversal(client):
     dataset = _upload_vision_dataset(client, headers, _classification_zip_bytes()).json()
 
     resp = client.get(
-        f"/vision/datasets/{dataset['id']}/images", headers=headers, params={"class_name": "../../../../etc"}
+        f"/api/vision/datasets/{dataset['id']}/images", headers=headers, params={"class_name": "../../../../etc"}
     )
     assert resp.status_code == 404
     assert resp.json()["detail"]["code"] == "CLASSE_INTROUVABLE"
@@ -240,6 +240,6 @@ def test_list_images_isolated_between_organizations(client):
 
     headers_b = _register(client, "b@bureau-b.fr", "Bureau B")
     resp = client.get(
-        f"/vision/datasets/{dataset_a['id']}/images", headers=headers_b, params={"class_name": "classe_0"}
+        f"/api/vision/datasets/{dataset_a['id']}/images", headers=headers_b, params={"class_name": "classe_0"}
     )
     assert resp.status_code == 404

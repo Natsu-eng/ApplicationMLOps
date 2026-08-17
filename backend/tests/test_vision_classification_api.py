@@ -14,7 +14,7 @@ from workers.vision_classification_worker import run_vision_classification_job
 
 def _register(client, email="owner@bureau.fr", org="Bureau"):
     resp = client.post(
-        "/auth/register",
+        "/api/auth/register",
         json={"email": email, "nom": "Owner", "password": "motdepasse123", "organization_name": org},
     ).json()
     return {"Authorization": f"Bearer {resp['access_token']}"}
@@ -46,7 +46,7 @@ def _classification_zip_bytes(n_per_class=8, n_classes=2) -> bytes:
 def _upload_vision_dataset(client, headers, content=None, name="dataset.zip"):
     content = content if content is not None else _classification_zip_bytes()
     return client.post(
-        "/vision/datasets", headers=headers, files={"file": (name, io.BytesIO(content), "application/zip")}
+        "/api/vision/datasets", headers=headers, files={"file": (name, io.BytesIO(content), "application/zip")}
     ).json()
 
 
@@ -55,12 +55,12 @@ def _create_job(client, headers, vision_dataset_id, **overrides):
     body.update(overrides)
     with patch("api.routers.vision_classification.training_queue") as mock_queue:
         mock_queue.enqueue.return_value.id = "fake-rq-id"
-        return client.post("/vision/classification/jobs", headers=headers, json=body)
+        return client.post("/api/vision/classification/jobs", headers=headers, json=body)
 
 
 def test_list_backbones(client):
     headers = _register(client)
-    resp = client.get("/vision/classification/backbones", headers=headers)
+    resp = client.get("/api/vision/classification/backbones", headers=headers)
     assert resp.status_code == 200
     ids = {b["id"] for b in resp.json()}
     assert "mobilenet_v3_small" in ids
@@ -125,7 +125,7 @@ def test_list_jobs_isolated_between_organizations(client):
     _create_job(client, headers_a, dataset_a["id"])
 
     headers_b = _register(client, "b@bureau-b.fr", "Bureau B")
-    resp = client.get("/vision/classification/jobs", headers=headers_b)
+    resp = client.get("/api/vision/classification/jobs", headers=headers_b)
     assert resp.status_code == 200
     assert resp.json() == []
 
@@ -136,7 +136,7 @@ def test_get_job_404_for_other_organization(client):
     job = _create_job(client, headers_a, dataset_a["id"]).json()
 
     headers_b = _register(client, "b@bureau-b.fr", "Bureau B")
-    resp = client.get(f"/vision/classification/jobs/{job['id']}", headers=headers_b)
+    resp = client.get(f"/api/vision/classification/jobs/{job['id']}", headers=headers_b)
     assert resp.status_code == 404
 
 
@@ -144,7 +144,7 @@ def test_result_endpoint_404_before_completion(client):
     headers = _register(client)
     dataset = _upload_vision_dataset(client, headers)
     job = _create_job(client, headers, dataset["id"]).json()
-    resp = client.get(f"/vision/classification/jobs/{job['id']}/result", headers=headers)
+    resp = client.get(f"/api/vision/classification/jobs/{job['id']}/result", headers=headers)
     assert resp.status_code == 404
     assert resp.json()["detail"]["code"] == "RESULTAT_INDISPONIBLE"
 
@@ -154,9 +154,9 @@ def test_delete_job_removes_it_from_history(client):
     dataset = _upload_vision_dataset(client, headers)
     job = _create_job(client, headers, dataset["id"]).json()
 
-    resp = client.delete(f"/vision/classification/jobs/{job['id']}", headers=headers)
+    resp = client.delete(f"/api/vision/classification/jobs/{job['id']}", headers=headers)
     assert resp.status_code == 204
-    assert client.get(f"/vision/classification/jobs/{job['id']}", headers=headers).status_code == 404
+    assert client.get(f"/api/vision/classification/jobs/{job['id']}", headers=headers).status_code == 404
 
 
 def test_quota_shared_with_other_job_types(client):
@@ -167,11 +167,11 @@ def test_quota_shared_with_other_job_types(client):
     with patch("api.routers.anomalies.training_queue") as mock_queue:
         mock_queue.enqueue.return_value.id = "fake-rq-id"
         tabular = client.post(
-            "/datasets", headers=headers,
+            "/api/datasets", headers=headers,
             files={"file": ("d.csv", io.BytesIO(b"x1,x2\n1,2\n3,4\n5,6\n7,8\n"), "text/csv")},
         ).json()
         client.post(
-            "/anomalies/jobs", headers=headers,
+            "/api/anomalies/jobs", headers=headers,
             json={"dataset_id": tabular["id"], "feature_columns": ["x1", "x2"]},
         )
 
@@ -193,7 +193,7 @@ def test_result_after_completion(client, db_session):
     run_vision_classification_job(job["id"])
     db_session.expire_all()
 
-    result_resp = client.get(f"/vision/classification/jobs/{job['id']}/result", headers=headers)
+    result_resp = client.get(f"/api/vision/classification/jobs/{job['id']}/result", headers=headers)
     assert result_resp.status_code == 200
     body = result_resp.json()
     assert body["class_names"] == ["classe_0", "classe_1"]
@@ -201,7 +201,7 @@ def test_result_after_completion(client, db_session):
     assert len(body["history"]) == 1
     assert len(body["confusion_matrix"]) == 2
 
-    job_resp = client.get(f"/vision/classification/jobs/{job['id']}", headers=headers)
+    job_resp = client.get(f"/api/vision/classification/jobs/{job['id']}", headers=headers)
     assert job_resp.json()["status"] == "completed"
     assert job_resp.json()["test_accuracy"] is not None
 
@@ -221,7 +221,7 @@ def test_explain_blocked_after_too_many_attempts(client, db_session):
     limit = get_settings().explain_rate_limit_max_attempts
     responses = [
         client.post(
-            f"/vision/classification/jobs/{job['id']}/explain",
+            f"/api/vision/classification/jobs/{job['id']}/explain",
             headers=headers,
             files={"file": ("test.png", io.BytesIO(_png_bytes()), "image/png")},
         )
@@ -230,7 +230,7 @@ def test_explain_blocked_after_too_many_attempts(client, db_session):
     assert all(r.status_code == 200 for r in responses)
 
     blocked = client.post(
-        f"/vision/classification/jobs/{job['id']}/explain",
+        f"/api/vision/classification/jobs/{job['id']}/explain",
         headers=headers,
         files={"file": ("test.png", io.BytesIO(_png_bytes()), "image/png")},
     )
@@ -248,7 +248,7 @@ def test_explain_returns_gradcam_heatmap(client, db_session):
     db_session.expire_all()
 
     resp = client.post(
-        f"/vision/classification/jobs/{job['id']}/explain",
+        f"/api/vision/classification/jobs/{job['id']}/explain",
         headers=headers,
         files={"file": ("test.png", io.BytesIO(_png_bytes()), "image/png")},
     )
@@ -268,7 +268,7 @@ def test_explain_with_explicit_target_label(client, db_session):
     db_session.expire_all()
 
     resp = client.post(
-        f"/vision/classification/jobs/{job['id']}/explain",
+        f"/api/vision/classification/jobs/{job['id']}/explain",
         headers=headers,
         files={"file": ("test.png", io.BytesIO(_png_bytes()), "image/png")},
         data={"target_label": "classe_1"},
@@ -285,7 +285,7 @@ def test_explain_rejects_unknown_target_label(client, db_session):
     db_session.expire_all()
 
     resp = client.post(
-        f"/vision/classification/jobs/{job['id']}/explain",
+        f"/api/vision/classification/jobs/{job['id']}/explain",
         headers=headers,
         files={"file": ("test.png", io.BytesIO(_png_bytes()), "image/png")},
         data={"target_label": "classe_inexistante"},
@@ -302,7 +302,7 @@ def test_explain_rejects_invalid_image(client, db_session):
     db_session.expire_all()
 
     resp = client.post(
-        f"/vision/classification/jobs/{job['id']}/explain",
+        f"/api/vision/classification/jobs/{job['id']}/explain",
         headers=headers,
         files={"file": ("test.png", io.BytesIO(b"not an image"), "image/png")},
     )
@@ -316,7 +316,7 @@ def test_explain_404_before_completion(client):
     job = _create_job(client, headers, dataset["id"]).json()
 
     resp = client.post(
-        f"/vision/classification/jobs/{job['id']}/explain",
+        f"/api/vision/classification/jobs/{job['id']}/explain",
         headers=headers,
         files={"file": ("test.png", io.BytesIO(_png_bytes()), "image/png")},
     )

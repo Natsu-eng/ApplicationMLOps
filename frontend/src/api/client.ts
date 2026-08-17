@@ -4,6 +4,23 @@
 
 export const BASE_URL = import.meta.env.VITE_API_URL ?? "";
 
+// Préfixe /api (correctif — incident réel de déploiement) : nginx ne
+// proxifie que `location /api/` vers le backend (nginx/nginx.conf), tout le
+// reste tombe dans `try_files ... /index.html` (200, HTML de la SPA) — un
+// appel sans préfixe recevait donc du HTML, jamais le backend. Appliqué une
+// seule fois ici (`apiUrl()`), jamais en dur dans chaque chemin d'endpoint
+// ci-dessous : ces chemins restent "/auth/login", "/datasets", etc.
+const API_PREFIX = "/api";
+
+/** URL absolue (BASE_URL + préfixe /api) pour un chemin donné — unique
+ * point de composition, utilisé par les fetch internes (request/
+ * uploadFile(WithFields)/exportModel) ET par les rares fetch directs hors
+ * de ce client (VisionImage.tsx), pour ne jamais dupliquer le préfixe en
+ * dur à deux endroits. */
+export function apiUrl(path: string): string {
+  return `${BASE_URL}${API_PREFIX}${path}`;
+}
+
 const TOKEN_KEY = "datalab_token";
 
 export function getToken(): string | null {
@@ -82,7 +99,7 @@ async function extractError(res: Response): Promise<ApiError> {
  * automatiquement s'il est présent. */
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const token = getToken();
-  const res = await fetch(`${BASE_URL}${path}`, {
+  const res = await fetch(apiUrl(path), {
     ...options,
     headers: {
       "Content-Type": "application/json",
@@ -99,7 +116,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 /** Requête formulaire x-www-form-urlencoded — uniquement pour /auth/login, qui
  * attend un OAuth2PasswordRequestForm côté FastAPI (username/password). */
 async function requestForm<T>(path: string, fields: Record<string, string>): Promise<T> {
-  const res = await fetch(`${BASE_URL}${path}`, {
+  const res = await fetch(apiUrl(path), {
     method: "POST",
     body: new URLSearchParams(fields),
   });
@@ -121,7 +138,7 @@ async function uploadFileWithFields<T>(path: string, file: File, fields: Record<
   const formData = new FormData();
   formData.append("file", file);
   for (const [key, value] of Object.entries(fields)) formData.append(key, value);
-  const res = await fetch(`${BASE_URL}${path}`, {
+  const res = await fetch(apiUrl(path), {
     method: "POST",
     headers: token ? { Authorization: `Bearer ${token}` } : undefined,
     body: formData,
@@ -1006,7 +1023,7 @@ export interface PredictionResult {
 // ── API ────────────────────────────────────────────────────────────────────
 
 export const api = {
-  health: () => request<HealthStatus>("/api/health"),
+  health: () => request<HealthStatus>("/health"),
 
   auth: {
     register: (data: RegisterPayload) =>
@@ -1105,7 +1122,7 @@ export const api = {
      * téléchargement navigateur via un lien éphémère. */
     exportModel: async (jobId: number, suggestedFilename?: string): Promise<void> => {
       const token = getToken();
-      const res = await fetch(`${BASE_URL}/training/jobs/${jobId}/model/export`, {
+      const res = await fetch(apiUrl(`/training/jobs/${jobId}/model/export`), {
         headers: token ? { Authorization: `Bearer ${token}` } : undefined,
       });
       if (res.status === 401) handleUnauthorized();

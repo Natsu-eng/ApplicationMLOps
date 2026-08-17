@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { BASE_URL, getToken, handleUnauthorized } from "../../api/client";
+import { apiUrl, getToken, handleUnauthorized } from "../../api/client";
 
 /** Affiche une image individuelle d'un dataset vision — l'endpoint
  * `GET /vision/datasets/{id}/image` exige un Bearer token, qu'une balise
@@ -26,7 +26,7 @@ export function VisionImage({
     setSrc(null);
     setFailed(false);
     const token = getToken();
-    fetch(`${BASE_URL}/vision/datasets/${datasetId}/image?path=${encodeURIComponent(path)}`, {
+    fetch(apiUrl(`/vision/datasets/${datasetId}/image?path=${encodeURIComponent(path)}`), {
       headers: token ? { Authorization: `Bearer ${token}` } : undefined,
     })
       .then((res) => {

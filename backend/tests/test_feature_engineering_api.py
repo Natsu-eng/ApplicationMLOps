@@ -11,7 +11,7 @@ from api.core.models import TrainingJob
 
 def _register(client, email="owner@bureau.fr", org="Bureau"):
     resp = client.post(
-        "/auth/register",
+        "/api/auth/register",
         json={"email": email, "nom": "Owner", "password": "motdepasse123", "organization_name": org},
     ).json()
     return {"Authorization": f"Bearer {resp['access_token']}"}
@@ -31,7 +31,7 @@ def _upload_rich_dataset(client, headers):
         cible = surface * 2 - consommation
         rows.append(f"{date},{ville},{surface},{consommation},{revenu},{cible}")
     content = ("date,ville,surface,consommation,revenu,cible\n" + "\n".join(rows) + "\n").encode()
-    resp = client.post("/datasets", headers=headers, files={"file": ("d.csv", io.BytesIO(content), "text/csv")})
+    resp = client.post("/api/datasets", headers=headers, files={"file": ("d.csv", io.BytesIO(content), "text/csv")})
     return resp.json()
 
 
@@ -40,7 +40,7 @@ def test_feature_engineering_suggestions_endpoint_returns_all_families(client):
     dataset = _upload_rich_dataset(client, headers)
 
     resp = client.get(
-        f"/datasets/{dataset['id']}/feature-engineering-suggestions",
+        f"/api/datasets/{dataset['id']}/feature-engineering-suggestions",
         headers=headers,
         params={"target_column": "cible"},
     )
@@ -58,7 +58,7 @@ def test_feature_engineering_suggestions_endpoint_rejects_unknown_target(client)
     dataset = _upload_rich_dataset(client, headers)
 
     resp = client.get(
-        f"/datasets/{dataset['id']}/feature-engineering-suggestions",
+        f"/api/datasets/{dataset['id']}/feature-engineering-suggestions",
         headers=headers,
         params={"target_column": "inexistante"},
     )
@@ -69,7 +69,7 @@ def test_feature_engineering_suggestions_endpoint_rejects_unknown_target(client)
 def _upload_simple_dataset(client, headers):
     rows = "\n".join(f"2022-01-{(i % 28) + 1:02d},{i}" for i in range(60))
     content = f"date,cible\n{rows}\n".encode()
-    resp = client.post("/datasets", headers=headers, files={"file": ("d2.csv", io.BytesIO(content), "text/csv")})
+    resp = client.post("/api/datasets", headers=headers, files={"file": ("d2.csv", io.BytesIO(content), "text/csv")})
     return resp.json()
 
 
@@ -80,7 +80,7 @@ def test_create_job_persists_versioned_feature_engineering_spec(mock_queue, db_s
     dataset = _upload_simple_dataset(client, headers)
 
     resp = client.post(
-        "/training/jobs",
+        "/api/training/jobs",
         headers=headers,
         json={
             "dataset_id": dataset["id"],
@@ -110,7 +110,7 @@ def test_create_job_rejects_unknown_transformation_type(mock_queue, client):
     dataset = _upload_simple_dataset(client, headers)
 
     resp = client.post(
-        "/training/jobs",
+        "/api/training/jobs",
         headers=headers,
         json={
             "dataset_id": dataset["id"],
@@ -128,7 +128,7 @@ def test_create_job_rejects_unknown_column_in_feature_engineering(mock_queue, cl
     dataset = _upload_simple_dataset(client, headers)
 
     resp = client.post(
-        "/training/jobs",
+        "/api/training/jobs",
         headers=headers,
         json={
             "dataset_id": dataset["id"],
@@ -150,7 +150,7 @@ def test_create_job_without_feature_engineering_stores_null(mock_queue, db_sessi
     dataset = _upload_simple_dataset(client, headers)
 
     resp = client.post(
-        "/training/jobs", headers=headers, json={"dataset_id": dataset["id"], "target_column": "cible"}
+        "/api/training/jobs", headers=headers, json={"dataset_id": dataset["id"], "target_column": "cible"}
     )
     assert resp.status_code == 201
     job_id = resp.json()["id"]

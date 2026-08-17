@@ -343,3 +343,103 @@ utilisée par des enregistrements existants), les labels frontend et la
 documentation — plus large que "arrêter les métriques fausses" (Lot 0).
 **À traiter** : lors du Lot 6A (wizard Vision) ou Lot 7 (produit), au
 moment de retravailler l'UX du pilier anomalies visuelles.
+
+## Correctif — Routage `/api`, taille d'upload nginx, test de fumée Docker
+
+**Trouvé (retour utilisateur, incident réel — l'application ne fonctionnait
+pas du tout une fois déployée)** : aucun router backend n'était préfixé
+`/api` (`app.include_router(auth_router)` etc., sans `prefix=`), alors que
+`nginx/nginx.conf` ne proxifie QUE `location /api/` vers le backend — tout
+le reste (`/auth/login`, `/datasets`, `/training/...`) tombait dans
+`try_files ... /index.html` et recevait le HTML de la SPA en 200.
+`POST /auth/login` renvoyait donc du HTML, `res.json()` levait une
+`SyntaxError` côté frontend, connexion impossible. Symptôme identique en
+dev : `vite.config.ts` proxifiait des préfixes par domaine métier
+(`/training`, `/clustering`, `/datasets`, `/vision`, ...) qui interceptaient
+AUSSI les routes de PAGE de même nom — rafraîchir `/training` en dev
+renvoyait le JSON d'erreur du backend, jamais le HTML de la SPA (c'est ce
+qui m'empêchait de vérifier les pages du Lot 2A/2B dans un navigateur).
+
+**Retenu — cause racine (pas un contournement)** :
+- Tous les routers métier préfixés `/api` dans `api/main.py`
+  (`app.include_router(router, prefix="/api")`, se compose avec le préfixe
+  propre de chaque router — aucun router modifié individuellement).
+- `frontend/src/api/client.ts` : un point de composition UNIQUE
+  (`apiUrl(path)`) préfixe `/api` pour les 4 chemins fetch existants
+  (`request`, `requestForm`, `uploadFileWithFields`, `exportModel`) ET pour
+  le fetch direct de `VisionImage.tsx` — les ~50 chemins d'endpoints dans
+  l'objet `api` restent inchangés (`/auth/login`, `/datasets`, ...), jamais
+  touchés un par un (risque d'oubli).
+- `vite.config.ts` réduit à UNE SEULE entrée de proxy (`/api`) — les 6
+  entrées par domaine métier supprimées, cause du symptôme dev (point 3).
+- **Pas de `VITE_API_URL` injecté au build** (délibéré, pas un oubli) :
+  une fois TOUT préfixé `/api` et nginx proxifiant `/api/` vers le
+  backend, un chemin relatif (`BASE_URL=""`) fonctionne nativement en
+  same-origin derrière nginx — injecter une URL absolue au build
+  coupartirait un artefact Docker unique à une seule URL de déploiement,
+  contrairement au principe même d'une image Docker réutilisable.
+- **267 chemins littéraux dans 15 fichiers de tests backend** (`client.post("/auth/...")`
+  etc.) préfixés `/api` mécaniquement (script Python, remplacement
+  `"<prefixe>` → `"/api<prefixe>`, vérifié par diff avant/après) — sans ça,
+  le correctif routeur cassait silencieusement toute la suite (525 tests).
+  Vérifié sur un sous-ensemble ciblé (auth/body-size-limit/datasets,
+  32/32) plutôt que la suite complète, à la demande explicite de
+  l'utilisateur («uniquement ce test, refais pas tous les tests»).
+
+**Retenu — `client_max_body_size`** : 20 Mo en dur dans nginx alors que
+`max_upload_size_mb=200`/`max_vision_upload_size_mb=500` côté backend —
+tout import réel aurait été rejeté en 413 avant même d'atteindre
+l'application. `nginx/nginx.conf` → `nginx/templates/default.conf.template`
+(templating envsubst officiel de l'image nginx, déclenché automatiquement
+au démarrage du conteneur) : `client_max_body_size ${MAX_VISION_UPLOAD_SIZE_MB}M`
+lit LA MÊME variable que le backend, ajoutée explicitement à
+`backend/.env`/`backend/.env.example` (jusqu'ici seulement un défaut
+Python implicite, jamais une ligne visible dans `.env`) — `docker-compose.yml`
+donne au service `frontend` `env_file: backend/.env` pour que cette
+variable atteigne le conteneur nginx à l'exécution.
+**Écarté** : dupliquer un nombre nginx distinct en dur — exactement le
+problème signalé (deux limites qui peuvent diverger silencieusement).
+
+**Trouvé en marge, corrigé (bloquant pour le test de fumée)** : `docker
+compose up -d --build` (commande documentée dans `README.md`,
+`backend/README.md` et l'en-tête de `docker-compose.yml`) résolvait
+`${POSTGRES_USER}`/`${POSTGRES_PASSWORD}`/`${POSTGRES_DB}` à des chaînes
+VIDES — Docker Compose interpole son propre fichier via un `.env` à la
+racine du dépôt, un mécanisme distinct de `env_file: backend/.env` (qui
+n'injecte des variables QUE dans les conteneurs qui le déclarent, jamais
+dans le texte du fichier compose lui-même). `DATABASE_URL` se résolvait
+donc en `postgresql://:@db:5432/` — le backend ne pouvait jamais se
+connecter à Postgres en Docker, silencieusement, aucune erreur au
+démarrage de `docker compose up`. `.env.example` ajouté à la racine
+(mêmes valeurs que `backend/.env.example`, fichiers distincts par
+nécessité des deux mécanismes Compose) ; README.md/backend/README.md et
+l'en-tête de `docker-compose.yml` mis à jour pour documenter les DEUX
+copies `.env.example` → `.env` requises.
+**Pourquoi traité ici et pas signalé sans agir** : ce bug bloquait
+littéralement le test de fumée demandé (item 4) — `docker compose up`
+n'aurait jamais démarré une base fonctionnelle, peu importe la qualité du
+reste du correctif. Nécessaire à la livraison, pas une extension de
+périmètre choisie librement.
+
+**Retenu — test de fumée (item 4)** : `backend/scripts/smoke_test_docker.py`,
+httpx (déjà une dépendance backend, aucune nouvelle dépendance) — attend
+`GET /api/health` (`database: up`), vérifie `GET /` sert du HTML (pas une
+erreur nginx), puis rejoue inscription → connexion (form-encoded, PAS
+JSON — exactement le chemin qui recevait du HTML pendant l'incident) →
+liste des datasets, contre `http://localhost` (nginx, port 80), jamais
+contre le backend ni `uvicorn --reload` directement. Nouveau job CI
+`smoke` (`.github/workflows/ci.yml`), parallèle aux jobs `backend`/
+`frontend` existants : construit la stack Docker complète, lance le
+script, publie les logs des conteneurs en cas d'échec, arrête toujours la
+stack (`if: always()`).
+**Pourquoi aucun des 525+42 tests existants ne pouvait attraper ça** :
+`tests/*.py` appelle `TestClient(app)` (FastAPI en mémoire, jamais nginx) ;
+les tests frontend (Vitest) montent des composants isolés, jamais un
+navigateur réel contre un serveur. Les deux contournent PAR CONSTRUCTION
+la couche qui a cassé (le routage entre nginx et le backend) — un vert
+sur les deux ne prouve rien sur le déploiement réel.
+**Remise en cause si** : le job `smoke` s'avère trop lent/flaky en CI
+(build Docker complet à chaque run) — envisager de le limiter aux push
+sur `main`/PR vers `main` plutôt que toutes branches, si le coût devient
+gênant. Pas fait préventivement : pas de signal actuel que c'est un
+problème.

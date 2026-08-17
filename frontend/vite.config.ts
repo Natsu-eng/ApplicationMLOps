@@ -4,6 +4,17 @@ import tailwindcss from "@tailwindcss/vite";
 
 // En dev, le frontend proxy /api vers le backend FastAPI (localhost:8000) :
 // pas de configuration CORS supplémentaire à gérer côté navigateur.
+//
+// Une SEULE entrée /api (correctif — incident réel de déploiement) : tous
+// les endpoints backend sont désormais préfixés /api (api/main.py), donc
+// une seule entrée de proxy couvre tout le client. Avant ce correctif, des
+// entrées séparées par domaine métier (/training, /clustering, /datasets,
+// /vision, ...) interceptaient aussi les ROUTES DE PAGE de même nom
+// (`/training`, `/clustering`, `/datasets`, `/vision/classification`...) :
+// rafraîchir ou ouvrir un lien direct sur ces pages en dev renvoyait le
+// JSON d'erreur du backend au lieu du HTML de la SPA, puisque Vite
+// proxifiait la requête de navigation elle-même avant que React Router ne
+// la voie jamais.
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   server: {
@@ -13,38 +24,6 @@ export default defineConfig({
     host: "127.0.0.1",
     proxy: {
       "/api": {
-        target: "http://localhost:8000",
-        changeOrigin: true,
-      },
-      "/auth": {
-        target: "http://localhost:8000",
-        changeOrigin: true,
-      },
-      "/datasets": {
-        target: "http://localhost:8000",
-        changeOrigin: true,
-      },
-      "/training": {
-        target: "http://localhost:8000",
-        changeOrigin: true,
-      },
-      "/clustering": {
-        target: "http://localhost:8000",
-        changeOrigin: true,
-      },
-      // Lot 13/14 (ML non supervisé) — ajoutés par avance pour ne pas
-      // reproduire l'oubli du Lot 11+12 (clustering non proxyé, 404 en dev).
-      "/dimensionality": {
-        target: "http://localhost:8000",
-        changeOrigin: true,
-      },
-      "/anomalies": {
-        target: "http://localhost:8000",
-        changeOrigin: true,
-      },
-      // Lot 15 (pilier Vision) — même oubli que Lot 13/14 signalé plus haut,
-      // évité ici en l'ajoutant dès l'écriture du frontend, pas après coup.
-      "/vision": {
         target: "http://localhost:8000",
         changeOrigin: true,
       },

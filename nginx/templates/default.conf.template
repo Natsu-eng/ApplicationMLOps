@@ -1,6 +1,15 @@
 # ═══════════════════════════════════════════════════════════════════════════
 # NGINX — DataLab Pro
 # Rôle : sert les fichiers statiques React + proxy /api vers le backend FastAPI
+#
+# TEMPLATE envsubst (image nginx officielle : tout fichier sous
+# /etc/nginx/templates/*.template est passé à envsubst puis écrit dans
+# /etc/nginx/conf.d au démarrage du conteneur, voir Dockerfile.frontend).
+# Seules les variables listées ci-dessous sont substituées (l'entrypoint
+# nginx limite envsubst aux noms de variables réellement présents dans
+# l'environnement du conteneur) — les variables nginx natives ($host,
+# $remote_addr, $scheme, etc. ci-dessous) ne sont JAMAIS des variables
+# d'environnement du conteneur, donc jamais touchées par envsubst.
 # ═══════════════════════════════════════════════════════════════════════════
 
 upstream backend_api {
@@ -14,7 +23,17 @@ server {
     listen 80;
     server_name _;
 
-    client_max_body_size 20M;
+    # Correctif (retour utilisateur) — 20M en dur rejetait tout import
+    # réel en 413 : max_upload_size_mb (tabulaire) = 200,
+    # max_vision_upload_size_mb (images) = 500 côté backend
+    # (api/core/config.py). nginx ne doit JAMAIS être plus strict que
+    # l'application — sinon la requête est rejetée avant même d'atteindre
+    # le code applicatif, qui a pourtant sa propre limite (mieux formulée,
+    # en français). Aligné sur MAX_VISION_UPLOAD_SIZE_MB (le plus grand des
+    # deux) et lu depuis LA MÊME variable d'environnement que le backend
+    # (backend/.env) — une seule source, jamais deux nombres qui peuvent
+    # diverger silencieusement.
+    client_max_body_size ${MAX_VISION_UPLOAD_SIZE_MB}M;
 
     # ── Fichiers statiques React (SPA) ────────────────────────────────────
     location / {
