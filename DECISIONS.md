@@ -261,6 +261,71 @@ Conformément au cadrage : ce point touche toute la chaîne d'authentification
 adapter). Coût et impacts présentés séparément dans le rapport de fin de
 lot — implémentation non commencée, en attente d'arbitrage.
 
+### D1.8 — Incident réel : stamp à l'aveugle + colonnes manquantes en base, correctif à deux niveaux
+
+**Trouvé (retour utilisateur, incident réel)** : `GET
+/vision/anomalies/jobs` renvoyait 500 en production locale.
+`_to_summary()` (`api/routers/vision_anomalies.py`) accède à
+`job.result`, qui charge paresseusement `VisionAnomalyModel` — donc TOUTES
+ses colonnes mappées, y compris `n_calibration`/`n_evaluation` (ajoutées
+au modèle au Lot 0.2, avant l'introduction d'Alembic au Lot 1.1). Vérifié
+directement sur la base : `alembic_version = 594bce594adf` (donc marquée
+`head`) mais `vision_anomaly_models` sans ces deux colonnes physiquement —
+la version antérieure de `run_migrations()` (D1.2) les avait stampées
+"conformes" sans jamais vérifier le schéma réel, exactement le risque que
+l'utilisateur avait signalé au cadrage.
+
+**Retenu — niveau systémique** :
+- `_schema_matches_metadata()` compare désormais le schéma réel
+  (`inspect()`) à `Base.metadata` table par table ET colonne par colonne
+  avant tout `stamp` sur une base pré-Alembic — divergence détectée =
+  `SchemaMismatchError` avec la liste exacte des écarts, jamais un stamp
+  à l'aveugle (corrige D1.2, qui ne vérifiait que l'absence
+  d'`alembic_version` combinée à la présence de `organizations`).
+- **Filet ajouté au-delà de ce que D1.2 couvrait** : une vérification
+  identique s'exécute maintenant APRÈS `stamp` ET après `upgrade`, pas
+  seulement avant un stamp — nécessaire parce que l'incident réel s'est
+  produit sur une base DÉJÀ marquée `head` : chaque redémarrage suivant
+  tombait dans la branche `upgrade head` (no-op, déjà à `head`) sans
+  jamais revérifier le schéma réel. Sans ce filet, le correctif n'aurait
+  protégé QUE les futures transitions pré-Alembic → Alembic, pas rattrapé
+  une base déjà mal stampée par l'ancien code.
+- Tests ajoutés : `test_pre_alembic_database_with_missing_column_is_refused_not_stamped`
+  (variante colonne du test table existant) et
+  `test_already_stamped_database_with_drifted_schema_is_refused_at_every_startup`
+  (reproduit l'incident exact : base déjà à `head`, colonne manquante
+  malgré tout).
+
+**Retenu — niveau immédiat** : migration de rattrapage
+(`2744196bc3c7_rattrapage_vision_anomaly_models_n_.py`) ajoutant
+`n_calibration`/`n_evaluation` à `vision_anomaly_models`, puis appliquée
+à la base de développement réelle (`alembic upgrade head`) — vérifié
+après coup que les deux colonnes existent et que les données existantes
+sont intactes (aucun `DROP`/`TRUNCATE`).
+**Idempotente par construction** : `594bce594adf` (révision initiale)
+crée déjà ces colonnes pour toute base NEUVE — un `add_column`
+inconditionnel dans la migration de rattrapage cassait donc toute base
+neuve traversant la chaîne complète (`duplicate column name`, constaté en
+test avant correction). `upgrade()`/`downgrade()` vérifient l'état réel
+via `sa.inspect()` avant d'agir, dans les deux sens : no-op sur une base
+neuve (déjà conforme), rattrapage réel sur une base drifted.
+
+**Trouvé, non traité (hors périmètre)** : l'autogénération a aussi
+détecté un changement de type sur `ml_models.promoted_at` et
+`training_jobs.progress_updated_at` (`TIMESTAMP` → `DateTime(timezone=True)`)
+sur la base réelle — sans rapport avec cet incident (pas une colonne
+manquante, un type divergent que `_schema_matches_metadata()` ne
+détecte d'ailleurs pas, puisqu'elle ne compare que les NOMS de colonnes).
+Non inclus dans la migration de rattrapage pour ne pas mélanger deux
+correctifs sans lien. À traiter séparément si ce type de divergence
+s'avère un jour bloquant (aujourd'hui SQLAlchemy lit/écrit les deux
+représentations sans erreur).
+**Remise en cause si** : ce type de divergence (type de colonne, pas
+présence/absence) cause un jour un bug réel — étendrait
+`_schema_matches_metadata()` au-delà des noms de colonnes, avec le coût
+de complexité que ça implique (faux positifs sur des équivalences de
+type bénignes selon le dialecte SQL).
+
 ### D0.3 — Terminologie "MVTec AD" dans le pilier anomalies visuelles
 
 **Trouvé, non traité (hors périmètre Lot 0)** : `structure_type ==
