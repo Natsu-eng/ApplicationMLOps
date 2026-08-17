@@ -2,7 +2,8 @@
 
 Mêmes principes que `api/routers/clustering.py`/`dimensionality.py` :
 isolation systématique par `organization_id`, tâche de fond obligatoire (RQ,
-réutilise `training_queue`), jamais de calcul ML dans la requête HTTP.
+`analysis_queue` — voir `api/core/job_queue.py`, correctif I6), jamais de
+calcul ML dans la requête HTTP.
 
 Pas de `GET /algorithms-catalog` — contrairement au clustering et à la
 réduction de dimension, il n'y a aucun choix d'algorithme à cataloguer :
@@ -20,7 +21,7 @@ from sqlalchemy.orm import joinedload
 
 from api.core.config import get_settings
 from api.core.database import get_db
-from api.core.job_queue import training_queue
+from api.core.job_queue import analysis_queue
 from api.core.models import AnomalyJob, AnomalyObservationRecord, Dataset, User
 from api.core.pagination import paginate_by_id
 from api.routers.auth import get_current_user
@@ -196,7 +197,7 @@ def create_anomaly_job(
 
     from workers.anomaly_worker import run_anomaly_job
 
-    rq_job = training_queue.enqueue(run_anomaly_job, job.id, job_timeout=1800)
+    rq_job = analysis_queue.enqueue(run_anomaly_job, job.id, job_timeout=600)
     job.rq_job_id = rq_job.id
     db.commit()
     db.refresh(job)
@@ -293,7 +294,7 @@ def delete_anomaly_job(job_id: int, current_user: User = Depends(get_current_use
         try:
             from rq.job import Job as RQJob
 
-            rq_job = RQJob.fetch(job.rq_job_id, connection=training_queue.connection)
+            rq_job = RQJob.fetch(job.rq_job_id, connection=analysis_queue.connection)
             rq_job.cancel()
             rq_job.delete()
         except Exception:

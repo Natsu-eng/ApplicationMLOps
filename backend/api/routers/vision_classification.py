@@ -1,9 +1,11 @@
 """Router classification d'images — pilier Vision, Lot 15 sous-lots B et D.
 
 Mêmes principes que `api/routers/anomalies.py` : isolation systématique par
-`organization_id`, tâche de fond obligatoire (RQ, réutilise
-`training_queue`) pour l'entraînement, jamais de calcul ML dans la requête
-HTTP pour un job. Le dataset source doit être un `VisionDataset` de
+`organization_id`, tâche de fond obligatoire (RQ, `vision_queue` — file
+dédiée aux jobs vision (torch), séparée de `training_queue`/
+`analysis_queue` depuis le correctif I6, voir `api/core/job_queue.py`)
+pour l'entraînement, jamais de calcul ML dans la requête HTTP pour un
+job. Le dataset source doit être un `VisionDataset` de
 structure "classification" — vérifié ici ET dans le worker (défense en
 profondeur, même principe que la validation dataset des autres routers).
 
@@ -27,7 +29,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from api.core.config import get_settings
 from api.core.database import get_db
-from api.core.job_queue import training_queue
+from api.core.job_queue import vision_queue
 from api.core.models import User, VisionClassificationJob, VisionClassificationModel, VisionDataset
 from api.core.pagination import paginate_by_id
 from api.core.rate_limit import rate_limit_dependency
@@ -232,7 +234,7 @@ def create_vision_classification_job(
 
     from workers.vision_classification_worker import run_vision_classification_job
 
-    rq_job = training_queue.enqueue(run_vision_classification_job, job.id, job_timeout=1800)
+    rq_job = vision_queue.enqueue(run_vision_classification_job, job.id, job_timeout=1800)
     job.rq_job_id = rq_job.id
     db.commit()
     db.refresh(job)
@@ -365,7 +367,7 @@ def delete_vision_classification_job(job_id: int, current_user: User = Depends(g
         try:
             from rq.job import Job as RQJob
 
-            rq_job = RQJob.fetch(job.rq_job_id, connection=training_queue.connection)
+            rq_job = RQJob.fetch(job.rq_job_id, connection=vision_queue.connection)
             rq_job.cancel()
             rq_job.delete()
         except Exception:

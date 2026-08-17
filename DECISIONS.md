@@ -344,7 +344,7 @@ documentation — plus large que "arrêter les métriques fausses" (Lot 0).
 **À traiter** : lors du Lot 6A (wizard Vision) ou Lot 7 (produit), au
 moment de retravailler l'UX du pilier anomalies visuelles.
 
-## Lot 4 — Tenir la charge (Phase 3 de l'audit, correctifs I3 et I4)
+## Lot 4 — Tenir la charge (Phase 3 de l'audit, correctifs I3, I4 et I6)
 
 ### D4.1 — Pagination rétrocompatible par absence, jamais une enveloppe JSON
 
@@ -534,3 +534,48 @@ les tout premiers jobs d'un dataset jamais encore lu.
 en pratique sur de gros datasets (plusieurs centaines de Mo) — à ce
 moment, ajouter une lecture partielle par format (ex.
 `pd.read_csv(path, usecols=[target_column])`) deviendrait justifié.
+
+### D4.8 — I6 : 3 files RQ par coût CPU/durée typique, pas par pilier produit
+
+**Question** : I6 (AUDIT_DATALAB_2026-08-16.md §I6, dépend de C7 — déjà
+traité au Lot 1.3) demande de séparer les files RQ pour qu'un job court
+n'attende plus derrière un entraînement long. Une seule `training_queue`
+partagée par les 6 types de job (supervisé, clustering, dimensionnalité,
+anomalies tabulaires, classification vision, anomalies vision) — même
+avec 2 répliques de worker (C7), deux entraînements longs simultanés
+suffisent à occuper les deux workers, laissant un clustering de
+quelques secondes attendre en file derrière eux. Comment découper les
+"3 files RQ" que demande l'audit ?
+**Retenu** : découpage par coût CPU/durée typique, pas par pilier
+produit — `training_queue` (supervisé, recherche Optuna, le plus long),
+`vision_queue` (classification + anomalies vision, torch CPU-only,
+également long), `analysis_queue` (clustering + dimensionnalité +
+anomalies tabulaires, pas de recherche d'hyperparamètres, nettement plus
+courts en pratique). `job_timeout` aligné : 1800s pour les deux files
+longues (inchangé), 600s pour `analysis_queue` (les 3 routers
+concernés). Un service Docker Compose dédié par groupe de files
+(`worker` → `training,vision`, replicas 2 ; `worker-analysis` →
+`analysis`, replicas 1), piloté par la variable d'environnement
+`RQ_QUEUES` lue par `workers/run_worker.py::_resolve_queues` — absente
+(dev local), le worker écoute les 3 files, comme avant ce correctif.
+**Écarté** : découper par pilier produit (ex. une file "tabulaire" et
+une file "vision") — n'aurait pas résolu le problème initial, un
+entraînement supervisé tabulaire (long) et un clustering tabulaire
+(court) auraient continué à se gêner sur la même file.
+**Écarté aussi** : donner une priorité RQ (`Worker([queue_prioritaire,
+queue_secondaire])`) au lieu de workers dédiés par file — RQ ne fait
+QUE choisir dans quel ordre un worker LIBRE pioche parmi ses files ; un
+worker déjà occupé par un job long ne libère rien avant la fin de ce
+job, quelle que soit la priorité. Seule une capacité dédiée
+(`worker-analysis`, jamais partagée avec les jobs longs) garantit
+qu'un job court ne soit jamais bloqué par un job long.
+**Vérifié, pas supposé** : ~150 endroits (6 routers + 13 patches de
+tests + 5 docstrings de worker) référençaient `training_queue` par ce
+nom précis — chacun vérifié individuellement avant renommage (aucun
+remplacement automatique aveugle) pour confirmer quelle nouvelle file
+lui correspond.
+**Remise en cause si** : le split observé en usage réel diverge de
+l'hypothèse "clustering/dimensionnalité/anomalies tabulaires sont
+courts" (ex. anomalies sur un dataset de plusieurs millions de lignes) —
+`job_timeout=600` deviendrait alors trop court, à ajuster par mesure
+réelle plutôt que par supposition.

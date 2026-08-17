@@ -1,6 +1,6 @@
 """Fonction exécutée par le worker RQ pour un job de clustering — même
-process worker que `training_worker.py` (une seule file `training_queue`,
-un seul worker physique, voir `docker-compose.yml`), fonction dédiée.
+process worker que `training_worker.py`, enfilée sur `analysis_queue`
+(Lot 4, correctif I6 — voir `api/core/job_queue.py`), fonction dédiée.
 
 Mêmes conventions que `training_worker.py` : session DB propre (pas de
 `Depends`), progression persistée directement en base à chaque étape,

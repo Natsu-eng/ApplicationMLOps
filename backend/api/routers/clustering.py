@@ -1,10 +1,12 @@
 """Router clustering — Lot 11+ (ML non supervisé).
 
 Mêmes principes que `api/routers/training.py` : isolation systématique par
-`organization_id`, tâche de fond obligatoire (RQ, réutilise `training_queue`
-— même worker physique, voir `docker-compose.yml`), jamais de calcul ML dans
-la requête HTTP. Router DÉDIÉ, jamais fusionné dans `training.py` — même
-raisonnement que la séparation `clustering_registry.py`/`ml_registry.py`.
+`organization_id`, tâche de fond obligatoire (RQ, `analysis_queue` —
+file dédiée aux jobs courts, séparée de `training_queue`/`vision_queue`
+depuis le correctif I6, voir `api/core/job_queue.py`), jamais de calcul
+ML dans la requête HTTP. Router DÉDIÉ, jamais fusionné dans
+`training.py` — même raisonnement que la séparation
+`clustering_registry.py`/`ml_registry.py`.
 """
 from __future__ import annotations
 
@@ -18,7 +20,7 @@ from sqlalchemy.orm import joinedload
 
 from api.core.config import get_settings
 from api.core.database import get_db
-from api.core.job_queue import training_queue
+from api.core.job_queue import analysis_queue
 from api.core.models import ClusterCandidateRecord, ClusterModel, ClusteringJob, Dataset, User
 from api.core.pagination import paginate_by_id
 from api.routers.auth import get_current_user
@@ -252,7 +254,7 @@ def create_clustering_job(
 
     from workers.clustering_worker import run_clustering_job
 
-    rq_job = training_queue.enqueue(run_clustering_job, job.id, job_timeout=1800)
+    rq_job = analysis_queue.enqueue(run_clustering_job, job.id, job_timeout=600)
     job.rq_job_id = rq_job.id
     db.commit()
     db.refresh(job)
@@ -344,7 +346,7 @@ def delete_clustering_job(job_id: int, current_user: User = Depends(get_current_
         try:
             from rq.job import Job as RQJob
 
-            rq_job = RQJob.fetch(job.rq_job_id, connection=training_queue.connection)
+            rq_job = RQJob.fetch(job.rq_job_id, connection=analysis_queue.connection)
             rq_job.cancel()
             rq_job.delete()
         except Exception:

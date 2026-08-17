@@ -1,7 +1,7 @@
 """Fonction exécutée par le worker RQ pour un job de réduction de dimension —
-même process worker que `training_worker.py`/`clustering_worker.py` (une
-seule file `training_queue`, un seul worker physique, voir
-`docker-compose.yml`), fonction dédiée.
+même process worker que `training_worker.py`/`clustering_worker.py`,
+enfilée sur `analysis_queue` (Lot 4, correctif I6 — voir
+`api/core/job_queue.py`), fonction dédiée.
 
 Mêmes conventions que `clustering_worker.py` : session DB propre, progression
 persistée à chaque étape, `_user_safe_error_message` copié (pas importé) —

@@ -1,8 +1,9 @@
 """Fonction exécutée par le worker RQ pour un job de détection d'anomalies —
 même process worker que `training_worker.py`/`clustering_worker.py`/
-`dimensionality_worker.py` (une seule file `training_queue`, un seul worker
-physique). Mêmes conventions : session DB propre, progression persistée à
-chaque étape, `_user_safe_error_message` copié (pas importé)."""
+`dimensionality_worker.py`, enfilée sur `analysis_queue` (Lot 4, correctif
+I6 — voir `api/core/job_queue.py`). Mêmes conventions : session DB propre,
+progression persistée à chaque étape, `_user_safe_error_message` copié
+(pas importé)."""
 from __future__ import annotations
 
 import json

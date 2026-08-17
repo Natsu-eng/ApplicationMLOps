@@ -2,16 +2,22 @@
 # DOCKER COMPOSE — DataLab Pro (FastAPI + React + PostgreSQL + Redis/RQ)
 #
 # Services :
-#   db       — PostgreSQL 15
-#   redis    — file de tâches d'entraînement (Lot 3)
-#   backend  — FastAPI + Gunicorn (port 8000 interne)
-#   worker   — même image que backend, exécute `rq worker` (Lot 3)
-#   frontend — React buildé + Nginx (port 80 public)
+#   db              — PostgreSQL 15
+#   redis           — files de tâches de fond (Lot 3 ; 3 files RQ depuis
+#                      le Lot 4, correctif I6 — voir api/core/job_queue.py)
+#   backend         — FastAPI + Gunicorn (port 8000 interne)
+#   worker          — même image que backend, écoute training_queue +
+#                      vision_queue (jobs longs — Optuna, torch)
+#   worker-analysis — même image, écoute analysis_queue (clustering/
+#                      dimensionnalité/anomalies tabulaires — jobs courts,
+#                      capacité dédiée pour ne jamais attendre derrière un
+#                      job de `worker`, Lot 4, correctif I6)
+#   frontend        — React buildé + Nginx (port 80 public)
 #
 # Démarrage : docker compose up -d --build
 # Plusieurs workers (Lot 1.3, correctif C7 — isolation par job via fork,
 # jobs de plusieurs organisations traités en parallèle) :
-#   docker compose up -d --scale worker=3
+#   docker compose up -d --scale worker=3 --scale worker-analysis=2
 # ═══════════════════════════════════════════════════════════════════════════
 
 services:
@@ -105,6 +111,10 @@ services:
       # + isolation par fork (voir workers/run_worker.py). Ne JAMAIS mettre
       # "simple" ici — réservé au développement local Windows.
       RQ_WORKER_MODE: fork
+      # Lot 4, correctif I6 : jobs longs uniquement (supervisé + vision) —
+      # jamais de clustering/dimensionnalité/anomalies ici, voir le service
+      # `worker-analysis` ci-dessous, qui leur dédie de la capacité.
+      RQ_QUEUES: "training,vision"
     volumes:
       # Même volume que le backend : le worker écrit les artefacts de modèles,
       # l'API les sert — un seul système de fichiers partagé (Lot 9 : stockage
@@ -120,6 +130,42 @@ services:
     restart: unless-stopped
     # Le HEALTHCHECK de l'image (curl /api/health) n'a pas de sens ici : le
     # worker ne sert pas de HTTP — désactivé plutôt que faussement "unhealthy".
+    healthcheck:
+      disable: true
+
+  worker-analysis:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: datalab-backend:latest
+    # Service séparé, pas juste une réplique de `worker` : `deploy.replicas`
+    # s'applique au MÊME service, donc au MÊME `RQ_QUEUES` — impossible de
+    # dédier une capacité à `analysis_queue` avec de simples répliques de
+    # `worker`. Un entraînement supervisé + un job vision peuvent occuper les
+    # 2 répliques de `worker` en même temps ; sans ce service dédié, un
+    # clustering de quelques secondes attendrait quand même derrière eux
+    # (Lot 4, correctif I6 — c'est précisément le problème que 3 files RQ
+    # sont censées résoudre).
+    deploy:
+      replicas: 1
+    command: ["python", "-m", "workers.run_worker"]
+    env_file: backend/.env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      REDIS_URL: redis://redis:6379/0
+      PYTHONUNBUFFERED: "1"
+      RQ_WORKER_MODE: fork
+      RQ_QUEUES: "analysis"
+    volumes:
+      - ./backend/storage:/app/storage
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - datalab_network
+    restart: unless-stopped
     healthcheck:
       disable: true
 

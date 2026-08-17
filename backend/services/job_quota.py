@@ -1,10 +1,11 @@
 """Quota de jobs concurrents partagé entre tous les types d'entraînement
 (AUDIT_ROADMAP.md, Lot 10 puis généralisé au Lot 13/14).
 
-Un seul worker RQ physique traite tous les types de job (supervisé,
-clustering, réduction de dimension, détection d'anomalies — voir
-`docker-compose.yml`, une seule `training_queue`) : sans compter tous les
-types ensemble, une organisation pourrait saturer le worker en cumulant
+Un nombre de workers RQ toujours limité traite tous les types de job
+(supervisé, clustering, réduction de dimension, détection d'anomalies,
+vision — voir `docker-compose.yml` et `api/core/job_queue.py`, 3 files
+depuis le correctif I6) : sans compter tous les types ensemble, une
+organisation pourrait saturer la capacité disponible en cumulant
 plusieurs types de jobs actifs, chacun restant sous la limite pris
 isolément.
 

@@ -56,7 +56,7 @@ def test_summary_counts_jobs_per_pillar(client):
         mock_queue.enqueue.return_value.id = "fake-rq-id"
         client.post("/training/jobs", headers=headers, json={"dataset_id": dataset["id"], "target_column": "cible"})
 
-    with patch("api.routers.clustering.training_queue") as mock_queue:
+    with patch("api.routers.clustering.analysis_queue") as mock_queue:
         mock_queue.enqueue.return_value.id = "fake-rq-id"
         client.post(
             "/clustering/jobs", headers=headers, json={"dataset_id": dataset["id"], "feature_columns": ["x1", "x2"]}
