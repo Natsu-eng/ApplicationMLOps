@@ -8,7 +8,7 @@ import EdaModal from "../components/datasets/EdaModal";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
-import { ColorIconBadge, accentBarClass, accentColorForId } from "../components/ui/ColorIconBadge";
+import { ColorIconBadge, accentColorForId } from "../components/ui/ColorIconBadge";
 import { Modal } from "../components/ui/Modal";
 import { PageHeader } from "../components/ui/PageHeader";
 import { DatasetStatusBadge } from "../components/ui/StatusBadge";
@@ -223,12 +223,19 @@ function DatasetCard({
   // monochrome (toutes les cartes teal). Le statut réel reste lisible via
   // StatusBadge (texte + puce), qui n'a jamais changé — variété visuelle et
   // information de statut sur deux canaux séparés plutôt que confondus.
+  //
+  // Portée VOLONTAIREMENT limitée à la pastille d'icône (retour utilisateur,
+  // trouvé en revue directe du navigateur) : la barre pleine largeur en tête
+  // de carte a été retirée — c'est l'élément le plus voyant de la grille, et
+  // elle portait une couleur dérivée d'un identifiant, donc aucune
+  // information. Même correction que sur `StatTile` (Lot 2A correctif 5),
+  // manquée ici lors du premier passage car `DatasetCard` est un composant
+  // distinct, jamais balayé avec StatTile.
   const color = accentColorForId(dataset.id);
   const confirmDelete = useConfirmAction<number>();
   const pending = confirmDelete.isPending(dataset.id);
   return (
     <Card interactive className="group overflow-hidden flex flex-col">
-      <div className={`h-1.5 ${accentBarClass(color)}`} aria-hidden="true" />
       <div className="p-5 flex flex-col flex-1">
         <div className="flex items-start justify-between gap-2 mb-3">
           <div className="flex items-start gap-3 min-w-0">

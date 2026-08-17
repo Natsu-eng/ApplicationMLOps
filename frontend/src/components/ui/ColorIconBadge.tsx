@@ -44,22 +44,6 @@ export function accentSurfaceClass(color: AccentColor): string {
   return ACCENT_SURFACE_CLASSES[color];
 }
 
-// Barre d'accent pleine couleur (liseré haut de carte) — un ton plus vif
-// que le badge d'icône, réservé à un usage en trait fin (jamais en aplat de
-// texte, contraste insuffisant).
-const ACCENT_BAR_CLASSES: Record<AccentColor, string> = {
-  blue: "bg-blue-400",
-  teal: "bg-teal-400",
-  amber: "bg-amber-400",
-  violet: "bg-violet-400",
-  rose: "bg-rose-400",
-  neutral: "bg-muted-foreground/40",
-};
-
-export function accentBarClass(color: AccentColor): string {
-  return ACCENT_BAR_CLASSES[color];
-}
-
 // Encre forte (valeur chiffrée mise en avant, ex. tuile de métrique) — un
 // ton au-dessus du texte -600 des badges, pour porter un gros nombre en gras
 // sans sacrifier le contraste.

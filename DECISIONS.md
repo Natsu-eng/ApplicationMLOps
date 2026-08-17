@@ -592,3 +592,79 @@ composants déjà touchés.
 `PageHeader`), plus aucune occurrence de `font-serif` dans tout `src/`.
 **Vérifié** : `grep -rn font-serif frontend/src` ne retourne plus rien.
 Gate complet relancé et vert (tsc, lint, 42/42 tests, build).
+
+### D2.9 — Retour utilisateur en revue directe (branche mélangée par erreur)
+
+**Incident de process, corrigé** : entre la revue Dashboard et ce point,
+j'ai basculé le répertoire de travail PARTAGÉ (`E:\mlops\app-analyse`,
+celui que le serveur de dev de l'utilisateur sert) vers d'autres branches
+(`fix-lot1-migration-safety`, `main`, `fix-api-prefix-routing`) pour des
+correctifs sans rapport, sans que l'utilisateur en soit informé. Résultat :
+en révisant l'app dans son navigateur, il voyait par moments l'état
+PRÉ-Lot 2A (sans les tokens `rounded-card`/`text-overline`/`text-body`/
+`text-caption`), a édité 4 fichiers directement dans ce répertoire en
+réutilisant ces tokens de bonne foi (cohérents avec ce qu'il avait vu
+validé), mais sur la mauvaise branche — ses edits ne "prenaient" pas
+visuellement (tokens non définis dans l'`index.css` de cette branche-là).
+**Retenu** : les 4 fichiers relus intégralement, la substance de chaque
+edit portée sur `lot-2a-design-system` (la seule branche où ces tokens
+existent) :
+- `Datasets.tsx` — barre colorée pleine largeur retirée de `DatasetCard`
+  (`accentBarClass` importé mais le motif n'avait jamais été balayé sur ce
+  composant précis lors du correctif StatTile — trouvaille réelle, pas un
+  faux positif dû au mélange de branches).
+- `ProtectedRoute.tsx` — écran de chargement nu remplacé par une silhouette
+  de l'application (`AppSkeleton`), rend l'attente perceptuellement plus
+  courte sans changer sa durée réelle (voir D2.10 pour la durée elle-même).
+- `Training.tsx` — `StepperNav` : `overflow-x-auto` + flèches de défilement
+  remplacés par `flex-wrap` (barre de défilement native + 5ᵉ étape coupée
+  constatées à 1568 px) ; `StepPill` : `bg-white`/`text-white` en dur
+  remplacés par `bg-card`/`text-primary-foreground` (bug de mode sombre
+  réel — pastille blanche vive sur fond sombre pour les étapes non
+  atteintes).
+- `accentBarClass` (`ColorIconBadge.tsx`) supprimé — plus aucun appelant
+  après le retrait ci-dessus (vérifié par recherche globale avant
+  suppression).
+**Pourquoi ce n'est pas un désaccord sur le contenu des correctifs** :
+vérifié directement que `lot-2a-design-system` (avant ce commit) avait
+encore la barre `DatasetCard` et n'avait ni `ProtectedRoute` amélioré ni
+les deux correctifs `Training.tsx` — les 4 trouvailles de l'utilisateur
+sont réelles, indépendamment de la confusion de branche.
+**Remise en cause si** : je dois de nouveau travailler sur une branche
+différente de celle que l'utilisateur révise activement — utiliser un
+`git worktree` séparé (déjà fait une fois ce lot pour Lot 2B) plutôt que
+de changer la branche du répertoire partagé, systématiquement à partir de
+maintenant.
+Gate complet relancé et vert (tsc, lint, 42/42 tests, build).
+
+### D2.10 — Diagnostic des 7–8 s avant le premier rendu (pas corrigé, `AppSkeleton` en corrige la perception)
+
+**Vérifié empiriquement, pas supposé** : backend local redémarré à froid,
+`GET /api/health` chronométré. Premier appel après démarrage : ~2 s
+d'attente de connexion puis échec (le process importe encore) ; prêt après
+~15 s ; une fois chaud, 5 requêtes consécutives entre 7 et 24 ms. La lenteur
+n'est donc PAS dans la logique de `/api/auth/me` (décodage JWT + une seule
+requête SQL) — elle est entièrement dans l'IMPORT PYTHON initial du
+process.
+**Cause racine identifiée** : `api/main.py` importe TOUS les routers de
+façon inconditionnelle au démarrage, y compris `vision_classification.py`
+(`import torch` en tête de fichier) — et par transitivité
+`ml_training.py`, `ml_explainability.py`, `ml_registry.py`,
+`vision_anomaly_training.py`, `vision_anomaly_registry.py`,
+`vision_classification_training.py`, `vision_classification_registry.py`,
+`vision_gradcam.py` (torch/lightgbm/catboost/shap/umap). Résultat : même
+un endpoint trivial comme `/api/auth/me` attend que l'intégralité de la
+pile ML soit chargée en mémoire avant de pouvoir répondre — à CHAQUE
+démarrage du process, y compris à chaque redémarrage déclenché par
+`uvicorn --reload` en développement actif (très fréquent pendant ce lot).
+**Non corrigé dans ce commit** : rendre ces imports paresseux (déplacer
+`import torch`/`lightgbm`/`catboost`/`shap`/`umap` du niveau module vers
+l'intérieur des fonctions qui les utilisent réellement) touche 8 fichiers
+de code ML de production, avec un risque réel d'erreur d'ordre
+d'import/typage si fait à la hâte — mérite son propre lot testé
+séparément, pas un correctif improvisé en fin de session. `AppSkeleton`
+(D2.9) corrige la PERCEPTION de l'attente dans l'intervalle, pas sa durée.
+**Remise en cause si** : la latence de démarrage devient bloquante en
+production (ex. redémarrages fréquents d'un conteneur, autoscaling) —
+alors le lot d'imports paresseux devient prioritaire, pas seulement un
+confort de développement.
