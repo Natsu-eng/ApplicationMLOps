@@ -13,7 +13,6 @@ Lancer en local :
 from __future__ import annotations
 
 import logging
-import sys
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -24,6 +23,7 @@ from starlette.responses import JSONResponse
 
 from api.core.config import get_settings
 from api.core.database import check_connection, init_db
+from api.core.observability import PrometheusMiddleware, RequestIdMiddleware, configure_logging, metrics_response
 from api.routers.anomalies import router as anomalies_router
 from api.routers.auth import router as auth_router
 from api.routers.clustering import router as clustering_router
@@ -35,15 +35,20 @@ from api.routers.vision_anomalies import router as vision_anomalies_router
 from api.routers.vision_classification import router as vision_classification_router
 from api.routers.vision_datasets import router as vision_datasets_router
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-    handlers=[logging.StreamHandler(sys.stdout)],
-)
+settings = get_settings()
+
+configure_logging(settings.log_level)
 logger = logging.getLogger("datalab.api")
 
-settings = get_settings()
+if settings.sentry_dsn:
+    # Lot 4, correctif I7 — actif SEULEMENT si SENTRY_DSN est défini
+    # (backend/.env) : aucun comportement différent en dev/CI sans DSN.
+    import sentry_sdk
+
+    sentry_sdk.init(dsn=settings.sentry_dsn, environment=settings.environment, traces_sample_rate=0.1)
+    logger.info("[STARTUP] Sentry activé (environment=%s)", settings.environment)
+else:
+    logger.info("[STARTUP] Sentry désactivé (SENTRY_DSN absent)")
 
 
 class MaxJsonBodySizeMiddleware(BaseHTTPMiddleware):
@@ -131,6 +136,12 @@ app.add_middleware(
     expose_headers=["Content-Disposition"],
 )
 app.add_middleware(MaxJsonBodySizeMiddleware, max_bytes=settings.max_json_body_size_mb * 1024 * 1024)
+app.add_middleware(PrometheusMiddleware)
+# RequestIdMiddleware EN DERNIER : le dernier `add_middleware` devient le
+# plus externe de la pile Starlette — sans ça, les logs émis par les
+# middlewares ci-dessus n'auraient pas encore de `request_id` (Lot 4,
+# correctif I7).
+app.add_middleware(RequestIdMiddleware)
 
 app.include_router(auth_router)
 app.include_router(datasets_router)
@@ -154,3 +165,11 @@ def health() -> dict:
         "environment": settings.environment,
         "database": "up" if check_connection() else "down",
     }
+
+
+@app.get("/metrics", tags=["système"])
+def metrics():
+    """Métriques Prometheus (Lot 4, correctif I7) — pas de préfixe `/api`
+    ni d'authentification, même convention que `/api/health` : un
+    collecteur de métriques n'a pas de session utilisateur."""
+    return metrics_response()

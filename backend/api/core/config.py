@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
+from typing import Optional
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -109,6 +110,12 @@ class Settings(BaseSettings):
 
     # Journalisation
     log_level: str = "INFO"
+
+    # Observabilité (Lot 4, correctif I7, AUDIT_DATALAB_2026-08-16.md §I7).
+    # Absent (None) par défaut : Sentry reste totalement inactif tant que
+    # cette variable n'est pas définie — dégradation honnête, jamais un
+    # crash au démarrage faute de DSN en dev/CI.
+    sentry_dsn: Optional[str] = None
 
     model_config = SettingsConfigDict(
         env_file=_ENV_FILE,

@@ -344,7 +344,7 @@ documentation — plus large que "arrêter les métriques fausses" (Lot 0).
 **À traiter** : lors du Lot 6A (wizard Vision) ou Lot 7 (produit), au
 moment de retravailler l'UX du pilier anomalies visuelles.
 
-## Lot 4 — Tenir la charge (Phase 3 de l'audit, correctifs I3, I4 et I6)
+## Lot 4 — Tenir la charge (Phase 3 de l'audit, correctifs I3, I4, I6 et I7)
 
 ### D4.1 — Pagination rétrocompatible par absence, jamais une enveloppe JSON
 
@@ -579,3 +579,60 @@ l'hypothèse "clustering/dimensionnalité/anomalies tabulaires sont
 courts" (ex. anomalies sur un dataset de plusieurs millions de lignes) —
 `job_timeout=600` deviendrait alors trop court, à ajuster par mesure
 réelle plutôt que par supposition.
+
+### D4.9 — I7 : logs JSON + request_id, /metrics Prometheus, Sentry conditionnel
+
+**Question** : I7 (AUDIT_DATALAB_2026-08-16.md §I7) demande une
+observabilité minimale — sans elle, un incident en production ne laisse
+que des logs texte libre à parcourir à la main, sans moyen de relier les
+lignes d'une même requête entre elles ni de mesurer la charge réelle.
+**Retenu**, un seul module `api/core/observability.py` pour les 3
+briques :
+- Logs JSON (`JsonFormatter`) — une ligne par log, `request_id` injecté
+  sur CHAQUE ligne via un `ContextVar` + `logging.Filter`
+  (`_RequestIdFilter`), `"-"` par défaut hors requête HTTP (démarrage,
+  worker RQ). Remplace `logging.basicConfig` (texte libre) dans
+  `api/main.py`.
+- `RequestIdMiddleware` — lit `X-Request-ID` du client s'il est fourni
+  (traçage bout-en-bout derrière un reverse proxy qui le fixe déjà),
+  sinon en génère un (`uuid4`) ; toujours renvoyé dans la réponse. Ajouté
+  EN DERNIER dans `api/main.py` (`add_middleware`) : le dernier ajouté
+  devient le plus externe de la pile Starlette, donc le seul ordre où
+  MÊME les logs de `CORSMiddleware`/`MaxJsonBodySizeMiddleware` portent
+  le `request_id` de leur requête.
+- `PrometheusMiddleware` + `GET /metrics` — compteur de requêtes,
+  histogramme de latence, jauge de requêtes en cours, labellisés par le
+  GABARIT de route (`request.scope["route"].path`, ex.
+  `/datasets/{dataset_id}`), jamais le chemin brut (`/datasets/42`) —
+  sans quoi la cardinalité de la métrique grandirait sans borne avec
+  l'usage réel. `scope["route"]` n'existe qu'APRÈS résolution du routing
+  (accessible seulement après `call_next`) ; absent sur un 404, repli sur
+  le chemin brut (cardinalité alors bornée par les tentatives d'un
+  attaquant, pas par un usage légitime).
+- Sentry — un simple `sentry_sdk.init(...)` conditionnel dans
+  `api/main.py`, actif SEULEMENT si `SENTRY_DSN` est défini
+  (`Settings.sentry_dsn: Optional[str] = None`) : dégradation honnête,
+  aucun changement de comportement en dev/CI sans DSN configuré, jamais
+  un crash au démarrage faute de DSN.
+**Écarté** : `structlog` ou une lib de logging structuré tierce — un
+`logging.Formatter` standard (stdlib) suffit pour un JSON par ligne, pas
+besoin d'une dépendance supplémentaire pour ce besoin précis. Le module
+s'appelle `observability.py`, jamais `logging.py`, pour éviter toute
+ambiguïté de lecture avec le module standard `logging` malgré l'absence
+de collision technique réelle (imports absolus Python 3).
+**Écarté aussi** : exposer `X-Next-Cursor`/`X-Request-ID` dans
+`CORSMiddleware(expose_headers=...)` — `X-Next-Cursor` n'est pas encore
+lu côté frontend (P6, pagination UI, différé — voir D4.1) ;
+`X-Request-ID` reste utile côté logs serveur même illisible en JS
+cross-origin, et le déploiement cible (nginx même origine, voir branche
+`fix-api-prefix-routing`) rend la question théorique pour l'instant —
+à rouvrir si un usage cross-origin réel apparaît.
+**Vérifié, pas supposé** : `prometheus-client`/`sentry-sdk` ajoutés à
+`requirements.txt` (0.26.0 / 2.68.0, dernières stables au moment du
+lot) — testés en conditions réelles via `TestClient` (démarrage complet
+de l'app, `/api/health`, `/metrics`, en-têtes de requête) avant d'écrire
+les tests automatisés, pas seulement lus dans la doc de ces libs.
+**Remise en cause si** : un besoin de traçage distribué plus riche
+apparaît (spans, pas seulement un id de corrélation) — à ce moment,
+OpenTelemetry remplacerait probablement ce module fait main plutôt que
+de l'étendre indéfiniment.
