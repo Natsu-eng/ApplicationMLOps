@@ -25,7 +25,7 @@ from api.core.models import Dataset, MLModel, ModelCandidate, TrainingJob, User
 from api.core.pagination import paginate_by_id
 from api.routers.auth import get_current_user
 from services.audit import log_action
-from services.datasets import DatasetParsingError, read_dataframe
+from services.datasets import DatasetParsingError, read_dataset_dataframe
 from services.feature_engineering import CURRENT_SPEC_VERSION
 from services.job_quota import ALL_JOB_MODELS, raise_if_quota_exceeded
 from services.job_watchdog import reconcile_stale_jobs
@@ -480,7 +480,7 @@ def create_training_job(
     feature_engineering_json = _validate_and_serialize_feature_engineering(body.feature_engineering, schema_columns)
 
     try:
-        df = read_dataframe(Path(dataset.file_path), Path(dataset.file_path).suffix)
+        df = read_dataset_dataframe(Path(dataset.file_path), Path(dataset.file_path).suffix)
     except DatasetParsingError as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

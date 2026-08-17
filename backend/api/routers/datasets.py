@@ -42,6 +42,7 @@ from services.datasets import (
     UnsupportedFileType,
     extract_schema,
     read_dataframe,
+    read_dataset_dataframe,
     sample_rows,
     validate_extension,
 )
@@ -348,7 +349,7 @@ def preview_dataset(
         )
     extension = Path(dataset.file_path).suffix
     try:
-        df = read_dataframe(Path(dataset.file_path), extension)
+        df = read_dataset_dataframe(Path(dataset.file_path), extension)
     except DatasetParsingError as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -374,9 +375,9 @@ def get_dataset_eda(
     """Exploration de données (EDA) — stats par colonne, corrélations
     (numériques ET catégorielles), valeurs manquantes, outliers, paires de
     features corrélées, et (Lot B) distribution de la cible si
-    `target_column` est fourni. Calculé à la demande (pas stocké) : un
-    dataset peut changer de statut mais son fichier ne change jamais une
-    fois uploadé, donc pas besoin de mise en cache pour ce volume d'usage.
+    `target_column` est fourni. Calculé à la demande (résultat jamais
+    stocké — seule la lecture du fichier source est mise en cache, voir
+    `read_dataset_dataframe`, Lot 4/I4).
 
     `target_column` est optionnel et rétrocompatible : sans lui, l'EDA
     fonctionne comme avant (exploration autonome d'un dataset, sans contexte
@@ -388,7 +389,7 @@ def get_dataset_eda(
             detail={"code": "DATASET_NON_PRET", "message": "Ce dataset n'a pas pu être analysé"},
         )
     try:
-        df = read_dataframe(Path(dataset.file_path), Path(dataset.file_path).suffix)
+        df = read_dataset_dataframe(Path(dataset.file_path), Path(dataset.file_path).suffix)
         target_distribution = compute_histogram(df, target_column) if target_column else None
     except DatasetParsingError as exc:
         raise HTTPException(
@@ -429,7 +430,7 @@ def get_dataset_histogram(
             detail={"code": "DATASET_NON_PRET", "message": "Ce dataset n'a pas pu être analysé"},
         )
     try:
-        df = read_dataframe(Path(dataset.file_path), Path(dataset.file_path).suffix)
+        df = read_dataset_dataframe(Path(dataset.file_path), Path(dataset.file_path).suffix)
         histogram = compute_histogram(df, column, bins=max(5, min(bins, 100)))
     except DatasetParsingError as exc:
         raise HTTPException(
@@ -471,7 +472,7 @@ def get_dataset_quality_check(
             detail={"code": "DATASET_NON_PRET", "message": "Ce dataset n'a pas pu être analysé"},
         )
     try:
-        df = read_dataframe(Path(dataset.file_path), Path(dataset.file_path).suffix)
+        df = read_dataset_dataframe(Path(dataset.file_path), Path(dataset.file_path).suffix)
         warnings = analyze_data_quality(df, target_column, group_column)
     except DatasetParsingError as exc:
         raise HTTPException(
@@ -506,7 +507,7 @@ def get_dataset_feature_engineering_suggestions(
             detail={"code": "DATASET_NON_PRET", "message": "Ce dataset n'a pas pu être analysé"},
         )
     try:
-        df = read_dataframe(Path(dataset.file_path), Path(dataset.file_path).suffix)
+        df = read_dataset_dataframe(Path(dataset.file_path), Path(dataset.file_path).suffix)
         suggestions = suggest_feature_engineering(df, target_column, group_column)
     except DatasetParsingError as exc:
         raise HTTPException(
@@ -541,7 +542,7 @@ def get_dataset_feature_by_target(
             detail={"code": "DATASET_NON_PRET", "message": "Ce dataset n'a pas pu être analysé"},
         )
     try:
-        df = read_dataframe(Path(dataset.file_path), Path(dataset.file_path).suffix)
+        df = read_dataset_dataframe(Path(dataset.file_path), Path(dataset.file_path).suffix)
         result = compute_feature_by_target(df, feature, target)
     except DatasetParsingError as exc:
         raise HTTPException(

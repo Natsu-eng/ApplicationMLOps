@@ -22,7 +22,7 @@ from api.core.models import Dataset, DimensionalityJob, DimensionalityPoint, Use
 from api.core.pagination import paginate_by_id
 from api.routers.auth import get_current_user
 from services.audit import log_action
-from services.datasets import DatasetParsingError, read_dataframe
+from services.datasets import DatasetParsingError, read_dataset_dataframe
 from services.dimensionality_registry import DEFAULT_ALGORITHM_ID, DIMENSIONALITY_REGISTRY
 from services.job_quota import ALL_JOB_MODELS, raise_if_quota_exceeded
 from services.job_watchdog import reconcile_stale_jobs
@@ -212,7 +212,7 @@ def create_dimensionality_job(
         )
 
     try:
-        read_dataframe(Path(dataset.file_path), Path(dataset.file_path).suffix)
+        read_dataset_dataframe(Path(dataset.file_path), Path(dataset.file_path).suffix)
     except DatasetParsingError as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -332,7 +332,7 @@ def get_dimensionality_color_by(
         )
 
     try:
-        df = read_dataframe(Path(job.dataset.file_path), Path(job.dataset.file_path).suffix)
+        df = read_dataset_dataframe(Path(job.dataset.file_path), Path(job.dataset.file_path).suffix)
     except DatasetParsingError as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

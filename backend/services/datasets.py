@@ -6,6 +6,7 @@ migration section C) : mêmes formats supportés, sans le couplage à
 """
 from __future__ import annotations
 
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -49,6 +50,29 @@ def read_dataframe(path: Path, extension: str) -> pd.DataFrame:
     except Exception as exc:  # pandas lève des types d'erreur variés selon le format
         raise DatasetParsingError(f"Impossible de lire le fichier : {exc}") from exc
     raise UnsupportedFileType(extension)
+
+
+@lru_cache(maxsize=64)
+def _read_cached(path_str: str, extension: str, mtime_ns: int) -> pd.DataFrame:
+    return read_dataframe(Path(path_str), extension)
+
+
+def read_dataset_dataframe(path: Path, extension: str) -> pd.DataFrame:
+    """Comme `read_dataframe`, mais met en cache (LRU) la lecture d'un
+    dataset déjà persisté — un fichier de dataset ne change jamais après
+    l'upload (voir `get_dataset_eda`), donc les multiples endpoints EDA
+    (preview/eda/histogram/quality-check/...) appelés depuis une même page
+    partagent une seule lecture disque au lieu d'une par requête (Lot 4,
+    I4). `mtime_ns` dans la clé de cache : défense en profondeur si un
+    fichier était un jour réécrit sur place. Réservé aux lectures d'un
+    dataset déjà en base — l'upload (aucun id encore attribué) continue
+    d'appeler `read_dataframe` directement.
+
+    Retourne une copie : aucun appelant ne doit pouvoir muter l'entrée
+    partagée du cache.
+    """
+    mtime_ns = path.stat().st_mtime_ns
+    return _read_cached(str(path), extension, mtime_ns).copy()
 
 
 def extract_schema(df: pd.DataFrame) -> list[dict[str, str]]:

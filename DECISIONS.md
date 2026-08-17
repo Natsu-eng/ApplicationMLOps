@@ -344,7 +344,7 @@ documentation — plus large que "arrêter les métriques fausses" (Lot 0).
 **À traiter** : lors du Lot 6A (wizard Vision) ou Lot 7 (produit), au
 moment de retravailler l'UX du pilier anomalies visuelles.
 
-## Lot 4 — Tenir la charge (Phase 3 de l'audit, correctif I3)
+## Lot 4 — Tenir la charge (Phase 3 de l'audit, correctifs I3 et I4)
 
 ### D4.1 — Pagination rétrocompatible par absence, jamais une enveloppe JSON
 
@@ -476,3 +476,61 @@ pilier vaut la peine d'être réintroduite par-dessus l'agrégat (ex. un
 endpoint agrégé qui répond quand même partiellement si une SEULE requête
 SQL interne échoue), pas maintenant, par anticipation d'un conflit qui
 n'existe pas encore.
+
+### D4.6 — Cache dataset : LRU en mémoire keyed par `(chemin, extension, mtime)`, jamais Parquet sur disque
+
+**Question** : I4 (AUDIT_DATALAB_2026-08-16.md §I4) demande un « cache
+Parquet par `dataset_id` + LRU en mémoire du worker » pour éviter de
+relire le fichier dataset à chaque requête (preview/eda/histogram/
+quality-check/feature-engineering-suggestions/feature-by-target
+appellent chacun `read_dataframe` séparément depuis la même page, plus
+une lecture par job créé côté router ET une seconde côté worker RQ).
+**Retenu** : un seul mécanisme, `services/datasets.py::read_dataset_dataframe`
+— `functools.lru_cache(maxsize=64)` sur une fonction privée
+`_read_cached(path_str, extension, mtime_ns)`, la clé inclut le `mtime_ns`
+du fichier (un `stat()`, négligeable face à un `pd.read_csv`/`read_excel`).
+Retourne toujours une copie (`.copy()`) : aucun appelant ne peut muter
+l'entrée partagée. Remplace `read_dataframe` sur tous les points d'appel
+qui lisent un dataset DÉJÀ persisté (6 endpoints `datasets.py`, 1 chacun
+dans `training.py`/`clustering.py`/`dimensionality.py` (×2)/`anomalies.py`,
+et les 4 workers RQ) — jamais l'upload (`POST /datasets`), qui lit un
+fichier qui vient d'être écrit, sans dataset encore en cache.
+**Écarté** : un cache Parquet matérialisé sur disque (ce que l'audit
+suggère littéralement) — ajoute un second fichier à gérer (invalidation,
+nettoyage à la suppression du dataset, cohérence si l'upload échoue à
+mi-chemin) pour un gain marginal : le fichier original est déjà local
+(pas de S3/MinIO à ce stade, I5 non traité), le coût dominant n'est pas
+le format CSV/Excel mais la RÉPÉTITION de la lecture — un LRU en mémoire
+règle ça sans nouvel état sur disque à faire vivre.
+**Limite assumée** : le cache est par PROCESS — l'API et chaque worker RQ
+ont chacun le leur, pas de partage entre eux. Suffisant pour l'usage
+visé (une page EDA qui enchaîne 6 requêtes vers le même process API ;
+un worker qui traite plusieurs jobs successifs sur le même dataset) ;
+un cache partagé inter-process demanderait Redis ou un fichier Parquet
+partagé — reporté avec I5 (stockage partagé) si le besoin se confirme.
+**Remise en cause si** : passage à plusieurs instances API derrière un
+load-balancer sans affinité de session, où le gain par-process devient
+marginal (chaque instance reconstitue son propre cache) — c'est alors
+que le Parquet partagé ou un cache Redis prendrait tout son sens.
+
+### D4.7 — `detect_task_type` : sortie du chemin HTTP non traitée dans ce lot
+
+**Question** : I4 demande aussi de « sortir `detect_task_type` du chemin
+HTTP » — `POST /training/jobs` lit le dataset ENTIER (`read_dataset_dataframe`,
+training.py:483) juste pour déduire `task_type` de la colonne cible quand
+`body.task_type` est absent, avant même de créer le job.
+**Retenu** : non traité ici, documenté comme limite connue. Le cache
+(D4.6) absorbe déjà le coût de RÉPÉTITION (2ᵉ création de job sur le même
+dataset = lecture en cache), ce qui couvre le cas dominant en pratique.
+Le coût réel restant — lire tout le fichier pour une seule colonne — ne
+peut être éliminé sans lecture partielle spécifique à chaque format
+(colonne unique en CSV/Parquet vs Excel/JSON qui n'offrent pas cette
+primitive aussi simplement), un chantier plus large que ce lot.
+**Écarté** : bricoler une lecture partielle seulement pour le CSV
+(format le plus courant) — traiterait les formats de façon asymétrique
+sans justification produit, pour un gain qui ne se matérialise que sur
+les tout premiers jobs d'un dataset jamais encore lu.
+**Remise en cause si** : la création de job devient mesurablement lente
+en pratique sur de gros datasets (plusieurs centaines de Mo) — à ce
+moment, ajouter une lecture partielle par format (ex.
+`pd.read_csv(path, usecols=[target_column])`) deviendrait justifié.

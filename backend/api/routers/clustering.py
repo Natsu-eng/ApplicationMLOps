@@ -24,7 +24,7 @@ from api.core.pagination import paginate_by_id
 from api.routers.auth import get_current_user
 from services.audit import log_action
 from services.clustering_registry import CLUSTER_REGISTRY, DEFAULT_ALGORITHM_IDS
-from services.datasets import DatasetParsingError, read_dataframe
+from services.datasets import DatasetParsingError, read_dataset_dataframe
 from services.job_quota import ALL_JOB_MODELS, raise_if_quota_exceeded
 from services.job_watchdog import reconcile_stale_jobs
 
@@ -226,7 +226,7 @@ def create_clustering_job(
             )
 
     try:
-        read_dataframe(Path(dataset.file_path), Path(dataset.file_path).suffix)
+        read_dataset_dataframe(Path(dataset.file_path), Path(dataset.file_path).suffix)
     except DatasetParsingError as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
