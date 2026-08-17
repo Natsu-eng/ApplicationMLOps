@@ -556,3 +556,25 @@ ponctuel d'un composant partagé, pas un problème de primitive.
 (une Card à l'intérieur d'un composant destiné à être imbriqué dans une
 page qui a elle-même une Card) — vérifier au moment de l'écrire, pas
 après coup.
+
+### D2.7 — Derniers titres de section sans hiérarchie réelle
+
+**Trouvé** : `grep -rn 'text-sm font-medium text-foreground'` sur
+`pages/` et `components/` — au-delà des `<p>` (libellés d'item de liste,
+hors périmètre, même raisonnement que pour Dashboard) — a trouvé 4 vrais
+titres de section (`<h2>`/`<h3>`) encore au même poids visuel que le
+corps de carte qu'ils introduisent, le bug exact corrigé sur Dashboard
+par le correctif 4 mais pas propagé au reste du produit : `Profile.tsx`
+(section "Équipe", formulaire "Ajouter un membre"), `Training.tsx`
+(titre de chaque étape du wizard, `StepContent`), et `Modal.tsx` (titre
+de CHAQUE modale de l'app — primitive partagée par `ModelResultModal`,
+`EdaModal`, les modales de détail Vision, etc.).
+**Retenu** : les 4 migrés vers `text-subtitle`, même traitement que
+`SectionHeader`/Dashboard. `Modal.tsx` étant une primitive, ce correctif
+bénéficie automatiquement à toutes les modales de l'app sans les
+retoucher une par une.
+**Écarté** : les usages `<p>` du même motif (libellés d'étape dans
+`HelpModal`, nom de classe dans `VisionDatasetExplorer`, "Mode expert"
+dans `ExpertModePanel`) — ce sont des libellés d'item, pas des titres de
+section, même distinction que pour Dashboard (D2.3 correctif 4).
+Gate complet relancé et vert (tsc, lint, 42/42 tests, build).

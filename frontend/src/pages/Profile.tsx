@@ -278,7 +278,7 @@ function OrganizationTab() {
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-2">
             <Users size={16} className="text-primary" />
-            <h2 className="text-sm font-medium text-foreground">Équipe — {user.organization_name}</h2>
+            <h2 className="text-subtitle text-foreground">Équipe — {user.organization_name}</h2>
           </div>
           {members && (
             <Badge variant="neutral">
@@ -393,7 +393,7 @@ function AddMemberForm({ onMemberAdded }: { onMemberAdded: () => void }) {
 
   return (
     <>
-      <h2 className="text-sm font-medium text-foreground mb-4">Ajouter un membre à l'équipe</h2>
+      <h2 className="text-subtitle text-foreground mb-4">Ajouter un membre à l'équipe</h2>
       <form onSubmit={handleSubmit} className="grid sm:grid-cols-3 gap-3 items-start">
         <Input type="text" placeholder="Nom" required minLength={2} value={nom} onChange={(e) => setNom(e.target.value)} />
         <Input type="email" placeholder="Email" required value={email} onChange={(e) => setEmail(e.target.value)} />
