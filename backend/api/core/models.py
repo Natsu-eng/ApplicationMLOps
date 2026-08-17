@@ -80,6 +80,23 @@ class Dataset(Base):
     columns_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="processing")  # processing | ready | error
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # Lot 5 (correctif P2, AUDIT_DATALAB_2026-08-16.md §P2) — SHA-256 du
+    # contenu brut du fichier, calculé une seule fois à l'upload (voir
+    # api/routers/datasets.py::upload_dataset). NULL pour l'historique
+    # antérieur à ce lot (jamais recalculé a posteriori — recalculer
+    # exigerait de relire chaque fichier sur disque, hors périmètre d'une
+    # migration de schéma). Sert à détecter un ré-upload accidentel du
+    # même fichier (voir duplicate_of_dataset_id) et, plus généralement,
+    # à vérifier l'intégrité d'un fichier stocké.
+    content_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
+    # Renseigné à l'upload si un dataset de LA MÊME organisation partage
+    # déjà exactement le même content_hash — jamais bloquant (l'upload
+    # aboutit toujours), purement informatif pour éviter un doublon
+    # silencieux. ondelete SET NULL : si le dataset d'origine est
+    # supprimé, ce dataset-ci reste un dataset normal, pas orphelin.
+    duplicate_of_dataset_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("datasets.id", ondelete="SET NULL"), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
 
     organization: Mapped["Organization"] = relationship("Organization")

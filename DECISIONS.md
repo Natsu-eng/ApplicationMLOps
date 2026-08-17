@@ -344,7 +344,7 @@ documentation — plus large que "arrêter les métriques fausses" (Lot 0).
 **À traiter** : lors du Lot 6A (wizard Vision) ou Lot 7 (produit), au
 moment de retravailler l'UX du pilier anomalies visuelles.
 
-## Lot 5 — Traçabilité (Phase 4 de l'audit, correctifs I2 et P1)
+## Lot 5 — Traçabilité (Phase 4 de l'audit, correctifs I2, P1 et P2)
 
 Branche `lot-5-tracability`, basée sur `main` (avant les Lots 2A/3/4,
 sur des branches séparées non encore fusionnées — voir D4.5/D4.8/D4.9
@@ -513,3 +513,57 @@ patché une fois de plus.
 **Remise en cause si** : un besoin produit réel pour l'extension aux 5
 autres types, ou pour un alias nommé librement, est exprimé — traiter
 alors comme un correctif séparé, avec son propre "fait quand".
+
+### D5.6 — P2 : hash SHA-256 + détection de doublon, `DatasetVersion` explicitement écarté (aucun re-upload n'existe)
+
+**Question** : P2 (AUDIT_DATALAB_2026-08-16.md §P2) demande "`DatasetVersion`
++ SHA-256 ; le modèle référence une version, pas un id" — une ligne,
+sans détail. Que signifie concrètement "versionner" un dataset dans CE
+produit ?
+**Vérifié, pas supposé** : `grep` sur `api/routers/datasets.py` confirme
+qu'il n'existe QU'UN SEUL endpoint mutateur, `POST /datasets` (upload) —
+aucun PUT/PATCH pour "remplacer" ou "mettre à jour" le fichier d'un
+dataset existant. Documenté ailleurs dans ce projet, de façon répétée et
+déjà structurante pour d'autres décisions (D4.6, D4.9 sur `lot-4-perf`,
+`get_dataset_eda` sur cette branche) : *"un dataset peut changer de
+statut mais son fichier ne change jamais une fois uploadé"*. Chaque ligne
+`Dataset` est donc DÉJÀ, par construction, une version immuable unique —
+il n'existe aujourd'hui aucune action utilisateur qui produirait une
+"version 2" d'un dataset existant.
+**Retenu** : `content_hash` (SHA-256, calculé à l'upload depuis les
+octets déjà en mémoire — aucune relecture disque) + `duplicate_of_dataset_id`
+(renseigné si un dataset de LA MÊME organisation partage déjà ce hash,
+jamais bloquant — l'upload aboutit toujours, purement informatif, même
+philosophie "informer, ne jamais bloquer" que `services/data_quality.py`).
+Donne un usage réel et immédiat au hash (repérer un ré-upload
+accidentel du même fichier, vérifier l'intégrité d'un fichier stocké)
+sans rien inventer au-delà de ce que permet le produit actuel.
+**Écarté** : scinder `Dataset` en `Dataset` (entité logique) +
+`DatasetVersion` (fichier uploadé versionné), avec migration de TOUTES
+les FK `dataset_id` existantes (`TrainingJob`, `ClusteringJob`,
+`DimensionalityJob`, `AnomalyJob`, `MLModel` — ce dernier tout juste
+ajouté par P1, D5.5) vers `dataset_version_id`. Sans fonctionnalité de
+remplacement de fichier, cette scission n'aurait AUCUN effet
+observable : une seule version aurait jamais existé pour chaque
+dataset, la FK aurait pointé exactement vers la même donnée qu'aujourd'hui,
+juste à travers une table intermédiaire de plus. "Le modèle référence
+une version, pas un id" est déjà vrai EN PRATIQUE (chaque `Dataset` est
+sa propre version unique et immuable) — le formaliser en une seconde
+table maintenant, avant qu'un vrai besoin de remplacement existe, aurait
+été concevoir pour un besoin hypothétique, contre les principes de ce
+projet et contre le choix déjà fait en D5.5 pour l'extension P1 aux 5
+autres pilotes.
+**Vérifié aussi** : migration (`d6231c7548cf`) — colonnes nullables,
+AUCUN rétropeuplement (contrairement à P1/D5.5) : recalculer le hash
+exigerait de relire chaque fichier sur disque depuis la migration elle-même,
+chemin non garanti identique entre environnements (dev/CI/prod) et
+potentiellement lent sur de gros fichiers — hors périmètre d'une
+migration de schéma. Dégradation honnête : `content_hash IS NULL` pour
+tout dataset antérieur à ce lot, pour toujours, comme `stage`/
+`promoted_at` sur `ml_models` avant ce lot. upgrade → downgrade →
+ré-upgrade testés avant ce commit.
+**Remise en cause si** : une fonctionnalité de remplacement/mise à jour
+d'un dataset existant est demandée — c'est EXACTEMENT le moment où
+`DatasetVersion` (et la migration de `dataset_id` vers
+`dataset_version_id` sur les 5 tables qui le référencent) devient
+nécessaire, pas avant.

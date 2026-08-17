@@ -27,6 +27,48 @@ def test_upload_csv_computes_schema(client):
     assert {c["name"] for c in body["columns"]} == {"a", "b"}
 
 
+# ── Lot 5, correctif P2 — hash de contenu + détection de doublon ────────────
+
+
+def test_upload_computes_a_sha256_content_hash(client):
+    headers = _register(client)
+    body = client.post("/datasets", headers=headers, files=_csv_file()).json()
+    assert body["content_hash"] is not None
+    assert len(body["content_hash"]) == 64  # hex SHA-256
+    assert body["duplicate_of_dataset_id"] is None
+
+
+def test_uploading_the_same_content_twice_flags_the_duplicate(client):
+    headers = _register(client)
+    first = client.post("/datasets", headers=headers, files=_csv_file()).json()
+    second = client.post(
+        "/datasets", headers=headers, files=_csv_file()  # même contenu, autre appel
+    ).json()
+
+    assert second["content_hash"] == first["content_hash"]
+    assert second["duplicate_of_dataset_id"] == first["id"]
+    # Jamais bloquant : le second upload aboutit quand même.
+    assert second["status"] == "ready"
+
+
+def test_uploading_different_content_never_flags_a_duplicate(client):
+    headers = _register(client)
+    client.post("/datasets", headers=headers, files=_csv_file("a,b\n1,2\n")).json()
+    second = client.post("/datasets", headers=headers, files=_csv_file("a,b\n9,9\n9,9\n9,9\n")).json()
+    assert second["duplicate_of_dataset_id"] is None
+
+
+def test_duplicate_detection_is_isolated_by_organization(client):
+    """Le même fichier uploadé par deux organisations DIFFÉRENTES n'est
+    jamais un doublon l'un de l'autre — l'isolation multi-tenant prime."""
+    headers_a = _register(client, "a@bureau-a.fr", "Bureau A")
+    client.post("/datasets", headers=headers_a, files=_csv_file())
+
+    headers_b = _register(client, "b@bureau-b.fr", "Bureau B")
+    second = client.post("/datasets", headers=headers_b, files=_csv_file()).json()
+    assert second["duplicate_of_dataset_id"] is None
+
+
 def test_upload_blocked_after_too_many_attempts(client):
     """Lot 1.4 (§C.2.7/§D.4, AUDIT_DATALAB_2026-08-16.md) — l'upload n'avait
     jusqu'ici aucune limite de débit (contrairement à /auth/login)."""
