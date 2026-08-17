@@ -400,3 +400,63 @@ ne couvre pas).
 **Remise en cause si** : en appliquant le système à une page du Lot 2B,
 l'anti-motif page→section→carte→sous-carte apparaît réellement (contrairement
 à Dashboard) — alors `Card.tsx` devra être revu à ce moment-là, pas avant.
+
+### D2.4 — Résilience du Dashboard par pilier + couleurs de pilier réelles
+
+**Trouvé (retour utilisateur, après validation D2.3)** : un seul endpoint
+en échec (`GET /vision/anomalies/jobs`, 500 — voir la migration de
+rattrapage D1.x sur `fix-lot1-migration-safety`) mettait à « — » les
+compteurs Supervisé, Non supervisé, Vision ET En cours, alors que les
+autres endpoints répondaient 200. Cause : `jobs`/`clusteringJobs`/
+`dimensionalityJobs`/`anomalyJobs`/`visionClassificationJobs`/
+`visionAnomalyJobs` restaient à `null` indéfiniment sur erreur (seul un
+message d'erreur était posé, jamais la liste elle-même) — `allJobsLoaded`
+exigeait que LES SIX soient non-null, donc UN SEUL échec permanent
+bloquait TOUS les compteurs, pour toujours (pas seulement le temps du
+chargement).
+
+**Retenu** :
+- Les 6 loaders règlent maintenant leur liste à `[]` sur erreur (plus
+  jamais `null` indéfiniment) — un pilier "réglé" (settled) veut dire
+  "a une réponse, succès ou échec", distinct de "encore en chargement".
+- 3 indicateurs de réglage indépendants (`supervisedSettled`/
+  `nonSupervisedSettled`/`visionSettled`) remplacent le seul
+  `allJobsLoaded` global pour la tuile "Analyses ML" : chaque colonne du
+  split (Supervisé/Non supervisé/Vision) affiche son vrai chiffre dès que
+  SON pilier répond, indépendamment des 2 autres.
+- "Dernière activité" affiche désormais un message ciblé par pilier
+  (`Activité Vision indisponible — <détail>`) au lieu d'un unique bandeau
+  d'erreur qui remplaçait toute la liste — et continue d'afficher les
+  entrées des piliers qui ONT répondu même si un autre a échoué (le calcul
+  `activity` tolérait déjà les sources `null`/vides via `?.forEach` ; seul
+  le RENDU bloquait tout derrière un seul état global).
+- "En cours" (agrégat trans-pilier, pas de pilier propre) se peuple dès
+  que les 6 sources sont réglées — plus jamais bloqué indéfiniment par un
+  échec permanent d'une seule d'entre elles.
+
+**Couleurs de pilier** (même retour) : `Datasets en bleu, Membres en
+violet` sur les tuiles n'avait aucun sens — aucune de ces données
+n'appartient à un pilier. `AccentColor` (`ColorIconBadge.tsx`) gagne une
+valeur `"neutral"` (tokens `muted`/`border` du thème, même convention que
+`Badge variant="neutral"`) pour ces tuiles trans-piliers (Datasets,
+Analyses ML dans son ensemble, En cours, Membres). `Pillar.color`
+(`config/pillars.ts`) devient la source UNIQUE de la couleur d'un pilier
+(`pillarColor(id)`) — violet/rose/teal pour supervisé/non supervisé/
+Vision respectivement, alignées sur l'usage déjà dominant de chaque
+pilier sur ses propres pages (`Training.tsx`, `Clustering.tsx`,
+`VisionDatasets.tsx`) pour que le Lot 2B n'ait pas à réconcilier une
+couleur différente plus tard. `StatTileSplitPart` gagne un `color?`
+optionnel pour teinter individuellement chaque colonne du split avec la
+couleur de SON pilier.
+
+**Écarté** : recolorer les icônes de `ACTIVITY_KIND_META` (liste
+"Dernière activité") sur la couleur du pilier — elles différencient
+aujourd'hui le TYPE de job (clustering/réduction/anomalies en 3 teintes
+distinctes au sein du même pilier non supervisé), une information plus
+fine que l'identité de pilier, non signalée comme "arbitraire" par le
+retour utilisateur (contrairement aux tuiles). Non touché.
+
+**Remise en cause si** : le Lot 2B révèle qu'une page a besoin de la
+couleur de pilier à un endroit où `pillarColor()` ne suffit pas (ex.
+mélange avec un statut) — étendre l'API plutôt que dupliquer la couleur
+en dur localement.

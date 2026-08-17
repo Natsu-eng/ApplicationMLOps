@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { LucideIcon } from "lucide-react";
 import { Link } from "react-router-dom";
 import { Minus, TrendingDown, TrendingUp } from "lucide-react";
-import { ColorIconBadge, type AccentColor } from "../ui/ColorIconBadge";
+import { ColorIconBadge, accentValueTextClass, type AccentColor } from "../ui/ColorIconBadge";
 
 const REDUCED_MOTION_QUERY = "(prefers-reduced-motion: reduce)";
 
@@ -48,6 +48,11 @@ function useCountUp(value: number | undefined, durationMs = 800): number | undef
 interface StatTileSplitPart {
   label: string;
   value: number | undefined;
+  /** Couleur d'identité (ex. couleur de pilier, `pillarColor()`) — teinte le
+   * chiffre de CETTE colonne uniquement (Lot 2A correctif 3 : "supervisé,
+   * non supervisé et Vision gardent la couleur de leur pilier"). Optionnel :
+   * une colonne sans identité propre (aucun cas actuel) resterait neutre. */
+  color?: AccentColor;
 }
 
 /** Tendance vs période précédente (Lot 2A, AUDIT_DATALAB_2026-08-16.md
@@ -126,15 +131,21 @@ export function StatTile({
       <ColorIconBadge icon={icon} color={color} size="sm" />
       <div className="flex items-stretch divide-x divide-border">
         <div className="pr-3 min-w-0">
-          <p className="text-title text-foreground tabular-nums leading-none">{displaySplitA ?? "—"}</p>
+          <p className={`text-title tabular-nums leading-none ${split[0].color ? accentValueTextClass(split[0].color) : "text-foreground"}`}>
+            {displaySplitA ?? "—"}
+          </p>
           <p className="text-caption text-muted-foreground mt-1.5">{split[0].label}</p>
         </div>
         <div className="px-3 min-w-0">
-          <p className="text-title text-foreground tabular-nums leading-none">{displaySplitB ?? "—"}</p>
+          <p className={`text-title tabular-nums leading-none ${split[1].color ? accentValueTextClass(split[1].color) : "text-foreground"}`}>
+            {displaySplitB ?? "—"}
+          </p>
           <p className="text-caption text-muted-foreground mt-1.5">{split[1].label}</p>
         </div>
         <div className="pl-3 min-w-0">
-          <p className="text-title text-foreground tabular-nums leading-none">{displaySplitC ?? "—"}</p>
+          <p className={`text-title tabular-nums leading-none ${split[2].color ? accentValueTextClass(split[2].color) : "text-foreground"}`}>
+            {displaySplitC ?? "—"}
+          </p>
           <p className="text-caption text-muted-foreground mt-1.5">{split[2].label}</p>
         </div>
       </div>

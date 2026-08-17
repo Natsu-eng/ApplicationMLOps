@@ -8,7 +8,7 @@ import type { LucideIcon } from "lucide-react";
  * n'est PAS le dégradé de marque (réservé aux moments de marque, voir
  * index.css) — c'est un bleu Tailwind ordinaire au même titre que les
  * trois autres teintes. */
-export type AccentColor = "blue" | "teal" | "amber" | "violet" | "rose";
+export type AccentColor = "blue" | "teal" | "amber" | "violet" | "rose" | "neutral";
 
 const ACCENT_CLASSES: Record<AccentColor, string> = {
   blue: "bg-blue-50 border-blue-200 text-blue-600",
@@ -19,6 +19,12 @@ const ACCENT_CLASSES: Record<AccentColor, string> = {
   // dans la rotation déterministe par id (ACCENT_ROTATION ci-dessous),
   // seulement quand la couleur doit refléter un statut réel.
   rose: "bg-rose-50 border-rose-200 text-rose-600",
+  // Pour une identité qui n'appartient à AUCUN pilier (ex. StatTile
+  // "Datasets"/"Membres" du dashboard, Lot 2A correctif 3) — jamais dans
+  // ACCENT_ROTATION : une teinte de pilier mal assignée est pire qu'une
+  // absence de teinte. Tokens `muted`/`border` du thème, pas un gris
+  // Tailwind brut — même convention que `Badge variant="neutral"`.
+  neutral: "bg-muted border-border text-muted-foreground",
 };
 
 // Fond de CARTE (pas de l'icône) — lavage très léger de la même teinte, pour
@@ -31,6 +37,7 @@ const ACCENT_SURFACE_CLASSES: Record<AccentColor, string> = {
   amber: "bg-amber-50/70 border-amber-100",
   violet: "bg-violet-50/70 border-violet-100",
   rose: "bg-rose-50/70 border-rose-100",
+  neutral: "bg-muted/70 border-border",
 };
 
 export function accentSurfaceClass(color: AccentColor): string {
@@ -46,6 +53,7 @@ const ACCENT_BAR_CLASSES: Record<AccentColor, string> = {
   amber: "bg-amber-400",
   violet: "bg-violet-400",
   rose: "bg-rose-400",
+  neutral: "bg-muted-foreground/40",
 };
 
 export function accentBarClass(color: AccentColor): string {
@@ -61,6 +69,7 @@ const ACCENT_VALUE_TEXT_CLASSES: Record<AccentColor, string> = {
   amber: "text-amber-700",
   violet: "text-violet-700",
   rose: "text-rose-700",
+  neutral: "text-foreground",
 };
 
 export function accentValueTextClass(color: AccentColor): string {
@@ -75,6 +84,7 @@ const ACCENT_BORDER_CLASSES: Record<AccentColor, string> = {
   amber: "border-amber-200",
   violet: "border-violet-200",
   rose: "border-rose-200",
+  neutral: "border-border",
 };
 
 export function accentBorderClass(color: AccentColor): string {

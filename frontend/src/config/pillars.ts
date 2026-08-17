@@ -11,6 +11,7 @@ import {
   Target,
   type LucideIcon,
 } from "lucide-react";
+import type { AccentColor } from "../components/ui/ColorIconBadge";
 
 /** Registre unique des piliers du produit — l'écran d'orientation, la
  * navigation (AppShell) et les routes réservées lisent tous ce fichier.
@@ -39,6 +40,17 @@ export interface Pillar {
   examples: string[];
   /** Items de nav affichés dans AppShell quand ce pilier est actif — vide tant que le pilier n'a pas d'écrans réels. */
   navItems: PillarNavItem[];
+  /** Couleur d'identité du pilier (Lot 2A correctif 3) — SOURCE UNIQUE :
+   * toute UI qui affiche une donnée appartenant à un pilier précis (tuile,
+   * badge, section) doit lire cette couleur via `pillarColor()` plutôt que
+   * choisir une teinte au hasard localement. Une donnée qui n'appartient à
+   * AUCUN pilier (ex. total de datasets tous piliers confondus) reste
+   * `"neutral"`, jamais une couleur de pilier empruntée arbitrairement.
+   * Distinctes des 3 couleurs entre elles ; alignées sur l'usage déjà
+   * dominant de chaque pilier sur ses propres pages (`Training.tsx`,
+   * `Clustering.tsx`, `VisionDatasets.tsx`) pour minimiser la dissonance
+   * quand le Lot 2B appliquera cette même couleur aux 16 autres pages. */
+  color: AccentColor;
 }
 
 export const PILLARS: Pillar[] = [
@@ -65,6 +77,7 @@ export const PILLARS: Pillar[] = [
       { to: "/training", label: "Entraînement", icon: BrainCircuit },
       { to: "/training/history", label: "Historique", icon: History },
     ],
+    color: "violet",
   },
   {
     id: "unsupervised",
@@ -84,6 +97,7 @@ export const PILLARS: Pillar[] = [
       { to: "/anomalies", label: "Détection d'anomalies", icon: AlertTriangle },
       { to: "/non-supervise/historique", label: "Historique", icon: History },
     ],
+    color: "rose",
   },
   {
     id: "vision",
@@ -102,5 +116,16 @@ export const PILLARS: Pillar[] = [
       { to: "/vision/anomalies", label: "Anomalies visuelles", icon: Sparkles },
       { to: "/vision/historique", label: "Historique", icon: History },
     ],
+    color: "teal",
   },
 ];
+
+/** Couleur d'identité d'un pilier — jamais un lookup local dans une page ou
+ * un composant (voir `Pillar.color`). Lève si `id` est absent du registre :
+ * un pilier qui n'existe pas ne doit jamais silencieusement retomber sur
+ * une couleur par défaut. */
+export function pillarColor(id: PillarId): AccentColor {
+  const pillar = PILLARS.find((p) => p.id === id);
+  if (!pillar) throw new Error(`Pilier inconnu : ${id}`);
+  return pillar.color;
+}
