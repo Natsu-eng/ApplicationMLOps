@@ -116,7 +116,11 @@ pytest -v tests/test_ml_training.py   # un fichier en particulier
 # depuis backend/
 cp .env.example .env   # ajuster POSTGRES_PASSWORD si besoin
 
-# depuis la racine du dépôt
+# depuis la racine du dépôt — .env (racine) requis en plus de backend/.env :
+# docker compose interpole ${POSTGRES_USER}/${PASSWORD}/${DB} depuis CE
+# fichier, distinct de backend/.env (injecté dans les conteneurs), voir
+# .env.example à la racine.
+cp ../.env.example ../.env
 docker compose up -d --build
 docker compose logs -f backend
 ```

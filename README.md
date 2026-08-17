@@ -51,6 +51,10 @@ npm run dev
 
 ```bash
 cp backend/.env.example backend/.env
+cp .env.example .env            # requis : docker compose lit CE .env (racine) pour interpoler
+                                 # ${POSTGRES_USER}/${POSTGRES_PASSWORD}/${POSTGRES_DB} dans
+                                 # docker-compose.yml — distinct de backend/.env ci-dessus
+                                 # (injecté dans les conteneurs, pas dans le fichier compose)
 docker compose up -d --build
 docker compose logs -f backend worker
 ```

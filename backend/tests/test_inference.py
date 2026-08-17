@@ -29,7 +29,7 @@ _FAST_CONFIG = TrainingConfig(optuna_trials=3, cv_folds=3)
 
 def _register(client, email="owner@bureau.fr", org="Bureau"):
     resp = client.post(
-        "/auth/register",
+        "/api/auth/register",
         json={"email": email, "nom": "Owner", "password": "motdepasse123", "organization_name": org},
     ).json()
     return {"Authorization": f"Bearer {resp['access_token']}"}
@@ -105,7 +105,7 @@ def test_predict_returns_plausible_value_with_interval(client, db_session):
     job = _train_and_persist_model(db_session, organization_id=1)
 
     resp = client.post(
-        f"/training/jobs/{job.id}/predict",
+        f"/api/training/jobs/{job.id}/predict",
         headers=headers,
         json={"data": {"x1": 50, "x2": 20}},
     )
@@ -122,7 +122,7 @@ def test_predict_rejects_missing_feature(client, db_session):
     headers = _register(client)
     job = _train_and_persist_model(db_session, organization_id=1)
 
-    resp = client.post(f"/training/jobs/{job.id}/predict", headers=headers, json={"data": {"x1": 50}})
+    resp = client.post(f"/api/training/jobs/{job.id}/predict", headers=headers, json={"data": {"x1": 50}})
     assert resp.status_code == 400
     assert resp.json()["detail"]["code"] == "PREDICTION_IMPOSSIBLE"
 

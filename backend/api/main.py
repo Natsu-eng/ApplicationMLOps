@@ -131,15 +131,22 @@ app.add_middleware(
 )
 app.add_middleware(MaxJsonBodySizeMiddleware, max_bytes=settings.max_json_body_size_mb * 1024 * 1024)
 
-app.include_router(auth_router)
-app.include_router(datasets_router)
-app.include_router(training_router)
-app.include_router(clustering_router)
-app.include_router(dimensionality_router)
-app.include_router(anomalies_router)
-app.include_router(vision_datasets_router)
-app.include_router(vision_classification_router)
-app.include_router(vision_anomalies_router)
+# Préfixe /api sur TOUS les routers métier (correctif — incident réel de
+# déploiement) : nginx (nginx/nginx.conf) ne proxifie que `location /api/`
+# vers le backend, tout le reste tombe dans `try_files ... /index.html` et
+# renvoie le HTML de la SPA en 200 — un POST /auth/login sans préfixe
+# recevait donc du HTML, jamais le backend. `include_router(router,
+# prefix="/api")` compose avec le préfixe propre du router (ex. "/auth"),
+# résultat "/api/auth" — les routers eux-mêmes restent inchangés.
+app.include_router(auth_router, prefix="/api")
+app.include_router(datasets_router, prefix="/api")
+app.include_router(training_router, prefix="/api")
+app.include_router(clustering_router, prefix="/api")
+app.include_router(dimensionality_router, prefix="/api")
+app.include_router(anomalies_router, prefix="/api")
+app.include_router(vision_datasets_router, prefix="/api")
+app.include_router(vision_classification_router, prefix="/api")
+app.include_router(vision_anomalies_router, prefix="/api")
 
 
 @app.get("/api/health", tags=["système"])

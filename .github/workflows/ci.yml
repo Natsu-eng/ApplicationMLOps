@@ -95,3 +95,54 @@ jobs:
       - name: Build
         working-directory: frontend
         run: npm run build
+
+  # Correctif (retour utilisateur, incident réel de déploiement) — les jobs
+  # backend/frontend ci-dessus appellent respectivement TestClient(app)
+  # (FastAPI en mémoire) et Vitest (composants isolés) : aucun des deux ne
+  # construit les vraies images Docker ni ne passe par nginx. Une régression
+  # de routage entre le frontend, nginx et le backend (ex. préfixe /api
+  # manquant sur un router, proxy nginx mal configuré) était donc invisible
+  # aux 525+42 tests tout en rendant l'application totalement non
+  # fonctionnelle une fois déployée. Ce job rejoue un scénario utilisateur
+  # réel (inscription → connexion → liste des datasets) contre la stack
+  # Docker complète, port 80, exactement comme un vrai déploiement.
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # docker-compose.yml lit .env (racine) pour SA PROPRE interpolation
+      # (${POSTGRES_USER}/${PASSWORD}/${DB}) ET charge backend/.env dans les
+      # conteneurs (env_file:) — deux mécanismes distincts, voir le
+      # commentaire en tête de docker-compose.yml. Aucun des deux n'est
+      # commité (secrets) ; .env.example fournit des valeurs sûres pour CI.
+      - name: Préparer les .env (valeurs CI, jamais des secrets réels)
+        run: |
+          cp .env.example .env
+          cp backend/.env.example backend/.env
+
+      - name: Construire et démarrer la stack Docker complète
+        run: docker compose up -d --build
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # httpx seul (déjà une dépendance backend, requirements.txt) — jamais
+      # le reste de requirements.txt (torch/shap/lightgbm...) : ce script ne
+      # fait que des requêtes HTTP contre la stack déjà démarrée, inutile de
+      # réinstaller tout le backend pour ça.
+      - name: Installer httpx
+        run: pip install httpx==0.27.2
+
+      - name: Scénario de fumée (inscription → connexion → liste des datasets)
+        working-directory: backend
+        run: python -m scripts.smoke_test_docker
+
+      - name: Logs des conteneurs (diagnostic en cas d'échec)
+        if: failure()
+        run: docker compose logs
+
+      - name: Arrêter la stack
+        if: always()
+        run: docker compose down -v

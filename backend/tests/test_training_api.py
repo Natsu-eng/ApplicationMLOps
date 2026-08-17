@@ -17,7 +17,7 @@ from api.routers.training import _headline_metric
 
 def _register(client, email="owner@bureau.fr", org="Bureau"):
     resp = client.post(
-        "/auth/register",
+        "/api/auth/register",
         json={"email": email, "nom": "Owner", "password": "motdepasse123", "organization_name": org},
     ).json()
     return {"Authorization": f"Bearer {resp['access_token']}"}
@@ -29,7 +29,7 @@ def _upload_dataset(client, headers):
     # comme régression (voir services/ml_task.py).
     rows = "\n".join(f"{i},{i * 2},{i * 3}" for i in range(50))
     content = f"x1,x2,cible\n{rows}\n".encode()
-    resp = client.post("/datasets", headers=headers, files={"file": ("d.csv", io.BytesIO(content), "text/csv")})
+    resp = client.post("/api/datasets", headers=headers, files={"file": ("d.csv", io.BytesIO(content), "text/csv")})
     return resp.json()
 
 
@@ -40,7 +40,7 @@ def test_create_job_enqueues_and_returns_summary(mock_queue, client):
     dataset = _upload_dataset(client, headers)
 
     resp = client.post(
-        "/training/jobs", headers=headers, json={"dataset_id": dataset["id"], "target_column": "cible"}
+        "/api/training/jobs", headers=headers, json={"dataset_id": dataset["id"], "target_column": "cible"}
     )
     assert resp.status_code == 201
     body = resp.json()
@@ -55,7 +55,7 @@ def test_create_job_rejects_unknown_target_column(mock_queue, client):
     dataset = _upload_dataset(client, headers)
 
     resp = client.post(
-        "/training/jobs",
+        "/api/training/jobs",
         headers=headers,
         json={"dataset_id": dataset["id"], "target_column": "colonne_inexistante"},
     )
@@ -67,7 +67,7 @@ def test_create_job_rejects_unknown_target_column(mock_queue, client):
 def test_create_job_rejects_unready_dataset(mock_queue, client):
     headers = _register(client)
     resp = client.post(
-        "/training/jobs", headers=headers, json={"dataset_id": 999999, "target_column": "cible"}
+        "/api/training/jobs", headers=headers, json={"dataset_id": 999999, "target_column": "cible"}
     )
     assert resp.status_code == 404
     assert resp.json()["detail"]["code"] == "DATASET_INTROUVABLE"
@@ -81,11 +81,11 @@ def test_training_job_isolation_between_organizations(mock_queue, client):
     dataset = _upload_dataset(client, headers_a)
 
     job = client.post(
-        "/training/jobs", headers=headers_a, json={"dataset_id": dataset["id"], "target_column": "cible"}
+        "/api/training/jobs", headers=headers_a, json={"dataset_id": dataset["id"], "target_column": "cible"}
     ).json()
 
-    assert client.get("/training/jobs", headers=headers_b).json() == []
-    assert client.get(f"/training/jobs/{job['id']}", headers=headers_b).status_code == 404
+    assert client.get("/api/training/jobs", headers=headers_b).json() == []
+    assert client.get(f"/api/training/jobs/{job['id']}", headers=headers_b).status_code == 404
 
 
 @patch("api.routers.training.training_queue")
@@ -94,12 +94,12 @@ def test_delete_removes_job_from_history(mock_queue, client):
     headers = _register(client)
     dataset = _upload_dataset(client, headers)
     job = client.post(
-        "/training/jobs", headers=headers, json={"dataset_id": dataset["id"], "target_column": "cible"}
+        "/api/training/jobs", headers=headers, json={"dataset_id": dataset["id"], "target_column": "cible"}
     ).json()
 
-    assert client.delete(f"/training/jobs/{job['id']}", headers=headers).status_code == 204
-    assert client.get(f"/training/jobs/{job['id']}", headers=headers).status_code == 404
-    assert client.get("/training/jobs", headers=headers).json() == []
+    assert client.delete(f"/api/training/jobs/{job['id']}", headers=headers).status_code == 204
+    assert client.get(f"/api/training/jobs/{job['id']}", headers=headers).status_code == 404
+    assert client.get("/api/training/jobs", headers=headers).json() == []
 
 
 @patch("api.routers.training.training_queue")
@@ -117,7 +117,7 @@ def test_delete_completed_job_with_model(mock_queue, client, db_session):
     headers = _register(client)
     dataset = _upload_dataset(client, headers)
     job_id = client.post(
-        "/training/jobs", headers=headers, json={"dataset_id": dataset["id"], "target_column": "cible"}
+        "/api/training/jobs", headers=headers, json={"dataset_id": dataset["id"], "target_column": "cible"}
     ).json()["id"]
 
     job = db_session.query(TrainingJob).filter(TrainingJob.id == job_id).first()
@@ -136,8 +136,8 @@ def test_delete_completed_job_with_model(mock_queue, client, db_session):
     )
     db_session.commit()
 
-    assert client.delete(f"/training/jobs/{job_id}", headers=headers).status_code == 204
-    assert client.get(f"/training/jobs/{job_id}", headers=headers).status_code == 404
+    assert client.delete(f"/api/training/jobs/{job_id}", headers=headers).status_code == 204
+    assert client.get(f"/api/training/jobs/{job_id}", headers=headers).status_code == 404
 
 
 @patch("api.routers.training.training_queue")
@@ -147,13 +147,13 @@ def test_delete_rejects_cross_organization(mock_queue, client):
     headers_b = _register(client, "b@bureau-b.fr", "Bureau B")
     dataset = _upload_dataset(client, headers_a)
     job = client.post(
-        "/training/jobs", headers=headers_a, json={"dataset_id": dataset["id"], "target_column": "cible"}
+        "/api/training/jobs", headers=headers_a, json={"dataset_id": dataset["id"], "target_column": "cible"}
     ).json()
 
-    resp = client.delete(f"/training/jobs/{job['id']}", headers=headers_b)
+    resp = client.delete(f"/api/training/jobs/{job['id']}", headers=headers_b)
     assert resp.status_code == 404
     # toujours là côté organisation A — la tentative de B n'a rien supprimé
-    assert client.get(f"/training/jobs/{job['id']}", headers=headers_a).status_code == 200
+    assert client.get(f"/api/training/jobs/{job['id']}", headers=headers_a).status_code == 200
 
 
 # ── Lot E2 — mode guidé/expert : catalogue de modèles + manettes ───────────
@@ -169,7 +169,7 @@ def test_model_endpoint_exposes_global_explainability_fields(mock_queue, client,
     headers = _register(client)
     dataset = _upload_dataset(client, headers)
     job_id = client.post(
-        "/training/jobs", headers=headers, json={"dataset_id": dataset["id"], "target_column": "cible"}
+        "/api/training/jobs", headers=headers, json={"dataset_id": dataset["id"], "target_column": "cible"}
     ).json()["id"]
 
     job = db_session.query(TrainingJob).filter(TrainingJob.id == job_id).first()
@@ -192,7 +192,7 @@ def test_model_endpoint_exposes_global_explainability_fields(mock_queue, client,
     )
     db_session.commit()
 
-    resp = client.get(f"/training/jobs/{job_id}/model", headers=headers)
+    resp = client.get(f"/api/training/jobs/{job_id}/model", headers=headers)
     assert resp.status_code == 200
     body = resp.json()
     assert body["shap_beeswarm"] == {"global": [{"feature": "x1", "feature_value": 1.0, "shap_value": 0.5}]}
@@ -210,7 +210,7 @@ def test_model_endpoint_degrades_cleanly_for_pre_lot_jobs(mock_queue, client, db
     headers = _register(client)
     dataset = _upload_dataset(client, headers)
     job_id = client.post(
-        "/training/jobs", headers=headers, json={"dataset_id": dataset["id"], "target_column": "cible"}
+        "/api/training/jobs", headers=headers, json={"dataset_id": dataset["id"], "target_column": "cible"}
     ).json()["id"]
 
     job = db_session.query(TrainingJob).filter(TrainingJob.id == job_id).first()
@@ -231,7 +231,7 @@ def test_model_endpoint_degrades_cleanly_for_pre_lot_jobs(mock_queue, client, db
     )
     db_session.commit()
 
-    resp = client.get(f"/training/jobs/{job_id}/model", headers=headers)
+    resp = client.get(f"/api/training/jobs/{job_id}/model", headers=headers)
     assert resp.status_code == 200
     body = resp.json()
     assert body["shap_beeswarm"] == {}
@@ -242,7 +242,7 @@ def test_model_endpoint_degrades_cleanly_for_pre_lot_jobs(mock_queue, client, db
 
 def test_models_catalog_lists_all_nine_registry_entries(client):
     headers = _register(client)
-    resp = client.get("/training/models-catalog", headers=headers)
+    resp = client.get("/api/training/models-catalog", headers=headers)
     assert resp.status_code == 200
     models = resp.json()["models"]
     assert len(models) == 9
@@ -268,7 +268,7 @@ def test_create_job_without_expert_fields_uses_unchanged_server_defaults(mock_qu
     settings = get_settings()
 
     job = client.post(
-        "/training/jobs", headers=headers, json={"dataset_id": dataset["id"], "target_column": "cible"}
+        "/api/training/jobs", headers=headers, json={"dataset_id": dataset["id"], "target_column": "cible"}
     ).json()
 
     job_row = db_session.query(TrainingJob).filter(TrainingJob.id == job["id"]).first()
@@ -287,7 +287,7 @@ def test_create_job_with_expert_fields_threads_them_into_config(mock_queue, clie
     dataset = _upload_dataset(client, headers)
 
     job = client.post(
-        "/training/jobs",
+        "/api/training/jobs",
         headers=headers,
         json={
             "dataset_id": dataset["id"],
@@ -313,7 +313,7 @@ def test_create_job_rejects_unknown_model_id(mock_queue, client):
     dataset = _upload_dataset(client, headers)
 
     resp = client.post(
-        "/training/jobs",
+        "/api/training/jobs",
         headers=headers,
         json={"dataset_id": dataset["id"], "target_column": "cible", "model_ids": ["modele_inexistant"]},
     )
@@ -330,7 +330,7 @@ def test_create_job_rejects_model_ids_incompatible_with_detected_task(mock_queue
     dataset = _upload_dataset(client, headers)
 
     resp = client.post(
-        "/training/jobs",
+        "/api/training/jobs",
         headers=headers,
         json={"dataset_id": dataset["id"], "target_column": "cible", "model_ids": ["naive_bayes"]},
     )
@@ -402,13 +402,13 @@ def test_candidates_endpoint_returns_leaderboard_sorted_by_rank(mock_queue, clie
     headers = _register(client)
     dataset = _upload_dataset(client, headers)
     job = client.post(
-        "/training/jobs", headers=headers, json={"dataset_id": dataset["id"], "target_column": "cible"}
+        "/api/training/jobs", headers=headers, json={"dataset_id": dataset["id"], "target_column": "cible"}
     ).json()
 
     job_row = db_session.query(TrainingJob).filter(TrainingJob.id == job["id"]).first()
     _complete_job_with_model_and_candidates(db_session, job["id"], job_row.organization_id)
 
-    resp = client.get(f"/training/jobs/{job['id']}/candidates", headers=headers)
+    resp = client.get(f"/api/training/jobs/{job['id']}/candidates", headers=headers)
     assert resp.status_code == 200
     body = resp.json()
     assert body["selection_metric_label"] == "R² (validation croisée)"
@@ -429,13 +429,13 @@ def test_candidates_endpoint_backward_compatible_for_pre_lot_jobs(mock_queue, cl
     headers = _register(client)
     dataset = _upload_dataset(client, headers)
     job = client.post(
-        "/training/jobs", headers=headers, json={"dataset_id": dataset["id"], "target_column": "cible"}
+        "/api/training/jobs", headers=headers, json={"dataset_id": dataset["id"], "target_column": "cible"}
     ).json()
 
     job_row = db_session.query(TrainingJob).filter(TrainingJob.id == job["id"]).first()
     _complete_job_with_model_and_candidates(db_session, job["id"], job_row.organization_id, add_candidates=False)
 
-    resp = client.get(f"/training/jobs/{job['id']}/candidates", headers=headers)
+    resp = client.get(f"/api/training/jobs/{job['id']}/candidates", headers=headers)
     assert resp.status_code == 200
     body = resp.json()
     assert body["candidates"] == []
@@ -449,11 +449,11 @@ def test_candidates_endpoint_isolated_between_organizations(mock_queue, client, 
     headers_b = _register(client, "b@bureau-b.fr", "Bureau B")
     dataset = _upload_dataset(client, headers_a)
     job = client.post(
-        "/training/jobs", headers=headers_a, json={"dataset_id": dataset["id"], "target_column": "cible"}
+        "/api/training/jobs", headers=headers_a, json={"dataset_id": dataset["id"], "target_column": "cible"}
     ).json()
 
     job_row = db_session.query(TrainingJob).filter(TrainingJob.id == job["id"]).first()
     _complete_job_with_model_and_candidates(db_session, job["id"], job_row.organization_id)
 
-    assert client.get(f"/training/jobs/{job['id']}/candidates", headers=headers_b).status_code == 404
-    assert client.get(f"/training/jobs/{job['id']}/candidates", headers=headers_a).status_code == 200
+    assert client.get(f"/api/training/jobs/{job['id']}/candidates", headers=headers_b).status_code == 404
+    assert client.get(f"/api/training/jobs/{job['id']}/candidates", headers=headers_a).status_code == 200

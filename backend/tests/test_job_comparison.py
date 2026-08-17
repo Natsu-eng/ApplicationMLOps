@@ -14,7 +14,7 @@ from api.core.models import MLModel, TrainingJob
 
 def _register(client, email="owner@bureau.fr", org="Bureau"):
     resp = client.post(
-        "/auth/register",
+        "/api/auth/register",
         json={"email": email, "nom": "Owner", "password": "motdepasse123", "organization_name": org},
     ).json()
     return {"Authorization": f"Bearer {resp['access_token']}"}
@@ -23,7 +23,7 @@ def _register(client, email="owner@bureau.fr", org="Bureau"):
 def _upload_dataset(client, headers, name="d.csv"):
     rows = "\n".join(f"{i},{i * 2},{i * 3}" for i in range(50))
     content = f"x1,x2,cible\n{rows}\n".encode()
-    resp = client.post("/datasets", headers=headers, files={"file": (name, io.BytesIO(content), "text/csv")})
+    resp = client.post("/api/datasets", headers=headers, files={"file": (name, io.BytesIO(content), "text/csv")})
     return resp.json()
 
 
@@ -56,7 +56,7 @@ def _create_job(client, headers, dataset_id, **overrides):
     with patch("api.routers.training.training_queue") as mock_queue:
         mock_queue.enqueue.return_value.id = "fake-rq-id"
         payload = {"dataset_id": dataset_id, "target_column": "cible", **overrides}
-        return client.post("/training/jobs", headers=headers, json=payload).json()
+        return client.post("/api/training/jobs", headers=headers, json=payload).json()
 
 
 def test_compare_returns_entries_in_requested_order(client, db_session):
@@ -69,7 +69,7 @@ def test_compare_returns_entries_in_requested_order(client, db_session):
     _complete_job(db_session, job2["id"], org_id, algorithm="CatBoost", r2_test=0.85)
 
     resp = client.get(
-        "/training/jobs/compare", headers=headers, params=[("job_ids", job2["id"]), ("job_ids", job1["id"])]
+        "/api/training/jobs/compare", headers=headers, params=[("job_ids", job2["id"]), ("job_ids", job1["id"])]
     )
     assert resp.status_code == 200
     body = resp.json()
@@ -85,12 +85,12 @@ def test_compare_flags_differing_config_and_ignores_equal_fields(mock_queue, cli
     headers = _register(client)
     dataset = _upload_dataset(client, headers)
     job1 = client.post(
-        "/training/jobs",
+        "/api/training/jobs",
         headers=headers,
         json={"dataset_id": dataset["id"], "target_column": "cible", "cv_folds": 4, "seed": 42},
     ).json()
     job2 = client.post(
-        "/training/jobs",
+        "/api/training/jobs",
         headers=headers,
         json={"dataset_id": dataset["id"], "target_column": "cible", "cv_folds": 6, "seed": 42},
     ).json()
@@ -99,7 +99,7 @@ def test_compare_flags_differing_config_and_ignores_equal_fields(mock_queue, cli
     _complete_job(db_session, job2["id"], org_id)
 
     resp = client.get(
-        "/training/jobs/compare", headers=headers, params=[("job_ids", job1["id"]), ("job_ids", job2["id"])]
+        "/api/training/jobs/compare", headers=headers, params=[("job_ids", job1["id"]), ("job_ids", job2["id"])]
     )
     body = resp.json()
     assert "cv_folds" in body["differing_config_fields"]
@@ -115,12 +115,12 @@ def test_compare_model_ids_diff_by_set_not_by_order(mock_queue, client, db_sessi
     headers = _register(client)
     dataset = _upload_dataset(client, headers)
     job1 = client.post(
-        "/training/jobs",
+        "/api/training/jobs",
         headers=headers,
         json={"dataset_id": dataset["id"], "target_column": "cible", "model_ids": ["lightgbm", "catboost"]},
     ).json()
     job2 = client.post(
-        "/training/jobs",
+        "/api/training/jobs",
         headers=headers,
         json={"dataset_id": dataset["id"], "target_column": "cible", "model_ids": ["catboost", "lightgbm"]},
     ).json()
@@ -129,7 +129,7 @@ def test_compare_model_ids_diff_by_set_not_by_order(mock_queue, client, db_sessi
     _complete_job(db_session, job2["id"], org_id)
 
     resp = client.get(
-        "/training/jobs/compare", headers=headers, params=[("job_ids", job1["id"]), ("job_ids", job2["id"])]
+        "/api/training/jobs/compare", headers=headers, params=[("job_ids", job1["id"]), ("job_ids", job2["id"])]
     )
     assert "model_ids" not in resp.json()["differing_config_fields"]
 
@@ -139,7 +139,7 @@ def test_compare_requires_at_least_two_jobs(client, db_session):
     dataset = _upload_dataset(client, headers)
     job1 = _create_job(client, headers, dataset["id"])
 
-    resp = client.get("/training/jobs/compare", headers=headers, params=[("job_ids", job1["id"])])
+    resp = client.get("/api/training/jobs/compare", headers=headers, params=[("job_ids", job1["id"])])
     assert resp.status_code in (400, 422)  # 422 si Query(min_length=2) rejette avant le handler
 
 
@@ -149,7 +149,7 @@ def test_compare_rejects_unknown_job_id(client, db_session):
     job1 = _create_job(client, headers, dataset["id"])
 
     resp = client.get(
-        "/training/jobs/compare", headers=headers, params=[("job_ids", job1["id"]), ("job_ids", 999999)]
+        "/api/training/jobs/compare", headers=headers, params=[("job_ids", job1["id"]), ("job_ids", 999999)]
     )
     assert resp.status_code == 404
     assert resp.json()["detail"]["code"] == "TRAINING_JOB_INTROUVABLE"
@@ -169,12 +169,12 @@ def test_compare_isolation_between_organizations(client, db_session):
     # job de l'organisation A — traité comme absent (jamais un indice
     # d'existence croisée), pas une fuite d'isolation.
     resp = client.get(
-        "/training/jobs/compare", headers=headers_b, params=[("job_ids", job_b1["id"]), ("job_ids", job_a1["id"])]
+        "/api/training/jobs/compare", headers=headers_b, params=[("job_ids", job_b1["id"]), ("job_ids", job_a1["id"])]
     )
     assert resp.status_code == 404
 
     # Contrôle : org A peut bien comparer ses deux propres jobs.
     resp_ok = client.get(
-        "/training/jobs/compare", headers=headers_a, params=[("job_ids", job_a1["id"]), ("job_ids", job_a2["id"])]
+        "/api/training/jobs/compare", headers=headers_a, params=[("job_ids", job_a1["id"]), ("job_ids", job_a2["id"])]
     )
     assert resp_ok.status_code == 200

@@ -12,7 +12,7 @@ def test_oversized_json_body_rejected_with_413(client):
     limit_bytes = get_settings().max_json_body_size_mb * 1024 * 1024
     padding = "x" * (limit_bytes + 1024)
     resp = client.post(
-        "/auth/register",
+        "/api/auth/register",
         json={"email": "trop@bureau.fr", "nom": padding, "password": "motdepasse123", "organization_name": "Bureau"},
     )
     assert resp.status_code == 413
@@ -21,7 +21,7 @@ def test_oversized_json_body_rejected_with_413(client):
 
 def test_normal_json_body_not_affected(client):
     resp = client.post(
-        "/auth/register",
+        "/api/auth/register",
         json={"email": "normal@bureau.fr", "nom": "Normal", "password": "motdepasse123", "organization_name": "Bureau"},
     )
     assert resp.status_code == 201
@@ -33,7 +33,7 @@ def test_multipart_upload_not_affected_by_json_limit(client):
     import io
 
     resp = client.post(
-        "/auth/register",
+        "/api/auth/register",
         json={"email": "uploader@bureau.fr", "nom": "Uploader", "password": "motdepasse123", "organization_name": "Bureau"},
     )
     headers = {"Authorization": f"Bearer {resp.json()['access_token']}"}
@@ -41,6 +41,6 @@ def test_multipart_upload_not_affected_by_json_limit(client):
     # de max_upload_size_mb — prouve juste que le chemin multipart n'est
     # jamais intercepté par la vérification Content-Type: application/json.
     upload = client.post(
-        "/datasets", headers=headers, files={"file": ("t.csv", io.BytesIO(b"a,b\n1,2\n"), "text/csv")}
+        "/api/datasets", headers=headers, files={"file": ("t.csv", io.BytesIO(b"a,b\n1,2\n"), "text/csv")}
     )
     assert upload.status_code == 201

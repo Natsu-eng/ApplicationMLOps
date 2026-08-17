@@ -16,7 +16,7 @@ from api.core.models import MLModel, TrainingJob
 
 def _register(client, email="owner@bureau.fr", org="Bureau"):
     resp = client.post(
-        "/auth/register",
+        "/api/auth/register",
         json={"email": email, "nom": "Owner", "password": "motdepasse123", "organization_name": org},
     ).json()
     return {"Authorization": f"Bearer {resp['access_token']}"}
@@ -25,7 +25,7 @@ def _register(client, email="owner@bureau.fr", org="Bureau"):
 def _upload_dataset(client, headers, name="d.csv"):
     rows = "\n".join(f"{i},{i * 2},{i * 3}" for i in range(50))
     content = f"x1,x2,cible\n{rows}\n".encode()
-    resp = client.post("/datasets", headers=headers, files={"file": (name, io.BytesIO(content), "text/csv")})
+    resp = client.post("/api/datasets", headers=headers, files={"file": (name, io.BytesIO(content), "text/csv")})
     return resp.json()
 
 
@@ -33,7 +33,7 @@ def _create_job(client, headers, dataset_id, target_column="cible"):
     with patch("api.routers.training.training_queue") as mock_queue:
         mock_queue.enqueue.return_value.id = "fake-rq-id"
         return client.post(
-            "/training/jobs", headers=headers, json={"dataset_id": dataset_id, "target_column": target_column}
+            "/api/training/jobs", headers=headers, json={"dataset_id": dataset_id, "target_column": target_column}
         ).json()
 
 
@@ -70,7 +70,7 @@ def test_promote_to_staging_sets_stage_and_timestamp(client, db_session):
     org_id = db_session.query(TrainingJob).filter(TrainingJob.id == job["id"]).first().organization_id
     _complete_job(db_session, job["id"], org_id)
 
-    resp = client.post(f"/training/jobs/{job['id']}/model/promote", headers=headers, json={"stage": "staging"})
+    resp = client.post(f"/api/training/jobs/{job['id']}/model/promote", headers=headers, json={"stage": "staging"})
     assert resp.status_code == 200
     body = resp.json()
     assert body["stage"] == "staging"
@@ -86,15 +86,15 @@ def test_promote_to_production_demotes_previous_production_for_same_dataset_and_
     _complete_job(db_session, job1["id"], org_id, algorithm="LightGBM")
     _complete_job(db_session, job2["id"], org_id, algorithm="CatBoost")
 
-    r1 = client.post(f"/training/jobs/{job1['id']}/model/promote", headers=headers, json={"stage": "production"})
+    r1 = client.post(f"/api/training/jobs/{job1['id']}/model/promote", headers=headers, json={"stage": "production"})
     assert r1.json()["stage"] == "production"
 
-    r2 = client.post(f"/training/jobs/{job2['id']}/model/promote", headers=headers, json={"stage": "production"})
+    r2 = client.post(f"/api/training/jobs/{job2['id']}/model/promote", headers=headers, json={"stage": "production"})
     assert r2.json()["stage"] == "production"
 
     # job1 doit avoir été démis en "staging" — jamais "none", le modèle
     # reste un candidat connu, juste plus la référence en production.
-    model1 = client.get(f"/training/jobs/{job1['id']}/model", headers=headers).json()
+    model1 = client.get(f"/api/training/jobs/{job1['id']}/model", headers=headers).json()
     assert model1["stage"] == "staging"
 
 
@@ -105,7 +105,7 @@ def test_promote_does_not_demote_production_of_a_different_target(client, db_ses
     rows = "\n".join(f"{i},{i * 2},{i * 3}" for i in range(50))
     content = f"x1,x2,cible\n{rows}\n".encode()
     dataset = client.post(
-        "/datasets", headers=headers, files={"file": ("d.csv", io.BytesIO(content), "text/csv")}
+        "/api/datasets", headers=headers, files={"file": ("d.csv", io.BytesIO(content), "text/csv")}
     ).json()
 
     job1 = _create_job(client, headers, dataset["id"], target_column="cible")
@@ -118,10 +118,10 @@ def test_promote_does_not_demote_production_of_a_different_target(client, db_ses
     j2.model.target_column = "x2"
     db_session.commit()
 
-    client.post(f"/training/jobs/{job1['id']}/model/promote", headers=headers, json={"stage": "production"})
-    client.post(f"/training/jobs/{job2['id']}/model/promote", headers=headers, json={"stage": "production"})
+    client.post(f"/api/training/jobs/{job1['id']}/model/promote", headers=headers, json={"stage": "production"})
+    client.post(f"/api/training/jobs/{job2['id']}/model/promote", headers=headers, json={"stage": "production"})
 
-    model1 = client.get(f"/training/jobs/{job1['id']}/model", headers=headers).json()
+    model1 = client.get(f"/api/training/jobs/{job1['id']}/model", headers=headers).json()
     assert model1["stage"] == "production"  # jamais démis, cible différente
 
 
@@ -131,9 +131,9 @@ def test_promote_to_none_clears_stage_and_timestamp(client, db_session):
     job = _create_job(client, headers, dataset["id"])
     org_id = db_session.query(TrainingJob).filter(TrainingJob.id == job["id"]).first().organization_id
     _complete_job(db_session, job["id"], org_id)
-    client.post(f"/training/jobs/{job['id']}/model/promote", headers=headers, json={"stage": "production"})
+    client.post(f"/api/training/jobs/{job['id']}/model/promote", headers=headers, json={"stage": "production"})
 
-    resp = client.post(f"/training/jobs/{job['id']}/model/promote", headers=headers, json={"stage": "none"})
+    resp = client.post(f"/api/training/jobs/{job['id']}/model/promote", headers=headers, json={"stage": "none"})
     body = resp.json()
     assert body["stage"] is None
     assert body["promoted_at"] is None
@@ -146,7 +146,7 @@ def test_promote_rejects_invalid_stage(client, db_session):
     org_id = db_session.query(TrainingJob).filter(TrainingJob.id == job["id"]).first().organization_id
     _complete_job(db_session, job["id"], org_id)
 
-    resp = client.post(f"/training/jobs/{job['id']}/model/promote", headers=headers, json={"stage": "archived"})
+    resp = client.post(f"/api/training/jobs/{job['id']}/model/promote", headers=headers, json={"stage": "archived"})
     assert resp.status_code == 400
     assert resp.json()["detail"]["code"] == "STAGE_INVALIDE"
 
@@ -156,7 +156,7 @@ def test_promote_requires_a_completed_job(client, db_session):
     dataset = _upload_dataset(client, headers)
     job = _create_job(client, headers, dataset["id"])  # jamais complété, pas de modèle
 
-    resp = client.post(f"/training/jobs/{job['id']}/model/promote", headers=headers, json={"stage": "staging"})
+    resp = client.post(f"/api/training/jobs/{job['id']}/model/promote", headers=headers, json={"stage": "staging"})
     assert resp.status_code == 409
 
 
@@ -170,7 +170,7 @@ def test_export_returns_the_artifact_file(client, db_session):
     org_id = db_session.query(TrainingJob).filter(TrainingJob.id == job["id"]).first().organization_id
     _complete_job(db_session, job["id"], org_id)
 
-    resp = client.get(f"/training/jobs/{job['id']}/model/export", headers=headers)
+    resp = client.get(f"/api/training/jobs/{job['id']}/model/export", headers=headers)
     assert resp.status_code == 200
     assert resp.headers["content-type"] == "application/octet-stream"
     assert "attachment" in resp.headers.get("content-disposition", "")
@@ -186,7 +186,7 @@ def test_export_rejects_missing_artifact_on_disk(client, db_session):
     org_id = db_session.query(TrainingJob).filter(TrainingJob.id == job["id"]).first().organization_id
     _complete_job(db_session, job["id"], org_id, artifact_path=Path(tempfile.gettempdir()) / "n_existe_pas.joblib")
 
-    resp = client.get(f"/training/jobs/{job['id']}/model/export", headers=headers)
+    resp = client.get(f"/api/training/jobs/{job['id']}/model/export", headers=headers)
     assert resp.status_code == 404
     assert resp.json()["detail"]["code"] == "ARTEFACT_INTROUVABLE"
 
@@ -199,7 +199,7 @@ def test_export_isolated_between_organizations(client, db_session):
     _complete_job(db_session, job_a["id"], org_a_id)
 
     headers_b = _register(client, "b@bureau-b.fr", "Bureau B")
-    resp = client.get(f"/training/jobs/{job_a['id']}/model/export", headers=headers_b)
+    resp = client.get(f"/api/training/jobs/{job_a['id']}/model/export", headers=headers_b)
     assert resp.status_code == 404
 
 
@@ -215,9 +215,9 @@ def test_registry_lists_only_promoted_models(client, db_session):
     _complete_job(db_session, job1["id"], org_id, algorithm="LightGBM")
     _complete_job(db_session, job2["id"], org_id, algorithm="CatBoost")  # jamais promu
 
-    client.post(f"/training/jobs/{job1['id']}/model/promote", headers=headers, json={"stage": "production"})
+    client.post(f"/api/training/jobs/{job1['id']}/model/promote", headers=headers, json={"stage": "production"})
 
-    resp = client.get("/training/models/registry", headers=headers)
+    resp = client.get("/api/training/models/registry", headers=headers)
     assert resp.status_code == 200
     entries = resp.json()["entries"]
     assert len(entries) == 1
@@ -231,8 +231,8 @@ def test_registry_isolated_between_organizations(client, db_session):
     job_a = _create_job(client, headers_a, dataset_a["id"])
     org_a_id = db_session.query(TrainingJob).filter(TrainingJob.id == job_a["id"]).first().organization_id
     _complete_job(db_session, job_a["id"], org_a_id)
-    client.post(f"/training/jobs/{job_a['id']}/model/promote", headers=headers_a, json={"stage": "production"})
+    client.post(f"/api/training/jobs/{job_a['id']}/model/promote", headers=headers_a, json={"stage": "production"})
 
     headers_b = _register(client, "b@bureau-b.fr", "Bureau B")
-    resp = client.get("/training/models/registry", headers=headers_b)
+    resp = client.get("/api/training/models/registry", headers=headers_b)
     assert resp.json()["entries"] == []

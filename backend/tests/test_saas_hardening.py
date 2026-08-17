@@ -11,7 +11,7 @@ from api.core.config import get_settings
 
 def _register(client, email="owner@bureau.fr", org="Bureau"):
     resp = client.post(
-        "/auth/register",
+        "/api/auth/register",
         json={"email": email, "nom": "Owner", "password": "motdepasse123", "organization_name": org},
     ).json()
     return {"Authorization": f"Bearer {resp['access_token']}"}
@@ -20,7 +20,7 @@ def _register(client, email="owner@bureau.fr", org="Bureau"):
 def _upload_dataset(client, headers, name="d.csv"):
     rows = "\n".join(f"{i},{i * 2},{i * 3}" for i in range(50))
     content = f"x1,x2,cible\n{rows}\n".encode()
-    resp = client.post("/datasets", headers=headers, files={"file": (name, io.BytesIO(content), "text/csv")})
+    resp = client.post("/api/datasets", headers=headers, files={"file": (name, io.BytesIO(content), "text/csv")})
     return resp.json()
 
 
@@ -28,7 +28,7 @@ def _create_job(client, headers, dataset_id):
     with patch("api.routers.training.training_queue") as mock_queue:
         mock_queue.enqueue.return_value.id = "fake-rq-id"
         return client.post(
-            "/training/jobs", headers=headers, json={"dataset_id": dataset_id, "target_column": "cible"}
+            "/api/training/jobs", headers=headers, json={"dataset_id": dataset_id, "target_column": "cible"}
         )
 
 
@@ -38,12 +38,12 @@ def _create_job(client, headers, dataset_id):
 def test_audit_log_records_member_added(client):
     headers = _register(client)
     client.post(
-        "/auth/team/members",
+        "/api/auth/team/members",
         headers=headers,
         json={"email": "membre@bureau.fr", "nom": "Membre", "password": "motdepasse123"},
     )
 
-    resp = client.get("/auth/team/audit-log", headers=headers)
+    resp = client.get("/api/auth/team/audit-log", headers=headers)
     assert resp.status_code == 200
     entries = resp.json()
     assert any(e["action"] == "member.added" and e["details"]["email"] == "membre@bureau.fr" for e in entries)
@@ -53,9 +53,9 @@ def test_audit_log_records_member_added(client):
 def test_audit_log_records_dataset_deleted(client):
     headers = _register(client)
     dataset = _upload_dataset(client, headers)
-    client.delete(f"/datasets/{dataset['id']}", headers=headers)
+    client.delete(f"/api/datasets/{dataset['id']}", headers=headers)
 
-    resp = client.get("/auth/team/audit-log", headers=headers)
+    resp = client.get("/api/auth/team/audit-log", headers=headers)
     entries = resp.json()
     deleted = [e for e in entries if e["action"] == "dataset.deleted"]
     assert len(deleted) == 1
@@ -67,9 +67,9 @@ def test_audit_log_records_training_job_deleted(client):
     headers = _register(client)
     dataset = _upload_dataset(client, headers)
     job = _create_job(client, headers, dataset["id"]).json()
-    client.delete(f"/training/jobs/{job['id']}", headers=headers)
+    client.delete(f"/api/training/jobs/{job['id']}", headers=headers)
 
-    resp = client.get("/auth/team/audit-log", headers=headers)
+    resp = client.get("/api/auth/team/audit-log", headers=headers)
     entries = resp.json()
     assert any(e["action"] == "training_job.deleted" and e["target_id"] == job["id"] for e in entries)
 
@@ -85,7 +85,7 @@ def test_audit_log_records_training_job_deleted(client):
 def _upload_unsupervised_dataset(client, headers, name="d.csv", n=60):
     rows = "\n".join(f"{i},{i * 2},cat{i % 3}" for i in range(n))
     content = f"x1,x2,categorie\n{rows}\n".encode()
-    resp = client.post("/datasets", headers=headers, files={"file": (name, io.BytesIO(content), "text/csv")})
+    resp = client.post("/api/datasets", headers=headers, files={"file": (name, io.BytesIO(content), "text/csv")})
     return resp.json()
 
 
@@ -95,11 +95,11 @@ def test_audit_log_records_clustering_job_deleted(client):
     with patch("api.routers.clustering.training_queue") as mock_queue:
         mock_queue.enqueue.return_value.id = "fake-rq-id"
         job = client.post(
-            "/clustering/jobs", headers=headers, json={"dataset_id": dataset["id"], "feature_columns": ["x1", "x2"]}
+            "/api/clustering/jobs", headers=headers, json={"dataset_id": dataset["id"], "feature_columns": ["x1", "x2"]}
         ).json()
-    client.delete(f"/clustering/jobs/{job['id']}", headers=headers)
+    client.delete(f"/api/clustering/jobs/{job['id']}", headers=headers)
 
-    entries = client.get("/auth/team/audit-log", headers=headers).json()
+    entries = client.get("/api/auth/team/audit-log", headers=headers).json()
     assert any(e["action"] == "clustering_job.deleted" and e["target_id"] == job["id"] for e in entries)
 
 
@@ -109,11 +109,11 @@ def test_audit_log_records_dimensionality_job_deleted(client):
     with patch("api.routers.dimensionality.training_queue") as mock_queue:
         mock_queue.enqueue.return_value.id = "fake-rq-id"
         job = client.post(
-            "/dimensionality/jobs", headers=headers, json={"dataset_id": dataset["id"], "feature_columns": ["x1", "x2"]}
+            "/api/dimensionality/jobs", headers=headers, json={"dataset_id": dataset["id"], "feature_columns": ["x1", "x2"]}
         ).json()
-    client.delete(f"/dimensionality/jobs/{job['id']}", headers=headers)
+    client.delete(f"/api/dimensionality/jobs/{job['id']}", headers=headers)
 
-    entries = client.get("/auth/team/audit-log", headers=headers).json()
+    entries = client.get("/api/auth/team/audit-log", headers=headers).json()
     assert any(e["action"] == "dimensionality_job.deleted" and e["target_id"] == job["id"] for e in entries)
 
 
@@ -123,11 +123,11 @@ def test_audit_log_records_anomaly_job_deleted(client):
     with patch("api.routers.anomalies.training_queue") as mock_queue:
         mock_queue.enqueue.return_value.id = "fake-rq-id"
         job = client.post(
-            "/anomalies/jobs", headers=headers, json={"dataset_id": dataset["id"], "feature_columns": ["x1", "x2"]}
+            "/api/anomalies/jobs", headers=headers, json={"dataset_id": dataset["id"], "feature_columns": ["x1", "x2"]}
         ).json()
-    client.delete(f"/anomalies/jobs/{job['id']}", headers=headers)
+    client.delete(f"/api/anomalies/jobs/{job['id']}", headers=headers)
 
-    entries = client.get("/auth/team/audit-log", headers=headers).json()
+    entries = client.get("/api/auth/team/audit-log", headers=headers).json()
     assert any(e["action"] == "anomaly_job.deleted" and e["target_id"] == job["id"] for e in entries)
 
 
@@ -148,9 +148,9 @@ def test_audit_log_records_model_promotion(client, db_session):
     ))
     db_session.commit()
 
-    client.post(f"/training/jobs/{job['id']}/model/promote", headers=headers, json={"stage": "production"})
+    client.post(f"/api/training/jobs/{job['id']}/model/promote", headers=headers, json={"stage": "production"})
 
-    entries = client.get("/auth/team/audit-log", headers=headers).json()
+    entries = client.get("/api/auth/team/audit-log", headers=headers).json()
     promoted = [e for e in entries if e["action"] == "model.promoted"]
     assert len(promoted) == 1
     assert promoted[0]["details"]["stage"] == "production"
@@ -159,26 +159,26 @@ def test_audit_log_records_model_promotion(client, db_session):
 def test_audit_log_restricted_to_owner(client):
     headers = _register(client)
     client.post(
-        "/auth/team/members",
+        "/api/auth/team/members",
         headers=headers,
         json={"email": "membre@bureau.fr", "nom": "Membre", "password": "motdepasse123"},
     )
     member_login = client.post(
-        "/auth/login", data={"username": "membre@bureau.fr", "password": "motdepasse123"}
+        "/api/auth/login", data={"username": "membre@bureau.fr", "password": "motdepasse123"}
     ).json()
     member_headers = {"Authorization": f"Bearer {member_login['access_token']}"}
 
-    resp = client.get("/auth/team/audit-log", headers=member_headers)
+    resp = client.get("/api/auth/team/audit-log", headers=member_headers)
     assert resp.status_code == 403
 
 
 def test_audit_log_isolated_between_organizations(client):
     headers_a = _register(client, "a@bureau-a.fr", "Bureau A")
     dataset_a = _upload_dataset(client, headers_a, "a.csv")
-    client.delete(f"/datasets/{dataset_a['id']}", headers=headers_a)
+    client.delete(f"/api/datasets/{dataset_a['id']}", headers=headers_a)
 
     headers_b = _register(client, "b@bureau-b.fr", "Bureau B")
-    entries_b = client.get("/auth/team/audit-log", headers=headers_b).json()
+    entries_b = client.get("/api/auth/team/audit-log", headers=headers_b).json()
     assert not any(e["action"] == "dataset.deleted" for e in entries_b)
 
 

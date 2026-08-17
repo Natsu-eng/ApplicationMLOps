@@ -6,7 +6,7 @@ import io
 
 def _register(client, email="owner@bureau.fr", org="Bureau"):
     resp = client.post(
-        "/auth/register",
+        "/api/auth/register",
         json={"email": email, "nom": "Owner", "password": "motdepasse123", "organization_name": org},
     ).json()
     return {"Authorization": f"Bearer {resp['access_token']}"}
@@ -18,7 +18,7 @@ def _csv_file(content: str = "a,b\n1,2\n3,4\n"):
 
 def test_upload_csv_computes_schema(client):
     headers = _register(client)
-    resp = client.post("/datasets", headers=headers, files=_csv_file())
+    resp = client.post("/api/datasets", headers=headers, files=_csv_file())
     assert resp.status_code == 201
     body = resp.json()
     assert body["status"] == "ready"
@@ -34,10 +34,10 @@ def test_upload_blocked_after_too_many_attempts(client):
 
     headers = _register(client)
     limit = get_settings().upload_rate_limit_max_attempts
-    responses = [client.post("/datasets", headers=headers, files=_csv_file()) for _ in range(limit)]
+    responses = [client.post("/api/datasets", headers=headers, files=_csv_file()) for _ in range(limit)]
     assert all(r.status_code == 201 for r in responses)
 
-    blocked = client.post("/datasets", headers=headers, files=_csv_file())
+    blocked = client.post("/api/datasets", headers=headers, files=_csv_file())
     assert blocked.status_code == 429
     assert blocked.json()["detail"]["code"] == "TROP_DE_REQUETES"
 
@@ -45,7 +45,7 @@ def test_upload_blocked_after_too_many_attempts(client):
 def test_upload_rejects_unsupported_extension(client):
     headers = _register(client)
     resp = client.post(
-        "/datasets", headers=headers, files={"file": ("test.txt", io.BytesIO(b"hello"), "text/plain")}
+        "/api/datasets", headers=headers, files={"file": ("test.txt", io.BytesIO(b"hello"), "text/plain")}
     )
     assert resp.status_code == 400
     assert resp.json()["detail"]["code"] == "DATASET_FORMAT_NON_SUPPORTE"
@@ -53,7 +53,7 @@ def test_upload_rejects_unsupported_extension(client):
 
 def test_upload_rejects_empty_file(client):
     headers = _register(client)
-    resp = client.post("/datasets", headers=headers, files={"file": ("vide.csv", io.BytesIO(b""), "text/csv")})
+    resp = client.post("/api/datasets", headers=headers, files={"file": ("vide.csv", io.BytesIO(b""), "text/csv")})
     assert resp.status_code == 400
     assert resp.json()["detail"]["code"] == "DATASET_FICHIER_VIDE"
 
@@ -62,25 +62,25 @@ def test_dataset_isolation_between_organizations(client):
     headers_a = _register(client, "a@bureau-a.fr", "Bureau A")
     headers_b = _register(client, "b@bureau-b.fr", "Bureau B")
 
-    created = client.post("/datasets", headers=headers_a, files=_csv_file()).json()
+    created = client.post("/api/datasets", headers=headers_a, files=_csv_file()).json()
 
-    assert client.get("/datasets", headers=headers_b).json() == []
-    assert client.get(f"/datasets/{created['id']}", headers=headers_b).status_code == 404
+    assert client.get("/api/datasets", headers=headers_b).json() == []
+    assert client.get(f"/api/datasets/{created['id']}", headers=headers_b).status_code == 404
 
 
 def test_delete_removes_dataset(client):
     headers = _register(client)
-    created = client.post("/datasets", headers=headers, files=_csv_file()).json()
+    created = client.post("/api/datasets", headers=headers, files=_csv_file()).json()
 
-    assert client.delete(f"/datasets/{created['id']}", headers=headers).status_code == 204
-    assert client.get(f"/datasets/{created['id']}", headers=headers).status_code == 404
+    assert client.delete(f"/api/datasets/{created['id']}", headers=headers).status_code == 204
+    assert client.get(f"/api/datasets/{created['id']}", headers=headers).status_code == 404
 
 
 def test_preview_returns_sample_rows(client):
     headers = _register(client)
-    created = client.post("/datasets", headers=headers, files=_csv_file()).json()
+    created = client.post("/api/datasets", headers=headers, files=_csv_file()).json()
 
-    resp = client.get(f"/datasets/{created['id']}/preview", headers=headers)
+    resp = client.get(f"/api/datasets/{created['id']}/preview", headers=headers)
     assert resp.status_code == 200
     body = resp.json()
     assert body["columns"] == ["a", "b"]
@@ -89,9 +89,9 @@ def test_preview_returns_sample_rows(client):
 
 def test_eda_returns_stats_and_correlations(client):
     headers = _register(client)
-    created = client.post("/datasets", headers=headers, files=_csv_file()).json()
+    created = client.post("/api/datasets", headers=headers, files=_csv_file()).json()
 
-    resp = client.get(f"/datasets/{created['id']}/eda", headers=headers)
+    resp = client.get(f"/api/datasets/{created['id']}/eda", headers=headers)
     assert resp.status_code == 200
     body = resp.json()
     assert body["row_count"] == 2
@@ -112,10 +112,10 @@ def _richer_csv_file():
 
 def test_eda_with_target_column_includes_target_distribution(client):
     headers = _register(client)
-    created = client.post("/datasets", headers=headers, files=_richer_csv_file()).json()
+    created = client.post("/api/datasets", headers=headers, files=_richer_csv_file()).json()
 
     resp = client.get(
-        f"/datasets/{created['id']}/eda", headers=headers, params={"target_column": "cible"}
+        f"/api/datasets/{created['id']}/eda", headers=headers, params={"target_column": "cible"}
     )
     assert resp.status_code == 200
     assert resp.json()["target_distribution"] is not None
@@ -123,10 +123,10 @@ def test_eda_with_target_column_includes_target_distribution(client):
 
 def test_eda_rejects_unknown_target_column(client):
     headers = _register(client)
-    created = client.post("/datasets", headers=headers, files=_csv_file()).json()
+    created = client.post("/api/datasets", headers=headers, files=_csv_file()).json()
 
     resp = client.get(
-        f"/datasets/{created['id']}/eda", headers=headers, params={"target_column": "inexistante"}
+        f"/api/datasets/{created['id']}/eda", headers=headers, params={"target_column": "inexistante"}
     )
     assert resp.status_code == 400
     assert resp.json()["detail"]["code"] == "COLONNE_INTROUVABLE"
@@ -134,10 +134,10 @@ def test_eda_rejects_unknown_target_column(client):
 
 def test_feature_by_target_returns_groups(client):
     headers = _register(client)
-    created = client.post("/datasets", headers=headers, files=_richer_csv_file()).json()
+    created = client.post("/api/datasets", headers=headers, files=_richer_csv_file()).json()
 
     resp = client.get(
-        f"/datasets/{created['id']}/feature-by-target",
+        f"/api/datasets/{created['id']}/feature-by-target",
         headers=headers,
         params={"feature": "valeur", "target": "categorie"},
     )
@@ -148,10 +148,10 @@ def test_feature_by_target_returns_groups(client):
 
 def test_feature_by_target_rejects_non_numeric_feature(client):
     headers = _register(client)
-    created = client.post("/datasets", headers=headers, files=_richer_csv_file()).json()
+    created = client.post("/api/datasets", headers=headers, files=_richer_csv_file()).json()
 
     resp = client.get(
-        f"/datasets/{created['id']}/feature-by-target",
+        f"/api/datasets/{created['id']}/feature-by-target",
         headers=headers,
         params={"feature": "categorie", "target": "cible"},
     )
@@ -163,10 +163,10 @@ def test_feature_by_target_isolation_between_organizations(client):
     headers_a = _register(client, "a@bureau-a.fr", "Bureau A")
     headers_b = _register(client, "b@bureau-b.fr", "Bureau B")
 
-    created = client.post("/datasets", headers=headers_a, files=_richer_csv_file()).json()
+    created = client.post("/api/datasets", headers=headers_a, files=_richer_csv_file()).json()
 
     resp = client.get(
-        f"/datasets/{created['id']}/feature-by-target",
+        f"/api/datasets/{created['id']}/feature-by-target",
         headers=headers_b,
         params={"feature": "valeur", "target": "categorie"},
     )
@@ -175,19 +175,19 @@ def test_feature_by_target_isolation_between_organizations(client):
 
 def test_histogram_returns_numeric_bins(client):
     headers = _register(client)
-    created = client.post("/datasets", headers=headers, files=_csv_file()).json()
+    created = client.post("/api/datasets", headers=headers, files=_csv_file()).json()
 
-    resp = client.get(f"/datasets/{created['id']}/histogram", headers=headers, params={"column": "a"})
+    resp = client.get(f"/api/datasets/{created['id']}/histogram", headers=headers, params={"column": "a"})
     assert resp.status_code == 200
     assert resp.json()["kind"] == "numeric"
 
 
 def test_histogram_rejects_unknown_column(client):
     headers = _register(client)
-    created = client.post("/datasets", headers=headers, files=_csv_file()).json()
+    created = client.post("/api/datasets", headers=headers, files=_csv_file()).json()
 
     resp = client.get(
-        f"/datasets/{created['id']}/histogram", headers=headers, params={"column": "inexistante"}
+        f"/api/datasets/{created['id']}/histogram", headers=headers, params={"column": "inexistante"}
     )
     assert resp.status_code == 400
     assert resp.json()["detail"]["code"] == "COLONNE_INTROUVABLE"
@@ -195,10 +195,10 @@ def test_histogram_rejects_unknown_column(client):
 
 def test_quality_check_returns_warnings_list(client):
     headers = _register(client)
-    created = client.post("/datasets", headers=headers, files=_csv_file()).json()
+    created = client.post("/api/datasets", headers=headers, files=_csv_file()).json()
 
     resp = client.get(
-        f"/datasets/{created['id']}/quality-check", headers=headers, params={"target_column": "b"}
+        f"/api/datasets/{created['id']}/quality-check", headers=headers, params={"target_column": "b"}
     )
     assert resp.status_code == 200
     body = resp.json()
@@ -207,10 +207,10 @@ def test_quality_check_returns_warnings_list(client):
 
 def test_quality_check_rejects_unknown_target_column(client):
     headers = _register(client)
-    created = client.post("/datasets", headers=headers, files=_csv_file()).json()
+    created = client.post("/api/datasets", headers=headers, files=_csv_file()).json()
 
     resp = client.get(
-        f"/datasets/{created['id']}/quality-check", headers=headers, params={"target_column": "inexistante"}
+        f"/api/datasets/{created['id']}/quality-check", headers=headers, params={"target_column": "inexistante"}
     )
     assert resp.status_code == 400
     assert resp.json()["detail"]["code"] == "COLONNE_INTROUVABLE"
@@ -220,10 +220,10 @@ def test_quality_check_isolation_between_organizations(client):
     headers_a = _register(client, "a@bureau-a.fr", "Bureau A")
     headers_b = _register(client, "b@bureau-b.fr", "Bureau B")
 
-    created = client.post("/datasets", headers=headers_a, files=_csv_file()).json()
+    created = client.post("/api/datasets", headers=headers_a, files=_csv_file()).json()
 
     resp = client.get(
-        f"/datasets/{created['id']}/quality-check", headers=headers_b, params={"target_column": "b"}
+        f"/api/datasets/{created['id']}/quality-check", headers=headers_b, params={"target_column": "b"}
     )
     assert resp.status_code == 404
 
@@ -240,10 +240,10 @@ def test_quality_check_without_target_column_returns_structural_warnings(client)
         f"C{i},42,{i}" for i in range(n)
     ) + "\n"
     created = client.post(
-        "/datasets", headers=headers, files={"file": ("d.csv", io.BytesIO(content.encode()), "text/csv")}
+        "/api/datasets", headers=headers, files={"file": ("d.csv", io.BytesIO(content.encode()), "text/csv")}
     ).json()
 
-    resp = client.get(f"/datasets/{created['id']}/quality-check", headers=headers)
+    resp = client.get(f"/api/datasets/{created['id']}/quality-check", headers=headers)
     assert resp.status_code == 200
     codes = {w["code"] for w in resp.json()["warnings"]}
     assert "colonne_constante" in codes
