@@ -907,6 +907,25 @@ export interface ModelRegistryResponse {
   entries: ModelRegistryEntry[];
 }
 
+// Lot 3 (correctif I1, AUDIT_DATALAB_2026-08-16.md §E.3) — verdict en
+// langage clair calculé côté serveur (services/model_verdict.py), jamais
+// recalculé côté frontend : mêmes règles partout (page Résultats, futures
+// extensions clustering/vision), un seul endroit à faire évoluer.
+export type VerdictLevel = "critique" | "attention" | "info";
+
+export interface VerdictClaim {
+  level: VerdictLevel;
+  code: string;
+  title: string;
+  explanation: string;
+  details: Record<string, unknown>;
+}
+
+export interface ModelVerdictData {
+  claims: VerdictClaim[];
+  next_action: string;
+}
+
 export interface MLModelDetail {
   id: number;
   training_job_id: number;
@@ -927,6 +946,9 @@ export interface MLModelDetail {
   permutation_importance: PermutationImportanceFeature[];
   calibration: Calibration | null;
   learning_curve: LearningCurveData | null;
+  // Lot 3 — voir ModelVerdictData ci-dessus. Toujours présent (calculé côté
+  // serveur à la volée, jamais persisté).
+  verdict: ModelVerdictData;
   // Lot 9 — registre de modèles versionné. `null` = jamais promu.
   stage: ModelStage;
   promoted_at: string | null;

@@ -367,9 +367,19 @@ def _regression_metrics(y_train, pred_train, y_test, pred_test) -> dict[str, flo
     }
 
 
-def _classification_metrics(y_test, pred_test, proba_test) -> dict[str, float]:
+def _classification_metrics(y_train, pred_train, y_test, pred_test, proba_test) -> dict[str, float]:
+    accuracy_train = float(accuracy_score(y_train, pred_train))
+    accuracy_test = float(accuracy_score(y_test, pred_test))
     metrics = {
-        "accuracy": float(accuracy_score(y_test, pred_test)),
+        "accuracy": accuracy_test,
+        # Écart train/test (Lot 3, correctif I1) — symétrique de `delta_r2`
+        # en régression, jusqu'ici absent : `pred_train` était déjà calculé
+        # inconditionnellement (voir `train_and_evaluate`) mais jeté sans
+        # être utilisé pour la classification. `services/model_verdict.py`
+        # en a besoin pour juger du surapprentissage, exactement comme il
+        # utilise `delta_r2` côté régression.
+        "accuracy_train": accuracy_train,
+        "delta_accuracy": float(accuracy_train - accuracy_test),
         "f1": float(f1_score(y_test, pred_test, average="weighted", zero_division=0)),
         "precision": float(precision_score(y_test, pred_test, average="weighted", zero_division=0)),
         "recall": float(recall_score(y_test, pred_test, average="weighted", zero_division=0)),
@@ -1135,7 +1145,7 @@ def train_and_evaluate(
         evaluation = _compute_regression_evaluation(y_test, pred_test, config.seed)
     else:
         proba_test = best_model.predict_proba(X_test_proc)
-        metrics = _classification_metrics(y_test, pred_test, proba_test)
+        metrics = _classification_metrics(y_train, pred_train, y_test, pred_test, proba_test)
         metrics["cv_score"] = float(cv_score)
         metrics["accuracy_bootstrap"] = _bootstrap_ci(y_test, pred_test, accuracy_score, config.seed)
         evaluation = _compute_classification_evaluation(y_test, pred_test, proba_test, class_names or [])

@@ -32,6 +32,7 @@ from services.ml_inference import InferenceError, load_bundle, predict_one
 from services.ml_registry import MODEL_REGISTRY
 from services.ml_task import detect_task_type
 from services.ml_training import selection_metric_label
+from services.model_verdict import compute_verdict
 
 _KNOWN_UPSTREAM_TYPES = {"datetime_decompose", "ratio", "numeric_coerce"}
 
@@ -153,6 +154,11 @@ class MLModelDetail(BaseModel):
     permutation_importance: List[dict[str, Any]] = []
     calibration: Optional[dict[str, Any]] = None
     learning_curve: Optional[dict[str, Any]] = None
+    # Lot 3 (correctif I1, AUDIT_DATALAB_2026-08-16.md §E.3) — verdict en
+    # langage clair, {"claims": [...], "next_action": "..."}, voir
+    # services/model_verdict.py. Toujours présent (calculé à la volée,
+    # jamais persisté — les règles peuvent évoluer sans backfill).
+    verdict: dict[str, Any]
     # Lot 9 — registre de modèles versionné. `None` = jamais promu.
     stage: Optional[str] = None
     promoted_at: Optional[datetime] = None
@@ -651,7 +657,32 @@ def get_training_job(job_id: int, current_user: User = Depends(get_current_user)
     return _to_summary(_get_org_job(job_id, current_user, db))
 
 
-def _to_model_detail(model: MLModel) -> MLModelDetail:
+def _to_model_detail(model: MLModel, db: Session) -> MLModelDetail:
+    metrics = json.loads(model.metrics_json)
+    evaluation = json.loads(model.evaluation_json) if model.evaluation_json else {}
+    calibration = json.loads(model.calibration_json) if model.calibration_json else None
+    learning_curve = json.loads(model.learning_curve_json) if model.learning_curve_json else None
+    cqr = json.loads(model.cqr_json) if model.cqr_json else None
+    # Lot 3 (correctif I1) — même requête que GET /jobs/{id}/candidates,
+    # nécessaire ici pour juger l'écart gagnant/2ᵉ (services/model_verdict.py) ;
+    # [] pour un job antérieur au Lot D (jamais de ModelCandidate), le
+    # verdict omet alors simplement cette affirmation, pas d'erreur.
+    candidates = [
+        {
+            "algorithm": row.algorithm,
+            "rank": row.rank,
+            "selection_score": row.selection_score,
+            "fold_scores": json.loads(row.fold_scores_json) if row.fold_scores_json else None,
+        }
+        for row in (
+            db.query(ModelCandidate)
+            .filter(ModelCandidate.training_job_id == model.training_job_id, ModelCandidate.organization_id == model.organization_id)
+            .order_by(ModelCandidate.rank.asc())
+            .all()
+        )
+    ]
+    verdict = compute_verdict(model.task_type, metrics, evaluation, candidates, calibration, learning_curve, cqr)
+
     return MLModelDetail(
         id=model.id,
         training_job_id=model.training_job_id,
@@ -660,16 +691,17 @@ def _to_model_detail(model: MLModel) -> MLModelDetail:
         target_column=model.target_column,
         feature_columns=json.loads(model.feature_columns_json),
         feature_schema=json.loads(model.feature_schema_json) if model.feature_schema_json else [],
-        metrics=json.loads(model.metrics_json),
+        metrics=metrics,
         shap_summary=json.loads(model.shap_summary_json) if model.shap_summary_json else [],
-        cqr=json.loads(model.cqr_json) if model.cqr_json else None,
+        cqr=cqr,
         model_card=json.loads(model.model_card_json) if model.model_card_json else {},
-        evaluation=json.loads(model.evaluation_json) if model.evaluation_json else {},
+        evaluation=evaluation,
         feature_engineering=json.loads(model.feature_engineering_json) if model.feature_engineering_json else None,
         shap_beeswarm=json.loads(model.shap_beeswarm_json) if model.shap_beeswarm_json else {},
         permutation_importance=json.loads(model.permutation_importance_json) if model.permutation_importance_json else [],
-        calibration=json.loads(model.calibration_json) if model.calibration_json else None,
-        learning_curve=json.loads(model.learning_curve_json) if model.learning_curve_json else None,
+        calibration=calibration,
+        learning_curve=learning_curve,
+        verdict=verdict,
         stage=model.stage,
         promoted_at=model.promoted_at,
         created_at=model.created_at,
@@ -684,7 +716,7 @@ def get_training_job_model(job_id: int, current_user: User = Depends(get_current
             status_code=status.HTTP_409_CONFLICT,
             detail={"code": "MODELE_NON_DISPONIBLE", "message": "Cet entraînement n'a pas encore produit de modèle"},
         )
-    return _to_model_detail(job.model)
+    return _to_model_detail(job.model, db)
 
 
 @router.post("/jobs/{job_id}/model/promote", response_model=MLModelDetail)
@@ -744,7 +776,7 @@ def promote_model(
     )
     db.commit()
     db.refresh(model)
-    return _to_model_detail(model)
+    return _to_model_detail(model, db)
 
 
 @router.get("/jobs/{job_id}/model/export")
