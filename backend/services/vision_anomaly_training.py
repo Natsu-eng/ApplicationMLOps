@@ -1,4 +1,4 @@
-"""Moteur d'entraînement — détection d'anomalies visuelles MVTec AD (pilier
+"""Moteur d'entraînement — détection d'anomalies visuelles (structure normal/défaut, pilier
 Vision, Lot 15 sous-lot C).
 
 Module séparé, même principe que `vision_classification_training.py` :

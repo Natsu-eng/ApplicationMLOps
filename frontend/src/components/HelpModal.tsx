@@ -95,7 +95,7 @@ const VISION_STEPS: HelpStep[] = [
     color: "violet",
     title: "2. Détectez les défauts visuels",
     description:
-      "Structure MVTec AD (images normales pour l'entraînement, normales + défectueuses pour le test) : le modèle apprend à reconstruire une image normale, un écart important signale un défaut. Le seuil de détection est calibré automatiquement, jamais deviné.",
+      "Structure normal/défaut (images normales pour l'entraînement, normales + défectueuses pour le test) : le modèle apprend à reconstruire une image normale, un écart important signale un défaut. Le seuil de détection est calibré automatiquement, jamais deviné.",
   },
 ];
 

@@ -35,6 +35,7 @@ from services.audit import log_action
 from services.job_quota import ALL_JOB_MODELS, raise_if_quota_exceeded
 from services.job_watchdog import reconcile_stale_jobs
 from services.vision_classification_registry import CLASSIFICATION_BACKBONE_REGISTRY, DEFAULT_BACKBONE_ID
+from services.vision_classification_training import AUGMENTATION_PRESET_IDS, DEFAULT_AUGMENTATION_PRESET
 from services.vision_gradcam import GradCamError, explain_classification_prediction
 
 router = APIRouter(prefix="/vision/classification", tags=["vision"])
@@ -56,6 +57,14 @@ class VisionClassificationJobCreate(BaseModel):
     freeze_backbone: bool = True
     unfreeze_after_epoch: Optional[int] = Field(default=None, ge=0)
     seed: Optional[int] = None
+    # Lot 6A (correctif I8, AUDIT_DATALAB_2026-08-16.md §I8) — voir
+    # services/vision_classification_training.py::ClassificationConfig
+    # pour la justification de chaque défaut.
+    class_weighting: bool = True
+    early_stopping_patience: Optional[int] = Field(default=3, ge=1, le=10)
+    use_lr_scheduler: bool = True
+    # Lot 6A (correctif I9) — voir AUGMENTATION_PRESET_IDS.
+    augmentation_preset: str = DEFAULT_AUGMENTATION_PRESET
 
 
 class BackboneOut(BaseModel):
@@ -177,6 +186,14 @@ def create_vision_classification_job(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={"code": "BACKBONE_INCONNU", "message": f"Backbone inconnu : {body.backbone_id}"},
         )
+    if body.augmentation_preset not in AUGMENTATION_PRESET_IDS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "code": "AUGMENTATION_PRESET_INCONNU",
+                "message": f"Preset d'augmentation inconnu : {body.augmentation_preset!r}",
+            },
+        )
 
     reconcile_stale_jobs(
         db, current_user.organization_id, _settings.stale_job_timeout_minutes, model=VisionClassificationJob
@@ -216,6 +233,10 @@ def create_vision_classification_job(
         "freeze_backbone": body.freeze_backbone,
         "unfreeze_after_epoch": body.unfreeze_after_epoch,
         "seed": body.seed if body.seed is not None else _settings.model_seed,
+        "class_weighting": body.class_weighting,
+        "early_stopping_patience": body.early_stopping_patience,
+        "use_lr_scheduler": body.use_lr_scheduler,
+        "augmentation_preset": body.augmentation_preset,
     }
 
     job = VisionClassificationJob(

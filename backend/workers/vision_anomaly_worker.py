@@ -1,5 +1,5 @@
 """Fonction exécutée par le worker RQ pour un job de détection d'anomalies
-visuelles MVTec AD — même process worker que `vision_classification_worker.py`
+visuelles (structure normal/défaut) — même process worker que `vision_classification_worker.py`
 (une seule file `training_queue`, un seul worker physique CPU). Mêmes
 conventions : session DB propre, progression persistée à chaque étape,
 `_user_safe_error_message` copié (pas importé)."""
@@ -68,7 +68,7 @@ def run_vision_anomaly_job(job_id: int) -> None:
                 raise TrainingAbortedError("Dataset d'images introuvable ou non prêt")
             if dataset.structure_type != "mvtec_ad":
                 raise TrainingAbortedError(
-                    "Ce dataset n'a pas une structure MVTec AD (train/good + test/good + test/<defaut>) — "
+                    "Ce dataset n'a pas une structure normal/défaut (train/good + test/good + test/<defaut>) — "
                     "un dataset de classification ne peut pas être utilisé pour la détection d'anomalies visuelles"
                 )
 

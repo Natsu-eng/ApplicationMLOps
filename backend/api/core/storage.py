@@ -75,7 +75,7 @@ def vision_dataset_dir(organization_id: int, dataset_id: int) -> Path:
     strictement croissante), mais un bug réel a été trouvé en test (SQLite,
     séquence qui redémarre à 1 après `drop_all`/`create_all` entre deux
     tests) où un id réutilisé héritait silencieusement des fichiers d'un
-    dataset précédent (classes MVTec AD mélangées à une classification)."""
+    dataset précédent (classes normal/défaut mélangées à une classification)."""
     target_dir = VISION_DATASETS_DIR / str(organization_id) / str(dataset_id)
     shutil.rmtree(target_dir, ignore_errors=True)
     target_dir.mkdir(parents=True, exist_ok=True)
@@ -97,7 +97,7 @@ def vision_classification_model_file_path(organization_id: int, job_id: int) -> 
 
 def vision_anomaly_model_file_path(organization_id: int, job_id: int) -> Path:
     """Même isolation que `vision_classification_model_file_path` — Lot 15
-    sous-lot C (détection d'anomalies visuelles MVTec AD)."""
+    sous-lot C (détection d'anomalies visuelles, structure normal/défaut)."""
     org_dir = MODELS_DIR / str(organization_id) / "vision_anomaly"
     org_dir.mkdir(parents=True, exist_ok=True)
     return org_dir / f"{job_id}.pt"

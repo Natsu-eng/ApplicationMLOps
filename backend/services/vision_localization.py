@@ -25,7 +25,7 @@ Corrige directement 3 des 9 bugs critiques déjà documentés dans
 (retour utilisateur direct) : `encode_heatmap_png` produisait un PNG en
 NIVEAUX DE GRIS, jamais la carte de chaleur rouge/bleu standard attendue
 pour du Grad-CAM (Selvaraju et al. 2017), et les deux usages (Grad-CAM,
-anomalies visuelles MVTec AD) affichaient la heatmap et l'image source côte
+anomalies visuelles, structure normal/défaut) affichaient la heatmap et l'image source côte
 à côte plutôt que superposées. `_apply_colormap` (palette "jet" — bleu =
 faible, rouge = fort) et `overlay_heatmap_on_image` corrigent les deux à la
 fois, une seule fois, puisque les deux usages partagent ce module.

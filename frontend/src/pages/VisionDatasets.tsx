@@ -11,9 +11,14 @@ import { useConfirmAction } from "../hooks/useConfirmAction";
 import { VisionDatasetExplorer } from "../components/vision/VisionDatasetExplorer";
 import { formatDateTime } from "../utils/format";
 
+// "mvtec_ad" reste la valeur technique stockée en base (structure_type,
+// jamais renommée — voir DECISIONS.md D0.3/D6A.x) : seul le LIBELLÉ
+// affiché change, la structure détectée (train/good + test/good +
+// test/<défaut>) est générique, pas exclusive au jeu de données industriel
+// MVTec AD au sens strict.
 const STRUCTURE_LABELS: Record<string, string> = {
   classification: "Classification",
-  mvtec_ad: "MVTec AD",
+  mvtec_ad: "Normal / défaut",
 };
 
 /** Page "Mes données Vision" (Lot 16E) — jusqu'ici absente : la gestion des
@@ -32,6 +37,7 @@ export default function VisionDatasets() {
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [exploring, setExploring] = useState<VisionDatasetDetail | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const folderInputRef = useRef<HTMLInputElement>(null);
   const confirmDelete = useConfirmAction<number>();
 
   const load = useCallback(() => {
@@ -45,7 +51,15 @@ export default function VisionDatasets() {
     load();
   }, [load]);
 
-  async function handleFiles(files: FileList | null) {
+  useEffect(() => {
+    // `webkitdirectory`/`directory` : attributs non standard, absents du
+    // typage JSX de React — posés impérativement plutôt qu'un cast de
+    // props (même résultat, jamais besoin de `as any` sur le JSX).
+    folderInputRef.current?.setAttribute("webkitdirectory", "");
+    folderInputRef.current?.setAttribute("directory", "");
+  }, []);
+
+  async function handleArchiveFiles(files: FileList | null) {
     const file = files?.[0];
     if (!file) return;
     setIsUploading(true);
@@ -61,10 +75,31 @@ export default function VisionDatasets() {
     }
   }
 
+  // Lot 6A (correctif I9/import général) — sélection d'un DOSSIER entier
+  // (input `webkitdirectory`, pas de glisser-déposer : la traversée d'une
+  // arborescence de dossiers déposée exigerait l'API DataTransferItem
+  // (`webkitGetAsEntry`), un chantier séparé — le bouton "Importer un
+  // dossier" reste le chemin principal, robuste sur tous les navigateurs
+  // qui supportent `webkitdirectory`).
+  async function handleFolderFiles(files: FileList | null) {
+    if (!files || files.length === 0) return;
+    setIsUploading(true);
+    setUploadError(null);
+    try {
+      await api.visionDatasets.uploadFolder(Array.from(files));
+      load();
+    } catch (err) {
+      setUploadError(err instanceof ApiError ? err.message : "Échec de l'upload");
+    } finally {
+      setIsUploading(false);
+      if (folderInputRef.current) folderInputRef.current.value = "";
+    }
+  }
+
   function onDrop(event: DragEvent<HTMLDivElement>) {
     event.preventDefault();
     setIsDragging(false);
-    handleFiles(event.dataTransfer.files);
+    handleArchiveFiles(event.dataTransfer.files);
   }
 
   async function handleDelete(id: number) {
@@ -136,7 +171,7 @@ export default function VisionDatasets() {
       <PageHeader
         eyebrow="Vision"
         title="Mes données"
-        description="Importez, explorez et gérez vos datasets d'images — dossiers de classes pour la classification, ou structure MVTec AD pour la détection d'anomalies visuelles."
+        description="Importez, explorez et gérez vos datasets d'images — dossiers de classes pour la classification, ou structure normal/défaut (train/good + test/good + test/<défaut>) pour la détection d'anomalies visuelles."
         icon={Database}
         color="teal"
       />
@@ -150,16 +185,26 @@ export default function VisionDatasets() {
         onDragLeave={() => setIsDragging(false)}
         onDrop={onDrop}
       >
-        <input ref={fileInputRef} type="file" accept=".zip" className="hidden" onChange={(e) => handleFiles(e.target.files)} />
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".zip,.tar,.tar.gz,.tgz"
+          className="hidden"
+          onChange={(e) => handleArchiveFiles(e.target.files)}
+        />
+        <input ref={folderInputRef} type="file" multiple className="hidden" onChange={(e) => handleFolderFiles(e.target.files)} />
         <UploadCloud className="text-muted-foreground flex-shrink-0" size={20} />
         <div className="min-w-0 flex-1">
-          <p className="text-sm text-foreground">Glissez une archive .zip ici, ou parcourez</p>
+          <p className="text-sm text-foreground">Glissez une archive (.zip, .tar, .tar.gz) ici, ou parcourez</p>
           <p className="text-xs text-muted-foreground">
             Structure détectée automatiquement — un dossier par classe, ou train/good + test/good + test/&lt;défaut&gt;
           </p>
         </div>
         <Button variant="secondary" size="sm" type="button" onClick={() => fileInputRef.current?.click()} disabled={isUploading} className="flex-shrink-0">
           {isUploading ? "Envoi…" : "Parcourir"}
+        </Button>
+        <Button variant="secondary" size="sm" type="button" onClick={() => folderInputRef.current?.click()} disabled={isUploading} className="flex-shrink-0">
+          Importer un dossier
         </Button>
       </Card>
 

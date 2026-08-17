@@ -46,7 +46,7 @@ def _classification_zip_bytes(n_per_class=8, n_classes=2) -> bytes:
 def _upload_vision_dataset(client, headers, content=None, name="dataset.zip"):
     content = content if content is not None else _classification_zip_bytes()
     return client.post(
-        "/vision/datasets", headers=headers, files={"file": (name, io.BytesIO(content), "application/zip")}
+        "/vision/datasets", headers=headers, files={"files": (name, io.BytesIO(content), "application/zip")}
     ).json()
 
 
@@ -63,8 +63,11 @@ def test_list_backbones(client):
     resp = client.get("/vision/classification/backbones", headers=headers)
     assert resp.status_code == 200
     ids = {b["id"] for b in resp.json()}
-    assert "mobilenet_v3_small" in ids
-    assert "resnet18" in ids
+    # Lot 6A — registre étendu de 2 à 7 backbones (voir DECISIONS.md).
+    assert ids == {
+        "mobilenet_v3_small", "mobilenet_v3_large", "resnet18", "resnet34",
+        "efficientnet_b0", "shufflenet_v2", "densenet121",
+    }
 
 
 def test_create_job_enqueues_and_returns_queued(client):
@@ -83,6 +86,32 @@ def test_create_job_rejects_unknown_backbone(client):
     resp = _create_job(client, headers, dataset["id"], backbone_id="resnet152")
     assert resp.status_code == 400
     assert resp.json()["detail"]["code"] == "BACKBONE_INCONNU"
+
+
+def test_create_job_rejects_unknown_augmentation_preset(client):
+    headers = _register(client)
+    dataset = _upload_vision_dataset(client, headers)
+    resp = _create_job(client, headers, dataset["id"], augmentation_preset="extreme")
+    assert resp.status_code == 400
+    assert resp.json()["detail"]["code"] == "AUGMENTATION_PRESET_INCONNU"
+
+
+def test_create_job_defaults_to_standard_augmentation(client, db_session):
+    import json as _json
+
+    from api.core.models import VisionClassificationJob
+
+    headers = _register(client)
+    dataset = _upload_vision_dataset(client, headers)
+    with patch("api.routers.vision_classification.training_queue") as mock_queue:
+        mock_queue.enqueue.return_value.id = "fake-rq-id"
+        job_id = client.post(
+            "/vision/classification/jobs", headers=headers,
+            json={"vision_dataset_id": dataset["id"], "num_epochs": 1, "batch_size": 4},
+        ).json()["id"]
+
+    job = db_session.query(VisionClassificationJob).filter(VisionClassificationJob.id == job_id).first()
+    assert _json.loads(job.config_json)["augmentation_preset"] == "standard"
 
 
 def test_create_job_rejects_epochs_out_of_range(client):

@@ -99,3 +99,25 @@ def test_all_registered_backbones_support_gradcam():
         model = spec.build_model(2, 0.3)
         target = spec.gradcam_target_layer(model)
         assert target is not None
+
+
+# ── Lot 6A — nouveaux backbones : Grad-CAM bout-en-bout sur les motifs de
+# gradcam_target_layer génuinement nouveaux (pas seulement "n'est pas None"
+# comme ci-dessus) — `.layer4` (famille resnet) et `.conv5` (shufflenet).
+# Le motif `.features` (mobilenet/efficientnet/densenet) est déjà couvert
+# bout-en-bout par `trained_artifact` (mobilenet_v3_small) ci-dessus.
+
+
+@pytest.mark.parametrize("backbone_id", ["resnet18", "shufflenet_v2"])
+def test_explain_produces_a_non_degenerate_heatmap_for_new_backbones(tmp_path, backbone_id):
+    _write_classification_dataset(tmp_path)
+    config = ClassificationConfig(backbone_id=backbone_id, num_epochs=1, batch_size=4, freeze_backbone=True)
+    result = train_and_evaluate_classification(tmp_path, config, lambda step, pct: None)
+
+    sample_image_path = tmp_path / "rouge" / "0.png"
+    with Image.open(sample_image_path) as image:
+        explanation = explain_classification_prediction(result.model_artifact, image)
+
+    raw = base64.b64decode(explanation.heatmap_png.split(",", 1)[1])
+    arr = np.array(Image.open(io.BytesIO(raw)))
+    assert arr.std() > 0

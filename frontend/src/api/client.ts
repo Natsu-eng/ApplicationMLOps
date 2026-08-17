@@ -113,6 +113,31 @@ async function uploadFile<T>(path: string, file: File): Promise<T> {
   return uploadFileWithFields<T>(path, file, {});
 }
 
+/** Lot 6A — plusieurs fichiers sous le MÊME champ "files" (FastAPI
+ * `List[UploadFile] = File(...)` les agrège automatiquement) : un seul
+ * fichier archive (`api.visionDatasets.upload`) ou tous les fichiers d'un
+ * dossier (`api.visionDatasets.uploadFolder`, chemins relatifs portés par
+ * `webkitRelativePath`, voir VisionDatasets.tsx). */
+async function uploadFiles<T>(path: string, files: File[]): Promise<T> {
+  const token = getToken();
+  const formData = new FormData();
+  for (const file of files) {
+    // 3ᵉ argument (filename) explicite : pour un import de dossier,
+    // `file.webkitRelativePath` (ex. "mon_dataset/chat/1.png") porte le
+    // chemin complet — `file.name` seul ("1.png") perdrait la hiérarchie
+    // de classes que le backend a besoin de voir.
+    formData.append("files", file, file.webkitRelativePath || file.name);
+  }
+  const res = await fetch(`${BASE_URL}${path}`, {
+    method: "POST",
+    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+    body: formData,
+  });
+  if (res.status === 401) handleUnauthorized();
+  if (!res.ok) throw await extractError(res);
+  return res.json() as Promise<T>;
+}
+
 /** Variante avec champs de formulaire additionnels (ex. `target_label` pour
  * Grad-CAM, `POST /vision/classification/jobs/{id}/explain`) — même
  * contrainte Content-Type que `uploadFile`. */
@@ -593,6 +618,9 @@ export interface VisionValidationReport {
 export interface VisionDatasetDetail extends VisionDatasetSummary {
   class_distribution: Record<string, number>;
   validation_report: VisionValidationReport;
+  // Lot 6A (correctif I9) — absent (null) pour un dataset "mvtec_ad"
+  // (l'augmentation d'images ne concerne que la classification).
+  recommended_augmentation_preset: AugmentationPreset | null;
 }
 
 export interface VisionDatasetImageList {
@@ -606,6 +634,10 @@ export interface VisionBackbone {
   label: string;
 }
 
+// Lot 6A (correctif I9) — "standard" reproduit l'augmentation historique
+// (seule option avant ce lot), voir services/vision_classification_training.py.
+export type AugmentationPreset = "aucune" | "legere" | "standard" | "forte";
+
 export interface VisionClassificationJobCreatePayload {
   vision_dataset_id: number;
   backbone_id?: string;
@@ -616,6 +648,13 @@ export interface VisionClassificationJobCreatePayload {
   freeze_backbone?: boolean;
   unfreeze_after_epoch?: number | null;
   seed?: number;
+  // Lot 6A (correctif I8) — voir ClassificationConfig côté backend pour la
+  // justification de chaque défaut.
+  class_weighting?: boolean;
+  early_stopping_patience?: number | null;
+  use_lr_scheduler?: boolean;
+  // Lot 6A (correctif I9).
+  augmentation_preset?: AugmentationPreset;
 }
 
 export interface VisionClassificationJobSummary {
@@ -1170,7 +1209,11 @@ export const api = {
 
   visionDatasets: {
     list: () => request<VisionDatasetSummary[]>("/vision/datasets"),
-    upload: (file: File) => uploadFile<VisionDatasetDetail>("/vision/datasets", file),
+    // Lot 6A — une seule archive (.zip/.tar/.tar.gz/.tgz) OU tous les
+    // fichiers d'un dossier sélectionné (voir uploadFiles/uploadFolder) :
+    // même endpoint côté backend, distingué par le nombre de fichiers reçus.
+    upload: (file: File) => uploadFiles<VisionDatasetDetail>("/vision/datasets", [file]),
+    uploadFolder: (files: File[]) => uploadFiles<VisionDatasetDetail>("/vision/datasets", files),
     get: (id: number) => request<VisionDatasetDetail>(`/vision/datasets/${id}`),
     listImages: (id: number, className: string) =>
       request<VisionDatasetImageList>(`/vision/datasets/${id}/images?class_name=${encodeURIComponent(className)}`),
