@@ -7,7 +7,6 @@ import {
   type VisionDatasetStructureType,
   type VisionDatasetSummary,
 } from "../../api/client";
-import { Card } from "../ui/Card";
 import { Button } from "../ui/Button";
 import { Select } from "../ui/Select";
 import { VisionDatasetExplorer } from "./VisionDatasetExplorer";
@@ -100,8 +99,12 @@ export function VisionDatasetPicker({
 
   return (
     <div className="space-y-3">
-      <Card
-        className={`p-4 border-dashed flex items-center gap-4 transition-colors ${isDragging ? "border-primary/60 bg-primary/5" : ""}`}
+      {/* Filet (pas une Card) — ce sélecteur est toujours intégré DANS la Card
+          du formulaire appelant (Lot 2A correctif 3) : une Card ici créerait
+          une carte dans la carte. Une bordure pointillée à faible opacité
+          suffit à signaler la zone de dépôt sans dupliquer le chrome. */}
+      <div
+        className={`rounded-card border border-dashed border-border/70 p-4 flex items-center gap-4 transition-colors ${isDragging ? "border-primary/60 bg-primary/5" : ""}`}
         onDragOver={(e) => {
           e.preventDefault();
           setIsDragging(true);
@@ -131,7 +134,7 @@ export function VisionDatasetPicker({
         >
           {isUploading ? "Envoi…" : "Parcourir"}
         </Button>
-      </Card>
+      </div>
 
       {datasets.length > 0 && (
         <div>

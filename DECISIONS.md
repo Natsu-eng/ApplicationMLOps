@@ -525,3 +525,34 @@ conteneurs et hiérarchie de sections page par page (au-delà de ce que
 les primitives déjà corrigées appliquent automatiquement), vérification
 visuelle par l'utilisateur sur les 16 pages comme cela a été fait pour
 Dashboard.
+
+### D2.6 — Audit du nesting de conteneurs : un seul cas réel trouvé, corrigé
+
+**Vérifié, pas supposé** : plutôt que de retravailler visuellement les 16
+pages à l'aveugle, audit systématique des 82 usages de `Card` (17
+fichiers) pour trouver où l'anti-motif "carte dans une carte" existe
+RÉELLEMENT, plutôt que de le supposer partout par précaution.
+
+**Trouvé** : un seul cas, dupliqué à deux endroits. `VisionDatasetPicker`
+(`components/vision/VisionDatasetPicker.tsx`), partagé par
+`VisionClassification.tsx` et `VisionAnomalies.tsx`, enveloppait sa zone
+de dépôt (drag-and-drop ZIP) dans sa propre `<Card>` — et les deux pages
+appelantes enveloppent déjà tout leur formulaire de configuration dans
+une `<Card>`. Résultat : une carte bordée+ombrée dans une carte
+bordée+ombrée, exactement le motif visé par le correctif 3.
+**Retenu** : la zone de dépôt devient un `<div>` avec un simple filet
+pointillé à faible opacité (`border border-dashed border-border/70`,
+sans `shadow-card` ni `bg-card` propres — elle hérite du fond de la Card
+parente), conformément au principe "la carte est l'exception qui signale
+un regroupement, pas le conteneur par défaut". L'état actif au survol
+d'un fichier glissé (`border-primary/60 bg-primary/5`) est conservé
+inchangé.
+**Écarté** : retravailler `Card.tsx` lui-même ou les 14 autres pages —
+l'audit n'y a trouvé AUCUNE carte imbriquée (toutes les cartes sont des
+frères dans une grille/pile), confirmant que le système de cartes du
+Lot 2A n'a pas de défaut structurel généralisé ; c'était un usage
+ponctuel d'un composant partagé, pas un problème de primitive.
+**Remise en cause si** : un futur composant partagé réintroduit ce motif
+(une Card à l'intérieur d'un composant destiné à être imbriqué dans une
+page qui a elle-même une Card) — vérifier au moment de l'écrire, pas
+après coup.
