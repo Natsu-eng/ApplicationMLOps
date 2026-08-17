@@ -540,3 +540,44 @@ mauvais étiquetage de LA fonctionnalité elle-même.
 **Remise en cause si** : un besoin réel de renommer aussi la valeur
 stockée apparaît (ex. rebranding produit) — migration de données
 dédiée à ce moment, jamais mélangée à un correctif de libellés.
+
+### D6A.7 — I10 : wizard 4 étapes (pas 5), stepper reconstruit avec les tokens corrigés plutôt que copié tel quel
+
+**Question** : `Training.tsx` sur CETTE branche (basée sur `main`, avant
+la branche `lot-2a-design-system` non fusionnée) porte encore le
+stepper D'AVANT ses propres correctifs UI trouvés en revue directe
+cette session (`overflow-x-auto` + boutons de défilement plutôt que
+`flex-wrap`, `bg-white text-white` cassant en thème sombre). Fallait-il
+porter fidèlement CE code (bug compris), ou la version déjà corrigée ?
+**Retenu** : reconstruit avec le pattern CORRIGÉ (`flex flex-wrap`,
+jamais de défilement + flèches ; `bg-card`/`text-primary-foreground`
+pour les pastilles, jamais `bg-white`/`text-white`) — les deux tokens
+existent déjà sur cette branche (vérifié dans `index.css` avant
+utilisation, pas supposé), aucune raison de réintroduire un bug déjà
+diagnostiqué et corrigé ailleurs dans une toute NOUVELLE page. `Training.tsx`
+lui-même non touché (hors périmètre de ce lot, vit sur une autre
+branche) — la convergence se fera à la fusion des branches.
+**Retenu aussi** : 4 étapes ("Données & modèle" / "Augmentation" / "Mode
+expert" / "Lancement"), pas 5 — Vision n'a pas d'équivalent à l'étape
+"Qualité des données" de `Training.tsx` (pas d'EDA sur des images).
+L'esprit du pattern (pastilles navigables, mode expert replié par
+défaut, récapitulatif avant lancement) est porté fidèlement ; le NOMBRE
+d'étapes de `Training.tsx` (5) était descriptif de SES étapes à lui,
+jamais une exigence universelle.
+**Retenu aussi** : le preset d'augmentation (I9) est pré-rempli avec la
+recommandation du dataset choisi (`recommended_augmentation_preset`),
+mais seulement tant que l'utilisateur n'a pas lui-même cliqué un preset
+(`augmentationTouched`) — change de dataset après coup ne doit jamais
+écraser un choix déjà fait explicitement.
+**Vérifié** : `tsc -b` (0 erreur), `eslint` (0 erreur, mêmes
+avertissements pré-existants sans rapport), `vite build` complet, build
+de production réussi. Contrat API vérifié champ par champ contre
+`VisionClassificationJobCreate` (backend) — tous les noms de champs du
+payload envoyé correspondent exactement.
+**Non vérifié visuellement** : aucun outil de capture d'écran
+disponible dans cet environnement au moment de ce lot (tenté avec
+Playwright, retiré à la demande explicite de l'utilisateur — "je teste
+moi-même"). Le rendu réel (espacement, retour à la ligne des cartes de
+preset, alignement de la pastille courante) n'a été vérifié que par les
+tokens/classes utilisés, jamais par une capture — à confirmer par
+l'utilisateur en conditions réelles.

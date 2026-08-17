@@ -1,14 +1,27 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { AlertCircle, Boxes, Loader2, PlayCircle, Sparkles, Target, Trash2 } from "lucide-react";
+import {
+  AlertCircle,
+  Boxes,
+  Check,
+  ChevronLeft,
+  ChevronRight,
+  Loader2,
+  PlayCircle,
+  Sparkles,
+  Target,
+  Trash2,
+} from "lucide-react";
 import { Line, LineChart, CartesianGrid, ResponsiveContainer, Tooltip as RechartsTooltip, XAxis, YAxis } from "recharts";
 import {
   ApiError,
   api,
+  type AugmentationPreset,
   type GradCamExplanation,
   type VisionBackbone,
   type VisionClassificationJobSummary,
   type VisionClassificationResult,
+  type VisionDatasetDetail,
   type VisionPredictionExample,
 } from "../api/client";
 import AppShell from "../components/AppShell";
@@ -26,6 +39,25 @@ import { VisionDatasetPicker } from "../components/vision/VisionDatasetPicker";
 import { VisionImage } from "../components/vision/VisionImage";
 import { useConfirmAction } from "../hooks/useConfirmAction";
 import { CHART_GRID_STROKE, CHART_SERIES_COLORS, CHART_TICK_STYLE_SM, CHART_TOOLTIP_STYLE } from "../theme/charts";
+
+/** Étapes du wizard horizontal (Lot 6A, correctif I10) — porte le pattern
+ * de `Training.tsx` (pastilles numérotées, navigation par étapes, mode
+ * expert replié par défaut) au pilier Vision, jusqu'ici asymétrique (un
+ * simple formulaire à plat). Pas de "Qualité des données" (pas d'EDA pour
+ * des images) — 4 étapes plutôt que 5, même esprit. */
+const STEP_LABELS = [
+  { number: 1, label: "Données & modèle" },
+  { number: 2, label: "Augmentation" },
+  { number: 3, label: "Mode expert" },
+  { number: 4, label: "Lancement" },
+];
+
+const AUGMENTATION_PRESET_INFO: Record<AugmentationPreset, { label: string; description: string }> = {
+  aucune: { label: "Aucune", description: "Images utilisées telles quelles, sans transformation." },
+  legere: { label: "Légère", description: "Retournement horizontal seulement." },
+  standard: { label: "Standard", description: "Retournement + légère rotation + variation de luminosité/contraste." },
+  forte: { label: "Forte", description: "Standard, en plus marqué, + décalage et mise à l'échelle aléatoires." },
+};
 
 const ACTIVE_STATUSES = new Set(["queued", "running"]);
 const POLL_INTERVAL_MS = 3000;
@@ -163,7 +195,7 @@ export default function VisionClassification() {
           Reprise de votre session…
         </div>
       ) : phase === "configure" ? (
-        <div className="max-w-2xl mx-auto">
+        <div className="max-w-3xl mx-auto">
           <ClassificationForm onJobCreated={openJob} />
         </div>
       ) : phase === "progress" && activeJob ? (
@@ -202,12 +234,48 @@ export default function VisionClassification() {
 
 function ClassificationForm({ onJobCreated }: { onJobCreated: (job: VisionClassificationJobSummary) => void }) {
   const [datasetId, setDatasetId] = useState<number | "">("");
+  const [datasetDetail, setDatasetDetail] = useState<VisionDatasetDetail | null>(null);
   const [backbones, setBackbones] = useState<VisionBackbone[]>([]);
   const [backboneId, setBackboneId] = useState("");
   const [numEpochs, setNumEpochs] = useState(8);
+  const [batchSize, setBatchSize] = useState(16);
+  const [learningRate, setLearningRate] = useState(1e-3);
+  const [dropoutRate, setDropoutRate] = useState(0.3);
   const [freezeBackbone, setFreezeBackbone] = useState(true);
+  const [unfreezeAfterEpoch, setUnfreezeAfterEpoch] = useState<number | "">("");
+  const [classWeighting, setClassWeighting] = useState(true);
+  const [earlyStoppingPatience, setEarlyStoppingPatience] = useState<number | "">(3);
+  const [useLrScheduler, setUseLrScheduler] = useState(true);
+  const [augmentationPreset, setAugmentationPreset] = useState<AugmentationPreset>("standard");
+  // Vrai tant que l'utilisateur n'a pas choisi lui-même un preset — permet
+  // à la recommandation (I9) de s'appliquer automatiquement au choix du
+  // dataset SANS écraser un choix déjà fait explicitement.
+  const [augmentationTouched, setAugmentationTouched] = useState(false);
+
+  // Mode expert (même esprit que Training.tsx/ExpertModePanel) — replié
+  // par défaut, chaque manette démarre à la même valeur que le mode
+  // guidé : l'activer sans rien changer ne modifie aucun résultat.
+  const [expertMode, setExpertMode] = useState(false);
+
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const [activeStep, setActiveStep] = useState(1);
+  const [maxReachedStep, setMaxReachedStep] = useState(1);
+
+  function goToStep(step: number) {
+    if (step <= maxReachedStep) setActiveStep(step);
+  }
+  function goNext() {
+    setActiveStep((s) => {
+      const next = Math.min(s + 1, STEP_LABELS.length);
+      setMaxReachedStep((m) => Math.max(m, next));
+      return next;
+    });
+  }
+  function goPrev() {
+    setActiveStep((s) => Math.max(s - 1, 1));
+  }
 
   useEffect(() => {
     api.visionClassification.backbones().then((list) => {
@@ -215,6 +283,19 @@ function ClassificationForm({ onJobCreated }: { onJobCreated: (job: VisionClassi
       if (list.length > 0) setBackboneId(list[0].id);
     });
   }, []);
+
+  function handleDatasetChange(id: number | "", detail: VisionDatasetDetail | null) {
+    setDatasetId(id);
+    setDatasetDetail(detail);
+    if (!augmentationTouched && detail?.recommended_augmentation_preset) {
+      setAugmentationPreset(detail.recommended_augmentation_preset);
+    }
+  }
+
+  function handleAugmentationChange(preset: AugmentationPreset) {
+    setAugmentationTouched(true);
+    setAugmentationPreset(preset);
+  }
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
@@ -226,7 +307,15 @@ function ClassificationForm({ onJobCreated }: { onJobCreated: (job: VisionClassi
         vision_dataset_id: datasetId,
         backbone_id: backboneId,
         num_epochs: numEpochs,
+        batch_size: batchSize,
+        learning_rate: learningRate,
+        dropout_rate: dropoutRate,
         freeze_backbone: freezeBackbone,
+        unfreeze_after_epoch: unfreezeAfterEpoch === "" ? null : unfreezeAfterEpoch,
+        class_weighting: classWeighting,
+        early_stopping_patience: earlyStoppingPatience === "" ? null : earlyStoppingPatience,
+        use_lr_scheduler: useLrScheduler,
+        augmentation_preset: augmentationPreset,
       });
       onJobCreated(job);
     } catch (err) {
@@ -236,66 +325,377 @@ function ClassificationForm({ onJobCreated }: { onJobCreated: (job: VisionClassi
     }
   }
 
+  const selectedBackboneLabel = backbones.find((b) => b.id === backboneId)?.label ?? "—";
+  const step1Valid = Boolean(datasetId && backboneId);
+
   return (
-    <Card className="p-5">
-      <form onSubmit={handleSubmit} className="space-y-4">
-        <div>
-          <label className="block text-sm text-muted-foreground mb-1.5">Dataset d'images</label>
-          <VisionDatasetPicker structureType="classification" value={datasetId} onChange={(id) => setDatasetId(id)} />
-        </div>
+    <form onSubmit={handleSubmit}>
+      <StepperNav steps={STEP_LABELS} activeStep={activeStep} maxReachedStep={maxReachedStep} onSelect={goToStep} />
 
-        {backbones.length > 0 && (
-          <div>
-            <label htmlFor="vc-backbone" className="block text-sm text-muted-foreground mb-1">
-              Modèle pré-entraîné (transfer learning)
-            </label>
-            <Select id="vc-backbone" value={backboneId} onChange={(e) => setBackboneId(e.target.value)}>
-              {backbones.map((b) => (
-                <option key={b.id} value={b.id}>
-                  {b.label}
-                </option>
-              ))}
-            </Select>
-          </div>
+      <Card className="p-5 mt-4">
+        {activeStep === 1 && (
+          <StepContent
+            title="Choisissez vos données et le modèle"
+            description="Sélectionnez un dataset d'images déjà classées par dossier, puis le modèle pré-entraîné à affiner."
+          >
+            <div>
+              <label className="block text-sm text-muted-foreground mb-1.5">Dataset d'images</label>
+              <VisionDatasetPicker structureType="classification" value={datasetId} onChange={handleDatasetChange} />
+            </div>
+
+            {backbones.length > 0 && (
+              <div>
+                <label htmlFor="vc-backbone" className="block text-sm text-muted-foreground mb-1">
+                  Modèle pré-entraîné (transfer learning)
+                </label>
+                <Select id="vc-backbone" value={backboneId} onChange={(e) => setBackboneId(e.target.value)}>
+                  {backbones.map((b) => (
+                    <option key={b.id} value={b.id}>
+                      {b.label}
+                    </option>
+                  ))}
+                </Select>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Un modèle plus léger (MobileNet) entraîne plus vite ; un modèle plus profond (ResNet,
+                  EfficientNet, DenseNet) peut être plus précis sur un dataset plus riche, au prix d'un
+                  entraînement plus long.
+                </p>
+              </div>
+            )}
+          </StepContent>
         )}
 
-        <div>
-          <label htmlFor="vc-epochs" className="block text-sm text-muted-foreground mb-1">
-            Nombre d'époques
-          </label>
-          <Input
-            id="vc-epochs"
-            type="number"
-            min={1}
-            max={30}
-            value={numEpochs}
-            onChange={(e) => setNumEpochs(Math.min(30, Math.max(1, Number(e.target.value) || 1)))}
+        {activeStep === 2 && (
+          <StepContent
+            title="Augmentation des données"
+            description="Diversifie artificiellement vos images d'entraînement (retournements, rotations légères...) pour réduire le sur-apprentissage. La recommandation est déjà sélectionnée — changez-la si besoin."
+          >
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {(Object.keys(AUGMENTATION_PRESET_INFO) as AugmentationPreset[]).map((preset) => {
+                const info = AUGMENTATION_PRESET_INFO[preset];
+                const isSelected = augmentationPreset === preset;
+                const isRecommended = datasetDetail?.recommended_augmentation_preset === preset;
+                return (
+                  <button
+                    key={preset}
+                    type="button"
+                    onClick={() => handleAugmentationChange(preset)}
+                    aria-pressed={isSelected}
+                    className={`text-left rounded-xl border p-3 transition-colors ${
+                      isSelected ? "border-primary/50 bg-primary/5" : "border-border hover:bg-muted"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-sm font-medium text-foreground">{info.label}</p>
+                      {isRecommended && <Badge variant="primary">Recommandé</Badge>}
+                    </div>
+                    <p className="text-xs text-muted-foreground mt-1">{info.description}</p>
+                  </button>
+                );
+              })}
+            </div>
+          </StepContent>
+        )}
+
+        {activeStep === 3 && (
+          <StepContent
+            title="Mode expert"
+            description="Par défaut, des réglages standards s'appliquent (pondération de classes, arrêt anticipé et taux d'apprentissage adaptatif déjà activés). Activez ce mode pour tout contrôler."
+          >
+            <div>
+              <label htmlFor="vc-epochs" className="block text-sm text-muted-foreground mb-1">
+                Nombre d'époques
+              </label>
+              <Input
+                id="vc-epochs"
+                type="number"
+                min={1}
+                max={30}
+                value={numEpochs}
+                onChange={(e) => setNumEpochs(Math.min(30, Math.max(1, Number(e.target.value) || 1)))}
+              />
+            </div>
+
+            <div className="flex items-center justify-between rounded-lg border border-border px-3 py-2.5">
+              <div>
+                <p className="text-sm text-foreground">Mode expert</p>
+                <p className="text-xs text-muted-foreground">
+                  Contrôle direct du taux d'apprentissage, de la taille de lot, du dégel progressif du tronc, de
+                  la pondération de classes, de l'arrêt anticipé et du scheduler.
+                </p>
+              </div>
+              <Switch checked={expertMode} onChange={setExpertMode} label="Mode expert" />
+            </div>
+
+            {expertMode && (
+              <>
+                <div className="flex items-center justify-between rounded-lg border border-border px-3 py-2.5">
+                  <div>
+                    <p className="text-sm text-foreground">Geler le tronc pré-entraîné</p>
+                    <p className="text-xs text-muted-foreground">
+                      Recommandé — seule la tête de classification est entraînée, plus rapide et plus fiable
+                      avec peu d'images.
+                    </p>
+                  </div>
+                  <Switch checked={freezeBackbone} onChange={setFreezeBackbone} label="Geler le tronc pré-entraîné" />
+                </div>
+
+                {freezeBackbone && (
+                  <div>
+                    <label htmlFor="vc-unfreeze" className="block text-sm text-muted-foreground mb-1">
+                      Dégeler à partir de l'époque <span className="text-muted-foreground">(optionnel)</span>
+                    </label>
+                    <Input
+                      id="vc-unfreeze"
+                      type="number"
+                      min={0}
+                      max={numEpochs - 1}
+                      placeholder="Jamais"
+                      value={unfreezeAfterEpoch}
+                      onChange={(e) => setUnfreezeAfterEpoch(e.target.value === "" ? "" : Number(e.target.value))}
+                    />
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Fine-tuning complet du tronc à partir de cette époque — affine le modèle pré-entraîné sur
+                      vos images, au prix d'un entraînement plus lent.
+                    </p>
+                  </div>
+                )}
+
+                <div>
+                  <label htmlFor="vc-batch-size" className="block text-sm text-muted-foreground mb-1">
+                    Taille de lot (batch size)
+                  </label>
+                  <Input
+                    id="vc-batch-size"
+                    type="number"
+                    min={1}
+                    max={128}
+                    value={batchSize}
+                    onChange={(e) => setBatchSize(Math.min(128, Math.max(1, Number(e.target.value) || 1)))}
+                  />
+                </div>
+
+                <div>
+                  <label htmlFor="vc-learning-rate" className="block text-sm text-muted-foreground mb-1">
+                    Taux d'apprentissage — {learningRate}
+                  </label>
+                  <input
+                    id="vc-learning-rate"
+                    type="range"
+                    min={0.0001}
+                    max={0.01}
+                    step={0.0001}
+                    value={learningRate}
+                    onChange={(e) => setLearningRate(Number(e.target.value))}
+                    className="w-full accent-primary"
+                  />
+                </div>
+
+                <div>
+                  <label htmlFor="vc-dropout" className="block text-sm text-muted-foreground mb-1">
+                    Dropout — {Math.round(dropoutRate * 100)} %
+                  </label>
+                  <input
+                    id="vc-dropout"
+                    type="range"
+                    min={0}
+                    max={0.9}
+                    step={0.05}
+                    value={dropoutRate}
+                    onChange={(e) => setDropoutRate(Number(e.target.value))}
+                    className="w-full accent-primary"
+                  />
+                </div>
+
+                <div className="flex items-center justify-between rounded-lg border border-border px-3 py-2.5">
+                  <div>
+                    <p className="text-sm text-foreground">Pondération de classes</p>
+                    <p className="text-xs text-muted-foreground">
+                      Corrige un dataset déséquilibré — sans elle, le modèle peut apprendre à toujours prédire
+                      la classe majoritaire.
+                    </p>
+                  </div>
+                  <Switch checked={classWeighting} onChange={setClassWeighting} label="Pondération de classes" />
+                </div>
+
+                <div className="flex items-center justify-between rounded-lg border border-border px-3 py-2.5">
+                  <div>
+                    <p className="text-sm text-foreground">Taux d'apprentissage adaptatif</p>
+                    <p className="text-xs text-muted-foreground">Réduit le taux d'apprentissage quand la progression stagne.</p>
+                  </div>
+                  <Switch checked={useLrScheduler} onChange={setUseLrScheduler} label="Taux d'apprentissage adaptatif" />
+                </div>
+
+                <div>
+                  <label htmlFor="vc-patience" className="block text-sm text-muted-foreground mb-1">
+                    Arrêt anticipé — patience (époques) <span className="text-muted-foreground">(optionnel)</span>
+                  </label>
+                  <Input
+                    id="vc-patience"
+                    type="number"
+                    min={1}
+                    max={10}
+                    placeholder="Désactivé"
+                    value={earlyStoppingPatience}
+                    onChange={(e) => setEarlyStoppingPatience(e.target.value === "" ? "" : Number(e.target.value))}
+                  />
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Arrête l'entraînement si aucune amélioration depuis ce nombre d'époques — économise du temps
+                    sans changer quel modèle est retenu (les meilleurs poids sont toujours conservés).
+                  </p>
+                </div>
+              </>
+            )}
+          </StepContent>
+        )}
+
+        {activeStep === 4 && (
+          <StepContent title="Prêt à lancer" description="Vérifiez le récapitulatif, puis lancez l'entraînement.">
+            <div className="rounded-xl border border-border bg-muted p-4">
+              <p className="text-xs uppercase tracking-wide text-muted-foreground mb-3">Récapitulatif</p>
+              <dl className="grid grid-cols-2 gap-y-2.5 text-sm">
+                <Fact label="Dataset" value={datasetDetail ? `${datasetDetail.n_images} images` : "—"} />
+                <Fact label="Modèle" value={selectedBackboneLabel} />
+                <Fact label="Époques" value={String(numEpochs)} />
+                <Fact label="Augmentation" value={AUGMENTATION_PRESET_INFO[augmentationPreset].label} />
+                <Fact label="Pondération de classes" value={classWeighting ? "Activée" : "Désactivée"} />
+                <Fact label="Arrêt anticipé" value={earlyStoppingPatience === "" ? "Désactivé" : `${earlyStoppingPatience} époques`} />
+              </dl>
+            </div>
+
+            {error && (
+              <div className="flex items-center gap-2 text-sm text-destructive bg-destructive/10 border border-destructive/20 rounded-lg px-3 py-2">
+                <AlertCircle size={15} className="flex-shrink-0" />
+                {error}
+              </div>
+            )}
+
+            <Button type="submit" disabled={!step1Valid || isSubmitting} className="w-full" size="md">
+              <PlayCircle size={16} />
+              {isSubmitting ? "Lancement…" : "Lancer l'entraînement"}
+            </Button>
+          </StepContent>
+        )}
+
+        <div className="flex items-center justify-between pt-5 mt-5 border-t border-border">
+          {activeStep > 1 ? (
+            <Button type="button" variant="secondary" size="sm" onClick={goPrev}>
+              <ChevronLeft size={14} />
+              Précédent
+            </Button>
+          ) : (
+            <span />
+          )}
+          {activeStep < STEP_LABELS.length && (
+            <Button type="button" size="sm" onClick={goNext} disabled={activeStep === 1 && !step1Valid}>
+              Continuer
+              <ChevronRight size={14} />
+            </Button>
+          )}
+        </div>
+      </Card>
+    </form>
+  );
+}
+
+/** Wizard horizontal (Lot 6A, correctif I10) — pastilles numérotées reliées
+ * par des chevrons, navigables (une étape déjà atteinte reste cliquable,
+ * jamais celles pas encore vues). `flex-wrap` plutôt qu'un défilement
+ * horizontal + flèches : jamais de contenu tronqué/caché sur petit écran,
+ * les pastilles passent simplement à la ligne suivante. */
+function StepperNav({
+  steps,
+  activeStep,
+  maxReachedStep,
+  onSelect,
+}: {
+  steps: { number: number; label: string }[];
+  activeStep: number;
+  maxReachedStep: number;
+  onSelect: (step: number) => void;
+}) {
+  return (
+    <nav aria-label="Étapes de l'entraînement" className="flex flex-wrap items-center gap-2">
+      {steps.map((step, i) => (
+        <div key={step.number} className="flex items-center gap-2">
+          <StepPill
+            number={step.number}
+            label={step.label}
+            state={step.number < activeStep ? "done" : step.number === activeStep ? "current" : "pending"}
+            current={step.number === activeStep}
+            disabled={step.number > maxReachedStep}
+            onClick={() => onSelect(step.number)}
           />
+          {i < steps.length - 1 && <ChevronRight size={14} className="text-muted-foreground/50 flex-shrink-0" aria-hidden="true" />}
         </div>
+      ))}
+    </nav>
+  );
+}
 
-        <div className="flex items-center justify-between rounded-lg border border-border px-3 py-2.5">
-          <div>
-            <p className="text-sm text-foreground">Geler le tronc pré-entraîné</p>
-            <p className="text-xs text-muted-foreground">
-              Recommandé — seule la tête de classification est entraînée, plus rapide et plus fiable avec peu
-              d'images.
-            </p>
-          </div>
-          <Switch checked={freezeBackbone} onChange={setFreezeBackbone} label="Geler le tronc pré-entraîné" />
-        </div>
+function StepPill({
+  number,
+  label,
+  state,
+  current,
+  disabled,
+  onClick,
+}: {
+  number: number;
+  label: string;
+  state: "done" | "current" | "pending";
+  current: boolean;
+  disabled: boolean;
+  onClick: () => void;
+}) {
+  const pillStyle = {
+    done: "border-success/30 bg-success/10 text-success",
+    current: "border-primary/30 bg-primary/10 text-primary",
+    pending: "border-border text-muted-foreground",
+  }[state];
+  const circleStyle = {
+    done: "bg-success text-primary-foreground",
+    current: "bg-primary text-primary-foreground",
+    pending: "bg-card border border-input text-muted-foreground",
+  }[state];
 
-        {error && (
-          <div className="flex items-center gap-2 text-sm text-destructive bg-destructive/10 border border-destructive/20 rounded-lg px-3 py-2">
-            <AlertCircle size={15} className="flex-shrink-0" />
-            {error}
-          </div>
-        )}
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      aria-current={current ? "step" : undefined}
+      aria-label={label}
+      className={`flex items-center gap-2 rounded-full border pl-1.5 pr-3 py-1.5 text-sm font-medium whitespace-nowrap transition-colors disabled:cursor-not-allowed ${pillStyle}`}
+    >
+      <span className={`h-5 w-5 rounded-full flex items-center justify-center text-xs font-semibold flex-shrink-0 ${circleStyle}`}>
+        {state === "done" ? <Check size={12} strokeWidth={3} /> : number}
+      </span>
+      <span className={current ? "" : "hidden sm:inline"}>{label}</span>
+    </button>
+  );
+}
 
-        <Button type="submit" disabled={!datasetId || isSubmitting} className="w-full">
-          {isSubmitting ? "Lancement…" : "Lancer l'entraînement"}
-        </Button>
-      </form>
-    </Card>
+/** Contenu d'une étape du wizard — titre + description en langage clair,
+ * puis les champs propres à l'étape. */
+function StepContent({ title, description, children }: { title: string; description?: string; children: ReactNode }) {
+  return (
+    <div className="space-y-4">
+      <div>
+        <h3 className="text-sm font-medium text-foreground">{title}</h3>
+        {description && <p className="text-xs text-muted-foreground mt-0.5">{description}</p>}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function Fact({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <dt className="text-xs text-muted-foreground">{label}</dt>
+      <dd className="text-sm text-foreground">{value}</dd>
+    </div>
   );
 }
 
