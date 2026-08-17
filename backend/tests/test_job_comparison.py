@@ -10,6 +10,7 @@ import json
 from unittest.mock import patch
 
 from api.core.models import MLModel, TrainingJob
+from services.model_versioning import next_version
 
 
 def _register(client, email="owner@bureau.fr", org="Bureau"):
@@ -34,6 +35,8 @@ def _complete_job(db_session, job_id, org_id, algorithm="LightGBM", r2_test=0.9,
         MLModel(
             organization_id=org_id,
             training_job_id=job.id,
+            dataset_id=job.dataset_id,
+            version=next_version(db_session, org_id, job.dataset_id, job.target_column),
             algorithm=algorithm,
             task_type="regression",
             target_column="cible",

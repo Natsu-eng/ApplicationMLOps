@@ -344,7 +344,7 @@ documentation — plus large que "arrêter les métriques fausses" (Lot 0).
 **À traiter** : lors du Lot 6A (wizard Vision) ou Lot 7 (produit), au
 moment de retravailler l'UX du pilier anomalies visuelles.
 
-## Lot 5 — Traçabilité (Phase 4 de l'audit, correctif I2)
+## Lot 5 — Traçabilité (Phase 4 de l'audit, correctifs I2 et P1)
 
 Branche `lot-5-tracability`, basée sur `main` (avant les Lots 2A/3/4,
 sur des branches séparées non encore fusionnées — voir D4.5/D4.8/D4.9
@@ -448,3 +448,68 @@ P6 (pagination UI) différé au Lot 4 (D4.1).
 **Remise en cause si** : un utilisateur/le produit demande explicitement
 cette vue — à ce moment, un nouvel onglet dans `ModelResultModal.tsx`
 consommant `GET /training/jobs/{id}/predictions` (déjà prêt côté API).
+
+### D5.5 — P1 : version + archived + rollback pour `MLModel` uniquement, extension aux 5 autres pillars EXPLICITEMENT différée
+
+**Question** : P1 (AUDIT_DATALAB_2026-08-16.md §P1) demande "`ModelVersion` :
+numéro, alias, `archived`, historique de transitions, rollback ; étendre
+aux 5 autres types" — une seule ligne, sans colonne "fichiers concernés"
+(contrairement aux items "I", plus détaillés). Le Lot 9 (déjà en place)
+avait déjà `stage`("staging"/"production")/`promoted_at` + une règle "un
+seul modèle production par dataset+cible" + un journal d'audit
+("model.promoted") — qu'est-ce qui manque vraiment ?
+**Retenu**, pour `MLModel` (pilier supervisé) seulement :
+- `version: int`, dénormalisé une fois à la création
+  (`services/model_versioning.py::next_version`, numérotation par lignée
+  organisation+dataset+cible, jamais recalculée).
+- `stage` étendu à une 4ᵉ valeur `"archived"` (retire du registre actif
+  SANS supprimer — `GET /models/registry` exclut désormais explicitement
+  les modèles archivés, avant : tout `stage` non NULL y apparaissait).
+- `GET /jobs/{id}/model/versions` — toute la lignée, la plus récente
+  d'abord (retrouver le job_id d'une version antérieure).
+- `GET /jobs/{id}/model/history` — lit `AuditLog` (déjà écrit par
+  `promote_model` depuis le Lot 9), jamais un second mécanisme de
+  journalisation parallèle.
+- Rollback : AUCUN endpoint dédié — repromouvoir une version antérieure
+  en "production" démet automatiquement la version courante (mécanisme
+  de démotion du Lot 9, inchangé) ; documenté comme LE mécanisme de
+  rollback dans `promote_model`, jamais dupliqué.
+**Écarté** : un `alias` libre façon MLflow ("champion"/"challenger"
+personnalisables) — `stage` fonctionne déjà comme 2 alias fixes bien
+compris (staging/production) SANS UI de nommage à construire ; un
+système d'alias générique demanderait une surface produit (comment
+créer/renommer un alias ?) hors du périmètre de ce correctif backend,
+et pour laquelle aucun besoin concret n'est exprimé — inventer cette UI
+maintenant aurait été concevoir pour un besoin hypothétique.
+**Écarté aussi** : une table `ModelVersion` séparée de `MLModel` — le
+"numéro de version" n'est qu'un attribut de plus du modèle déjà
+existant (comme `stage`), pas une nouvelle ENTITÉ avec un cycle de vie
+propre ; une table séparée aurait imposé une jointure supplémentaire à
+chaque lecture pour un gain nul ici.
+**Extension aux 5 autres types (clustering, dimensionnalité, anomalies
+tabulaires, classification vision, anomalies vision) : DIFFÉRÉE**,
+décision explicite et non un oubli — chacun exigerait sa propre colonne
+`version`+`dataset_id` dénormalisé, sa propre migration (avec le même
+rétropeuplement soigné que celui testé ici), son propre triplet
+d'endpoints. Cinq fois le travail fait ici, pour des pilotes dont
+l'usage "plusieurs versions du même problème" est aujourd'hui moins
+établi que pour le supervisé (Lot 9 y était déjà rodé). Voir I2 (D5.1)
+pour le même raisonnement de scope déjà appliqué dans ce lot.
+**Vérifié, pas supposé** : migration (`f983e8e87dcb`) testée contre une
+base SQLite PEUPLÉE (pas seulement vide) — plusieurs "problèmes"
+distincts (même dataset+cibles différentes, datasets différents+même
+nom de cible), vérifié que chaque lignée reçoit bien 1, 2, 3... dans
+l'ordre `id` croissant, jamais `created_at` (même leçon que D4.2) —
+upgrade → vérification ligne par ligne → downgrade → vérification que
+les colonnes disparaissent sans perte des autres lignes → ré-upgrade.
+Bug réel trouvé en écrivant les tests : `tests/test_model_registry.py`
+avait un helper `_complete_job` qui codait en dur `target_column="cible"`
+dans le modèle créé, indépendamment de la vraie cible du job (masqué
+avant ce lot par un correctif a posteriori `model.target_column = "x2"`
+dans 2 tests) — la nouvelle contrainte UNIQUE l'a fait échouer
+immédiatement (`UNIQUE constraint failed`), révélant l'incohérence.
+Corrigé à la source (`target_column=job.target_column`) plutôt que
+patché une fois de plus.
+**Remise en cause si** : un besoin produit réel pour l'extension aux 5
+autres types, ou pour un alias nommé librement, est exprimé — traiter
+alors comme un correctif séparé, avec son propre "fait quand".

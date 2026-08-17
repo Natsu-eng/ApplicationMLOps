@@ -11,7 +11,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text, func
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from api.core.database import Base
@@ -159,6 +159,13 @@ class MLModel(Base):
     training_job_id: Mapped[int] = mapped_column(
         Integer, ForeignKey("training_jobs.id", ondelete="CASCADE"), nullable=False, unique=True
     )
+    # Lot 5 (correctif P1) — dénormalisé depuis `training_job.dataset_id` :
+    # `target_column` (ci-dessous) l'est déjà pour la même raison (identifier
+    # le "problème" — dataset + cible — sans jointure sur `training_jobs` à
+    # chaque requête). Immuable après création, comme `training_job_id`.
+    dataset_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("datasets.id", ondelete="CASCADE"), nullable=False, index=True
+    )
     algorithm: Mapped[str] = mapped_column(String(50), nullable=False)  # libellé lisible du registre (services/ml_registry.py, Lot 5)
     task_type: Mapped[str] = mapped_column(String(20), nullable=False)
     target_column: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -195,13 +202,33 @@ class MLModel(Base):
     # Courbe d'apprentissage (train-size vs score) — diagnostic de
     # sur/sous-apprentissage complémentaire à delta_r2/accuracy train-test.
     learning_curve_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    # Lot 9 — registre de modèles versionné. `stage` : "staging"/"production",
-    # NULL = jamais promu (comportement historique, rétrocompat par absence
-    # comme le reste du projet — voir api/routers/training.py::promote_model
-    # pour la règle "un seul modèle en production par dataset+cible").
+    # Lot 9 — registre de modèles versionné. `stage` :
+    # "staging"/"production"/"archived" (Lot 5, correctif P1, ce dernier
+    # ajouté ici), NULL = jamais promu (comportement historique,
+    # rétrocompat par absence comme le reste du projet — voir
+    # api/routers/training.py::promote_model pour la règle "un seul
+    # modèle en production par dataset+cible", et `_VALID_STAGES` pour la
+    # liste faisant foi).
     stage: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     promoted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Lot 5 (correctif P1) — numéro de version au sein du "problème"
+    # (organization_id, dataset_id, target_column) : 1 pour le tout
+    # premier modèle entraîné sur ce couple dataset/cible, incrémenté à
+    # chaque nouveau (voir services/model_versioning.py::next_version).
+    # Assigné UNE SEULE FOIS à la création, jamais recalculé — un modèle
+    # "version 3" garde ce numéro pour toujours, y compris si une version
+    # intermédiaire est supprimée par la suite (l'historique reste
+    # interprétable, jamais de renumérotation rétroactive).
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+    __table_args__ = (
+        # Empêche deux modèles du même problème de partager le même numéro
+        # de version — filet de sécurité en cas de course entre deux
+        # entraînements terminant au même instant sur le même dataset+cible
+        # (deux workers RQ concurrents, voir services/model_versioning.py).
+        UniqueConstraint("organization_id", "dataset_id", "target_column", "version", name="uq_ml_models_version"),
+    )
 
     organization: Mapped["Organization"] = relationship("Organization")
     training_job: Mapped["TrainingJob"] = relationship("TrainingJob", back_populates="model")

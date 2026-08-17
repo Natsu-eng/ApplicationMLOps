@@ -23,6 +23,7 @@ from services.feature_engineering import apply_upstream_feature_engineering
 from services.ml_inference import InferenceError, predict_one
 from services.ml_preprocessing import split_dataset
 from services.ml_training import TrainingConfig, train_and_evaluate
+from services.model_versioning import next_version
 
 _FAST_CONFIG = TrainingConfig(optuna_trials=3, cv_folds=3)
 
@@ -80,6 +81,8 @@ def _train_and_persist_model(db, organization_id: int) -> TrainingJob:
     model = MLModel(
         organization_id=organization_id,
         training_job_id=job.id,
+        dataset_id=dataset.id,
+        version=next_version(db, organization_id, dataset.id, job.target_column),
         algorithm=result.algorithm,
         task_type="regression",
         target_column="cible",

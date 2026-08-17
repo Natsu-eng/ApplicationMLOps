@@ -21,7 +21,7 @@ from sqlalchemy.orm import Session
 from api.core.config import get_settings
 from api.core.database import get_db
 from api.core.job_queue import training_queue
-from api.core.models import Dataset, MLModel, ModelCandidate, Prediction, TrainingJob, User
+from api.core.models import AuditLog, Dataset, MLModel, ModelCandidate, Prediction, TrainingJob, User
 from api.routers.auth import get_current_user
 from services.audit import log_action
 from services.datasets import DatasetParsingError, read_dataframe
@@ -157,6 +157,9 @@ class MLModelDetail(BaseModel):
     # Lot 9 — registre de modèles versionné. `None` = jamais promu.
     stage: Optional[str] = None
     promoted_at: Optional[datetime] = None
+    # Lot 5 (correctif P1) — numéro de version au sein du problème
+    # (dataset + cible), voir api/core/models.py::MLModel.version.
+    version: int
     created_at: datetime
 
 
@@ -187,17 +190,19 @@ class LeaderboardResponse(BaseModel):
 # un problème donné (promotion), et pouvoir en RÉCUPÉRER l'artefact hors de
 # la plateforme (export).
 
-_VALID_STAGES = {"none", "staging", "production"}
+_VALID_STAGES = {"none", "staging", "production", "archived"}
 
 
 class PromoteModelRequest(BaseModel):
-    stage: str  # "none" | "staging" | "production"
+    stage: str  # "none" | "staging" | "production" | "archived"
 
 
 class ModelRegistryEntry(BaseModel):
     """Une entrée du registre — un modèle PROMU (staging ou production),
     avec assez de contexte (dataset/cible/algorithme/métrique) pour
-    identifier de quel problème il s'agit sans recharger le job complet."""
+    identifier de quel problème il s'agit sans recharger le job complet.
+    Un modèle "archived" (Lot 5, correctif P1) n'apparaît JAMAIS ici —
+    explicitement retiré, voir list_model_registry."""
     job_id: int
     model_id: int
     dataset_id: int
@@ -212,6 +217,43 @@ class ModelRegistryEntry(BaseModel):
 
 class ModelRegistryResponse(BaseModel):
     entries: List[ModelRegistryEntry]
+
+
+class ModelVersionEntry(BaseModel):
+    """Une version du "problème" (dataset + cible) — Lot 5, correctif
+    P1. Permet de voir tout l'historique d'un problème et d'identifier
+    le job_id d'une version antérieure pour y revenir (rollback : voir
+    promote_model, aucun endpoint dédié — repromouvoir une version
+    antérieure DÉMET automatiquement la version courante, même mécanisme
+    qu'une promotion normale)."""
+    job_id: int
+    model_id: int
+    version: int
+    algorithm: str
+    stage: Optional[str] = None
+    promoted_at: Optional[datetime] = None
+    created_at: datetime
+    headline_metric: Optional[dict[str, Any]] = None
+
+
+class ModelVersionsResponse(BaseModel):
+    entries: List[ModelVersionEntry]
+
+
+class ModelTransitionEntry(BaseModel):
+    """Une transition de stage passée (Lot 5, correctif P1) — lue depuis
+    le journal d'audit existant (`AuditLog`, action "model.promoted",
+    déjà écrit par promote_model depuis le Lot 9), jamais un second
+    mécanisme de journalisation parallèle."""
+    model_id: int
+    version: int
+    stage: str
+    actor: Optional[str] = None
+    created_at: datetime
+
+
+class ModelHistoryResponse(BaseModel):
+    entries: List[ModelTransitionEntry]
 
 
 # ── Lot D-bis — comparaison inter-jobs ──────────────────────────────────────
@@ -690,6 +732,7 @@ def _to_model_detail(model: MLModel) -> MLModelDetail:
         learning_curve=json.loads(model.learning_curve_json) if model.learning_curve_json else None,
         stage=model.stage,
         promoted_at=model.promoted_at,
+        version=model.version,
         created_at=model.created_at,
     )
 
@@ -713,7 +756,10 @@ def promote_model(
     db: Session = Depends(get_db),
 ):
     """Promotion d'un modèle (Lot 9) — "staging" (à valider), "production"
-    (celui utilisé en confiance pour ce problème) ou "none" (retrait).
+    (celui utilisé en confiance pour ce problème), "archived" (Lot 5,
+    correctif P1 : retiré du registre actif sans être supprimé, pour
+    désencombrer `GET /models/registry` d'anciennes versions non
+    pertinentes) ou "none" (retrait, sans connotation d'archivage).
 
     Règle du registre : UN SEUL modèle "production" à la fois par couple
     (dataset, cible) au sein d'une organisation — promouvoir un nouveau
@@ -721,11 +767,20 @@ def promote_model(
     "staging", jamais supprimé ni écrasé, juste son statut qui change),
     pour qu'il n'y ait jamais d'ambiguïté sur "quel modèle fait autorité".
     Aucune limite en "staging" : plusieurs candidats peuvent y attendre
-    validation en parallèle."""
+    validation en parallèle.
+
+    Rollback (Lot 5, correctif P1) : aucun endpoint dédié — repromouvoir
+    une version ANTÉRIEURE en "production" (via son propre job_id, voir
+    `GET /jobs/{id}/model/versions` pour retrouver ce job_id) déclenche
+    exactement le même mécanisme de démotion ci-dessus, donc revient bien
+    en arrière sans code séparé à maintenir."""
     if body.stage not in _VALID_STAGES:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"code": "STAGE_INVALIDE", "message": f"Statut inconnu : {body.stage!r} (attendu : none/staging/production)"},
+            detail={
+                "code": "STAGE_INVALIDE",
+                "message": f"Statut inconnu : {body.stage!r} (attendu : none/staging/production/archived)",
+            },
         )
     job = _get_org_job(job_id, current_user, db)
     if job.status != "completed" or job.model is None:
@@ -765,6 +820,84 @@ def promote_model(
     return _to_model_detail(model)
 
 
+@router.get("/jobs/{job_id}/model/versions", response_model=ModelVersionsResponse)
+def list_model_versions(job_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Toutes les versions du "problème" (même dataset + même cible) que
+    le modèle de ce job (Lot 5, correctif P1) — la plus récente d'abord.
+    Permet de retrouver le job_id d'une version antérieure pour la
+    repromouvoir (rollback, voir promote_model)."""
+    job = _get_org_job(job_id, current_user, db)
+    if job.model is None:
+        return ModelVersionsResponse(entries=[])
+    rows = (
+        db.query(MLModel)
+        .filter(
+            MLModel.organization_id == current_user.organization_id,
+            MLModel.dataset_id == job.dataset_id,
+            MLModel.target_column == job.target_column,
+        )
+        .order_by(MLModel.version.desc())
+        .all()
+    )
+    entries = []
+    for row in rows:
+        metrics = json.loads(row.metrics_json) if row.metrics_json else {}
+        entries.append(ModelVersionEntry(
+            job_id=row.training_job_id,
+            model_id=row.id,
+            version=row.version,
+            algorithm=row.algorithm,
+            stage=row.stage,
+            promoted_at=row.promoted_at,
+            created_at=row.created_at,
+            headline_metric=_headline_metric(row.task_type, metrics) if metrics else None,
+        ))
+    return ModelVersionsResponse(entries=entries)
+
+
+@router.get("/jobs/{job_id}/model/history", response_model=ModelHistoryResponse)
+def get_model_history(job_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Historique des transitions de stage pour TOUTES les versions de ce
+    problème (Lot 5, correctif P1) — lu depuis `AuditLog` (action
+    "model.promoted", déjà écrite par promote_model depuis le Lot 9),
+    jamais un second mécanisme de journalisation parallèle. Le plus
+    récent d'abord."""
+    job = _get_org_job(job_id, current_user, db)
+    if job.model is None:
+        return ModelHistoryResponse(entries=[])
+    version_by_model_id = {
+        row.id: row.version
+        for row in db.query(MLModel.id, MLModel.version).filter(
+            MLModel.organization_id == current_user.organization_id,
+            MLModel.dataset_id == job.dataset_id,
+            MLModel.target_column == job.target_column,
+        )
+    }
+    if not version_by_model_id:
+        return ModelHistoryResponse(entries=[])
+    logs = (
+        db.query(AuditLog)
+        .filter(
+            AuditLog.organization_id == current_user.organization_id,
+            AuditLog.action == "model.promoted",
+            AuditLog.target_id.in_(list(version_by_model_id.keys())),
+        )
+        .order_by(AuditLog.id.desc())
+        .all()
+    )
+    entries = []
+    for log in logs:
+        details = json.loads(log.details_json) if log.details_json else {}
+        entries.append(ModelTransitionEntry(
+            model_id=log.target_id,
+            version=version_by_model_id[log.target_id],
+            stage=details.get("stage", "?"),
+            actor=log.actor.nom if log.actor else None,
+            created_at=log.created_at,
+        ))
+    return ModelHistoryResponse(entries=entries)
+
+
 @router.get("/jobs/{job_id}/model/export")
 def export_model(job_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     """Export de l'artefact (Lot 9) — le bundle joblib complet (modèle +
@@ -794,11 +927,15 @@ def list_model_registry(current_user: User = Depends(get_current_user), db: Sess
     production) de l'organisation, tous datasets/cibles confondus. Un modèle
     jamais promu (`stage IS NULL`, comportement historique) n'y apparaît
     jamais — le registre n'est PAS un doublon de l'historique complet
-    (`GET /training/jobs`), seulement ce qui a été explicitement retenu."""
+    (`GET /training/jobs`), seulement ce qui a été explicitement retenu.
+
+    Un modèle "archived" (Lot 5, correctif P1) n'y apparaît pas non plus —
+    explicitement retiré du registre actif, mais toujours consultable via
+    `GET /jobs/{id}/model/versions` (tout l'historique du problème)."""
     models = (
         db.query(MLModel)
         .join(TrainingJob, MLModel.training_job_id == TrainingJob.id)
-        .filter(MLModel.organization_id == current_user.organization_id, MLModel.stage.isnot(None))
+        .filter(MLModel.organization_id == current_user.organization_id, MLModel.stage.in_(("staging", "production")))
         .order_by(MLModel.promoted_at.desc())
         .all()
     )
