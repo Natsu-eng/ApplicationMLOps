@@ -1003,10 +1003,35 @@ export interface PredictionResult {
   explanation?: LocalExplanation;
 }
 
+// Lot 4 (correctif I3, AUDIT_DATALAB_2026-08-16.md §C.2.4) — remplace les 8
+// appels de liste complets faits par Dashboard.tsx au montage par un seul
+// aller-retour agrégé (GET /dashboard/summary). Mêmes formes de résumé de
+// job que les endpoints de liste dédiés (TrainingJobSummary, etc.) —
+// jamais une forme dupliquée.
+export interface DashboardSummary {
+  members_count: number;
+  datasets_count: number;
+  recent_datasets: DatasetSummary[];
+  supervised_count: number;
+  unsupervised_count: number;
+  vision_count: number;
+  active_count: number;
+  recent_supervised: TrainingJobSummary[];
+  recent_clustering: ClusteringJobSummary[];
+  recent_dimensionality: DimensionalityJobSummary[];
+  recent_anomalies: AnomalyJobSummary[];
+  recent_vision_classification: VisionClassificationJobSummary[];
+  recent_vision_anomalies: VisionAnomalyJobSummary[];
+}
+
 // ── API ────────────────────────────────────────────────────────────────────
 
 export const api = {
   health: () => request<HealthStatus>("/api/health"),
+
+  dashboard: {
+    summary: () => request<DashboardSummary>("/dashboard/summary"),
+  },
 
   auth: {
     register: (data: RegisterPayload) =>

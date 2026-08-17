@@ -15,18 +15,7 @@ import {
   Users,
   type LucideIcon,
 } from "lucide-react";
-import {
-  ApiError,
-  api,
-  type AnomalyJobSummary,
-  type ClusteringJobSummary,
-  type DatasetSummary,
-  type DimensionalityJobSummary,
-  type JobStatus,
-  type TrainingJobSummary,
-  type VisionAnomalyJobSummary,
-  type VisionClassificationJobSummary,
-} from "../api/client";
+import { ApiError, api, type DashboardSummary, type JobStatus, type TrainingJobSummary } from "../api/client";
 import { useAuth } from "../contexts/AuthContext";
 import AppShell from "../components/AppShell";
 import { StatTile, StatTileRow } from "../components/dashboard/StatTile";
@@ -39,8 +28,6 @@ import { PageHeader } from "../components/ui/PageHeader";
 import { DatasetStatusBadge, JobStatusBadge } from "../components/ui/StatusBadge";
 import { useConfirmAction } from "../hooks/useConfirmAction";
 import { formatDateTime, formatPercent } from "../utils/format";
-
-const ACTIVE_STATUSES = new Set(["queued", "running"]);
 
 /** Salutation contextuelle à l'heure réelle du navigateur — jamais un texte
  * figé. Trois tranches (retour utilisateur explicite : deux ne suffisaient
@@ -96,18 +83,16 @@ const ACTIVITY_KIND_META: Record<ActivityKind, { icon: LucideIcon; color: Accent
 export default function Dashboard() {
   const { user } = useAuth();
 
-  const [members, setMembers] = useState<{ id: number }[] | null>(null);
-  const [datasets, setDatasets] = useState<DatasetSummary[] | null>(null);
-  const [datasetsError, setDatasetsError] = useState<string | null>(null);
-  const [jobs, setJobs] = useState<TrainingJobSummary[] | null>(null);
-  const [jobsError, setJobsError] = useState<string | null>(null);
-  const [clusteringJobs, setClusteringJobs] = useState<ClusteringJobSummary[] | null>(null);
-  const [dimensionalityJobs, setDimensionalityJobs] = useState<DimensionalityJobSummary[] | null>(null);
-  const [anomalyJobs, setAnomalyJobs] = useState<AnomalyJobSummary[] | null>(null);
-  const [unsupervisedJobsError, setUnsupervisedJobsError] = useState<string | null>(null);
-  const [visionClassificationJobs, setVisionClassificationJobs] = useState<VisionClassificationJobSummary[] | null>(null);
-  const [visionAnomalyJobs, setVisionAnomalyJobs] = useState<VisionAnomalyJobSummary[] | null>(null);
-  const [visionJobsError, setVisionJobsError] = useState<string | null>(null);
+  // Lot 4 (correctif I3, AUDIT_DATALAB_2026-08-16.md §C.2.4) — un seul
+  // aller-retour (`GET /dashboard/summary`) remplace les 8 appels de liste
+  // complets faits ici jusque-là (membres, datasets, et les 6 types de
+  // job). Un échec devient forcément global (plus de dégradation fine par
+  // pilier) : accepté — les 8 requêtes touchaient de toute façon la même
+  // base de données, le risque de panne partielle était déjà faible, et le
+  // gain de performance (1 requête réseau au lieu de 8, N+1 éliminé côté
+  // serveur) l'emporte largement pour la page la plus visitée du produit.
+  const [summary, setSummary] = useState<DashboardSummary | null>(null);
+  const [summaryError, setSummaryError] = useState<string | null>(null);
   const [viewingJob, setViewingJob] = useState<TrainingJobSummary | null>(null);
   const confirmDeleteJob = useConfirmAction<number>();
 
@@ -135,97 +120,34 @@ export default function Dashboard() {
     setSearchParams({}, { replace: false });
   }
 
-  const loadMembers = useCallback(async () => {
+  const loadSummary = useCallback(async () => {
     try {
-      setMembers(await api.team.members());
-    } catch {
-      // Tuile statistique seulement ici (la gestion d'équipe complète, avec
-      // ses propres erreurs distinctes, vit sur /profile) — un échec reste
-      // silencieux sur la tuile ("—"), sans bannière dupliquée.
-    }
-  }, []);
-
-  const loadJobs = useCallback(async () => {
-    try {
-      setJobs(await api.training.listJobs());
-      setJobsError(null);
+      setSummary(await api.dashboard.summary());
+      setSummaryError(null);
     } catch (err) {
-      // AUDIT_ROADMAP.md, H4/D3 : distinguer "aucun entraînement" (liste
-      // vide légitime) d'un échec réseau.
-      setJobsError(err instanceof ApiError ? err.message : "Impossible de charger les entraînements");
-    }
-  }, []);
-
-  const loadUnsupervisedJobs = useCallback(() => {
-    api.clustering
-      .listJobs()
-      .then(setClusteringJobs)
-      .catch((err) => setUnsupervisedJobsError(err instanceof ApiError ? err.message : "Impossible de charger l'activité non supervisée"));
-    api.dimensionality
-      .listJobs()
-      .then(setDimensionalityJobs)
-      .catch((err) => setUnsupervisedJobsError(err instanceof ApiError ? err.message : "Impossible de charger l'activité non supervisée"));
-    api.anomalies
-      .listJobs()
-      .then(setAnomalyJobs)
-      .catch((err) => setUnsupervisedJobsError(err instanceof ApiError ? err.message : "Impossible de charger l'activité non supervisée"));
-  }, []);
-
-  const loadVisionJobs = useCallback(() => {
-    api.visionClassification
-      .listJobs()
-      .then(setVisionClassificationJobs)
-      .catch((err) => setVisionJobsError(err instanceof ApiError ? err.message : "Impossible de charger l'activité Vision"));
-    api.visionAnomalies
-      .listJobs()
-      .then(setVisionAnomalyJobs)
-      .catch((err) => setVisionJobsError(err instanceof ApiError ? err.message : "Impossible de charger l'activité Vision"));
-  }, []);
-
-  const loadDatasets = useCallback(async () => {
-    try {
-      setDatasets(await api.datasets.list());
-      setDatasetsError(null);
-    } catch (err) {
-      setDatasetsError(err instanceof ApiError ? err.message : "Impossible de charger les datasets");
+      setSummaryError(err instanceof ApiError ? err.message : "Impossible de charger le tableau de bord");
     }
   }, []);
 
   useEffect(() => {
-    loadMembers();
-    loadDatasets();
-    loadJobs();
-    loadUnsupervisedJobs();
-    loadVisionJobs();
-  }, [loadMembers, loadDatasets, loadJobs, loadUnsupervisedJobs, loadVisionJobs]);
+    loadSummary();
+  }, [loadSummary]);
 
   async function handleDeleteJob(id: number) {
     try {
       await api.training.remove(id);
-      loadJobs();
+      loadSummary();
     } catch {
       // best-effort — la liste se resynchronisera au prochain chargement
     }
   }
 
-  const allJobsLoaded =
-    jobs !== null &&
-    clusteringJobs !== null &&
-    dimensionalityJobs !== null &&
-    anomalyJobs !== null &&
-    visionClassificationJobs !== null &&
-    visionAnomalyJobs !== null;
-  const unsupervisedJobsCount = (clusteringJobs?.length ?? 0) + (dimensionalityJobs?.length ?? 0) + (anomalyJobs?.length ?? 0);
-  const visionJobsCount = (visionClassificationJobs?.length ?? 0) + (visionAnomalyJobs?.length ?? 0);
-  const totalJobsCount = (jobs?.length ?? 0) + unsupervisedJobsCount + visionJobsCount;
-  const activeJobsCount = [jobs, clusteringJobs, dimensionalityJobs, anomalyJobs, visionClassificationJobs, visionAnomalyJobs].reduce(
-    (sum, list) => sum + (list?.filter((j) => ACTIVE_STATUSES.has(j.status)).length ?? 0),
-    0,
-  );
+  const totalJobsCount = summary ? summary.supervised_count + summary.unsupervised_count + summary.vision_count : undefined;
 
   const activity = useMemo<ActivityItem[]>(() => {
+    if (!summary) return [];
     const items: ActivityItem[] = [];
-    jobs?.forEach((j) =>
+    summary.recent_supervised.forEach((j) =>
       items.push({
         kind: "supervised",
         id: j.id,
@@ -242,7 +164,7 @@ export default function Dashboard() {
         raw: j,
       }),
     );
-    clusteringJobs?.forEach((j) =>
+    summary.recent_clustering.forEach((j) =>
       items.push({
         kind: "clustering",
         id: j.id,
@@ -255,7 +177,7 @@ export default function Dashboard() {
         createdBy: j.created_by,
       }),
     );
-    dimensionalityJobs?.forEach((j) =>
+    summary.recent_dimensionality.forEach((j) =>
       items.push({
         kind: "dimensionality",
         id: j.id,
@@ -268,7 +190,7 @@ export default function Dashboard() {
         createdBy: j.created_by,
       }),
     );
-    anomalyJobs?.forEach((j) =>
+    summary.recent_anomalies.forEach((j) =>
       items.push({
         kind: "anomalies",
         id: j.id,
@@ -281,7 +203,7 @@ export default function Dashboard() {
         createdBy: j.created_by,
       }),
     );
-    visionClassificationJobs?.forEach((j) =>
+    summary.recent_vision_classification.forEach((j) =>
       items.push({
         kind: "vision_classification",
         id: j.id,
@@ -294,7 +216,7 @@ export default function Dashboard() {
         createdBy: j.created_by,
       }),
     );
-    visionAnomalyJobs?.forEach((j) =>
+    summary.recent_vision_anomalies.forEach((j) =>
       items.push({
         kind: "vision_anomalies",
         id: j.id,
@@ -309,9 +231,9 @@ export default function Dashboard() {
     );
     items.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
     return items.slice(0, 6);
-  }, [jobs, clusteringJobs, dimensionalityJobs, anomalyJobs, visionClassificationJobs, visionAnomalyJobs]);
+  }, [summary]);
 
-  const recentDatasets = datasets?.slice(0, 5) ?? [];
+  const recentDatasets = summary?.recent_datasets ?? [];
 
   if (!user) return null;
 
@@ -334,27 +256,21 @@ export default function Dashboard() {
       />
 
       <StatTileRow wide>
-        <StatTile icon={Database} label="Datasets" value={datasets?.length} color="blue" delayMs={0} />
+        <StatTile icon={Database} label="Datasets" value={summary?.datasets_count} color="blue" delayMs={0} />
         <StatTile
           icon={Activity}
           label="Analyses ML"
-          value={allJobsLoaded ? totalJobsCount : undefined}
+          value={totalJobsCount}
           color="teal"
           delayMs={60}
           split={[
-            { label: "Supervisé", value: allJobsLoaded ? jobs!.length : undefined },
-            { label: "Non supervisé", value: allJobsLoaded ? unsupervisedJobsCount : undefined },
-            { label: "Vision", value: allJobsLoaded ? visionJobsCount : undefined },
+            { label: "Supervisé", value: summary?.supervised_count },
+            { label: "Non supervisé", value: summary?.unsupervised_count },
+            { label: "Vision", value: summary?.vision_count },
           ]}
         />
-        <StatTile
-          icon={Activity}
-          label="En cours"
-          value={allJobsLoaded ? activeJobsCount : undefined}
-          color="amber"
-          delayMs={120}
-        />
-        <StatTile icon={Users} label="Membres de l'équipe" value={members?.length} color="violet" delayMs={180} />
+        <StatTile icon={Activity} label="En cours" value={summary?.active_count} color="amber" delayMs={120} />
+        <StatTile icon={Users} label="Membres de l'équipe" value={summary?.members_count} color="violet" delayMs={180} />
       </StatTileRow>
 
       <div className="grid gap-6 lg:grid-cols-2 mb-10">
@@ -374,9 +290,9 @@ export default function Dashboard() {
             </div>
           </div>
 
-          {jobsError || unsupervisedJobsError || visionJobsError ? (
-            <ErrorNote message={jobsError ?? unsupervisedJobsError ?? visionJobsError ?? ""} />
-          ) : !allJobsLoaded ? (
+          {summaryError ? (
+            <ErrorNote message={summaryError} />
+          ) : !summary ? (
             <p className="text-sm text-muted-foreground">Chargement…</p>
           ) : activity.length === 0 ? (
             <p className="text-sm text-muted-foreground">
@@ -496,9 +412,9 @@ export default function Dashboard() {
             </Link>
           </div>
 
-          {datasetsError ? (
-            <ErrorNote message={datasetsError} />
-          ) : datasets === null ? (
+          {summaryError ? (
+            <ErrorNote message={summaryError} />
+          ) : !summary ? (
             <p className="text-sm text-muted-foreground">Chargement…</p>
           ) : recentDatasets.length === 0 ? (
             <p className="text-sm text-muted-foreground">

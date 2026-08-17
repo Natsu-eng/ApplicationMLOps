@@ -20,15 +20,16 @@ from pathlib import Path
 from typing import Any, List, Optional
 
 import torch
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Response, UploadFile, status
 from PIL import Image, UnidentifiedImageError
 from pydantic import BaseModel, Field
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from api.core.config import get_settings
 from api.core.database import get_db
 from api.core.job_queue import training_queue
 from api.core.models import User, VisionClassificationJob, VisionClassificationModel, VisionDataset
+from api.core.pagination import paginate_by_id
 from api.core.rate_limit import rate_limit_dependency
 from api.routers.auth import get_current_user
 from services.audit import log_action
@@ -240,13 +241,26 @@ def create_vision_classification_job(
 
 
 @router.get("/jobs", response_model=List[VisionClassificationJobSummary])
-def list_vision_classification_jobs(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    jobs = (
+def list_vision_classification_jobs(
+    response: Response,
+    limit: Optional[int] = Query(None, ge=1, le=500),
+    cursor: Optional[int] = Query(None, description="id de la dernière ligne de la page précédente"),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    # joinedload (Lot 4, correctif I3) — voir training.py::list_training_jobs.
+    query = (
         db.query(VisionClassificationJob)
+        .options(
+            joinedload(VisionClassificationJob.vision_dataset),
+            joinedload(VisionClassificationJob.created_by),
+            joinedload(VisionClassificationJob.result),
+        )
         .filter(VisionClassificationJob.organization_id == current_user.organization_id)
-        .order_by(VisionClassificationJob.created_at.desc())
-        .all()
+        # id DESC, pas created_at DESC — voir anomalies.py::list_anomaly_jobs.
+        .order_by(VisionClassificationJob.id.desc())
     )
+    jobs = paginate_by_id(query, VisionClassificationJob.id, response, cursor, limit)
     return [_to_summary(j) for j in jobs]
 
 

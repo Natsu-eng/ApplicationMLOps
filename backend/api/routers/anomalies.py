@@ -14,13 +14,15 @@ import json
 from pathlib import Path
 from typing import Any, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel, Field
+from sqlalchemy.orm import joinedload
 
 from api.core.config import get_settings
 from api.core.database import get_db
 from api.core.job_queue import training_queue
 from api.core.models import AnomalyJob, AnomalyObservationRecord, Dataset, User
+from api.core.pagination import paginate_by_id
 from api.routers.auth import get_current_user
 from services.anomaly_training import DEFAULT_TOP_N, MAX_TOP_N
 from services.audit import log_action
@@ -203,13 +205,28 @@ def create_anomaly_job(
 
 
 @router.get("/jobs", response_model=List[AnomalyJobSummary])
-def list_anomaly_jobs(current_user: User = Depends(get_current_user), db=Depends(get_db)):
-    jobs = (
+def list_anomaly_jobs(
+    response: Response,
+    limit: Optional[int] = Query(None, ge=1, le=500),
+    cursor: Optional[int] = Query(None, description="id de la dernière ligne de la page précédente"),
+    current_user: User = Depends(get_current_user),
+    db=Depends(get_db),
+):
+    # joinedload (Lot 4, correctif I3) — voir training.py::list_training_jobs.
+    query = (
         db.query(AnomalyJob)
+        .options(joinedload(AnomalyJob.dataset), joinedload(AnomalyJob.created_by), joinedload(AnomalyJob.result))
         .filter(AnomalyJob.organization_id == current_user.organization_id)
-        .order_by(AnomalyJob.created_at.desc())
-        .all()
+        # id DESC, pas created_at DESC (Lot 4, correctif I3) : SQLite stocke
+        # `func.now()` avec une précision à la seconde — plusieurs jobs créés
+        # rapidement (rafale d'appels API, tests) peuvent partager le même
+        # `created_at`, rendant l'ordre non déterministe et cassant le
+        # curseur de pagination (des lignes sautées ou dupliquées entre deux
+        # pages). `id` auto-incrémenté encode l'ordre de création SANS
+        # ambiguïté possible — équivalent en pratique, strictement fiable.
+        .order_by(AnomalyJob.id.desc())
     )
+    jobs = paginate_by_id(query, AnomalyJob.id, response, cursor, limit)
     return [_to_summary(j) for j in jobs]
 
 

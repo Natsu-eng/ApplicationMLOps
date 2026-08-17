@@ -27,6 +27,7 @@ from api.core.database import check_connection, init_db
 from api.routers.anomalies import router as anomalies_router
 from api.routers.auth import router as auth_router
 from api.routers.clustering import router as clustering_router
+from api.routers.dashboard import router as dashboard_router
 from api.routers.datasets import router as datasets_router
 from api.routers.dimensionality import router as dimensionality_router
 from api.routers.training import router as training_router
@@ -140,6 +141,7 @@ app.include_router(anomalies_router)
 app.include_router(vision_datasets_router)
 app.include_router(vision_classification_router)
 app.include_router(vision_anomalies_router)
+app.include_router(dashboard_router)
 
 
 @app.get("/api/health", tags=["système"])

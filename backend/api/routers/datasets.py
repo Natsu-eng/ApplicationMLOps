@@ -14,13 +14,14 @@ from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile, status
 from pydantic import BaseModel
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from api.core.config import get_settings
 from api.core.database import get_db
 from api.core.models import Dataset, User
+from api.core.pagination import paginate_by_id
 from api.core.rate_limit import rate_limit_dependency
 from api.core.storage import dataset_file_path, delete_dataset_file
 from api.routers.auth import get_current_user
@@ -306,13 +307,24 @@ async def upload_dataset(
 
 
 @router.get("", response_model=List[DatasetSummary])
-def list_datasets(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    datasets = (
+def list_datasets(
+    response: Response,
+    limit: Optional[int] = Query(None, ge=1, le=500),
+    cursor: Optional[int] = Query(None, description="id de la dernière ligne de la page précédente"),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    # joinedload (Lot 4, correctif I3, même motif que les 6 listes de jobs
+    # — training.py::list_training_jobs) : _to_summary accède à
+    # dataset.uploaded_by, sans quoi 1 requête SQL par dataset (N+1).
+    query = (
         db.query(Dataset)
+        .options(joinedload(Dataset.uploaded_by))
         .filter(Dataset.organization_id == current_user.organization_id)
-        .order_by(Dataset.created_at.desc())
-        .all()
+        # id DESC, pas created_at DESC — voir anomalies.py::list_anomaly_jobs.
+        .order_by(Dataset.id.desc())
     )
+    datasets = paginate_by_id(query, Dataset.id, response, cursor, limit)
     return [_to_summary(d) for d in datasets]
 
 

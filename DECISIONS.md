@@ -343,3 +343,136 @@ utilisée par des enregistrements existants), les labels frontend et la
 documentation — plus large que "arrêter les métriques fausses" (Lot 0).
 **À traiter** : lors du Lot 6A (wizard Vision) ou Lot 7 (produit), au
 moment de retravailler l'UX du pilier anomalies visuelles.
+
+## Lot 4 — Tenir la charge (Phase 3 de l'audit, correctif I3)
+
+### D4.1 — Pagination rétrocompatible par absence, jamais une enveloppe JSON
+
+**Question** : `GET /training/jobs` et les 5 endpoints équivalents
+renvoient TOUJOURS la totalité des jobs de l'organisation
+(AUDIT_DATALAB_2026-08-16.md §C.2.4, R6 — "effondrement de performance à
+la montée en charge"). Comment ajouter une vraie pagination par curseur
+sans casser le Dashboard ni les 3 pages Historique, qui attendent
+aujourd'hui un tableau JSON à plat ?
+**Retenu** : `limit`/`cursor` optionnels (`api/core/pagination.py`,
+partagé par les 6 routers de job + `GET /datasets`) — absents (défaut) :
+comportement STRICTEMENT inchangé, tout est renvoyé, aucun appelant
+existant cassé. La page suivante est signalée par un en-tête
+`X-Next-Cursor`, jamais dans le corps JSON : la forme de la réponse
+(`List[XSummary]`) reste identique que la pagination soit utilisée ou
+non — pas d'enveloppe `{items, cursor}` qui aurait forcé une migration de
+tous les appelants dans ce même lot.
+**Écarté** : migrer les pages Historique vers une UI de pagination réelle
+dans ce lot — c'est `P6` (refonte de `Table.tsx`, tri/pagination/
+recherche/sélection), une phase produit séparée et postérieure dans le
+plan d'exécution de l'audit (§Q). Ce lot livre la CAPACITÉ backend,
+robuste et testée ; l'adoption frontend page par page est un chantier
+distinct.
+**Remise en cause si** : `P6` révèle qu'un en-tête HTTP est un mauvais
+support pour le curseur (ex. proxy qui le filtre) — passer à un champ
+dans le corps JSON à ce moment-là, pas préventivement.
+
+### D4.2 — Curseur basé sur `id`, jamais `created_at` : bug réel trouvé en testant
+
+**Trouvé en testant** : les 6 endpoints de job (et `GET /datasets`)
+triaient par `created_at DESC`. SQLite stocke `func.now()` avec une
+précision à la SECONDE — un test créant 7 jobs en rafale (as réel en
+usage : plusieurs jobs lancés depuis un script, ou une simple rafale de
+clics) leur donne souvent le même `created_at`, rendant l'ordre non
+déterministe. Le curseur (`WHERE id < cursor`) suppose que l'ordre de
+tri correspond à l'ordre décroissant des `id` — faux dès qu'il y a des
+égalités de `created_at`, ce qui a fait sauter/dupliquer des lignes entre
+deux pages dans `test_cursor_advances_to_the_next_page_without_overlap_or_gap`.
+**Retenu** : tri par `id DESC` partout où une pagination existe
+désormais (les 6 listes de jobs, `GET /datasets`, l'agrégat Dashboard) —
+`id` auto-incrémenté encode l'ordre de création SANS ambiguïté possible
+(contrairement à un horodatage à résolution limitée), équivalent en
+pratique à `created_at DESC` pour toute table où les lignes ne sont
+jamais réordonnées après coup (vrai ici).
+**Pourquoi ce n'est pas anecdotique** : ce bug existait DÉJÀ (silencieusement)
+avant ce lot — sans pagination, l'ordre de retour n'avait pas besoin
+d'être stable puisque TOUT était renvoyé d'un coup ; il devient visible
+et cassant seulement quand on doit garantir qu'une page suivante
+reprend exactement là où la précédente s'est arrêtée.
+**Remise en cause si** : un jour `id` cesse d'être strictement corrélé à
+l'ordre de création (ex. import en masse avec des `id` explicites) —
+pas le cas actuellement, aucune table de ce projet n'assigne `id`
+manuellement.
+
+### D4.3 — `joinedload` sur les 6 listes de jobs + `GET /datasets`
+
+**Trouvé, vérifié** : `_to_summary()` de chacun des 6 routers de job
+accède à `job.dataset`/`job.vision_dataset`, `job.created_by` et
+`job.model`/`job.result` — 3 requêtes SQL supplémentaires PAR JOB sans
+`joinedload` (N+1, AUDIT_DATALAB_2026-08-16.md §C.2.4). `GET /datasets`
+a le même défaut sur `dataset.uploaded_by` — pas nommé explicitement
+dans les "6 listes" de l'audit (qui ne visait que les jobs), mais
+exactement la même classe de bug, dans la même zone fonctionnelle,
+servant directement le risque R6 que ce correctif existe pour éliminer
+— corrigé en même temps plutôt que laissé de côté par une lecture trop
+littérale du périmètre.
+**Retenu** : `.options(joinedload(...))` sur les 3 relations de chacun
+des 7 endpoints — un seul aller-retour SQL désormais, quel que soit le
+nombre de lignes.
+**Écarté** : étendre `joinedload` à `GET /auth/team/audit-log`
+(`AuditLog.actor`) ou `GET /vision/datasets` — hors du périmètre I3
+(pas des listes de JOB), pas de risque N+1 signalé pour ces deux-là dans
+l'audit ; à vérifier séparément si un jour ils deviennent lents en
+pratique.
+
+### D4.4 — Endpoint agrégé `GET /dashboard/summary` : réutilise les schémas existants, jamais une forme dupliquée
+
+**Question** : `Dashboard.tsx` appelait 8 endpoints de liste complets à
+chaque montage (`AUDIT_DATALAB_2026-08-16.md` ligne 170-171 : "Le
+Dashboard appelle 8 endpoints de liste complets au montage"). Comment
+construire l'agrégat sans dupliquer la définition de `TrainingJobSummary`
+et des 5 schémas équivalents ?
+**Retenu** : `api/routers/dashboard.py` importe directement les fonctions
+`_to_summary` et classes `XJobSummary` de chacun des 6 routers de job
+(alias à l'import pour éviter la collision de nom `_to_summary` entre
+modules) — un seul endroit fait foi sur "à quoi ressemble un résumé de
+job supervisé/clustering/...", jamais une seconde définition qui
+pourrait diverger de l'original. Réutilise aussi `count_active_jobs`/
+`ALL_JOB_MODELS` (`services/job_quota.py`), déjà le point de vérité sur
+"tous les types de job confondus" pour le quota.
+**Comptages via `COUNT(*)` SQL**, jamais en chargeant les lignes pour les
+compter côté Python — `recent_*` se limite à 6 lignes par pilier (assez
+pour dominer le tri final à 6, tous piliers confondus, sans jamais
+ramener des milliers de lignes juste pour en garder 6).
+**Test explicite** (`test_summary_recent_supervised_matches_list_training_jobs_shape`) :
+vérifie que `recent_supervised[0]` de l'agrégat est BYTE-POUR-BYTE
+identique à l'entrée correspondante de `GET /training/jobs` — la
+réutilisation de `_to_summary` n'est pas qu'une intention documentée,
+elle est vérifiée.
+**Écarté** : dupliquer la logique de fusion/tri/troncature à 6 déjà
+présente côté frontend (`Dashboard.tsx`, `useMemo` sur `activity`) —
+l'agrégat renvoie 6 candidats PAR PILIER (36 au total dans le pire cas),
+le frontend continue de fusionner/trier/tronquer à 6 exactement comme
+avant, code inchangé au-delà de la SOURCE des données (1 champ de
+l'agrégat au lieu de 6 états séparés).
+**Remise en cause si** : le nombre de piliers augmente au point où
+36 lignes remontées par montage devient un volume non négligeable —
+réduire `_RECENT_PER_PILLAR` à ce moment-là, pas préventivement.
+
+### D4.5 — `Dashboard.tsx` : dégradation par pilier abandonnée, assumé
+
+**Trouvé, assumé** : le Lot 2A (branche séparée, non fusionnée à ce
+jour) avait ajouté une dégradation indépendante par pilier au Dashboard
+(un pilier en échec n'empêchait plus les autres de s'afficher). Ce lot
+étant basé sur `main` (avant le Lot 2A), et remplaçant les 8 appels par
+UN seul, cette dégradation fine n'a plus de sens : un succès ou un échec
+est désormais forcément global (une seule requête HTTP, une seule
+réponse).
+**Retenu** : accepté comme compromis délibéré, pas un oubli — les 8
+requêtes touchaient de toute façon la même base de données (pas des
+systèmes indépendants), le risque de panne partagée entre elles était
+déjà largement corrélé en pratique ; le gain de performance (1 requête
+au lieu de 8, N+1 éliminé) l'emporte pour la page la plus visitée du
+produit.
+**Remise en cause si** : au moment de fusionner ce lot avec le Lot 2A
+(branches actuellement séparées), le conflit sur `Dashboard.tsx` devra
+être résolu à la main — décider À CE MOMENT-LÀ si la dégradation par
+pilier vaut la peine d'être réintroduite par-dessus l'agrégat (ex. un
+endpoint agrégé qui répond quand même partiellement si une SEULE requête
+SQL interne échoue), pas maintenant, par anticipation d'un conflit qui
+n'existe pas encore.

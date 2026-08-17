@@ -12,13 +12,15 @@ import json
 from pathlib import Path
 from typing import Any, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel
+from sqlalchemy.orm import joinedload
 
 from api.core.config import get_settings
 from api.core.database import get_db
 from api.core.job_queue import training_queue
 from api.core.models import ClusterCandidateRecord, ClusterModel, ClusteringJob, Dataset, User
+from api.core.pagination import paginate_by_id
 from api.routers.auth import get_current_user
 from services.audit import log_action
 from services.clustering_registry import CLUSTER_REGISTRY, DEFAULT_ALGORITHM_IDS
@@ -259,13 +261,24 @@ def create_clustering_job(
 
 
 @router.get("/jobs", response_model=List[ClusteringJobSummary])
-def list_clustering_jobs(current_user: User = Depends(get_current_user), db=Depends(get_db)):
-    jobs = (
+def list_clustering_jobs(
+    response: Response,
+    limit: Optional[int] = Query(None, ge=1, le=500),
+    cursor: Optional[int] = Query(None, description="id de la dernière ligne de la page précédente"),
+    current_user: User = Depends(get_current_user),
+    db=Depends(get_db),
+):
+    # joinedload (Lot 4, correctif I3) — voir training.py::list_training_jobs.
+    query = (
         db.query(ClusteringJob)
+        .options(joinedload(ClusteringJob.dataset), joinedload(ClusteringJob.created_by), joinedload(ClusteringJob.result))
         .filter(ClusteringJob.organization_id == current_user.organization_id)
-        .order_by(ClusteringJob.created_at.desc())
-        .all()
+        # id DESC, pas created_at DESC — voir anomalies.py::list_anomaly_jobs
+        # (précision seconde de SQLite, curseur de pagination cassé par des
+        # égalités de created_at).
+        .order_by(ClusteringJob.id.desc())
     )
+    jobs = paginate_by_id(query, ClusteringJob.id, response, cursor, limit)
     return [_to_summary(j) for j in jobs]
 
 
