@@ -578,3 +578,17 @@ retoucher une par une.
 dans `ExpertModePanel`) — ce sont des libellés d'item, pas des titres de
 section, même distinction que pour Dashboard (D2.3 correctif 4).
 Gate complet relancé et vert (tsc, lint, 42/42 tests, build).
+
+### D2.8 — Dernier `font-serif` : 4 pages hors `PageHeader`
+
+**Trouvé** : `grep -rn font-serif` sur tout `src/` — le correctif 6
+(typographie unique) n'avait retiré `font-serif` que d'`AuthBrandPanel`
+et de `PageHeader`. 4 pages qui n'utilisent PAS `PageHeader` (écrans hors
+`AppShell` : `Login.tsx`, `Register.tsx`, `Orientation.tsx`,
+`ComingSoon.tsx`) avaient leur propre `<h1 className="text-2xl
+font-serif">` local, invisible à la recherche initiale limitée aux
+composants déjà touchés.
+**Retenu** : les 4 migrées vers `text-title` (même token que
+`PageHeader`), plus aucune occurrence de `font-serif` dans tout `src/`.
+**Vérifié** : `grep -rn font-serif frontend/src` ne retourne plus rien.
+Gate complet relancé et vert (tsc, lint, 42/42 tests, build).

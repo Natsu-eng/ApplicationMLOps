@@ -68,7 +68,7 @@ export default function ComingSoon({ pillarId }: { pillarId: PillarId }) {
         <Badge variant="neutral">
           {pillarId === "unsupervised" ? "ML non supervisé" : "Vision"} · Bientôt disponible
         </Badge>
-        <h1 className="text-2xl font-serif text-foreground mt-4 mb-2">{pillar.title}</h1>
+        <h1 className="text-title text-foreground mt-4 mb-2">{pillar.title}</h1>
         <p className="text-sm text-muted-foreground leading-relaxed mb-8 max-w-lg mx-auto">{pillar.description}</p>
 
         {features.length > 0 && (
