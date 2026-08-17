@@ -13,7 +13,7 @@ from alembic import command
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import sessionmaker
 
-from api.core.database import Base, _alembic_config, run_migrations
+from api.core.database import Base, SchemaMismatchError, _alembic_config, run_migrations
 
 # Enregistre les 22 tables sur Base.metadata (même import que env.py) —
 # sans ça, Base.metadata.create_all() ne créerait rien.
@@ -101,6 +101,94 @@ def test_existing_pre_alembic_database_is_stamped_not_recreated(tmp_path):
         version = conn.execute(text("SELECT version_num FROM alembic_version")).scalar()
     assert version is not None  # marquée à head, pas laissée vide
     engine.dispose()
+
+
+def test_pre_alembic_database_with_missing_table_is_refused_not_stamped(tmp_path):
+    """Correctif (retour utilisateur) : l'ancien critère de détection
+    ("alembic_version absente + organizations présente") ne prouvait rien
+    sur les 21 AUTRES tables — une base restaurée depuis une sauvegarde
+    antérieure à l'ajout du pilier Vision, par exemple, aurait été
+    estampillée "à jour" avec des tables manquantes, sans qu'aucune
+    migration ne les crée jamais. `run_migrations()` doit maintenant
+    comparer le schéma réel à `Base.metadata` table par table et refuser
+    de démarrer si ça diverge, avec un diagnostic précis — jamais un
+    stamp à l'aveugle."""
+    url = _sqlite_url(tmp_path, "missing_table.db")
+    engine = create_engine(url)
+
+    # Simule une base pré-Alembic à laquelle il manque une table entière
+    # (ex. restaurée depuis une sauvegarde antérieure au pilier Vision) :
+    # crée tout le schéma attendu PUIS supprime une table.
+    Base.metadata.create_all(bind=engine)
+    with engine.begin() as conn:
+        conn.execute(text("DROP TABLE vision_anomaly_examples"))
+
+    tables_before = set(inspect(engine).get_table_names())
+    assert "alembic_version" not in tables_before
+    assert "vision_anomaly_examples" not in tables_before
+    engine.dispose()
+
+    with pytest.raises(SchemaMismatchError, match="vision_anomaly_examples"):
+        run_migrations(db_url=url)
+
+    # Confirme que rien n'a été estampillé (le diagnostic reste valable si
+    # on relance après avoir réparé la base à la main).
+    engine = create_engine(url)
+    tables_after = set(inspect(engine).get_table_names())
+    assert "alembic_version" not in tables_after
+    engine.dispose()
+
+
+def test_pre_alembic_database_with_missing_column_is_refused_not_stamped(tmp_path):
+    """Variante colonne (demandée explicitement) du test précédent : une
+    base pré-Alembic à laquelle il manque une SEULE colonne (pas une table
+    entière) doit être refusée exactement de la même façon."""
+    url = _sqlite_url(tmp_path, "missing_column.db")
+    engine = create_engine(url)
+
+    Base.metadata.create_all(bind=engine)
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE vision_anomaly_models DROP COLUMN n_calibration"))
+
+    tables_before = set(inspect(engine).get_table_names())
+    assert "alembic_version" not in tables_before
+    engine.dispose()
+
+    with pytest.raises(SchemaMismatchError, match="vision_anomaly_models.n_calibration"):
+        run_migrations(db_url=url)
+
+    engine = create_engine(url)
+    assert "alembic_version" not in set(inspect(engine).get_table_names())
+    engine.dispose()
+
+
+def test_already_stamped_database_with_drifted_schema_is_refused_at_every_startup(tmp_path):
+    """Reproduit l'INCIDENT RÉEL : une base déjà marquée `alembic_version =
+    head` (par une version antérieure, moins stricte, de `run_migrations`,
+    ou par toute autre voie) mais dont le schéma réel a dérivé — ici,
+    `vision_anomaly_models` sans `n_calibration`/`n_evaluation`. Comme
+    `alembic_version` est déjà présente, l'ancienne logique tombait dans la
+    branche `upgrade head`, un no-op silencieux (déjà à `head`), et
+    l'écart restait invisible jusqu'au premier appel API en 500. La
+    vérification post-migration doit maintenant le détecter à CHAQUE
+    démarrage, pas seulement au moment d'un stamp."""
+    url = _sqlite_url(tmp_path, "drifted_head.db")
+    engine = create_engine(url)
+
+    # Reproduit l'état incriminé : schéma complet, migré normalement une
+    # première fois (alembic_version posée à head par un run_migrations
+    # antérieur), PUIS une colonne disparaît (dérive post-head — stamp
+    # historique erroné, migration partiellement appliquée, etc.).
+    run_migrations(db_url=url)
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE vision_anomaly_models DROP COLUMN n_evaluation"))
+
+    tables_before = set(inspect(engine).get_table_names())
+    assert "alembic_version" in tables_before  # bien déjà stampée/migrée, contrairement aux tests précédents
+    engine.dispose()
+
+    with pytest.raises(SchemaMismatchError, match="vision_anomaly_models.n_evaluation"):
+        run_migrations(db_url=url)
 
 
 def test_naive_upgrade_on_existing_schema_would_fail_without_stamp(tmp_path):

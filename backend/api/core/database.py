@@ -53,23 +53,40 @@ def get_db():
         db.close()
 
 
-def _add_column_if_missing(table: str, column: str, column_sql_type: str) -> None:
-    """GELÉ depuis le Lot 1.1 (correctif C3, AUDIT_DATALAB_2026-08-16.md) —
-    remplacé par Alembic (`run_migrations()` ci-dessous). Ne plus y ajouter
-    d'appel : toute évolution de schéma passe désormais par
-    `alembic revision --autogenerate`, voir `backend/alembic/versions/`.
-    Conservée uniquement pour référence historique (les colonnes qu'elle
-    ajoutait sont maintenant des colonnes normales de `api/core/models.py`,
-    créées par la révision initiale `594bce594adf`)."""
-    inspector = inspect(engine)
-    if table not in inspector.get_table_names():
-        return  # la table sera créée avec la bonne colonne par create_all()
-    existing_columns = {col["name"] for col in inspector.get_columns(table)}
-    if column in existing_columns:
-        return
-    with engine.begin() as conn:
-        conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {column_sql_type}"))
-    logger.info("[DB] Migration : colonne %s.%s ajoutée", table, column)
+class SchemaMismatchError(RuntimeError):
+    """La base est pré-Alembic (tables déjà présentes, pas de table
+    `alembic_version`) mais son schéma ne correspond pas exactement à ce
+    que la révision initiale est censée avoir créé — voir
+    `_schema_matches_metadata`. Ne JAMAIS estampiller `head` dans ce cas :
+    ce serait mentir sur l'état réel de la base et fermer le seul chemin
+    de réparation (un `alembic upgrade head` sur une base honnêtement non
+    stampée aurait au moins tenté de créer ce qui manque)."""
+
+
+def _schema_matches_metadata(target_engine) -> list[str]:
+    """Compare le schéma RÉEL de `target_engine` à `Base.metadata` (les 22
+    tables/colonnes attendues, exactement ce que la révision initiale crée
+    — même source, donc comparaison fiable sans dupliquer la définition du
+    schéma attendu). Retourne la liste des écarts (vide = conforme).
+
+    Correctif (retour utilisateur) : le critère précédent ("alembic_version
+    absente + table organizations présente") ne prouvait rien sur les 21
+    AUTRES tables — une base restaurée depuis une sauvegarde antérieure à
+    l'ajout du pilier Vision, par exemple, aurait été estampillée "à jour"
+    avec des tables manquantes, sans qu'aucune migration ne les crée
+    jamais. Vérifie maintenant table par table ET colonne par colonne."""
+    inspector = inspect(target_engine)
+    actual_tables = set(inspector.get_table_names())
+    problems: list[str] = []
+    for table in Base.metadata.sorted_tables:
+        if table.name not in actual_tables:
+            problems.append(f"table manquante : {table.name}")
+            continue
+        actual_columns = {col["name"] for col in inspector.get_columns(table.name)}
+        missing_columns = [c.name for c in table.columns if c.name not in actual_columns]
+        for column_name in missing_columns:
+            problems.append(f"colonne manquante : {table.name}.{column_name}")
+    return problems
 
 
 def _alembic_config(db_url: str | None = None):
@@ -102,11 +119,30 @@ def run_migrations(db_url: str | None = None) -> None:
     - **Base déjà en service** (tables déjà présentes, pas de table
       `alembic_version` — c'est-à-dire toute base créée avant ce lot par
       l'ancien `Base.metadata.create_all()`) : rejouer la révision initiale
-      échouerait (`CREATE TABLE` sur une table déjà existante). On marque
-      donc cette révision comme déjà appliquée via `alembic stamp head`,
-      SANS exécuter son SQL — les données existantes ne sont jamais
-      touchées. Testé avec de vraies données dans
-      `tests/test_alembic_migration.py::test_existing_pre_alembic_database_is_stamped_not_recreated`.
+      échouerait (`CREATE TABLE` sur une table déjà existante). SI son
+      schéma correspond exactement à ce qu'attend la révision initiale
+      (`_schema_matches_metadata`), on la marque comme déjà appliquée via
+      `alembic stamp head`, SANS exécuter son SQL — les données existantes
+      ne sont jamais touchées. SINON (schéma partiel — ex. une base
+      restaurée depuis une sauvegarde antérieure à un lot qui a ajouté des
+      tables) : `SchemaMismatchError`, jamais un stamp à l'aveugle qui
+      fermerait le seul chemin de réparation. Testé avec de vraies données
+      dans `tests/test_alembic_migration.py`.
+
+    **Vérification finale, après les deux chemins ci-dessus** (correctif —
+    incident réel) : un stamp erroné effectué par une version ANTÉRIEURE,
+    moins stricte, de cette fonction (avant l'ajout de
+    `_schema_matches_metadata`) laisse une base marquée `head` alors que
+    son schéma réel diverge — `vision_anomaly_models` a ainsi été stampée
+    `head` sans les colonnes `n_calibration`/`n_evaluation`, ajoutées au
+    modèle après coup. Une fois `alembic_version` posée à `head`, chaque
+    redémarrage suivant passait par la branche `else` (`upgrade head`,
+    no-op puisque déjà à `head`) SANS jamais revérifier le schéma réel :
+    l'écart restait invisible jusqu'au premier appel API en 500. Le
+    contrôle est donc désormais répété après `stamp` ET après `upgrade`,
+    pas seulement avant un stamp — seule façon de détecter un schéma qui a
+    dérivé APRÈS avoir atteint `head` (stamp historique erroné, migration
+    partiellement appliquée, intervention manuelle sur la base).
     """
     from alembic import command
 
@@ -116,14 +152,38 @@ def run_migrations(db_url: str | None = None) -> None:
     existing_tables = set(inspector.get_table_names())
     is_pre_alembic_database = "alembic_version" not in existing_tables and "organizations" in existing_tables
 
+    def _fail(message: str, problems: list[str]) -> None:
+        if db_url:
+            target_engine.dispose()
+        raise SchemaMismatchError(message + " Écarts détectés : " + "; ".join(problems))
+
     if is_pre_alembic_database:
+        problems = _schema_matches_metadata(target_engine)
+        if problems:
+            _fail(
+                "Base pré-Alembic détectée, mais son schéma ne correspond pas exactement à la révision "
+                "initiale — refus de démarrer plutôt que d'estampiller à l'aveugle (ce qui fermerait "
+                "définitivement le chemin de réparation).",
+                problems,
+            )
         command.stamp(cfg, "head")
         logger.info(
-            "[DB] Base pré-Alembic détectée (tables déjà présentes, jamais migrée) — "
+            "[DB] Base pré-Alembic détectée (tables déjà présentes, jamais migrée, schéma conforme) — "
             "révision initiale marquée appliquée sans rejeu"
         )
     else:
         command.upgrade(cfg, "head")
+
+    # Filet de sécurité général (voir docstring) : reconfirme la conformité
+    # une fois `head` atteint, quel que soit le chemin emprunté ci-dessus.
+    post_migration_problems = _schema_matches_metadata(target_engine)
+    if post_migration_problems:
+        _fail(
+            "La base est marquée `head` mais son schéma réel ne correspond pas à celui attendu — refus de "
+            "démarrer plutôt que de servir du trafic contre un schéma incomplet. Génère et applique une "
+            "migration de rattrapage (`alembic revision --autogenerate`) pour combler l'écart.",
+            post_migration_problems,
+        )
 
     if db_url:
         target_engine.dispose()
