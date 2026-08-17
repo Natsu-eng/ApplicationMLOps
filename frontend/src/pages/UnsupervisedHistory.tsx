@@ -9,6 +9,7 @@ import {
   type DimensionalityJobSummary,
 } from "../api/client";
 import AppShell from "../components/AppShell";
+import { pillarColor } from "../config/pillars";
 import { Card } from "../components/ui/Card";
 import { ColorIconBadge, accentColorForId } from "../components/ui/ColorIconBadge";
 import { PageHeader } from "../components/ui/PageHeader";
@@ -80,7 +81,7 @@ export default function UnsupervisedHistory() {
         title="Historique"
         description="Retrouvez vos clusterings, réductions de dimension et détections d'anomalies passés — même après avoir quitté la page ou relancé une nouvelle analyse."
         icon={History}
-        color="violet"
+        color={pillarColor("unsupervised")}
       />
 
       <div className="mb-5">

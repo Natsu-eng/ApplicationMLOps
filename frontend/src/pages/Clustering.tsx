@@ -25,6 +25,7 @@ import {
   type DatasetSummary,
 } from "../api/client";
 import AppShell from "../components/AppShell";
+import { pillarColor } from "../config/pillars";
 import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
 import { ColorIconBadge, accentSurfaceClass, accentValueTextClass, type AccentColor } from "../components/ui/ColorIconBadge";
@@ -161,7 +162,7 @@ export default function Clustering() {
             : undefined
         }
         icon={Shapes}
-        color="rose"
+        color={pillarColor("unsupervised")}
         action={
           phase !== "configure" ? (
             <div className="flex items-center gap-2">
@@ -393,7 +394,7 @@ function MetricDirection({ better }: { better: "up" | "down" }) {
   const Icon = better === "up" ? ArrowUp : ArrowDown;
   return (
     <span
-      className="inline-flex items-center text-[10px] text-muted-foreground/80"
+      className="inline-flex items-center text-caption text-muted-foreground/80"
       title={better === "up" ? "Plus haut = meilleur" : "Plus bas = meilleur"}
     >
       <Icon size={11} />
@@ -524,7 +525,7 @@ function ClusteringResultView({ job }: { job: ClusteringJobSummary }) {
 
         <div className={`rounded-xl border p-3 mt-4 ${accentSurfaceClass(QUALITY_ACCENT[quality.tone])}`}>
           <span
-            className={`inline-flex items-center text-[11px] font-semibold px-2 py-0.5 rounded-full bg-card/80 ${accentValueTextClass(QUALITY_ACCENT[quality.tone])}`}
+            className={`inline-flex items-center text-overline px-2 py-0.5 rounded-full bg-card/80 ${accentValueTextClass(QUALITY_ACCENT[quality.tone])}`}
           >
             {quality.label}
           </span>
@@ -621,7 +622,7 @@ function ClusteringResultView({ job }: { job: ClusteringJobSummary }) {
                 </p>
                 {profile.differentiating_variables.length > 0 && (
                   <div className="space-y-1 mb-2">
-                    <p className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                    <p className="text-overline uppercase text-muted-foreground">
                       Variables différenciantes
                     </p>
                     {profile.differentiating_variables.slice(0, 3).map((varName) => {

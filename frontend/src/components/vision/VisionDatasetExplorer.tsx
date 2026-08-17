@@ -93,7 +93,7 @@ function ClassGallerySection({
             ))}
           </div>
           {images.total > images.paths.length && (
-            <p className="text-[11px] text-muted-foreground mt-1.5">
+            <p className="text-caption text-muted-foreground mt-1.5">
               {images.paths.length} sur {images.total} images affichées.
             </p>
           )}

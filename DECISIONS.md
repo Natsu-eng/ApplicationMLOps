@@ -460,3 +460,68 @@ retour utilisateur (contrairement aux tuiles). Non touché.
 couleur de pilier à un endroit où `pillarColor()` ne suffit pas (ex.
 mélange avec un statut) — étendre l'API plutôt que dupliquer la couleur
 en dur localement.
+
+## Lot 2B
+
+### D2.5 — Premier incrément : couleurs de pilier + dernières tailles arbitraires
+
+**Contexte** : Lot 2B applique le système du Lot 2A (déjà validé sur
+Dashboard) aux 16 autres pages. Travaillé dans un worktree Git séparé
+(`../app-analyse-lot2b`) pendant qu'une vérification backend tournait sur
+une autre branche, pour ne jamais perturber un `pytest` en cours en
+changeant les fichiers sous ses pieds (leçon tirée d'un incident réel
+cette même session — un `git stash`/`checkout` avait fait disparaître des
+fichiers pendant qu'un test les utilisait encore).
+
+**Retenu — couleurs de pilier partout** : les 11 pages appartenant
+explicitement à un pilier (déjà déclaré sans ambiguïté via `<AppShell
+pillarId="...">`, un signal existant réutilisé plutôt qu'inventé) migrent
+leur `PageHeader` de leur couleur codée en dur vers `pillarColor(id)`.
+Plusieurs collisions/incohérences réelles trouvées en croisant la couleur
+canonique du Lot 2A (D2.4 : supervisé=violet, non supervisé=rose,
+Vision=teal) avec l'usage existant : `TrainingHistory` (amber),
+`AnomalyDetection` (amber), `DimensionalityReduction` (blue),
+`UnsupervisedHistory` (violet — entrait en collision avec supervisé),
+`VisionClassification`/`VisionHistory` (violet — même collision),
+`VisionAnomalies` (amber), `Datasets` (teal — entrait en collision avec
+Vision). Chacune corrigée vers la couleur réelle de son pilier.
+**Écarté** : recolorer aussi les `SectionHeader`/`MetricTile` internes à
+chaque page (ex. `Clustering.tsx` a un `SectionHeader color="violet"`
+pour "Profils de segments") — même raisonnement que D2.4 : ils
+différencient une sous-section, pas l'identité de la page, non signalés
+comme un problème.
+**Dashboard/Profile/DesignSystem non touchées** : leur couleur (bleu/
+violet) n'appartient à aucun pilier par construction (vue d'ensemble
+trans-pilier, compte, page de référence hors nav) — laisser une couleur
+neutre-ish plutôt que d'en forcer une de pilier serait plus cohérent,
+mais aucune de ces 3 pages n'a été signalée comme un problème ; non
+touchées pour rester strictement dans le périmètre du retour utilisateur.
+
+**Retenu — dernières tailles arbitraires** : `_schema` ci-dessus n'a rien
+à voir, mais même logique que D2.2 : `grep -rn "text-\["` sur tout `src/`
+trouvait encore 17 fichiers (Table.tsx/StatTile.tsx, déjà migrés au Lot
+2A malgré ce que D2.2 affirmait, se sont révélés propres — la divergence
+venait d'avoir grep-é la mauvaise branche, voir note ci-dessous). Tous
+migrés vers `text-caption` (texte simple, la majorité des cas) ou
+`text-overline` (motif déjà uppercase/tracking-wide/badge sémantique,
+ex. `AppShell.tsx` en-tête de section de nav, badges de qualité) —
+critère : la présence de `font-semibold`/`uppercase`/`tracking-wide`
+redondants dans la classe existante signale un overline, sinon caption.
+`text-[9px]`/`text-[10px]` (Heatmap, Avatar) n'ont pas d'équivalent plus
+petit que `text-overline`/`text-caption` (11px/12px) dans l'échelle —
+légère augmentation de taille assumée plutôt que de garder une valeur
+arbitraire.
+
+**Piège rencontré, documenté pour la suite** : grep-er `frontend/src`
+depuis la branche `fix-lot1-migration-safety` (qui ne contient AUCUN
+changement Lot 2A, basée sur `main`) donnait des résultats trompeurs
+(StatTile.tsx y apparaissait encore avec `text-[11px]`, alors qu'il est
+déjà propre sur `lot-2a-design-system`). Toujours vérifier sur quelle
+branche/worktree une lecture de fichier a réellement lieu avant d'en
+tirer une conclusion.
+
+**Reste à faire (Lot 2B, pas dans cet incrément)** : nesting de
+conteneurs et hiérarchie de sections page par page (au-delà de ce que
+les primitives déjà corrigées appliquent automatiquement), vérification
+visuelle par l'utilisateur sur les 16 pages comme cela a été fait pour
+Dashboard.

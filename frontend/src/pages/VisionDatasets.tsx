@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type DragEvent } from "react"
 import { AlertCircle, Database, Images, Trash2, UploadCloud } from "lucide-react";
 import { ApiError, api, type VisionDatasetDetail, type VisionDatasetSummary } from "../api/client";
 import AppShell from "../components/AppShell";
+import { pillarColor } from "../config/pillars";
 import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
 import { PageHeader } from "../components/ui/PageHeader";
@@ -138,7 +139,7 @@ export default function VisionDatasets() {
         title="Mes données"
         description="Importez, explorez et gérez vos datasets d'images — dossiers de classes pour la classification, ou structure MVTec AD pour la détection d'anomalies visuelles."
         icon={Database}
-        color="teal"
+        color={pillarColor("vision")}
       />
 
       <Card

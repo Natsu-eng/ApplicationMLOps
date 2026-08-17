@@ -23,6 +23,7 @@ import {
   type DimensionalityResult,
 } from "../api/client";
 import AppShell from "../components/AppShell";
+import { pillarColor } from "../config/pillars";
 import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
 import { accentSurfaceClass, accentValueTextClass, type AccentColor } from "../components/ui/ColorIconBadge";
@@ -151,7 +152,7 @@ export default function DimensionalityReduction() {
             : undefined
         }
         icon={ScatterChartIcon}
-        color="blue"
+        color={pillarColor("unsupervised")}
         action={
           phase !== "configure" ? (
             <div className="flex items-center gap-2">

@@ -84,7 +84,7 @@ function ClassificationCharts({ evaluation }: { evaluation: ModelEvaluation }) {
             help="Plus la courbe se rapproche du coin supérieur gauche, mieux le modèle distingue les classes. La diagonale grise correspond au hasard."
           />
           {manyClasses && (
-            <p className="text-[11px] text-muted-foreground mb-1">
+            <p className="text-caption text-muted-foreground mb-1">
               Survolez ou cliquez une classe dans la légende pour l'isoler.
             </p>
           )}
@@ -140,7 +140,7 @@ function ClassificationCharts({ evaluation }: { evaluation: ModelEvaluation }) {
             help="Utile en complément de la ROC quand les classes sont déséquilibrées — plus la courbe reste haute, mieux le modèle équilibre précision et rappel."
           />
           {manyClasses && (
-            <p className="text-[11px] text-muted-foreground mb-1">
+            <p className="text-caption text-muted-foreground mb-1">
               Survolez ou cliquez une classe dans la légende pour l'isoler.
             </p>
           )}

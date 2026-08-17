@@ -8,6 +8,7 @@ import {
   type TrainingJobSummary,
 } from "../api/client";
 import AppShell from "../components/AppShell";
+import { pillarColor } from "../config/pillars";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
@@ -113,7 +114,7 @@ export default function TrainingHistory() {
         title="Entraînements"
         description="Sélectionnez au moins deux entraînements pour les comparer côte à côte."
         icon={History}
-        color="amber"
+        color={pillarColor("supervised")}
         action={
           <Button onClick={handleCompare} disabled={selected.size < 2 || comparing}>
             <GitCompareArrows size={15} />

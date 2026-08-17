@@ -236,7 +236,7 @@ export default function EdaModal({ dataset, onClose }: { dataset: DatasetSummary
                         <td className="px-3.5 py-2.5 font-medium text-foreground border-t border-border/60">{c.name}</td>
                         <td className="px-3.5 py-2.5 border-t border-border/60">
                           <span
-                            className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium border ${accentSurfaceClass(
+                            className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-overline border ${accentSurfaceClass(
                               c.kind === "numeric" ? "blue" : "violet"
                             )} ${accentValueTextClass(c.kind === "numeric" ? "blue" : "violet")}`}
                           >

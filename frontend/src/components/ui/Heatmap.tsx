@@ -62,7 +62,7 @@ export function Heatmap({ xLabels, yLabels, matrix, variant = "sequential", form
         {xLabels.map((label) => (
           <div
             key={label}
-            className={`bg-card text-[9px] text-muted-foreground px-0.5 pb-1 truncate ${
+            className={`bg-card text-caption text-muted-foreground px-0.5 pb-1 truncate ${
               rotateLabels ? "[writing-mode:vertical-rl] rotate-180 text-left max-h-20" : "text-center"
             }`}
             title={label}
@@ -72,7 +72,7 @@ export function Heatmap({ xLabels, yLabels, matrix, variant = "sequential", form
         ))}
         {yLabels.map((yLabel, i) => (
           <Fragment key={yLabel}>
-            <div className="bg-card text-[9px] text-muted-foreground pr-1.5 flex items-center justify-end truncate max-w-24" title={yLabel}>
+            <div className="bg-card text-caption text-muted-foreground pr-1.5 flex items-center justify-end truncate max-w-24" title={yLabel}>
               {yLabel}
             </div>
             {matrix[i].map((value, j) => {
@@ -80,7 +80,7 @@ export function Heatmap({ xLabels, yLabels, matrix, variant = "sequential", form
               return (
                 <div
                   key={`${yLabel}-${xLabels[j]}`}
-                  className="aspect-square min-h-8 flex items-center justify-center text-[10px] font-medium tabular-nums transition-colors"
+                  className="aspect-square min-h-8 flex items-center justify-center text-caption font-medium tabular-nums transition-colors"
                   style={{ backgroundColor: style.background, color: style.color }}
                   title={`${yLabel} × ${xLabels[j]} : ${value ?? "—"}`}
                 >

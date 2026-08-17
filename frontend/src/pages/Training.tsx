@@ -10,6 +10,7 @@ import {
   type TrainingJobSummary,
 } from "../api/client";
 import AppShell from "../components/AppShell";
+import { pillarColor } from "../config/pillars";
 import { ClassRebalancingSuggestion } from "../components/training/ClassRebalancingSuggestion";
 import { DataQualityWarnings } from "../components/training/DataQualityWarnings";
 import {
@@ -159,7 +160,7 @@ export default function Training() {
           phase === "configure" ? "Objectif : prédire une valeur ou une catégorie. Nous vous guidons pas à pas." : undefined
         }
         icon={BrainCircuit}
-        color="violet"
+        color={pillarColor("supervised")}
         action={
           phase !== "configure" ? (
             <div className="flex items-center gap-2">
@@ -758,7 +759,7 @@ function StepPill({
       disabled={disabled}
       className={`flex items-center gap-2 rounded-full border pl-1.5 pr-3 py-1.5 text-sm font-medium whitespace-nowrap transition-colors disabled:cursor-not-allowed ${pillStyle}`}
     >
-      <span className={`h-5 w-5 rounded-full flex items-center justify-center text-[11px] font-semibold flex-shrink-0 ${circleStyle}`}>
+      <span className={`h-5 w-5 rounded-full flex items-center justify-center text-overline flex-shrink-0 ${circleStyle}`}>
         {state === "done" ? <Check size={12} strokeWidth={3} /> : number}
       </span>
       {label}

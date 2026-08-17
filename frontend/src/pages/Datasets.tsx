@@ -3,6 +3,7 @@ import { useSearchParams } from "react-router-dom";
 import { AlertCircle, ChartColumn, Database, Eye, FileSpreadsheet, Trash2, UploadCloud } from "lucide-react";
 import { ApiError, api, type DatasetSummary, type PreviewResponse } from "../api/client";
 import AppShell from "../components/AppShell";
+import { pillarColor } from "../config/pillars";
 import EdaModal from "../components/datasets/EdaModal";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
@@ -117,7 +118,7 @@ export default function Datasets() {
         title="Mes données"
         description="Importez, explorez et préparez vos jeux de données avant de les utiliser pour un entraînement."
         icon={Database}
-        color="teal"
+        color={pillarColor("supervised")}
         action={
           datasets && datasets.length > 0 ? (
             <Badge variant="neutral">

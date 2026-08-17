@@ -12,6 +12,7 @@ import {
   type VisionPredictionExample,
 } from "../api/client";
 import AppShell from "../components/AppShell";
+import { pillarColor } from "../config/pillars";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
@@ -128,7 +129,7 @@ export default function VisionClassification() {
             : undefined
         }
         icon={Boxes}
-        color="violet"
+        color={pillarColor("vision")}
         action={
           phase !== "configure" ? (
             <div className="flex items-center gap-2">
@@ -404,7 +405,7 @@ function ExampleGrid({ examples, datasetId }: { examples: VisionPredictionExampl
             alt={example.relative_path}
             className={`w-full aspect-square object-cover rounded-lg border-2 ${example.correct ? "border-success/40" : "border-destructive/40"}`}
           />
-          <p className="text-[10px] text-muted-foreground truncate" title={example.relative_path}>
+          <p className="text-caption text-muted-foreground truncate" title={example.relative_path}>
             {example.correct ? example.predicted_label : `${example.true_label} → ${example.predicted_label}`}
           </p>
         </div>

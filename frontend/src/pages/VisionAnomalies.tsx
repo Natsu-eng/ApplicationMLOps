@@ -11,6 +11,7 @@ import {
   type VisionAnomalyResult,
 } from "../api/client";
 import AppShell from "../components/AppShell";
+import { pillarColor } from "../config/pillars";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
@@ -126,7 +127,7 @@ export default function VisionAnomalies() {
             : undefined
         }
         icon={AlertTriangle}
-        color="amber"
+        color={pillarColor("vision")}
         action={
           phase !== "configure" ? (
             <div className="flex items-center gap-2">
@@ -412,7 +413,7 @@ function AnomalyExampleCard({ example, datasetId }: { example: VisionAnomalyExam
       </div>
       <div className="grid grid-cols-3 gap-2">
         <div>
-          <p className="text-[10px] text-muted-foreground mb-1">Image</p>
+          <p className="text-caption text-muted-foreground mb-1">Image</p>
           <VisionImage
             datasetId={datasetId}
             path={example.relative_path}
@@ -421,7 +422,7 @@ function AnomalyExampleCard({ example, datasetId }: { example: VisionAnomalyExam
           />
         </div>
         <div>
-          <p className="text-[10px] text-muted-foreground mb-1">Zones erronées (superposées)</p>
+          <p className="text-caption text-muted-foreground mb-1">Zones erronées (superposées)</p>
           <img
             src={example.heatmap_png}
             alt="Image avec carte d'erreur superposée"
@@ -429,7 +430,7 @@ function AnomalyExampleCard({ example, datasetId }: { example: VisionAnomalyExam
           />
         </div>
         <div>
-          <p className="text-[10px] text-muted-foreground mb-1">Masque du défaut</p>
+          <p className="text-caption text-muted-foreground mb-1">Masque du défaut</p>
           <img src={example.mask_png} alt="masque binaire" className="w-full aspect-square object-cover rounded-lg border border-border" />
         </div>
       </div>
@@ -439,7 +440,7 @@ function AnomalyExampleCard({ example, datasetId }: { example: VisionAnomalyExam
           style={{ background: "linear-gradient(to right, #0000cc, #00cc66, #cc0000)" }}
           aria-hidden="true"
         />
-        <p className="text-[10px] text-muted-foreground">Bleu = normal · Rouge = zone la plus atypique</p>
+        <p className="text-caption text-muted-foreground">Bleu = normal · Rouge = zone la plus atypique</p>
       </div>
       <p className="text-xs text-muted-foreground mt-2 tabular-nums">Score d'anomalie : {example.anomaly_score.toFixed(4)}</p>
     </Card>
