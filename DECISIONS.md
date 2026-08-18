@@ -833,3 +833,112 @@ séparément, pas un correctif improvisé en fin de session. `AppSkeleton`
 production (ex. redémarrages fréquents d'un conteneur, autoscaling) —
 alors le lot d'imports paresseux devient prioritaire, pas seulement un
 confort de développement.
+
+## Lot 3 — Verdict post-entraînement (Phase 2 de l'audit, correctif I1)
+
+### D3.1 — Portée : règles déterministes sur des données déjà persistées, aucun nouveau calcul ML
+
+**Question** : l'audit (§E.3/§P) identifie « aucune aide à la décision
+post-entraînement » comme le plus gros écart entre la promesse produit et
+le code, et demande `services/model_verdict.py` + composant
+`ModelVerdict`. Comment le construire sans transformer ça en chantier de
+recherche ?
+**Retenu** : 7 vérifications, toutes des règles déterministes (seuils) sur
+des nombres DÉJÀ calculés et persistés par `ml_training.py` — aucun
+nouvel entraînement, aucune nouvelle métrique coûteuse :
+surapprentissage (`delta_r2`/`delta_accuracy`), fiabilité (largeur de
+l'IC bootstrap), choix de métrique (déséquilibre de classes déduit de
+`confusion_matrix`, classification uniquement), écart au 2ᵉ candidat
+(`selection_score` vs écart-type des `fold_scores`), honnêteté des
+probabilités (écart à la diagonale de `calibration_json`, classification
+uniquement), utilité de plus de données (plateau de `learning_curve_json`),
+couverture CQR (`empirical_coverage` vs `target_coverage`, régression
+uniquement). Chaque vérification omise (donnée absente — job antérieur au
+correctif, ou non applicable au type de tâche) est simplement absente du
+résultat, jamais remplacée par une affirmation inventée.
+**Convention reprise de `services/data_quality.py`** (même vocabulaire de
+niveau `critique`/`attention`/`info`, mêmes champs `code`/`title`/
+`explanation`) — l'utilisateur reconnaît immédiatement le même type de
+garde-fou que les avertissements de qualité de données déjà affichés
+avant l'entraînement.
+**Écarté** : étendre au clustering et à la vision dans ce même lot (la
+roadmap de l'audit le mentionne en extension) — le pilier non supervisé a
+déjà son propre équivalent (`utils/clusterQuality.ts`), la vision n'a pas
+encore de notion de candidats/leaderboard comparable. Fait quand le
+besoin se présente, pas par anticipation.
+
+### D3.2 — Donnée manquante trouvée en vérifiant le code réel : pas d'`accuracy_train` en classification
+
+**Trouvé** : `_regression_metrics` calcule `r2_train`/`r2_test`/`delta_r2`
+depuis `pred_train`/`pred_test`, mais `_classification_metrics` ne
+prenait QUE `y_test`/`pred_test` — `pred_train` était déjà calculé
+inconditionnellement dans `train_and_evaluate` (ligne commune aux deux
+branches) mais jamais utilisé côté classification. Le tableau de l'audit
+(§E.3) suppose "accuracy train/test" disponible pour juger le
+surapprentissage — ce n'est vrai qu'en régression.
+**Retenu** : `_classification_metrics` prend maintenant `y_train`/
+`pred_train` en plus, calcule `accuracy_train`/`delta_accuracy` — même
+paire de clés que `r2_train`/`delta_r2` côté régression, aucun calcul
+supplémentaire (juste un `accuracy_score` de plus sur des prédictions
+déjà calculées). `services/model_verdict.py` en dépend pour juger le
+surapprentissage en classification exactement comme en régression, sans
+traiter les deux tâches différemment.
+**Vérifié** : aucun test n'asserte l'ensemble exact des clés de `metrics`
+(`grep metrics\.keys` sans résultat) — ajout sans risque de régression.
+Tests classification ciblés de `test_ml_training.py` relancés (3/3).
+
+### D3.3 — Verdict calculé à la volée, jamais persisté
+
+**Question** : stocker le verdict en base (nouvelle colonne
+`verdict_json` sur `MLModel`) ou le calculer à chaque lecture ?
+**Retenu** : calculé à la volée dans `_to_model_detail()` (routers/
+training.py), jamais persisté. Les règles de `model_verdict.py` peuvent
+évoluer (seuils affinés, nouvelles vérifications) sans backfill ni
+migration — un modèle entraîné avant ce lot affiche immédiatement un
+verdict cohérent avec les règles actuelles, pas figé sur ce qui existait
+au moment de son entraînement. Coût : une requête `ModelCandidate`
+supplémentaire par lecture de modèle (déjà nécessaire pour le
+leaderboard, `GET /jobs/{id}/candidates` — même filtre, dupliqué ici
+plutôt que partagé, la fonction reste appelable sans devoir aussi
+récupérer le leaderboard).
+**Remise en cause si** : le calcul devient coûteux (aujourd'hui : une
+requête SQL + quelques dizaines de comparaisons de flottants, négligeable)
+ou si l'historique des verdicts doit être auditable (aujourd'hui : non
+demandé).
+
+### D3.4 — Suppression du texte ad hoc "Interprétation du modèle" qui doublonnait la question du 2ᵉ candidat
+
+**Trouvé, corrigé** : `ModelResultModal.tsx` avait déjà DEUX tentatives ad
+hoc de répondre à « ce modèle surapprend-il ? »/« le gagnant est-il
+vraiment meilleur ? » — un texte inline sous les métriques de performance
+(`delta_r2 < 0.08 ? ... : ...`, régression uniquement, aucune notion de
+significativité) et une phrase dans `ModelInterpretation` comparant
+`selection_score` du gagnant et du 2ᵉ avec un seuil arbitraire (0,01),
+sans jamais utiliser `fold_scores` (déjà disponible, Lot D). Garder les
+trois (l'ancien texte, l'ancienne phrase, ET le nouveau `ModelVerdict`)
+aurait affiché deux verdicts différents, avec des seuils différents, sur
+la même page.
+**Retenu** : les deux supprimés. `ModelVerdict`, en tête de page, répond
+maintenant aux deux questions avec la vraie donnée disponible
+(`delta_r2`/`delta_accuracy` pour l'un, écart-type des `fold_scores` pour
+l'autre). `ModelInterpretation` ne garde que ce que `ModelVerdict` ne
+couvre pas : l'importance des variables (SHAP).
+**Remise en cause si** : un besoin réapparaît de comparer TOUS les
+candidats deux à deux (pas seulement le gagnant au 2ᵉ) — hors périmètre
+de ce lot, `ModelVerdict` répond à "le gagnant est-il clairement
+meilleur", pas à un classement complet qualifié.
+
+### D3.5 — Vérification : sous-ensemble ciblé, pas la suite complète (525 tests)
+
+**Retenu** (demande explicite de l'utilisateur, "évite de lancer tous les
+tests, juste la partie concernée") : `test_model_verdict.py` (29/29,
+nouveau), sous-ensemble classification de `test_ml_training.py` ciblé par
+`-k classification` (3/3, vérifie `accuracy_train`/`delta_accuracy`),
+`test_training_api.py`+`test_model_registry.py`+`test_job_comparison.py`
+(36/36, les trois fichiers qui exercent `_to_model_detail()`/`GET
+/jobs/{id}/model`/`promote_model`, dont la signature a changé). Gate
+frontend complet (tsc, lint, 35/35 tests, build) — plus rapide, moins de
+surface de risque de régression que le backend.
+**Remise en cause si** : une régression apparaît ailleurs dans la suite
+complète au prochain lot qui touche `ml_training.py`/`training.py` — la
+suite complète devra alors être relancée avant fusion vers `main`.

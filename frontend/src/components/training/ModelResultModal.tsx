@@ -21,6 +21,7 @@ import { formatMetricValue, formatPercent } from "../../utils/format";
 import { clampUnitScore } from "../../utils/cvScore";
 import EvaluationCharts from "./EvaluationCharts";
 import { ShapBeeswarmChart, PermutationImportanceChart } from "./GlobalExplainability";
+import { ModelVerdict } from "./ModelVerdict";
 import { CalibrationChart, LearningCurveChart } from "./ReliabilityDiagnostics";
 import PredictionForm from "./PredictionForm";
 
@@ -168,37 +169,24 @@ function ShapBars({ features }: { features: MLModelDetail["shap_summary"] }) {
  * shap_summary) — aucun nouveau calcul côté modèle. */
 function ModelInterpretation({
   model,
-  leaderboard,
   explainabilityDegraded,
 }: {
   model: MLModelDetail;
-  leaderboard: LeaderboardResponse | null;
   explainabilityDegraded: boolean;
 }) {
-  const winner = leaderboard?.candidates.find((c) => c.is_winner);
-  const runnerUp = leaderboard?.candidates.find((c) => !c.is_winner);
-  const metricShortName = leaderboard?.selection_metric_label.split(" (")[0];
-
-  let whyText: string;
-  if (winner && runnerUp && metricShortName && leaderboard) {
-    const delta = clampUnitScore(winner.selection_score) - clampUnitScore(runnerUp.selection_score);
-    const deltaQualifier =
-      delta < 0.01 ? "un écart faible — les modèles candidats étaient proches" : "un écart net";
-    whyText =
-      `${model.algorithm} a été retenu parmi ${leaderboard.candidates.length} modèles comparés : meilleur ` +
-      `${metricShortName} en validation croisée, devant ${runnerUp.algorithm} de ${delta.toFixed(3)} point` +
-      `${delta >= 0.001 ? "s" : ""} — ${deltaQualifier}.`;
-  } else {
-    whyText = `${model.algorithm} a été retenu sur la base de son score de validation croisée.`;
-  }
-
+  // La comparaison au 2ᵉ candidat (pourquoi CE modèle a été retenu) vivait
+  // ici sous forme d'un texte ad hoc (seuil arbitraire 0,01, sans rapport à
+  // la variance inter-plis) — supprimée (Lot 3, correctif I1) : ModelVerdict,
+  // en tête de page, répond maintenant à la même question avec la vraie
+  // significativité statistique (écart vs écart-type des `fold_scores`).
+  // Ne reste ici que ce que ModelVerdict ne couvre pas : l'importance des
+  // variables.
   const topFeatures = model.shap_summary.slice(0, 3).map((f) => f.feature);
+  if (explainabilityDegraded || topFeatures.length === 0) return null;
   const featuresText =
-    !explainabilityDegraded && topFeatures.length > 0
-      ? topFeatures.length === 1
-        ? `La variable qui pèse le plus dans ses décisions est ${topFeatures[0]}.`
-        : `Les variables qui pèsent le plus dans ses décisions sont, par ordre d'importance : ${topFeatures.join(", ")}.`
-      : null;
+    topFeatures.length === 1
+      ? `La variable qui pèse le plus dans ses décisions est ${topFeatures[0]}.`
+      : `Les variables qui pèsent le plus dans ses décisions sont, par ordre d'importance : ${topFeatures.join(", ")}.`;
 
   return (
     <section className="rounded-xl border border-primary/20 bg-primary/5 p-4">
@@ -206,16 +194,13 @@ function ModelInterpretation({
         <Sparkles size={12} />
         Interprétation du modèle
       </p>
-      <p className="text-sm text-foreground/90 leading-relaxed">{whyText}</p>
-      {featuresText && (
-        <p className="text-sm text-foreground/90 leading-relaxed mt-2">
-          {featuresText}{" "}
-          <span className="text-muted-foreground">
-            Une variable en tête de liste influence davantage la prédiction que les autres — cela ne prouve pas
-            un lien de cause à effet, seulement que le modèle s'appuie fortement dessus.
-          </span>
-        </p>
-      )}
+      <p className="text-sm text-foreground/90 leading-relaxed">
+        {featuresText}{" "}
+        <span className="text-muted-foreground">
+          Une variable en tête de liste influence davantage la prédiction que les autres — cela ne prouve pas un
+          lien de cause à effet, seulement que le modèle s'appuie fortement dessus.
+        </span>
+      </p>
     </section>
   );
 }
@@ -410,6 +395,10 @@ export function ModelResultView({ job }: { job: TrainingJobSummary }) {
             )}
           </div>
 
+          {/* En tête de la vue Résultats (Lot 3, correctif I1) — jamais dans
+              un onglet secondaire, c'est la promesse produit elle-même. */}
+          <ModelVerdict verdict={model.verdict} />
+
           {/* Onglets — remplace l'ancien empilement vertical de 10+ cartes
               identiques (défilement long, aucune hiérarchie) par une
               navigation groupée par intention, même motif que EdaModal.tsx
@@ -461,13 +450,6 @@ export function ModelResultView({ job }: { job: TrainingJobSummary }) {
                       </>
                     )}
                   </div>
-                  {model.task_type === "regression" && typeof model.metrics.delta_r2 === "number" && (
-                    <p className="text-xs text-muted-foreground mt-3">
-                      Écart train/test (R²) : <span className="tabular-nums">{formatMetricValue(model.metrics.delta_r2)}</span>
-                      {" — "}
-                      {model.metrics.delta_r2 < 0.08 ? "pas de surapprentissage notable" : "surapprentissage à surveiller"}
-                    </p>
-                  )}
                 </Card>
               </div>
 
@@ -477,7 +459,6 @@ export function ModelResultView({ job }: { job: TrainingJobSummary }) {
 
               <ModelInterpretation
                 model={model}
-                leaderboard={leaderboard}
                 explainabilityDegraded={explainability?.status === "degraded"}
               />
             </div>
