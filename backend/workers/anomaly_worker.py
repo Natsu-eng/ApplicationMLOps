@@ -1,8 +1,9 @@
 """Fonction exécutée par le worker RQ pour un job de détection d'anomalies —
 même process worker que `training_worker.py`/`clustering_worker.py`/
-`dimensionality_worker.py` (une seule file `training_queue`, un seul worker
-physique). Mêmes conventions : session DB propre, progression persistée à
-chaque étape, `_user_safe_error_message` copié (pas importé)."""
+`dimensionality_worker.py`, enfilée sur `analysis_queue` (Lot 4, correctif
+I6 — voir `api/core/job_queue.py`). Mêmes conventions : session DB propre,
+progression persistée à chaque étape, `_user_safe_error_message` copié
+(pas importé)."""
 from __future__ import annotations
 
 import json
@@ -17,7 +18,7 @@ from api.core.database import SessionLocal
 from api.core.models import AnomalyJob, AnomalyModel, AnomalyObservationRecord, Dataset
 from api.core.storage import anomaly_model_file_path
 from services.anomaly_training import AnomalyConfig, train_and_evaluate_anomalies
-from services.datasets import read_dataframe
+from services.datasets import read_dataset_dataframe
 from services.ml_preprocessing import TrainingAbortedError
 
 logger = logging.getLogger("datalab.anomaly_worker")
@@ -68,7 +69,7 @@ def run_anomaly_job(job_id: int) -> None:
             if dataset is None or dataset.status != "ready":
                 raise TrainingAbortedError("Dataset introuvable ou non prêt")
 
-            df = read_dataframe(Path(dataset.file_path), Path(dataset.file_path).suffix)
+            df = read_dataset_dataframe(Path(dataset.file_path), Path(dataset.file_path).suffix)
             feature_columns = json.loads(job.feature_columns_json)
             missing = [c for c in feature_columns if c not in df.columns]
             if missing:

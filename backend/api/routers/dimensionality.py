@@ -1,8 +1,9 @@
 """Router réduction de dimension — Lot 13 (ML non supervisé).
 
 Mêmes principes que `api/routers/clustering.py` : isolation systématique par
-`organization_id`, tâche de fond obligatoire (RQ, réutilise `training_queue`),
-jamais de calcul ML dans la requête HTTP. Router DÉDIÉ, jamais fusionné.
+`organization_id`, tâche de fond obligatoire (RQ, `analysis_queue` —
+voir `api/core/job_queue.py`, correctif I6), jamais de calcul ML dans la
+requête HTTP. Router DÉDIÉ, jamais fusionné.
 """
 from __future__ import annotations
 
@@ -11,16 +12,18 @@ from pathlib import Path
 from typing import Any, List, Optional
 
 import pandas as pd
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel
+from sqlalchemy.orm import joinedload
 
 from api.core.config import get_settings
 from api.core.database import get_db
-from api.core.job_queue import training_queue
+from api.core.job_queue import analysis_queue
 from api.core.models import Dataset, DimensionalityJob, DimensionalityPoint, User
+from api.core.pagination import paginate_by_id
 from api.routers.auth import get_current_user
 from services.audit import log_action
-from services.datasets import DatasetParsingError, read_dataframe
+from services.datasets import DatasetParsingError, read_dataset_dataframe
 from services.dimensionality_registry import DEFAULT_ALGORITHM_ID, DIMENSIONALITY_REGISTRY
 from services.job_quota import ALL_JOB_MODELS, raise_if_quota_exceeded
 from services.job_watchdog import reconcile_stale_jobs
@@ -210,7 +213,7 @@ def create_dimensionality_job(
         )
 
     try:
-        read_dataframe(Path(dataset.file_path), Path(dataset.file_path).suffix)
+        read_dataset_dataframe(Path(dataset.file_path), Path(dataset.file_path).suffix)
     except DatasetParsingError as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -236,7 +239,7 @@ def create_dimensionality_job(
 
     from workers.dimensionality_worker import run_dimensionality_job
 
-    rq_job = training_queue.enqueue(run_dimensionality_job, job.id, job_timeout=1800)
+    rq_job = analysis_queue.enqueue(run_dimensionality_job, job.id, job_timeout=600)
     job.rq_job_id = rq_job.id
     db.commit()
     db.refresh(job)
@@ -245,13 +248,26 @@ def create_dimensionality_job(
 
 
 @router.get("/jobs", response_model=List[DimensionalityJobSummary])
-def list_dimensionality_jobs(current_user: User = Depends(get_current_user), db=Depends(get_db)):
-    jobs = (
+def list_dimensionality_jobs(
+    response: Response,
+    limit: Optional[int] = Query(None, ge=1, le=500),
+    cursor: Optional[int] = Query(None, description="id de la dernière ligne de la page précédente"),
+    current_user: User = Depends(get_current_user),
+    db=Depends(get_db),
+):
+    # joinedload (Lot 4, correctif I3) — voir training.py::list_training_jobs.
+    query = (
         db.query(DimensionalityJob)
+        .options(
+            joinedload(DimensionalityJob.dataset),
+            joinedload(DimensionalityJob.created_by),
+            joinedload(DimensionalityJob.result),
+        )
         .filter(DimensionalityJob.organization_id == current_user.organization_id)
-        .order_by(DimensionalityJob.created_at.desc())
-        .all()
+        # id DESC, pas created_at DESC — voir anomalies.py::list_anomaly_jobs.
+        .order_by(DimensionalityJob.id.desc())
     )
+    jobs = paginate_by_id(query, DimensionalityJob.id, response, cursor, limit)
     return [_to_summary(j) for j in jobs]
 
 
@@ -317,7 +333,7 @@ def get_dimensionality_color_by(
         )
 
     try:
-        df = read_dataframe(Path(job.dataset.file_path), Path(job.dataset.file_path).suffix)
+        df = read_dataset_dataframe(Path(job.dataset.file_path), Path(job.dataset.file_path).suffix)
     except DatasetParsingError as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -360,7 +376,7 @@ def delete_dimensionality_job(job_id: int, current_user: User = Depends(get_curr
         try:
             from rq.job import Job as RQJob
 
-            rq_job = RQJob.fetch(job.rq_job_id, connection=training_queue.connection)
+            rq_job = RQJob.fetch(job.rq_job_id, connection=analysis_queue.connection)
             rq_job.cancel()
             rq_job.delete()
         except Exception:

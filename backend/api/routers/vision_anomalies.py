@@ -2,24 +2,26 @@
 sous-lot C.
 
 Mêmes principes que `api/routers/vision_classification.py` : isolation
-systématique par `organization_id`, tâche de fond obligatoire (RQ, réutilise
-`training_queue`), jamais de calcul ML dans la requête HTTP. Le dataset
-source doit être un `VisionDataset` de structure "mvtec_ad" — vérifié ici ET
-dans le worker (défense en profondeur)."""
+systématique par `organization_id`, tâche de fond obligatoire (RQ,
+`vision_queue` — voir `api/core/job_queue.py`, correctif I6), jamais de
+calcul ML dans la requête HTTP. Le dataset source doit être un
+`VisionDataset` de structure "mvtec_ad" — vérifié ici ET dans le worker
+(défense en profondeur)."""
 from __future__ import annotations
 
 import json
 from pathlib import Path
 from typing import Any, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel, Field
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from api.core.config import get_settings
 from api.core.database import get_db
-from api.core.job_queue import training_queue
+from api.core.job_queue import vision_queue
 from api.core.models import User, VisionAnomalyExampleRecord, VisionAnomalyJob, VisionAnomalyModel, VisionDataset
+from api.core.pagination import paginate_by_id
 from api.routers.auth import get_current_user
 from services.audit import log_action
 from services.job_quota import ALL_JOB_MODELS, raise_if_quota_exceeded
@@ -211,7 +213,7 @@ def create_vision_anomaly_job(
 
     from workers.vision_anomaly_worker import run_vision_anomaly_job
 
-    rq_job = training_queue.enqueue(run_vision_anomaly_job, job.id, job_timeout=1800)
+    rq_job = vision_queue.enqueue(run_vision_anomaly_job, job.id, job_timeout=1800)
     job.rq_job_id = rq_job.id
     db.commit()
     db.refresh(job)
@@ -220,13 +222,26 @@ def create_vision_anomaly_job(
 
 
 @router.get("/jobs", response_model=List[VisionAnomalyJobSummary])
-def list_vision_anomaly_jobs(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    jobs = (
+def list_vision_anomaly_jobs(
+    response: Response,
+    limit: Optional[int] = Query(None, ge=1, le=500),
+    cursor: Optional[int] = Query(None, description="id de la dernière ligne de la page précédente"),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    # joinedload (Lot 4, correctif I3) — voir training.py::list_training_jobs.
+    query = (
         db.query(VisionAnomalyJob)
+        .options(
+            joinedload(VisionAnomalyJob.vision_dataset),
+            joinedload(VisionAnomalyJob.created_by),
+            joinedload(VisionAnomalyJob.result),
+        )
         .filter(VisionAnomalyJob.organization_id == current_user.organization_id)
-        .order_by(VisionAnomalyJob.created_at.desc())
-        .all()
+        # id DESC, pas created_at DESC — voir anomalies.py::list_anomaly_jobs.
+        .order_by(VisionAnomalyJob.id.desc())
     )
+    jobs = paginate_by_id(query, VisionAnomalyJob.id, response, cursor, limit)
     return [_to_summary(j) for j in jobs]
 
 
@@ -299,7 +314,7 @@ def delete_vision_anomaly_job(job_id: int, current_user: User = Depends(get_curr
         try:
             from rq.job import Job as RQJob
 
-            rq_job = RQJob.fetch(job.rq_job_id, connection=training_queue.connection)
+            rq_job = RQJob.fetch(job.rq_job_id, connection=vision_queue.connection)
             rq_job.cancel()
             rq_job.delete()
         except Exception:

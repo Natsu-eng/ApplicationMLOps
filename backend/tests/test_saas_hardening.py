@@ -92,7 +92,7 @@ def _upload_unsupervised_dataset(client, headers, name="d.csv", n=60):
 def test_audit_log_records_clustering_job_deleted(client):
     headers = _register(client)
     dataset = _upload_unsupervised_dataset(client, headers)
-    with patch("api.routers.clustering.training_queue") as mock_queue:
+    with patch("api.routers.clustering.analysis_queue") as mock_queue:
         mock_queue.enqueue.return_value.id = "fake-rq-id"
         job = client.post(
             "/api/clustering/jobs", headers=headers, json={"dataset_id": dataset["id"], "feature_columns": ["x1", "x2"]}
@@ -106,7 +106,7 @@ def test_audit_log_records_clustering_job_deleted(client):
 def test_audit_log_records_dimensionality_job_deleted(client):
     headers = _register(client)
     dataset = _upload_unsupervised_dataset(client, headers)
-    with patch("api.routers.dimensionality.training_queue") as mock_queue:
+    with patch("api.routers.dimensionality.analysis_queue") as mock_queue:
         mock_queue.enqueue.return_value.id = "fake-rq-id"
         job = client.post(
             "/api/dimensionality/jobs", headers=headers, json={"dataset_id": dataset["id"], "feature_columns": ["x1", "x2"]}
@@ -120,7 +120,7 @@ def test_audit_log_records_dimensionality_job_deleted(client):
 def test_audit_log_records_anomaly_job_deleted(client):
     headers = _register(client)
     dataset = _upload_unsupervised_dataset(client, headers)
-    with patch("api.routers.anomalies.training_queue") as mock_queue:
+    with patch("api.routers.anomalies.analysis_queue") as mock_queue:
         mock_queue.enqueue.return_value.id = "fake-rq-id"
         job = client.post(
             "/api/anomalies/jobs", headers=headers, json={"dataset_id": dataset["id"], "feature_columns": ["x1", "x2"]}

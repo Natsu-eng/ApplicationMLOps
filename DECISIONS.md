@@ -942,3 +942,339 @@ surface de risque de régression que le backend.
 **Remise en cause si** : une régression apparaît ailleurs dans la suite
 complète au prochain lot qui touche `ml_training.py`/`training.py` — la
 suite complète devra alors être relancée avant fusion vers `main`.
+
+## Lot 4 — Tenir la charge (Phase 3 de l'audit, correctifs I3, I4, I6 et I7)
+
+### D4.1 — Pagination rétrocompatible par absence, jamais une enveloppe JSON
+
+**Question** : `GET /training/jobs` et les 5 endpoints équivalents
+renvoient TOUJOURS la totalité des jobs de l'organisation
+(AUDIT_DATALAB_2026-08-16.md §C.2.4, R6 — "effondrement de performance à
+la montée en charge"). Comment ajouter une vraie pagination par curseur
+sans casser le Dashboard ni les 3 pages Historique, qui attendent
+aujourd'hui un tableau JSON à plat ?
+**Retenu** : `limit`/`cursor` optionnels (`api/core/pagination.py`,
+partagé par les 6 routers de job + `GET /datasets`) — absents (défaut) :
+comportement STRICTEMENT inchangé, tout est renvoyé, aucun appelant
+existant cassé. La page suivante est signalée par un en-tête
+`X-Next-Cursor`, jamais dans le corps JSON : la forme de la réponse
+(`List[XSummary]`) reste identique que la pagination soit utilisée ou
+non — pas d'enveloppe `{items, cursor}` qui aurait forcé une migration de
+tous les appelants dans ce même lot.
+**Écarté** : migrer les pages Historique vers une UI de pagination réelle
+dans ce lot — c'est `P6` (refonte de `Table.tsx`, tri/pagination/
+recherche/sélection), une phase produit séparée et postérieure dans le
+plan d'exécution de l'audit (§Q). Ce lot livre la CAPACITÉ backend,
+robuste et testée ; l'adoption frontend page par page est un chantier
+distinct.
+**Remise en cause si** : `P6` révèle qu'un en-tête HTTP est un mauvais
+support pour le curseur (ex. proxy qui le filtre) — passer à un champ
+dans le corps JSON à ce moment-là, pas préventivement.
+
+### D4.2 — Curseur basé sur `id`, jamais `created_at` : bug réel trouvé en testant
+
+**Trouvé en testant** : les 6 endpoints de job (et `GET /datasets`)
+triaient par `created_at DESC`. SQLite stocke `func.now()` avec une
+précision à la SECONDE — un test créant 7 jobs en rafale (as réel en
+usage : plusieurs jobs lancés depuis un script, ou une simple rafale de
+clics) leur donne souvent le même `created_at`, rendant l'ordre non
+déterministe. Le curseur (`WHERE id < cursor`) suppose que l'ordre de
+tri correspond à l'ordre décroissant des `id` — faux dès qu'il y a des
+égalités de `created_at`, ce qui a fait sauter/dupliquer des lignes entre
+deux pages dans `test_cursor_advances_to_the_next_page_without_overlap_or_gap`.
+**Retenu** : tri par `id DESC` partout où une pagination existe
+désormais (les 6 listes de jobs, `GET /datasets`, l'agrégat Dashboard) —
+`id` auto-incrémenté encode l'ordre de création SANS ambiguïté possible
+(contrairement à un horodatage à résolution limitée), équivalent en
+pratique à `created_at DESC` pour toute table où les lignes ne sont
+jamais réordonnées après coup (vrai ici).
+**Pourquoi ce n'est pas anecdotique** : ce bug existait DÉJÀ (silencieusement)
+avant ce lot — sans pagination, l'ordre de retour n'avait pas besoin
+d'être stable puisque TOUT était renvoyé d'un coup ; il devient visible
+et cassant seulement quand on doit garantir qu'une page suivante
+reprend exactement là où la précédente s'est arrêtée.
+**Remise en cause si** : un jour `id` cesse d'être strictement corrélé à
+l'ordre de création (ex. import en masse avec des `id` explicites) —
+pas le cas actuellement, aucune table de ce projet n'assigne `id`
+manuellement.
+
+### D4.3 — `joinedload` sur les 6 listes de jobs + `GET /datasets`
+
+**Trouvé, vérifié** : `_to_summary()` de chacun des 6 routers de job
+accède à `job.dataset`/`job.vision_dataset`, `job.created_by` et
+`job.model`/`job.result` — 3 requêtes SQL supplémentaires PAR JOB sans
+`joinedload` (N+1, AUDIT_DATALAB_2026-08-16.md §C.2.4). `GET /datasets`
+a le même défaut sur `dataset.uploaded_by` — pas nommé explicitement
+dans les "6 listes" de l'audit (qui ne visait que les jobs), mais
+exactement la même classe de bug, dans la même zone fonctionnelle,
+servant directement le risque R6 que ce correctif existe pour éliminer
+— corrigé en même temps plutôt que laissé de côté par une lecture trop
+littérale du périmètre.
+**Retenu** : `.options(joinedload(...))` sur les 3 relations de chacun
+des 7 endpoints — un seul aller-retour SQL désormais, quel que soit le
+nombre de lignes.
+**Écarté** : étendre `joinedload` à `GET /auth/team/audit-log`
+(`AuditLog.actor`) ou `GET /vision/datasets` — hors du périmètre I3
+(pas des listes de JOB), pas de risque N+1 signalé pour ces deux-là dans
+l'audit ; à vérifier séparément si un jour ils deviennent lents en
+pratique.
+
+### D4.4 — Endpoint agrégé `GET /dashboard/summary` : réutilise les schémas existants, jamais une forme dupliquée
+
+**Question** : `Dashboard.tsx` appelait 8 endpoints de liste complets à
+chaque montage (`AUDIT_DATALAB_2026-08-16.md` ligne 170-171 : "Le
+Dashboard appelle 8 endpoints de liste complets au montage"). Comment
+construire l'agrégat sans dupliquer la définition de `TrainingJobSummary`
+et des 5 schémas équivalents ?
+**Retenu** : `api/routers/dashboard.py` importe directement les fonctions
+`_to_summary` et classes `XJobSummary` de chacun des 6 routers de job
+(alias à l'import pour éviter la collision de nom `_to_summary` entre
+modules) — un seul endroit fait foi sur "à quoi ressemble un résumé de
+job supervisé/clustering/...", jamais une seconde définition qui
+pourrait diverger de l'original. Réutilise aussi `count_active_jobs`/
+`ALL_JOB_MODELS` (`services/job_quota.py`), déjà le point de vérité sur
+"tous les types de job confondus" pour le quota.
+**Comptages via `COUNT(*)` SQL**, jamais en chargeant les lignes pour les
+compter côté Python — `recent_*` se limite à 6 lignes par pilier (assez
+pour dominer le tri final à 6, tous piliers confondus, sans jamais
+ramener des milliers de lignes juste pour en garder 6).
+**Test explicite** (`test_summary_recent_supervised_matches_list_training_jobs_shape`) :
+vérifie que `recent_supervised[0]` de l'agrégat est BYTE-POUR-BYTE
+identique à l'entrée correspondante de `GET /training/jobs` — la
+réutilisation de `_to_summary` n'est pas qu'une intention documentée,
+elle est vérifiée.
+**Écarté** : dupliquer la logique de fusion/tri/troncature à 6 déjà
+présente côté frontend (`Dashboard.tsx`, `useMemo` sur `activity`) —
+l'agrégat renvoie 6 candidats PAR PILIER (36 au total dans le pire cas),
+le frontend continue de fusionner/trier/tronquer à 6 exactement comme
+avant, code inchangé au-delà de la SOURCE des données (1 champ de
+l'agrégat au lieu de 6 états séparés).
+**Remise en cause si** : le nombre de piliers augmente au point où
+36 lignes remontées par montage devient un volume non négligeable —
+réduire `_RECENT_PER_PILLAR` à ce moment-là, pas préventivement.
+
+### D4.5 — `Dashboard.tsx` : dégradation par pilier abandonnée, assumé
+
+**Trouvé, assumé** : le Lot 2A (branche séparée, non fusionnée à ce
+jour) avait ajouté une dégradation indépendante par pilier au Dashboard
+(un pilier en échec n'empêchait plus les autres de s'afficher). Ce lot
+étant basé sur `main` (avant le Lot 2A), et remplaçant les 8 appels par
+UN seul, cette dégradation fine n'a plus de sens : un succès ou un échec
+est désormais forcément global (une seule requête HTTP, une seule
+réponse).
+**Retenu** : accepté comme compromis délibéré, pas un oubli — les 8
+requêtes touchaient de toute façon la même base de données (pas des
+systèmes indépendants), le risque de panne partagée entre elles était
+déjà largement corrélé en pratique ; le gain de performance (1 requête
+au lieu de 8, N+1 éliminé) l'emporte pour la page la plus visitée du
+produit.
+**Remise en cause si** : au moment de fusionner ce lot avec le Lot 2A
+(branches actuellement séparées), le conflit sur `Dashboard.tsx` devra
+être résolu à la main — décider À CE MOMENT-LÀ si la dégradation par
+pilier vaut la peine d'être réintroduite par-dessus l'agrégat (ex. un
+endpoint agrégé qui répond quand même partiellement si une SEULE requête
+SQL interne échoue), pas maintenant, par anticipation d'un conflit qui
+n'existe pas encore.
+
+### D4.6 — Cache dataset : LRU en mémoire keyed par `(chemin, extension, mtime)`, jamais Parquet sur disque
+
+**Question** : I4 (AUDIT_DATALAB_2026-08-16.md §I4) demande un « cache
+Parquet par `dataset_id` + LRU en mémoire du worker » pour éviter de
+relire le fichier dataset à chaque requête (preview/eda/histogram/
+quality-check/feature-engineering-suggestions/feature-by-target
+appellent chacun `read_dataframe` séparément depuis la même page, plus
+une lecture par job créé côté router ET une seconde côté worker RQ).
+**Retenu** : un seul mécanisme, `services/datasets.py::read_dataset_dataframe`
+— `functools.lru_cache(maxsize=64)` sur une fonction privée
+`_read_cached(path_str, extension, mtime_ns)`, la clé inclut le `mtime_ns`
+du fichier (un `stat()`, négligeable face à un `pd.read_csv`/`read_excel`).
+Retourne toujours une copie (`.copy()`) : aucun appelant ne peut muter
+l'entrée partagée. Remplace `read_dataframe` sur tous les points d'appel
+qui lisent un dataset DÉJÀ persisté (6 endpoints `datasets.py`, 1 chacun
+dans `training.py`/`clustering.py`/`dimensionality.py` (×2)/`anomalies.py`,
+et les 4 workers RQ) — jamais l'upload (`POST /datasets`), qui lit un
+fichier qui vient d'être écrit, sans dataset encore en cache.
+**Écarté** : un cache Parquet matérialisé sur disque (ce que l'audit
+suggère littéralement) — ajoute un second fichier à gérer (invalidation,
+nettoyage à la suppression du dataset, cohérence si l'upload échoue à
+mi-chemin) pour un gain marginal : le fichier original est déjà local
+(pas de S3/MinIO à ce stade, I5 non traité), le coût dominant n'est pas
+le format CSV/Excel mais la RÉPÉTITION de la lecture — un LRU en mémoire
+règle ça sans nouvel état sur disque à faire vivre.
+**Limite assumée** : le cache est par PROCESS — l'API et chaque worker RQ
+ont chacun le leur, pas de partage entre eux. Suffisant pour l'usage
+visé (une page EDA qui enchaîne 6 requêtes vers le même process API ;
+un worker qui traite plusieurs jobs successifs sur le même dataset) ;
+un cache partagé inter-process demanderait Redis ou un fichier Parquet
+partagé — reporté avec I5 (stockage partagé) si le besoin se confirme.
+**Remise en cause si** : passage à plusieurs instances API derrière un
+load-balancer sans affinité de session, où le gain par-process devient
+marginal (chaque instance reconstitue son propre cache) — c'est alors
+que le Parquet partagé ou un cache Redis prendrait tout son sens.
+
+### D4.7 — `detect_task_type` : sortie du chemin HTTP non traitée dans ce lot
+
+**Question** : I4 demande aussi de « sortir `detect_task_type` du chemin
+HTTP » — `POST /training/jobs` lit le dataset ENTIER (`read_dataset_dataframe`,
+training.py:483) juste pour déduire `task_type` de la colonne cible quand
+`body.task_type` est absent, avant même de créer le job.
+**Retenu** : non traité ici, documenté comme limite connue. Le cache
+(D4.6) absorbe déjà le coût de RÉPÉTITION (2ᵉ création de job sur le même
+dataset = lecture en cache), ce qui couvre le cas dominant en pratique.
+Le coût réel restant — lire tout le fichier pour une seule colonne — ne
+peut être éliminé sans lecture partielle spécifique à chaque format
+(colonne unique en CSV/Parquet vs Excel/JSON qui n'offrent pas cette
+primitive aussi simplement), un chantier plus large que ce lot.
+**Écarté** : bricoler une lecture partielle seulement pour le CSV
+(format le plus courant) — traiterait les formats de façon asymétrique
+sans justification produit, pour un gain qui ne se matérialise que sur
+les tout premiers jobs d'un dataset jamais encore lu.
+**Remise en cause si** : la création de job devient mesurablement lente
+en pratique sur de gros datasets (plusieurs centaines de Mo) — à ce
+moment, ajouter une lecture partielle par format (ex.
+`pd.read_csv(path, usecols=[target_column])`) deviendrait justifié.
+
+### D4.8 — I6 : 3 files RQ par coût CPU/durée typique, pas par pilier produit
+
+**Question** : I6 (AUDIT_DATALAB_2026-08-16.md §I6, dépend de C7 — déjà
+traité au Lot 1.3) demande de séparer les files RQ pour qu'un job court
+n'attende plus derrière un entraînement long. Une seule `training_queue`
+partagée par les 6 types de job (supervisé, clustering, dimensionnalité,
+anomalies tabulaires, classification vision, anomalies vision) — même
+avec 2 répliques de worker (C7), deux entraînements longs simultanés
+suffisent à occuper les deux workers, laissant un clustering de
+quelques secondes attendre en file derrière eux. Comment découper les
+"3 files RQ" que demande l'audit ?
+**Retenu** : découpage par coût CPU/durée typique, pas par pilier
+produit — `training_queue` (supervisé, recherche Optuna, le plus long),
+`vision_queue` (classification + anomalies vision, torch CPU-only,
+également long), `analysis_queue` (clustering + dimensionnalité +
+anomalies tabulaires, pas de recherche d'hyperparamètres, nettement plus
+courts en pratique). `job_timeout` aligné : 1800s pour les deux files
+longues (inchangé), 600s pour `analysis_queue` (les 3 routers
+concernés). Un service Docker Compose dédié par groupe de files
+(`worker` → `training,vision`, replicas 2 ; `worker-analysis` →
+`analysis`, replicas 1), piloté par la variable d'environnement
+`RQ_QUEUES` lue par `workers/run_worker.py::_resolve_queues` — absente
+(dev local), le worker écoute les 3 files, comme avant ce correctif.
+**Écarté** : découper par pilier produit (ex. une file "tabulaire" et
+une file "vision") — n'aurait pas résolu le problème initial, un
+entraînement supervisé tabulaire (long) et un clustering tabulaire
+(court) auraient continué à se gêner sur la même file.
+**Écarté aussi** : donner une priorité RQ (`Worker([queue_prioritaire,
+queue_secondaire])`) au lieu de workers dédiés par file — RQ ne fait
+QUE choisir dans quel ordre un worker LIBRE pioche parmi ses files ; un
+worker déjà occupé par un job long ne libère rien avant la fin de ce
+job, quelle que soit la priorité. Seule une capacité dédiée
+(`worker-analysis`, jamais partagée avec les jobs longs) garantit
+qu'un job court ne soit jamais bloqué par un job long.
+**Vérifié, pas supposé** : ~150 endroits (6 routers + 13 patches de
+tests + 5 docstrings de worker) référençaient `training_queue` par ce
+nom précis — chacun vérifié individuellement avant renommage (aucun
+remplacement automatique aveugle) pour confirmer quelle nouvelle file
+lui correspond.
+**Remise en cause si** : le split observé en usage réel diverge de
+l'hypothèse "clustering/dimensionnalité/anomalies tabulaires sont
+courts" (ex. anomalies sur un dataset de plusieurs millions de lignes) —
+`job_timeout=600` deviendrait alors trop court, à ajuster par mesure
+réelle plutôt que par supposition.
+
+### D4.9 — I7 : logs JSON + request_id, /metrics Prometheus, Sentry conditionnel
+
+**Question** : I7 (AUDIT_DATALAB_2026-08-16.md §I7) demande une
+observabilité minimale — sans elle, un incident en production ne laisse
+que des logs texte libre à parcourir à la main, sans moyen de relier les
+lignes d'une même requête entre elles ni de mesurer la charge réelle.
+**Retenu**, un seul module `api/core/observability.py` pour les 3
+briques :
+- Logs JSON (`JsonFormatter`) — une ligne par log, `request_id` injecté
+  sur CHAQUE ligne via un `ContextVar` + `logging.Filter`
+  (`_RequestIdFilter`), `"-"` par défaut hors requête HTTP (démarrage,
+  worker RQ). Remplace `logging.basicConfig` (texte libre) dans
+  `api/main.py`.
+- `RequestIdMiddleware` — lit `X-Request-ID` du client s'il est fourni
+  (traçage bout-en-bout derrière un reverse proxy qui le fixe déjà),
+  sinon en génère un (`uuid4`) ; toujours renvoyé dans la réponse. Ajouté
+  EN DERNIER dans `api/main.py` (`add_middleware`) : le dernier ajouté
+  devient le plus externe de la pile Starlette, donc le seul ordre où
+  MÊME les logs de `CORSMiddleware`/`MaxJsonBodySizeMiddleware` portent
+  le `request_id` de leur requête.
+- `PrometheusMiddleware` + `GET /metrics` — compteur de requêtes,
+  histogramme de latence, jauge de requêtes en cours, labellisés par le
+  GABARIT de route (`request.scope["route"].path`, ex.
+  `/datasets/{dataset_id}`), jamais le chemin brut (`/datasets/42`) —
+  sans quoi la cardinalité de la métrique grandirait sans borne avec
+  l'usage réel. `scope["route"]` n'existe qu'APRÈS résolution du routing
+  (accessible seulement après `call_next`) ; absent sur un 404, repli sur
+  le chemin brut (cardinalité alors bornée par les tentatives d'un
+  attaquant, pas par un usage légitime).
+- Sentry — un simple `sentry_sdk.init(...)` conditionnel dans
+  `api/main.py`, actif SEULEMENT si `SENTRY_DSN` est défini
+  (`Settings.sentry_dsn: Optional[str] = None`) : dégradation honnête,
+  aucun changement de comportement en dev/CI sans DSN configuré, jamais
+  un crash au démarrage faute de DSN.
+**Écarté** : `structlog` ou une lib de logging structuré tierce — un
+`logging.Formatter` standard (stdlib) suffit pour un JSON par ligne, pas
+besoin d'une dépendance supplémentaire pour ce besoin précis. Le module
+s'appelle `observability.py`, jamais `logging.py`, pour éviter toute
+ambiguïté de lecture avec le module standard `logging` malgré l'absence
+de collision technique réelle (imports absolus Python 3).
+**Écarté aussi** : exposer `X-Next-Cursor`/`X-Request-ID` dans
+`CORSMiddleware(expose_headers=...)` — `X-Next-Cursor` n'est pas encore
+lu côté frontend (P6, pagination UI, différé — voir D4.1) ;
+`X-Request-ID` reste utile côté logs serveur même illisible en JS
+cross-origin, et le déploiement cible (nginx même origine, voir branche
+`fix-api-prefix-routing`) rend la question théorique pour l'instant —
+à rouvrir si un usage cross-origin réel apparaît.
+**Vérifié, pas supposé** : `prometheus-client`/`sentry-sdk` ajoutés à
+`requirements.txt` (0.26.0 / 2.68.0, dernières stables au moment du
+lot) — testés en conditions réelles via `TestClient` (démarrage complet
+de l'app, `/api/health`, `/metrics`, en-têtes de requête) avant d'écrire
+les tests automatisés, pas seulement lus dans la doc de ces libs.
+**Remise en cause si** : un besoin de traçage distribué plus riche
+apparaît (spans, pas seulement un id de corrélation) — à ce moment,
+OpenTelemetry remplacerait probablement ce module fait main plutôt que
+de l'étendre indéfiniment.
+
+### D4.10 — Résolution du conflit `Dashboard.tsx` à la fusion vers `main` (tranche la remise en cause de D4.5)
+
+**Contexte** : D4.5 avait explicitement différé la décision « dégradation
+par pilier vs endpoint agrégé » au moment de fusionner Lot 4 avec Lot 2A.
+C'est ce moment — fusion séquentielle de `lot-4-perf` dans `main` (qui
+contient déjà `lot-2a-design-system` et `lot-3-verdict`), conflit réel sur
+`frontend/src/pages/Dashboard.tsx` (4 sections divergentes).
+**Trouvé en résolvant** : les 6 états `useState` par pilier
+(`jobs`/`clusteringJobs`/`datasets`/`members`/...) que la dégradation fine
+de Lot 2A (D2.4) manipulait avaient déjà été supprimés par la fusion
+automatique (hunk non conflictuel, Lot 2A n'avait touché que le corps des
+callbacks, pas leur déclaration) — conserver le code de dégradation par
+pilier aurait donc référencé des variables inexistantes, invalidant le
+gate frontend (`tsc`) immédiatement. Le choix n'était donc pas seulement
+architectural, il était aussi mécanique.
+**Retenu** :
+- Modèle de chargement Lot 4 conservé tel quel (`GET /dashboard/summary`,
+  un seul état `summary`/`summaryError`) — la cause racine de l'incident
+  D2.4 (colonnes manquantes en base faisant échouer `_to_summary()`) est
+  désormais interceptée en amont, au démarrage, par la vérification de
+  schéma D1.8 (`_schema_matches_metadata()`) : elle refuse de démarrer sur
+  un schéma drifté plutôt que de le découvrir tardivement via un 500 sur
+  un endpoint. Le risque qui justifiait la dégradation fine par pilier est
+  donc structurellement réduit, pas seulement accepté par confort.
+- **Décision UX de D2.4 conservée par-dessus** : les 4 tuiles agrégées
+  restent `color="neutral"`, et les 3 colonnes de la tuile "Analyses ML"
+  gardent `pillarColor(id)` (au lieu des couleurs bleu/teal/amber/violet
+  arbitraires que `lot-4-perf` avait héritées de la base, antérieure à la
+  correction D2.4) — ce point n'a aucun rapport avec la stratégie de
+  chargement (1 requête vs 8), donc les deux décisions ne s'opposaient
+  pas réellement, seul le code source se chevauchait ligne à ligne.
+**Écarté** : réintroduire une dégradation partielle CÔTÉ BACKEND (un
+`try/except` par pilier dans `get_dashboard_summary()` qui renverrait un
+200 partiel si une seule sous-requête échoue) — option explicitement
+envisagée par D4.5. Non retenue ici : changement de comportement non
+testé, introduit au milieu d'une résolution de conflit de fusion plutôt
+que comme un lot dédié avec ses propres tests.
+**Remise en cause si** : un incident réel en production montre qu'une
+sous-requête de `get_dashboard_summary()` échoue alors que le reste du
+schéma est sain (donc un cas que D1.8 ne couvre pas) — alors la résilience
+partielle CÔTÉ BACKEND (200 partiel) redevient la bonne réponse, à traiter
+comme son propre correctif testé, pas en fusionnant à nouveau ce commit.

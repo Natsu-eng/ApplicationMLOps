@@ -53,7 +53,7 @@ def _upload_vision_dataset(client, headers, content=None, name="dataset.zip"):
 def _create_job(client, headers, vision_dataset_id, **overrides):
     body = {"vision_dataset_id": vision_dataset_id, "num_epochs": 1, "batch_size": 4}
     body.update(overrides)
-    with patch("api.routers.vision_classification.training_queue") as mock_queue:
+    with patch("api.routers.vision_classification.vision_queue") as mock_queue:
         mock_queue.enqueue.return_value.id = "fake-rq-id"
         return client.post("/api/vision/classification/jobs", headers=headers, json=body)
 
@@ -164,7 +164,7 @@ def test_quota_shared_with_other_job_types(client):
     dataset = _upload_vision_dataset(client, headers)
     limit = get_settings().max_concurrent_jobs_per_org
 
-    with patch("api.routers.anomalies.training_queue") as mock_queue:
+    with patch("api.routers.anomalies.analysis_queue") as mock_queue:
         mock_queue.enqueue.return_value.id = "fake-rq-id"
         tabular = client.post(
             "/api/datasets", headers=headers,

@@ -23,6 +23,14 @@ Lancer :
     cd backend && python -m workers.run_worker
 Pour plusieurs workers en parallèle (isolation par organisation) :
     voir docker-compose.yml, service `worker`, `docker compose up --scale worker=N`.
+
+Lot 4 (correctif I6) — `RQ_QUEUES` (liste séparée par des virgules parmi
+"training", "vision", "analysis") choisit les files écoutées par CE
+process ; absente ou vide, les 3 sont écoutées (comportement historique,
+pratique pour un unique worker de développement). En production
+(`docker-compose.yml`), chaque service `worker*` fixe `RQ_QUEUES` pour
+dédier de la capacité aux jobs courts (clustering/dimensionnalité/
+anomalies) — voir `api/core/job_queue.py` pour le détail des 3 files.
 """
 from __future__ import annotations
 
@@ -50,10 +58,29 @@ def _resolve_worker_mode() -> str:
     return "simple" if sys.platform.startswith("win") else "fork"
 
 
+def _resolve_queues() -> list:
+    """`RQ_QUEUES=training,analysis` par ex. ; absente/vide → les 3 files
+    (comportement historique, un seul process qui écoute tout)."""
+    from api.core.job_queue import ALL_QUEUES
+
+    names = [n.strip().lower() for n in os.environ.get("RQ_QUEUES", "").split(",") if n.strip()]
+    if not names:
+        return list(ALL_QUEUES.values())
+    unknown = [n for n in names if n not in ALL_QUEUES]
+    if unknown:
+        raise ValueError(
+            f"RQ_QUEUES contient des files inconnues : {', '.join(unknown)} "
+            f"(attendu parmi {', '.join(ALL_QUEUES)})"
+        )
+    return [ALL_QUEUES[n] for n in names]
+
+
 def _build_worker():
-    from api.core.job_queue import redis_conn, training_queue
+    from api.core.job_queue import redis_conn
 
     mode = _resolve_worker_mode()
+    queues = _resolve_queues()
+    logger.info("[Worker] Files écoutées : %s", ", ".join(q.name for q in queues))
 
     if mode == "simple":
         from rq import SimpleWorker
@@ -70,12 +97,12 @@ def _build_worker():
             "toutes les organisations, timeout non fiable sur code natif bloquant. "
             "Réservé au développement Windows, jamais recommandé en production."
         )
-        return PortableWorker([training_queue], connection=redis_conn)
+        return PortableWorker(queues, connection=redis_conn)
 
     from rq import Worker
 
     logger.info("[Worker] Mode 'fork' (Worker classique, isolation par job, UnixSignalDeathPenalty)")
-    return Worker([training_queue], connection=redis_conn)
+    return Worker(queues, connection=redis_conn)
 
 
 def main() -> None:

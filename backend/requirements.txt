@@ -69,6 +69,15 @@ pillow==12.3.0
 torch==2.13.0
 torchvision==0.28.0
 
+# ── Observabilité (Lot 4, correctif I7) ───────────────────────────────
+# Métriques HTTP exposées en /metrics (format texte Prometheus standard,
+# scrappable par n'importe quel collecteur compatible — pas de dépendance
+# à une infra Prometheus précise pour que l'endpoint existe).
+prometheus-client==0.26.0
+# Sentry — actif seulement si SENTRY_DSN est défini (voir api/main.py) :
+# ne change rien au comportement tant que la variable est absente.
+sentry-sdk[fastapi]==2.68.0
+
 # ── Tests ──────────────────────────────────────────────────────────
 pytest==8.2.2
 httpx==0.27.2

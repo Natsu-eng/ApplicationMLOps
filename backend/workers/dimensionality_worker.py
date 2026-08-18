@@ -1,7 +1,7 @@
 """Fonction exécutée par le worker RQ pour un job de réduction de dimension —
-même process worker que `training_worker.py`/`clustering_worker.py` (une
-seule file `training_queue`, un seul worker physique, voir
-`docker-compose.yml`), fonction dédiée.
+même process worker que `training_worker.py`/`clustering_worker.py`,
+enfilée sur `analysis_queue` (Lot 4, correctif I6 — voir
+`api/core/job_queue.py`), fonction dédiée.
 
 Mêmes conventions que `clustering_worker.py` : session DB propre, progression
 persistée à chaque étape, `_user_safe_error_message` copié (pas importé) —
@@ -20,7 +20,7 @@ import joblib
 from api.core.database import SessionLocal
 from api.core.models import Dataset, DimensionalityJob, DimensionalityModel, DimensionalityPoint
 from api.core.storage import dimensionality_model_file_path
-from services.datasets import read_dataframe
+from services.datasets import read_dataset_dataframe
 from services.dimensionality_training import DimensionalityConfig, train_and_evaluate_dimensionality
 from services.ml_preprocessing import TrainingAbortedError
 
@@ -72,7 +72,7 @@ def run_dimensionality_job(job_id: int) -> None:
             if dataset is None or dataset.status != "ready":
                 raise TrainingAbortedError("Dataset introuvable ou non prêt")
 
-            df = read_dataframe(Path(dataset.file_path), Path(dataset.file_path).suffix)
+            df = read_dataset_dataframe(Path(dataset.file_path), Path(dataset.file_path).suffix)
             feature_columns = json.loads(job.feature_columns_json)
             missing = [c for c in feature_columns if c not in df.columns]
             if missing:

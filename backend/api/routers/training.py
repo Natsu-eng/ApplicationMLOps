@@ -13,18 +13,19 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from api.core.config import get_settings
 from api.core.database import get_db
 from api.core.job_queue import training_queue
 from api.core.models import Dataset, MLModel, ModelCandidate, TrainingJob, User
+from api.core.pagination import paginate_by_id
 from api.routers.auth import get_current_user
 from services.audit import log_action
-from services.datasets import DatasetParsingError, read_dataframe
+from services.datasets import DatasetParsingError, read_dataset_dataframe
 from services.feature_engineering import CURRENT_SPEC_VERSION
 from services.job_quota import ALL_JOB_MODELS, raise_if_quota_exceeded
 from services.job_watchdog import reconcile_stale_jobs
@@ -485,7 +486,7 @@ def create_training_job(
     feature_engineering_json = _validate_and_serialize_feature_engineering(body.feature_engineering, schema_columns)
 
     try:
-        df = read_dataframe(Path(dataset.file_path), Path(dataset.file_path).suffix)
+        df = read_dataset_dataframe(Path(dataset.file_path), Path(dataset.file_path).suffix)
     except DatasetParsingError as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -554,13 +555,25 @@ def create_training_job(
 
 
 @router.get("/jobs", response_model=List[TrainingJobSummary])
-def list_training_jobs(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    jobs = (
+def list_training_jobs(
+    response: Response,
+    limit: Optional[int] = Query(None, ge=1, le=500),
+    cursor: Optional[int] = Query(None, description="id de la dernière ligne de la page précédente"),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    # joinedload (Lot 4, correctif I3) : _to_summary accède à job.dataset,
+    # job.created_by et job.model — sans ça, 3 requêtes SQL PAR JOB
+    # (N+1, AUDIT_DATALAB_2026-08-16.md §C.2.4). Un seul aller-retour
+    # désormais, quel que soit le nombre de jobs.
+    query = (
         db.query(TrainingJob)
+        .options(joinedload(TrainingJob.dataset), joinedload(TrainingJob.created_by), joinedload(TrainingJob.model))
         .filter(TrainingJob.organization_id == current_user.organization_id)
-        .order_by(TrainingJob.created_at.desc())
-        .all()
+        # id DESC, pas created_at DESC — voir anomalies.py::list_anomaly_jobs.
+        .order_by(TrainingJob.id.desc())
     )
+    jobs = paginate_by_id(query, TrainingJob.id, response, cursor, limit)
     return [_to_summary(j) for j in jobs]
 
 

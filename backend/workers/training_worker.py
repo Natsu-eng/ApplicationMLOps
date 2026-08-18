@@ -19,7 +19,7 @@ import joblib
 from api.core.database import SessionLocal
 from api.core.models import Dataset, MLModel, ModelCandidate, TrainingJob
 from api.core.storage import model_file_path
-from services.datasets import read_dataframe
+from services.datasets import read_dataset_dataframe
 from services.feature_engineering import FeatureEngineeringSpecError, apply_upstream_feature_engineering
 from services.ml_preprocessing import DataLeakageError, TrainingAbortedError, split_dataset
 from services.ml_training import TrainingConfig, train_and_evaluate
@@ -87,7 +87,7 @@ def run_training_job(job_id: int) -> None:
 
             from pathlib import Path
 
-            df = read_dataframe(Path(dataset.file_path), Path(dataset.file_path).suffix)
+            df = read_dataset_dataframe(Path(dataset.file_path), Path(dataset.file_path).suffix)
 
             # `raw_feature_columns` : colonnes SAISIES par l'utilisateur (formulaire
             # de prédiction, feature_columns_json de MLModel) — distinctes des

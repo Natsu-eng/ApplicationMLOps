@@ -1,10 +1,12 @@
 """Router clustering — Lot 11+ (ML non supervisé).
 
 Mêmes principes que `api/routers/training.py` : isolation systématique par
-`organization_id`, tâche de fond obligatoire (RQ, réutilise `training_queue`
-— même worker physique, voir `docker-compose.yml`), jamais de calcul ML dans
-la requête HTTP. Router DÉDIÉ, jamais fusionné dans `training.py` — même
-raisonnement que la séparation `clustering_registry.py`/`ml_registry.py`.
+`organization_id`, tâche de fond obligatoire (RQ, `analysis_queue` —
+file dédiée aux jobs courts, séparée de `training_queue`/`vision_queue`
+depuis le correctif I6, voir `api/core/job_queue.py`), jamais de calcul
+ML dans la requête HTTP. Router DÉDIÉ, jamais fusionné dans
+`training.py` — même raisonnement que la séparation
+`clustering_registry.py`/`ml_registry.py`.
 """
 from __future__ import annotations
 
@@ -12,17 +14,19 @@ import json
 from pathlib import Path
 from typing import Any, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel
+from sqlalchemy.orm import joinedload
 
 from api.core.config import get_settings
 from api.core.database import get_db
-from api.core.job_queue import training_queue
+from api.core.job_queue import analysis_queue
 from api.core.models import ClusterCandidateRecord, ClusterModel, ClusteringJob, Dataset, User
+from api.core.pagination import paginate_by_id
 from api.routers.auth import get_current_user
 from services.audit import log_action
 from services.clustering_registry import CLUSTER_REGISTRY, DEFAULT_ALGORITHM_IDS
-from services.datasets import DatasetParsingError, read_dataframe
+from services.datasets import DatasetParsingError, read_dataset_dataframe
 from services.job_quota import ALL_JOB_MODELS, raise_if_quota_exceeded
 from services.job_watchdog import reconcile_stale_jobs
 
@@ -224,7 +228,7 @@ def create_clustering_job(
             )
 
     try:
-        read_dataframe(Path(dataset.file_path), Path(dataset.file_path).suffix)
+        read_dataset_dataframe(Path(dataset.file_path), Path(dataset.file_path).suffix)
     except DatasetParsingError as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -250,7 +254,7 @@ def create_clustering_job(
 
     from workers.clustering_worker import run_clustering_job
 
-    rq_job = training_queue.enqueue(run_clustering_job, job.id, job_timeout=1800)
+    rq_job = analysis_queue.enqueue(run_clustering_job, job.id, job_timeout=600)
     job.rq_job_id = rq_job.id
     db.commit()
     db.refresh(job)
@@ -259,13 +263,24 @@ def create_clustering_job(
 
 
 @router.get("/jobs", response_model=List[ClusteringJobSummary])
-def list_clustering_jobs(current_user: User = Depends(get_current_user), db=Depends(get_db)):
-    jobs = (
+def list_clustering_jobs(
+    response: Response,
+    limit: Optional[int] = Query(None, ge=1, le=500),
+    cursor: Optional[int] = Query(None, description="id de la dernière ligne de la page précédente"),
+    current_user: User = Depends(get_current_user),
+    db=Depends(get_db),
+):
+    # joinedload (Lot 4, correctif I3) — voir training.py::list_training_jobs.
+    query = (
         db.query(ClusteringJob)
+        .options(joinedload(ClusteringJob.dataset), joinedload(ClusteringJob.created_by), joinedload(ClusteringJob.result))
         .filter(ClusteringJob.organization_id == current_user.organization_id)
-        .order_by(ClusteringJob.created_at.desc())
-        .all()
+        # id DESC, pas created_at DESC — voir anomalies.py::list_anomaly_jobs
+        # (précision seconde de SQLite, curseur de pagination cassé par des
+        # égalités de created_at).
+        .order_by(ClusteringJob.id.desc())
     )
+    jobs = paginate_by_id(query, ClusteringJob.id, response, cursor, limit)
     return [_to_summary(j) for j in jobs]
 
 
@@ -331,7 +346,7 @@ def delete_clustering_job(job_id: int, current_user: User = Depends(get_current_
         try:
             from rq.job import Job as RQJob
 
-            rq_job = RQJob.fetch(job.rq_job_id, connection=training_queue.connection)
+            rq_job = RQJob.fetch(job.rq_job_id, connection=analysis_queue.connection)
             rq_job.cancel()
             rq_job.delete()
         except Exception:

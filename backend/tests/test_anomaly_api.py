@@ -26,7 +26,7 @@ def _upload_dataset(client, headers, name="d.csv", n=60):
 def _create_job(client, headers, dataset_id, **overrides):
     body = {"dataset_id": dataset_id, "feature_columns": ["x1", "x2"]}
     body.update(overrides)
-    with patch("api.routers.anomalies.training_queue") as mock_queue:
+    with patch("api.routers.anomalies.analysis_queue") as mock_queue:
         mock_queue.enqueue.return_value.id = "fake-rq-id"
         return client.post("/api/anomalies/jobs", headers=headers, json=body)
 
@@ -114,13 +114,13 @@ def test_quota_shared_across_all_four_job_types(client):
         mock_queue.enqueue.return_value.id = "fake-rq-id"
         client.post("/api/training/jobs", headers=headers, json={"dataset_id": dataset["id"], "target_column": "x1"})
 
-    with patch("api.routers.clustering.training_queue") as mock_queue:
+    with patch("api.routers.clustering.analysis_queue") as mock_queue:
         mock_queue.enqueue.return_value.id = "fake-rq-id"
         client.post(
             "/api/clustering/jobs", headers=headers, json={"dataset_id": dataset["id"], "feature_columns": ["x1", "x2"]}
         )
 
-    with patch("api.routers.dimensionality.training_queue") as mock_queue:
+    with patch("api.routers.dimensionality.analysis_queue") as mock_queue:
         mock_queue.enqueue.return_value.id = "fake-rq-id"
         client.post(
             "/api/dimensionality/jobs",

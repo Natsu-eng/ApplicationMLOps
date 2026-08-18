@@ -2,7 +2,8 @@
 
 Mêmes principes que `api/routers/clustering.py`/`dimensionality.py` :
 isolation systématique par `organization_id`, tâche de fond obligatoire (RQ,
-réutilise `training_queue`), jamais de calcul ML dans la requête HTTP.
+`analysis_queue` — voir `api/core/job_queue.py`, correctif I6), jamais de
+calcul ML dans la requête HTTP.
 
 Pas de `GET /algorithms-catalog` — contrairement au clustering et à la
 réduction de dimension, il n'y a aucun choix d'algorithme à cataloguer :
@@ -14,17 +15,19 @@ import json
 from pathlib import Path
 from typing import Any, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel, Field
+from sqlalchemy.orm import joinedload
 
 from api.core.config import get_settings
 from api.core.database import get_db
-from api.core.job_queue import training_queue
+from api.core.job_queue import analysis_queue
 from api.core.models import AnomalyJob, AnomalyObservationRecord, Dataset, User
+from api.core.pagination import paginate_by_id
 from api.routers.auth import get_current_user
 from services.anomaly_training import DEFAULT_TOP_N, MAX_TOP_N
 from services.audit import log_action
-from services.datasets import DatasetParsingError, read_dataframe
+from services.datasets import DatasetParsingError, read_dataset_dataframe
 from services.job_quota import ALL_JOB_MODELS, raise_if_quota_exceeded
 from services.job_watchdog import reconcile_stale_jobs
 
@@ -171,7 +174,7 @@ def create_anomaly_job(
         )
 
     try:
-        read_dataframe(Path(dataset.file_path), Path(dataset.file_path).suffix)
+        read_dataset_dataframe(Path(dataset.file_path), Path(dataset.file_path).suffix)
     except DatasetParsingError as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -194,7 +197,7 @@ def create_anomaly_job(
 
     from workers.anomaly_worker import run_anomaly_job
 
-    rq_job = training_queue.enqueue(run_anomaly_job, job.id, job_timeout=1800)
+    rq_job = analysis_queue.enqueue(run_anomaly_job, job.id, job_timeout=600)
     job.rq_job_id = rq_job.id
     db.commit()
     db.refresh(job)
@@ -203,13 +206,28 @@ def create_anomaly_job(
 
 
 @router.get("/jobs", response_model=List[AnomalyJobSummary])
-def list_anomaly_jobs(current_user: User = Depends(get_current_user), db=Depends(get_db)):
-    jobs = (
+def list_anomaly_jobs(
+    response: Response,
+    limit: Optional[int] = Query(None, ge=1, le=500),
+    cursor: Optional[int] = Query(None, description="id de la dernière ligne de la page précédente"),
+    current_user: User = Depends(get_current_user),
+    db=Depends(get_db),
+):
+    # joinedload (Lot 4, correctif I3) — voir training.py::list_training_jobs.
+    query = (
         db.query(AnomalyJob)
+        .options(joinedload(AnomalyJob.dataset), joinedload(AnomalyJob.created_by), joinedload(AnomalyJob.result))
         .filter(AnomalyJob.organization_id == current_user.organization_id)
-        .order_by(AnomalyJob.created_at.desc())
-        .all()
+        # id DESC, pas created_at DESC (Lot 4, correctif I3) : SQLite stocke
+        # `func.now()` avec une précision à la seconde — plusieurs jobs créés
+        # rapidement (rafale d'appels API, tests) peuvent partager le même
+        # `created_at`, rendant l'ordre non déterministe et cassant le
+        # curseur de pagination (des lignes sautées ou dupliquées entre deux
+        # pages). `id` auto-incrémenté encode l'ordre de création SANS
+        # ambiguïté possible — équivalent en pratique, strictement fiable.
+        .order_by(AnomalyJob.id.desc())
     )
+    jobs = paginate_by_id(query, AnomalyJob.id, response, cursor, limit)
     return [_to_summary(j) for j in jobs]
 
 
@@ -276,7 +294,7 @@ def delete_anomaly_job(job_id: int, current_user: User = Depends(get_current_use
         try:
             from rq.job import Job as RQJob
 
-            rq_job = RQJob.fetch(job.rq_job_id, connection=training_queue.connection)
+            rq_job = RQJob.fetch(job.rq_job_id, connection=analysis_queue.connection)
             rq_job.cancel()
             rq_job.delete()
         except Exception:
