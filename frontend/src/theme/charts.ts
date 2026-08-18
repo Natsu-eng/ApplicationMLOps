@@ -29,6 +29,17 @@ export const CHART_TICK_COLOR = "#64748b"; // slate-500 — contraste correct su
 export const CHART_TICK_COLOR_MUTED = "#334155"; // slate-700 — plus foncé que le tick standard (voir note ci-dessus)
 export const CHART_REFERENCE_STROKE = "#94a3b8"; // slate-400
 
+// Hauteurs normalisées (Lot 2A, AUDIT_DATALAB_2026-08-16.md §J.4) — avant
+// ce lot, 180/200/220/240/360 coexistaient sans raison d'écarter l'un ou
+// l'autre. Trois tailles, usage prescrit : SM pour un graphe secondaire
+// dans une grille dense (EDA), MD pour un graphe principal de carte, LG
+// pour un graphe qui porte seul tout le contenu d'une page (projection 2D).
+// Nouveau code seulement — appliquer aux graphes existants est le travail
+// du Lot 2B, pas de celui-ci (aucune page métier modifiée ici).
+export const CHART_HEIGHT_SM = 200;
+export const CHART_HEIGHT_MD = 260;
+export const CHART_HEIGHT_LG = 360;
+
 export const CHART_TICK_STYLE = { fill: CHART_TICK_COLOR, fontSize: 11 };
 export const CHART_TICK_STYLE_SM = { fill: CHART_TICK_COLOR, fontSize: 10 };
 export const CHART_TICK_STYLE_MUTED = { fill: CHART_TICK_COLOR_MUTED, fontSize: 11 };
@@ -43,26 +54,40 @@ export const CHART_TOOLTIP_STYLE = {
   labelStyle: { color: "#334155" }, // slate-700
 };
 
-// Palette de séries — jusqu'à 6 classes lisibles (courbes ROC/PR multi-classes,
-// beeswarm par classe). Ordre VALIDÉ (pas choisi à l'œil) contre la
-// discrimination des couleurs (deutéranopie/protanopie/tritanopie) : l'ancien
-// ordre (bleu/pink/teal/amber/emerald/orange) échouait la paire adjacente
-// pink↔teal (ΔE 3.8 en deutéranopie, sous le seuil de 6). Revalidé avec
-// `dataviz/scripts/validate_palette.js` (méthode skill dataviz) — bleu de
-// marque conservé en position 1, les 5 teintes suivantes reprennent l'ordre
-// de référence du skill (seul ordre garanti sans collision adjacente) :
-// tous les écarts adjacents ≥ 9.1 ΔE en vision daltonienne, ≥ 19.6 en
-// vision normale, contraste ≥ 3:1 sur fond blanc.
-export const CHART_SERIES_COLORS = ["#1d4ed8", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300"];
+// Palette de séries — 6 maximum (retour utilisateur, Lot 2A correctif 1) :
+// l'ordre précédent (bleu roi/orange/vert menthe/jaune/rose/vert foncé)
+// n'était pas une VRAIE séquence — deux verts se confondaient (slots 3 et
+// 6) et l'orange/le jaune étaient voisins. Reconstruite depuis zéro :
+// ancrée sur 3 teintes Okabe-Ito (« Color Universal Design », référence
+// établie pour la distinguabilité en daltonisme — bleu/ambre/vermillon),
+// complétée par recherche gloutonne sur les 3 emplacements restants,
+// maximisant l'écart perceptuel MINIMAL (distance euclidienne dans OKLab,
+// métrique quasi perceptuellement uniforme) simultanément en vision
+// normale ET sous simulation de deutéranopie (matrice Machado/Oliveira/
+// Fernandes 2009, appliquée en sRGB linéaire) — jamais un seul des deux
+// critères optimisé au détriment de l'autre. Écart minimal obtenu sur les
+// 15 paires : 15.6 ΔE en vision normale, 13.1 ΔE en deutéranopie simulée
+// (contre un écart de 3.8 pour l'ancienne palette). Méthode et calcul
+// complets : DECISIONS.md, Lot 2A.
+//
+// Compromis assumé : les slots 2 (ambre) et 4 (azur) sont volontairement
+// clairs (nécessaire à leur séparation perceptuelle des slots voisins) —
+// contraste plus faible qu'idéal sur carte blanche pour un TRAIT fin
+// (2.3:1 et 1.8:1 respectivement, mesuré). Acceptable pour des éléments
+// graphiques (lignes/points, jamais du texte, qui a ses propres tokens
+// validés à 4.5:1) combinés à la légende isolable déjà en place
+// (IsolatableLegend) — mais à garder à l'œil si un usage futur les
+// affiche en traits très fins sans légende adjacente.
+export const CHART_SERIES_COLORS = ["#2d6fcd", "#e69f00", "#d45e00", "#5ecdf6", "#23735c", "#37a0a6"];
 
 // Couleurs sémantiques par usage — alignées sur les positions validées de
 // CHART_SERIES_COLORS (jamais une teinte hors palette, pour rester
 // cohérent si un graphe combine une couleur "sémantique" et la palette de
 // séries dans la même figure).
-export const CHART_COLOR_PRIMARY = "#1d4ed8"; // bleu de marque (slot 1) — série principale (prédit vs réel, distributions, corrélations)
-export const CHART_COLOR_SECONDARY = "#eb6834"; // orange (slot 2) — série de contraste (résidus, valeurs manquantes)
-export const CHART_COLOR_TERTIARY = "#1baf7a"; // aqua (slot 3) — distribution de la cible
-export const CHART_COLOR_WARNING = "#eda100"; // jaune/ambre (slot 4) — anomalies/outliers
+export const CHART_COLOR_PRIMARY = "#2d6fcd"; // bleu de marque (slot 1) — série principale (prédit vs réel, distributions, corrélations)
+export const CHART_COLOR_SECONDARY = "#e69f00"; // ambre (slot 2) — série de contraste (résidus, valeurs manquantes)
+export const CHART_COLOR_TERTIARY = "#23735c"; // vert foncé bleuté (slot 5) — distribution de la cible
+export const CHART_COLOR_WARNING = "#d45e00"; // vermillon (slot 3) — anomalies/outliers
 
 // Échelle divergente du beeswarm SHAP (Lot Explicabilité globale) — colore
 // chaque point par la valeur (normalisée par variable) de la feature, PAS
@@ -115,7 +140,7 @@ export function heatmapTextColor(stepIndex: number): string {
 }
 
 // Boxplot (composant custom BoxPlot.tsx, pas de primitive Recharts native)
-export const BOXPLOT_FILL = "rgba(29, 78, 216, 0.12)"; // blue-700 translucide (CHART_COLOR_PRIMARY)
+export const BOXPLOT_FILL = "rgba(45, 111, 205, 0.12)"; // CHART_COLOR_PRIMARY translucide
 export const BOXPLOT_STROKE = CHART_COLOR_PRIMARY;
 export const BOXPLOT_MEDIAN_STROKE = CHART_COLOR_SECONDARY;
 export const BOXPLOT_WHISKER_STROKE = CHART_TICK_COLOR;

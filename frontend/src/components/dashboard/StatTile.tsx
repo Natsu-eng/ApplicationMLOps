@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import type { LucideIcon } from "lucide-react";
-import { ColorIconBadge, accentBarClass, type AccentColor } from "../ui/ColorIconBadge";
+import { Link } from "react-router-dom";
+import { Minus, TrendingDown, TrendingUp } from "lucide-react";
+import { ColorIconBadge, accentValueTextClass, type AccentColor } from "../ui/ColorIconBadge";
 
 const REDUCED_MOTION_QUERY = "(prefers-reduced-motion: reduce)";
 
@@ -46,7 +48,25 @@ function useCountUp(value: number | undefined, durationMs = 800): number | undef
 interface StatTileSplitPart {
   label: string;
   value: number | undefined;
+  /** Couleur d'identité (ex. couleur de pilier, `pillarColor()`) — teinte le
+   * chiffre de CETTE colonne uniquement (Lot 2A correctif 3 : "supervisé,
+   * non supervisé et Vision gardent la couleur de leur pilier"). Optionnel :
+   * une colonne sans identité propre (aucun cas actuel) resterait neutre. */
+  color?: AccentColor;
 }
+
+/** Tendance vs période précédente (Lot 2A, AUDIT_DATALAB_2026-08-16.md
+ * §J.4) — jamais calculée par le composant : la valeur vient du serveur
+ * (aucun historique client-side ici), le composant ne fait que l'afficher. */
+export interface StatTileTrend {
+  direction: "up" | "down" | "flat";
+  /** Déjà formaté par l'appelant (ex. "+12 %", "−3") — le composant ne
+   * devine jamais si une hausse est "bonne" ou "mauvaise" (dépend de la
+   * métrique), donc pas de couleur sémantique automatique ici. */
+  label: string;
+}
+
+const TREND_ICON = { up: TrendingUp, down: TrendingDown, flat: Minus } as const;
 
 export function StatTile({
   icon,
@@ -55,6 +75,9 @@ export function StatTile({
   color,
   delayMs = 0,
   split,
+  trend,
+  loading = false,
+  href,
 }: {
   icon: LucideIcon;
   label: string;
@@ -69,44 +92,105 @@ export function StatTile({
    * que `split` n'est pas fourni. 3 parts fixes (pas un tableau générique) :
    * les hooks `useCountUp` ci-dessous doivent rester appelés un nombre fixe
    * de fois à chaque rendu (règle des hooks), pas dans une boucle de
-   * longueur variable — étendu de 2 à 3 au Lot 16 (pilier Vision). */
+   * longueur variable — étendu de 2 à 3 au Lot 16 (pilier Vision). Le trend
+   * ne s'affiche que sur la tuile simple (non scindée) — combiner les deux
+   * dans le même espace restreint serait illisible. */
   split?: [StatTileSplitPart, StatTileSplitPart, StatTileSplitPart];
+  trend?: StatTileTrend;
+  /** État de chargement (Lot 2A) — squelette plutôt que "—", distinct d'une
+   * valeur réellement absente. */
+  loading?: boolean;
+  /** Lien vers la vue détaillée (Lot 2A) — la tuile entière devient
+   * cliquable/focusable au clavier, jamais une zone de clic invisible sans
+   * affordance. */
+  href?: string;
 }) {
   const displayValue = useCountUp(value);
   const displaySplitA = useCountUp(split?.[0]?.value);
   const displaySplitB = useCountUp(split?.[1]?.value);
   const displaySplitC = useCountUp(split?.[2]?.value);
 
-  return (
-    <div
-      className="group stat-tile-enter overflow-hidden rounded-2xl border border-border/70 bg-card shadow-md shadow-foreground/[0.04] transition-all duration-200 hover:shadow-lg hover:-translate-y-0.5"
-      style={{ animationDelay: `${delayMs}ms` }}
-    >
-      <div className={`h-1 ${accentBarClass(color)}`} aria-hidden="true" />
-      <div className="p-4 flex items-center gap-3">
-        <ColorIconBadge icon={icon} color={color} />
-        {split ? (
-          <div className="flex items-stretch divide-x divide-border min-w-0 flex-1">
-            <div className="pr-2 min-w-0">
-              <p className="text-lg font-semibold text-foreground tabular-nums">{displaySplitA ?? "—"}</p>
-              <p className="text-[11px] text-muted-foreground truncate">{split[0].label}</p>
-            </div>
-            <div className="px-2 min-w-0">
-              <p className="text-lg font-semibold text-foreground tabular-nums">{displaySplitB ?? "—"}</p>
-              <p className="text-[11px] text-muted-foreground truncate">{split[1].label}</p>
-            </div>
-            <div className="pl-2 min-w-0">
-              <p className="text-lg font-semibold text-foreground tabular-nums">{displaySplitC ?? "—"}</p>
-              <p className="text-[11px] text-muted-foreground truncate">{split[2].label}</p>
-            </div>
-          </div>
-        ) : (
-          <div className="min-w-0">
-            <p className="text-xl font-semibold text-foreground tabular-nums">{displayValue ?? "—"}</p>
-            <p className="text-xs text-muted-foreground truncate">{label}</p>
-          </div>
+  // Composition refaite (retour utilisateur, Lot 2A) — l'ancienne mise en
+  // page (icône + bloc chiffre/libellé côte à côte sur UNE ligne, plus une
+  // barre colorée en haut de tuile) cassait sous contrainte réelle : le
+  // libellé tronquait ("Modèles entr…"), le delta passait à la ligne à
+  // côté du chiffre faute de place. Refaite en 3 lignes empilées, chacune
+  // sur toute la largeur de la tuile — plus aucune compétition d'espace
+  // entre icône/chiffre/delta/libellé : (1) icône seule, (2) chiffre
+  // dominant + delta aligné à côté, (3) libellé sur sa propre ligne
+  // complète, jamais tronqué. Barre colorée supprimée (motif daté) :
+  // l'identité de couleur reste portée par l'icône seule.
+  const content = loading ? (
+    <div className="p-4 space-y-2.5">
+      <div className="h-8 w-8 rounded-control bg-muted animate-pulse" />
+      <div className="h-7 w-20 rounded bg-muted animate-pulse" />
+      <div className="h-3.5 w-28 rounded bg-muted animate-pulse" />
+    </div>
+  ) : split ? (
+    <div className="p-4 space-y-3">
+      <ColorIconBadge icon={icon} color={color} size="sm" />
+      <div className="flex items-stretch divide-x divide-border">
+        <div className="pr-3 min-w-0">
+          <p className={`text-title tabular-nums leading-none ${split[0].color ? accentValueTextClass(split[0].color) : "text-foreground"}`}>
+            {displaySplitA ?? "—"}
+          </p>
+          <p className="text-caption text-muted-foreground mt-1.5">{split[0].label}</p>
+        </div>
+        <div className="px-3 min-w-0">
+          <p className={`text-title tabular-nums leading-none ${split[1].color ? accentValueTextClass(split[1].color) : "text-foreground"}`}>
+            {displaySplitB ?? "—"}
+          </p>
+          <p className="text-caption text-muted-foreground mt-1.5">{split[1].label}</p>
+        </div>
+        <div className="pl-3 min-w-0">
+          <p className={`text-title tabular-nums leading-none ${split[2].color ? accentValueTextClass(split[2].color) : "text-foreground"}`}>
+            {displaySplitC ?? "—"}
+          </p>
+          <p className="text-caption text-muted-foreground mt-1.5">{split[2].label}</p>
+        </div>
+      </div>
+    </div>
+  ) : (
+    <div className="p-4 space-y-2">
+      <ColorIconBadge icon={icon} color={color} size="sm" />
+      <div className="flex items-baseline gap-2">
+        <p className="text-display text-foreground tabular-nums leading-none">{displayValue ?? "—"}</p>
+        {trend && (
+          <span
+            className={`inline-flex items-center gap-0.5 text-caption tabular-nums flex-shrink-0 ${
+              trend.direction === "flat" ? "text-muted-foreground" : "text-foreground/70"
+            }`}
+          >
+            {(() => {
+              const TrendIcon = TREND_ICON[trend.direction];
+              return <TrendIcon size={12} aria-hidden="true" />;
+            })()}
+            {trend.label}
+          </span>
         )}
       </div>
+      <p className="text-caption text-muted-foreground">{label}</p>
+    </div>
+  );
+
+  const chromeClass =
+    "group stat-tile-enter overflow-hidden rounded-card border border-border/70 bg-card shadow-card transition-all duration-200 hover:shadow-overlay hover:-translate-y-0.5";
+
+  if (href) {
+    return (
+      <Link
+        to={href}
+        className={`${chromeClass} block focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/50`}
+        style={{ animationDelay: `${delayMs}ms` }}
+      >
+        {content}
+      </Link>
+    );
+  }
+
+  return (
+    <div className={chromeClass} style={{ animationDelay: `${delayMs}ms` }}>
+      {content}
     </div>
   );
 }

@@ -44,7 +44,7 @@ export default function Register() {
       <div className="flex-1 flex items-center justify-center p-6 sm:p-10 bg-muted">
         <div className="max-w-sm w-full">
           <div className="mb-6">
-            <h1 className="text-2xl font-serif text-foreground">Créer votre bureau d'études</h1>
+            <h1 className="text-title text-foreground">Créer votre bureau d'études</h1>
             <p className="text-sm text-muted-foreground mt-1">
               Vous devenez propriétaire de l'organisation — vous pourrez ensuite y inviter votre équipe.
             </p>

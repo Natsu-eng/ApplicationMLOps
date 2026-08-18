@@ -1,8 +1,6 @@
-import { useState } from "react";
 import { Activity, Crosshair, Grid3x3, Target as TargetIcon, Waves } from "lucide-react";
 import {
   CartesianGrid,
-  Legend,
   Line,
   LineChart,
   ReferenceLine,
@@ -27,6 +25,13 @@ import {
   CHART_TICK_STYLE,
   CHART_TOOLTIP_STYLE,
 } from "../../theme/charts";
+// Lot 2A — IsolatableLegend/useSeriesIsolation vivent maintenant dans
+// components/ui/ChartLegend.tsx (réutilisables par n'importe quel graphe
+// multi-séries) ; réexportés ici pour ne casser aucun import existant
+// (ReliabilityDiagnostics.tsx importe ces deux noms depuis ce fichier).
+import { IsolatableLegend, useSeriesIsolation } from "../ui/ChartLegend";
+
+export { IsolatableLegend, useSeriesIsolation };
 
 export default function EvaluationCharts({
   taskType,
@@ -44,47 +49,6 @@ export default function EvaluationCharts({
   return null;
 }
 
-/** Isolation d'une série de courbe par la légende (Lot E1-ter) — nécessaire
- * dès qu'il y a plus de 2-3 classes (ROC/PR multiclasse) : les courbes
- * s'emmêlent sinon. Clic = masquer/réafficher une classe, survol = mettre
- * les autres en retrait. Un hook par graphe (ROC et PR restent indépendants
- * : isoler une classe sur l'un n'affecte pas l'autre). */
-export function useSeriesIsolation() {
-  const [hidden, setHidden] = useState<Set<string>>(new Set());
-  const [hovered, setHovered] = useState<string | null>(null);
-
-  function toggle(name: string) {
-    setHidden((prev) => {
-      const next = new Set(prev);
-      if (next.has(name)) next.delete(name);
-      else next.add(name);
-      return next;
-    });
-  }
-
-  return { hidden, hovered, setHovered, toggle };
-}
-
-export function IsolatableLegend({ isolation }: { isolation: ReturnType<typeof useSeriesIsolation> }) {
-  return (
-    <Legend
-      wrapperStyle={{ fontSize: 11, cursor: "pointer" }}
-      onClick={(entry) => isolation.toggle(String(entry.value))}
-      onMouseEnter={(entry) => isolation.setHovered(String(entry.value))}
-      onMouseLeave={() => isolation.setHovered(null)}
-      formatter={(value) => (
-        <span
-          style={{
-            opacity: isolation.hidden.has(String(value)) ? 0.35 : 1,
-            textDecoration: isolation.hidden.has(String(value)) ? "line-through" : "none",
-          }}
-        >
-          {value}
-        </span>
-      )}
-    />
-  );
-}
 
 function ClassificationCharts({ evaluation }: { evaluation: ModelEvaluation }) {
   const classNames = evaluation.class_names ?? [];
@@ -120,7 +84,7 @@ function ClassificationCharts({ evaluation }: { evaluation: ModelEvaluation }) {
             help="Plus la courbe se rapproche du coin supérieur gauche, mieux le modèle distingue les classes. La diagonale grise correspond au hasard."
           />
           {manyClasses && (
-            <p className="text-[11px] text-muted-foreground mb-1">
+            <p className="text-caption text-muted-foreground mb-1">
               Survolez ou cliquez une classe dans la légende pour l'isoler.
             </p>
           )}
@@ -176,7 +140,7 @@ function ClassificationCharts({ evaluation }: { evaluation: ModelEvaluation }) {
             help="Utile en complément de la ROC quand les classes sont déséquilibrées — plus la courbe reste haute, mieux le modèle équilibre précision et rappel."
           />
           {manyClasses && (
-            <p className="text-[11px] text-muted-foreground mb-1">
+            <p className="text-caption text-muted-foreground mb-1">
               Survolez ou cliquez une classe dans la légende pour l'isoler.
             </p>
           )}

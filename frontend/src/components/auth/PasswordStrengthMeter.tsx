@@ -50,7 +50,7 @@ export function PasswordStrengthMeter({ password }: { password: string }) {
       <p className={`text-xs font-semibold mt-1 ${password ? STRENGTH_TEXT[strength] : "text-muted-foreground"}`}>
         {password ? STRENGTH_LABEL[strength] : "Choisissez un mot de passe"}
       </p>
-      <p className="text-[11px] text-muted-foreground mt-0.5">
+      <p className="text-caption text-muted-foreground mt-0.5">
         12+ caractères avec majuscule, minuscule, chiffre et caractère spécial pour un mot de passe robuste.
       </p>
     </div>

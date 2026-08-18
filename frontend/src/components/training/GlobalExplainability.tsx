@@ -156,7 +156,7 @@ export function ShapBeeswarmChart({ beeswarm }: { beeswarm: ShapBeeswarm }) {
           />
         </ScatterChart>
       </ResponsiveContainer>
-      <div className="flex items-center gap-2 mt-2 text-[11px] text-muted-foreground">
+      <div className="flex items-center gap-2 mt-2 text-caption text-muted-foreground">
         <span>Valeur de la variable :</span>
         <span
           className="inline-block w-16 h-2 rounded-full"

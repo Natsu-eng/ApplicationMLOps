@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { Boxes, History, Sparkles } from "lucide-react";
 import { ApiError, api, type VisionAnomalyJobSummary, type VisionClassificationJobSummary } from "../api/client";
 import AppShell from "../components/AppShell";
+import { pillarColor } from "../config/pillars";
 import { Card } from "../components/ui/Card";
 import { ColorIconBadge, accentColorForId } from "../components/ui/ColorIconBadge";
 import { PageHeader } from "../components/ui/PageHeader";
@@ -63,7 +64,7 @@ export default function VisionHistory() {
         title="Historique"
         description="Retrouvez vos classifications d'images et détections d'anomalies visuelles passées — même après avoir quitté la page ou relancé une nouvelle analyse."
         icon={History}
-        color="violet"
+        color={pillarColor("vision")}
       />
 
       <div className="mb-5">

@@ -81,7 +81,7 @@ export function AuthBrandPanel({ kicker, heading, tagline }: Props) {
         <span className="inline-flex items-center bg-white/15 border border-white/15 px-2.5 py-1 rounded-full text-xs font-medium text-white/90 mb-4">
           {kicker}
         </span>
-        <h1 className="text-3xl xl:text-4xl font-serif font-bold leading-[1.15] tracking-tight max-w-md">
+        <h1 className="text-3xl xl:text-4xl font-bold leading-[1.15] tracking-tight max-w-md">
           {heading}
         </h1>
         <p className="mt-5 text-white/80 text-base leading-relaxed max-w-md">{tagline}</p>

@@ -51,7 +51,7 @@ export function VisionImage({
   }, [datasetId, path]);
 
   if (failed) {
-    return <div className={`bg-muted flex items-center justify-center text-[10px] text-muted-foreground ${className}`}>Image indisponible</div>;
+    return <div className={`bg-muted flex items-center justify-center text-caption text-muted-foreground ${className}`}>Image indisponible</div>;
   }
   if (!src) {
     return <div className={`bg-muted animate-pulse ${className}`} />;

@@ -71,7 +71,7 @@ export function LocalExplanationPanel({ explanation }: { explanation: LocalExpla
           );
         })}
       </div>
-      <p className="text-[11px] text-muted-foreground mt-2 tabular-nums">
+      <p className="text-caption text-muted-foreground mt-2 tabular-nums">
         Base du modèle : {explanation.base_value.toFixed(3)} → total après effet des variables :{" "}
         {finalValue.toFixed(3)}
       </p>

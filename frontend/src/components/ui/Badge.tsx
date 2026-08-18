@@ -35,7 +35,7 @@ export function Badge({
 }) {
   return (
     <span
-      className={`inline-flex items-center gap-1.5 whitespace-nowrap text-[11px] font-medium px-2 py-0.5 rounded-full ${VARIANT_CLASSES[variant]}`}
+      className={`inline-flex items-center gap-1.5 whitespace-nowrap text-overline font-medium px-2 py-0.5 rounded-full ${VARIANT_CLASSES[variant]}`}
     >
       {dot && (
         <span className={`size-1.5 rounded-full ${DOT_CLASSES[variant]} ${pulse ? "animate-pulse" : ""}`} />

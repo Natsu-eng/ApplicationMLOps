@@ -75,7 +75,7 @@ export default function AppShell({ children, pillarId }: { children: ReactNode; 
           <div key={pillar.id}>
             <div className="flex items-center justify-between px-3 pt-5 pb-1.5">
               <span
-                className={`text-[11px] font-semibold tracking-wide uppercase ${
+                className={`text-overline uppercase ${
                   pillar.id === pillarId ? "text-sidebar-highlight" : "text-sidebar-muted-foreground/80"
                 }`}
               >

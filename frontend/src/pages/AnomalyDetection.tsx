@@ -13,6 +13,7 @@ import {
   type DatasetSummary,
 } from "../api/client";
 import AppShell from "../components/AppShell";
+import { pillarColor } from "../config/pillars";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
@@ -166,7 +167,7 @@ export default function AnomalyDetection() {
             : undefined
         }
         icon={AlertTriangle}
-        color="amber"
+        color={pillarColor("unsupervised")}
         action={
           phase !== "configure" ? (
             <div className="flex items-center gap-2">

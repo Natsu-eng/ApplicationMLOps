@@ -95,7 +95,7 @@ function MetricCard({
       </p>
       <p className={`text-xl font-semibold tabular-nums ${accentValueTextClass(color)}`}>{formatMetricValue(value)}</p>
       {ci && (
-        <p className="text-[11px] text-muted-foreground mt-0.5 tabular-nums">
+        <p className="text-caption text-muted-foreground mt-0.5 tabular-nums">
           IC 95 % [{formatMetricValue(ci.ci_low)} – {formatMetricValue(ci.ci_high)}]
         </p>
       )}

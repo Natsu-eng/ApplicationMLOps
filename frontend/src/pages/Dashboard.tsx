@@ -29,6 +29,7 @@ import {
 } from "../api/client";
 import { useAuth } from "../contexts/AuthContext";
 import AppShell from "../components/AppShell";
+import { pillarColor } from "../config/pillars";
 import { StatTile, StatTileRow } from "../components/dashboard/StatTile";
 import ModelResultModal from "../components/training/ModelResultModal";
 import { Button } from "../components/ui/Button";
@@ -151,35 +152,59 @@ export default function Dashboard() {
       setJobsError(null);
     } catch (err) {
       // AUDIT_ROADMAP.md, H4/D3 : distinguer "aucun entraînement" (liste
-      // vide légitime) d'un échec réseau.
+      // vide légitime) d'un échec réseau. Réglé à `[]` (pas laissé `null`) :
+      // correctif (retour utilisateur) — un `null` permanent bloquait AUSSI
+      // les compteurs des AUTRES piliers, qui attendaient que CE pilier se
+      // charge avant de s'afficher. Chaque pilier doit dégrader seul.
+      setJobs([]);
       setJobsError(err instanceof ApiError ? err.message : "Impossible de charger les entraînements");
     }
   }, []);
 
   const loadUnsupervisedJobs = useCallback(() => {
+    // Correctif (retour utilisateur) : un seul des 3 appels en échec ne
+    // doit plus geler les 2 autres à "—" indéfiniment — chaque source se
+    // règle à `[]` sur erreur, le pilier affiche alors le total réel des
+    // sources qui ont réussi, avec un message ciblé pour signaler la partie
+    // manquante (voir rendu de "Dernière activité").
     api.clustering
       .listJobs()
       .then(setClusteringJobs)
-      .catch((err) => setUnsupervisedJobsError(err instanceof ApiError ? err.message : "Impossible de charger l'activité non supervisée"));
+      .catch((err) => {
+        setClusteringJobs([]);
+        setUnsupervisedJobsError(err instanceof ApiError ? err.message : "Impossible de charger l'activité non supervisée");
+      });
     api.dimensionality
       .listJobs()
       .then(setDimensionalityJobs)
-      .catch((err) => setUnsupervisedJobsError(err instanceof ApiError ? err.message : "Impossible de charger l'activité non supervisée"));
+      .catch((err) => {
+        setDimensionalityJobs([]);
+        setUnsupervisedJobsError(err instanceof ApiError ? err.message : "Impossible de charger l'activité non supervisée");
+      });
     api.anomalies
       .listJobs()
       .then(setAnomalyJobs)
-      .catch((err) => setUnsupervisedJobsError(err instanceof ApiError ? err.message : "Impossible de charger l'activité non supervisée"));
+      .catch((err) => {
+        setAnomalyJobs([]);
+        setUnsupervisedJobsError(err instanceof ApiError ? err.message : "Impossible de charger l'activité non supervisée");
+      });
   }, []);
 
   const loadVisionJobs = useCallback(() => {
     api.visionClassification
       .listJobs()
       .then(setVisionClassificationJobs)
-      .catch((err) => setVisionJobsError(err instanceof ApiError ? err.message : "Impossible de charger l'activité Vision"));
+      .catch((err) => {
+        setVisionClassificationJobs([]);
+        setVisionJobsError(err instanceof ApiError ? err.message : "Impossible de charger l'activité Vision");
+      });
     api.visionAnomalies
       .listJobs()
       .then(setVisionAnomalyJobs)
-      .catch((err) => setVisionJobsError(err instanceof ApiError ? err.message : "Impossible de charger l'activité Vision"));
+      .catch((err) => {
+        setVisionAnomalyJobs([]);
+        setVisionJobsError(err instanceof ApiError ? err.message : "Impossible de charger l'activité Vision");
+      });
   }, []);
 
   const loadDatasets = useCallback(async () => {
@@ -208,13 +233,16 @@ export default function Dashboard() {
     }
   }
 
-  const allJobsLoaded =
-    jobs !== null &&
-    clusteringJobs !== null &&
-    dimensionalityJobs !== null &&
-    anomalyJobs !== null &&
-    visionClassificationJobs !== null &&
-    visionAnomalyJobs !== null;
+  // Dégradation indépendante par pilier (retour utilisateur) : chaque
+  // pilier a son propre indicateur "réglé" (settled), plus seulement un
+  // état global — un pilier en échec ne doit jamais empêcher les 2 autres
+  // de montrer leurs vrais chiffres. `!== null` suffit désormais à détecter
+  // "réglé" (succès OU échec), puisque les loaders ci-dessus règlent
+  // toujours la liste à `[]` sur erreur au lieu de la laisser `null`.
+  const supervisedSettled = jobs !== null;
+  const nonSupervisedSettled = clusteringJobs !== null && dimensionalityJobs !== null && anomalyJobs !== null;
+  const visionSettled = visionClassificationJobs !== null && visionAnomalyJobs !== null;
+  const allJobsSettled = supervisedSettled && nonSupervisedSettled && visionSettled;
   const unsupervisedJobsCount = (clusteringJobs?.length ?? 0) + (dimensionalityJobs?.length ?? 0) + (anomalyJobs?.length ?? 0);
   const visionJobsCount = (visionClassificationJobs?.length ?? 0) + (visionAnomalyJobs?.length ?? 0);
   const totalJobsCount = (jobs?.length ?? 0) + unsupervisedJobsCount + visionJobsCount;
@@ -333,34 +361,42 @@ export default function Dashboard() {
         }
       />
 
+      {/* Couleurs (Lot 2A correctif 3) : une tuile qui agrège plusieurs
+          piliers (Datasets, Analyses ML dans son ensemble, En cours,
+          Membres) reste neutre — aucune ne "appartient" à un seul pilier.
+          Seules les 3 colonnes de la tuile "Analyses ML" portent chacune la
+          couleur RÉELLE de leur pilier (`pillarColor`, source unique
+          `config/pillars.ts`), et se peuplent indépendamment les unes des
+          autres (voir `supervisedSettled`/`nonSupervisedSettled`/
+          `visionSettled` : un pilier en échec ne bloque plus les 2 autres). */}
       <StatTileRow wide>
-        <StatTile icon={Database} label="Datasets" value={datasets?.length} color="blue" delayMs={0} />
+        <StatTile icon={Database} label="Datasets" value={datasets?.length} color="neutral" delayMs={0} />
         <StatTile
           icon={Activity}
           label="Analyses ML"
-          value={allJobsLoaded ? totalJobsCount : undefined}
-          color="teal"
+          value={allJobsSettled ? totalJobsCount : undefined}
+          color="neutral"
           delayMs={60}
           split={[
-            { label: "Supervisé", value: allJobsLoaded ? jobs!.length : undefined },
-            { label: "Non supervisé", value: allJobsLoaded ? unsupervisedJobsCount : undefined },
-            { label: "Vision", value: allJobsLoaded ? visionJobsCount : undefined },
+            { label: "Supervisé", value: supervisedSettled ? jobs!.length : undefined, color: pillarColor("supervised") },
+            { label: "Non supervisé", value: nonSupervisedSettled ? unsupervisedJobsCount : undefined, color: pillarColor("unsupervised") },
+            { label: "Vision", value: visionSettled ? visionJobsCount : undefined, color: pillarColor("vision") },
           ]}
         />
         <StatTile
           icon={Activity}
           label="En cours"
-          value={allJobsLoaded ? activeJobsCount : undefined}
-          color="amber"
+          value={allJobsSettled ? activeJobsCount : undefined}
+          color="neutral"
           delayMs={120}
         />
-        <StatTile icon={Users} label="Membres de l'équipe" value={members?.length} color="violet" delayMs={180} />
+        <StatTile icon={Users} label="Membres de l'équipe" value={members?.length} color="neutral" delayMs={180} />
       </StatTileRow>
 
       <div className="grid gap-6 lg:grid-cols-2 mb-10">
         <Card className="p-5">
           <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
-            <h2 className="text-sm font-medium text-foreground">Dernière activité</h2>
+            <h2 className="text-subtitle text-foreground">Dernière activité</h2>
             <div className="flex items-center gap-3 text-xs">
               <Link to="/training/history" className="text-primary hover:text-primary/80">
                 Historique supervisé
@@ -374,11 +410,18 @@ export default function Dashboard() {
             </div>
           </div>
 
-          {jobsError || unsupervisedJobsError || visionJobsError ? (
-            <ErrorNote message={jobsError ?? unsupervisedJobsError ?? visionJobsError ?? ""} />
-          ) : !allJobsLoaded ? (
+          {/* Dégradation indépendante par pilier (retour utilisateur) : un
+              seul pilier en échec (ex. Vision) affiche désormais SON propre
+              message ciblé, sans masquer ni bloquer l'activité des 2 autres
+              piliers qui, eux, ont répondu — plus une seule bannière
+              générique qui remplaçait toute la liste au moindre échec. */}
+          {jobsError && <ErrorNote message={`Activité Supervisé indisponible — ${jobsError}`} />}
+          {unsupervisedJobsError && <ErrorNote message={`Activité Non supervisé indisponible — ${unsupervisedJobsError}`} />}
+          {visionJobsError && <ErrorNote message={`Activité Vision indisponible — ${visionJobsError}`} />}
+
+          {!supervisedSettled && !nonSupervisedSettled && !visionSettled ? (
             <p className="text-sm text-muted-foreground">Chargement…</p>
-          ) : activity.length === 0 ? (
+          ) : activity.length === 0 && !jobsError && !unsupervisedJobsError && !visionJobsError ? (
             <p className="text-sm text-muted-foreground">
               Aucune analyse pour l'instant — lancez-en une depuis{" "}
               <Link to="/training" className="text-primary hover:text-primary/80">
@@ -394,7 +437,7 @@ export default function Dashboard() {
               </Link>
               .
             </p>
-          ) : (
+          ) : activity.length > 0 ? (
             <ul className="divide-y divide-border">
               {activity.map((item) => {
                 const meta = ACTIVITY_KIND_META[item.kind];
@@ -485,12 +528,12 @@ export default function Dashboard() {
                 );
               })}
             </ul>
-          )}
+          ) : null}
         </Card>
 
         <Card className="p-5">
           <div className="flex items-center justify-between mb-4">
-            <h2 className="text-sm font-medium text-foreground">Derniers datasets</h2>
+            <h2 className="text-subtitle text-foreground">Derniers datasets</h2>
             <Link to="/datasets" className="text-xs text-primary hover:text-primary/80">
               Voir tout
             </Link>
