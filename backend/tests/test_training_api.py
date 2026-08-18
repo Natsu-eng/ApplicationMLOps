@@ -13,6 +13,7 @@ from unittest.mock import patch
 from api.core.config import get_settings
 from api.core.models import MLModel, ModelCandidate, TrainingJob
 from api.routers.training import _headline_metric
+from services.model_versioning import next_version
 
 
 def _register(client, email="owner@bureau.fr", org="Bureau"):
@@ -126,6 +127,8 @@ def test_delete_completed_job_with_model(mock_queue, client, db_session):
         MLModel(
             organization_id=job.organization_id,
             training_job_id=job.id,
+            dataset_id=job.dataset_id,
+            version=next_version(db_session, job.organization_id, job.dataset_id, job.target_column),
             algorithm="LightGBM",
             task_type="regression",
             target_column="cible",
@@ -178,6 +181,8 @@ def test_model_endpoint_exposes_global_explainability_fields(mock_queue, client,
         MLModel(
             organization_id=job.organization_id,
             training_job_id=job.id,
+            dataset_id=job.dataset_id,
+            version=next_version(db_session, job.organization_id, job.dataset_id, job.target_column),
             algorithm="LightGBM",
             task_type="regression",
             target_column="cible",
@@ -219,6 +224,8 @@ def test_model_endpoint_degrades_cleanly_for_pre_lot_jobs(mock_queue, client, db
         MLModel(
             organization_id=job.organization_id,
             training_job_id=job.id,
+            dataset_id=job.dataset_id,
+            version=next_version(db_session, job.organization_id, job.dataset_id, job.target_column),
             algorithm="LightGBM",
             task_type="regression",
             target_column="cible",
@@ -371,6 +378,8 @@ def _complete_job_with_model_and_candidates(db_session, job_id, org_id, add_cand
         MLModel(
             organization_id=org_id,
             training_job_id=job.id,
+            dataset_id=job.dataset_id,
+            version=next_version(db_session, org_id, job.dataset_id, job.target_column),
             algorithm="LightGBM",
             task_type="regression",
             target_column="cible",

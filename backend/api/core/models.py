@@ -11,7 +11,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text, func
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from api.core.database import Base
@@ -80,6 +80,23 @@ class Dataset(Base):
     columns_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="processing")  # processing | ready | error
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # Lot 5 (correctif P2, AUDIT_DATALAB_2026-08-16.md §P2) — SHA-256 du
+    # contenu brut du fichier, calculé une seule fois à l'upload (voir
+    # api/routers/datasets.py::upload_dataset). NULL pour l'historique
+    # antérieur à ce lot (jamais recalculé a posteriori — recalculer
+    # exigerait de relire chaque fichier sur disque, hors périmètre d'une
+    # migration de schéma). Sert à détecter un ré-upload accidentel du
+    # même fichier (voir duplicate_of_dataset_id) et, plus généralement,
+    # à vérifier l'intégrité d'un fichier stocké.
+    content_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
+    # Renseigné à l'upload si un dataset de LA MÊME organisation partage
+    # déjà exactement le même content_hash — jamais bloquant (l'upload
+    # aboutit toujours), purement informatif pour éviter un doublon
+    # silencieux. ondelete SET NULL : si le dataset d'origine est
+    # supprimé, ce dataset-ci reste un dataset normal, pas orphelin.
+    duplicate_of_dataset_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("datasets.id", ondelete="SET NULL"), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
 
     organization: Mapped["Organization"] = relationship("Organization")
@@ -159,6 +176,13 @@ class MLModel(Base):
     training_job_id: Mapped[int] = mapped_column(
         Integer, ForeignKey("training_jobs.id", ondelete="CASCADE"), nullable=False, unique=True
     )
+    # Lot 5 (correctif P1) — dénormalisé depuis `training_job.dataset_id` :
+    # `target_column` (ci-dessous) l'est déjà pour la même raison (identifier
+    # le "problème" — dataset + cible — sans jointure sur `training_jobs` à
+    # chaque requête). Immuable après création, comme `training_job_id`.
+    dataset_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("datasets.id", ondelete="CASCADE"), nullable=False, index=True
+    )
     algorithm: Mapped[str] = mapped_column(String(50), nullable=False)  # libellé lisible du registre (services/ml_registry.py, Lot 5)
     task_type: Mapped[str] = mapped_column(String(20), nullable=False)
     target_column: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -195,13 +219,33 @@ class MLModel(Base):
     # Courbe d'apprentissage (train-size vs score) — diagnostic de
     # sur/sous-apprentissage complémentaire à delta_r2/accuracy train-test.
     learning_curve_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    # Lot 9 — registre de modèles versionné. `stage` : "staging"/"production",
-    # NULL = jamais promu (comportement historique, rétrocompat par absence
-    # comme le reste du projet — voir api/routers/training.py::promote_model
-    # pour la règle "un seul modèle en production par dataset+cible").
+    # Lot 9 — registre de modèles versionné. `stage` :
+    # "staging"/"production"/"archived" (Lot 5, correctif P1, ce dernier
+    # ajouté ici), NULL = jamais promu (comportement historique,
+    # rétrocompat par absence comme le reste du projet — voir
+    # api/routers/training.py::promote_model pour la règle "un seul
+    # modèle en production par dataset+cible", et `_VALID_STAGES` pour la
+    # liste faisant foi).
     stage: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     promoted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Lot 5 (correctif P1) — numéro de version au sein du "problème"
+    # (organization_id, dataset_id, target_column) : 1 pour le tout
+    # premier modèle entraîné sur ce couple dataset/cible, incrémenté à
+    # chaque nouveau (voir services/model_versioning.py::next_version).
+    # Assigné UNE SEULE FOIS à la création, jamais recalculé — un modèle
+    # "version 3" garde ce numéro pour toujours, y compris si une version
+    # intermédiaire est supprimée par la suite (l'historique reste
+    # interprétable, jamais de renumérotation rétroactive).
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+    __table_args__ = (
+        # Empêche deux modèles du même problème de partager le même numéro
+        # de version — filet de sécurité en cas de course entre deux
+        # entraînements terminant au même instant sur le même dataset+cible
+        # (deux workers RQ concurrents, voir services/model_versioning.py).
+        UniqueConstraint("organization_id", "dataset_id", "target_column", "version", name="uq_ml_models_version"),
+    )
 
     organization: Mapped["Organization"] = relationship("Organization")
     training_job: Mapped["TrainingJob"] = relationship("TrainingJob", back_populates="model")
@@ -255,6 +299,45 @@ class ModelCandidate(Base):
 
     organization: Mapped["Organization"] = relationship("Organization")
     training_job: Mapped["TrainingJob"] = relationship("TrainingJob")
+
+
+class Prediction(Base):
+    """Une prédiction individuelle produite par
+    `POST /training/jobs/{id}/predict` (Lot 5, correctif I2,
+    AUDIT_DATALAB_2026-08-16.md §I2).
+
+    Avant ce lot, chaque prédiction disparaissait sitôt la réponse HTTP
+    envoyée : aucune trace de CE qui a été demandé, CE qui a été répondu,
+    ni PAR QUI — un incident ("le modèle a mal prédit pour ce dossier")
+    ne pouvait pas être investigué après coup. Remonte au modèle (donc au
+    run d'entraînement, au dataset, à l'organisation) via `ml_model_id` —
+    jamais dupliqué ici.
+
+    `output_json` capture prédiction + probabilités + intervalle CQR
+    (tout ce que l'audit désigne par "sortie" et "intervalle") — jamais
+    `explanation` (SHAP local) : recalculable à la demande depuis le
+    bundle + `input_json`, volumineuse, pas une donnée qui fait foi (voir
+    services/ml_inference.py::explain_one, appelé sans persistance)."""
+
+    __tablename__ = "predictions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    organization_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    ml_model_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("ml_models.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    requested_by_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    input_json: Mapped[str] = mapped_column(Text, nullable=False)
+    output_json: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+    organization: Mapped["Organization"] = relationship("Organization")
+    ml_model: Mapped["MLModel"] = relationship("MLModel")
+    requested_by: Mapped[Optional["User"]] = relationship("User")
 
 
 class AuditLog(Base):

@@ -1278,3 +1278,227 @@ sous-requête de `get_dashboard_summary()` échoue alors que le reste du
 schéma est sain (donc un cas que D1.8 ne couvre pas) — alors la résilience
 partielle CÔTÉ BACKEND (200 partiel) redevient la bonne réponse, à traiter
 comme son propre correctif testé, pas en fusionnant à nouveau ce commit.
+
+## Lot 5 — Traçabilité (Phase 4 de l'audit, correctifs I2, P1 et P2)
+
+Branche `lot-5-tracability`, basée sur `main` (avant les Lots 2A/3/4,
+sur des branches séparées non encore fusionnées — voir D4.5/D4.8/D4.9
+sur `lot-4-perf` pour le même avertissement de réconciliation à venir).
+Phase 4 complète de l'audit (I2, P1, P2, I5) traitée en plusieurs
+correctifs séquentiels sur cette même branche, même découpage que
+Lot 4 (I3/I4/I6/I7).
+
+### D5.1 — Table `Prediction` dédiée, jamais un JSON sur `MLModel`
+
+**Question** : I2 (AUDIT_DATALAB_2026-08-16.md §I2) demande de persister
+chaque prédiction (`POST /training/jobs/{id}/predict`) — jusqu'ici
+perdue sitôt la réponse HTTP envoyée, rendant impossible d'investiguer
+après coup "le modèle a mal prédit pour ce dossier". Une table dédiée ou
+un journal générique (réutiliser `AuditLog`) ?
+**Retenu** : table `Prediction` dédiée (`api/core/models.py`) —
+`organization_id`, `ml_model_id`, `requested_by_id`, `input_json`,
+`output_json`, `created_at`. `output_json` capture prédiction +
+probabilités + intervalle CQR (tout ce que l'audit désigne par "sortie"
+et "intervalle"), **jamais** `explanation` (SHAP local) : recalculable à
+la demande depuis le bundle + `input_json` (voir
+`services/ml_inference.py::explain_one`), volumineuse, pas une donnée
+qui fait foi — persister une valeur recalculable à l'identique aurait
+été de la duplication sans bénéfice de traçabilité.
+**Écarté** : réutiliser `AuditLog` (`services/audit.py`) — explicitement
+scopé aux "actions sensibles" (suppression, promotion, ajout de membre),
+volontairement minimal ; une prédiction est le chemin ROUTINE de
+l'application, pas une action de gouvernance. Le détourner aurait rendu
+`AuditLog` bruyant (potentiellement des centaines de lignes par heure)
+pour un usage qui n'est pas le sien.
+**Vérifié, pas supposé** : migration Alembic (`0860f4355873`) générée
+par autogénération contre une base neuve, testée upgrade → vérification
+du schéma réel (colonnes + index) → downgrade → vérification que la
+table disparaît → ré-upgrade, avant tout commit (voir méthodologie de
+session, `_as_aware_utc` déjà établi dans `job_watchdog.py`).
+
+### D5.2 — Rétention par purge à la demande, jamais un scheduler dédié
+
+**Question** : I2 demande "+ rétention" — sans borne, `predictions`
+grossirait indéfiniment, et `input_json` peut contenir des données
+personnelles saisies par l'utilisateur (aucune raison de les garder
+indéfiniment).
+**Retenu** : même principe que `services/job_watchdog.py::reconcile_stale_jobs`
+(déjà en place, Lot AUDIT_ROADMAP.md H2) — une purge à la demande,
+appelée juste avant d'enregistrer une nouvelle prédiction de la MÊME
+organisation (`services/prediction_retention.py::purge_old_predictions`,
+`Settings.prediction_retention_days = 90`). Une prédiction jamais
+réutilisée est donc purgée au plus tard à la prochaine prédiction de sa
+propre organisation — pas de process séparé, pas de dépendance nouvelle
+(Celery beat ou équivalent), cohérent avec "pas de scheduler dédié" déjà
+choisi pour les jobs orphelins.
+**Écarté** : un script de purge lancé par un cron externe (comme
+`backend/scripts/smoke_test_docker.py` sur la branche
+`fix-api-prefix-routing`) — aurait exigé une tâche cron/Task Scheduler
+en plus de l'application elle-même, jamais garantie de tourner (pas
+d'infrastructure de planification existante dans ce projet) ; la purge à
+la demande, elle, s'exécute à coup sûr dès qu'une organisation redevient
+active.
+**Vérifié, pas supposé** : comparaison de dates faite en PYTHON, jamais
+par un filtre SQL sur `created_at` — un filtre SQL direct aurait paru
+fonctionner en local (SQLite) tout en étant fiable différemment en
+production (PostgreSQL), le même écart de fuseau horaire que
+`job_watchdog.py::_as_aware_utc` documente déjà. Constaté concrètement
+en écrivant `test_old_predictions_are_purged_on_the_next_prediction`
+(`TypeError: can't compare offset-naive and offset-aware datetimes` —
+sur l'assertion du TEST, pas sur la purge elle-même, qui utilisait déjà
+`_as_aware_utc` en interne).
+**Remise en cause si** : le volume de prédictions par organisation
+devient assez élevé pour que "charger tous les id/created_at de
+l'organisation à chaque prédiction" devienne mesurablement coûteux — un
+index composite `(organization_id, created_at)` ou un vrai job planifié
+deviendrait alors justifié.
+
+### D5.3 — Historique `GET /training/jobs/{id}/predictions` : `limit` simple, pas encore le curseur du Lot 4
+
+**Question** : comment exposer l'historique des prédictions d'un job ?
+**Retenu** : `GET /training/jobs/{job_id}/predictions`, un paramètre
+`limit` simple (défaut 50, max 500), tri par `id` décroissant (même
+raison qu'ailleurs dans le projet : `id` est sans ambiguïté, jamais
+`created_at`, voir D4.2 sur `lot-4-perf`).
+**Écarté** : la pagination par curseur de `api/core/pagination.py`
+(Lot 4/I3) — ce module vit sur `lot-4-perf`, une branche distincte non
+fusionnée au moment de ce lot ; le dupliquer ici aurait créé deux
+implémentations concurrentes du même mécanisme. La rétention (D5.2)
+borne déjà la taille de cette table dans le temps, rendant un simple
+`limit` suffisant pour l'instant.
+**Remise en cause si** : au moment de fusionner `lot-4-perf` et
+`lot-5-tracability`, harmoniser cet endpoint sur `paginate_by_id` comme
+les autres listes — à traiter EXPLICITEMENT à ce moment (même avertissement
+que D4.5 pour `Dashboard.tsx`), pas anticipé ici.
+
+### D5.4 — Pas de surface frontend pour I2 dans ce lot
+
+**Question** : faut-il un onglet "Historique des prédictions" dans
+`ModelResultModal.tsx` pour ce correctif ?
+**Retenu** : non — la colonne "Fichiers concernés" d'I2 dans l'audit ne
+liste que `models.py`/`training.py` (contrairement à I1, explicitement
+"back + front"). Le backend est prêt (persistance + endpoint), la
+surface frontend est un chantier séparé, cohérent avec le traitement de
+P6 (pagination UI) différé au Lot 4 (D4.1).
+**Remise en cause si** : un utilisateur/le produit demande explicitement
+cette vue — à ce moment, un nouvel onglet dans `ModelResultModal.tsx`
+consommant `GET /training/jobs/{id}/predictions` (déjà prêt côté API).
+
+### D5.5 — P1 : version + archived + rollback pour `MLModel` uniquement, extension aux 5 autres pillars EXPLICITEMENT différée
+
+**Question** : P1 (AUDIT_DATALAB_2026-08-16.md §P1) demande "`ModelVersion` :
+numéro, alias, `archived`, historique de transitions, rollback ; étendre
+aux 5 autres types" — une seule ligne, sans colonne "fichiers concernés"
+(contrairement aux items "I", plus détaillés). Le Lot 9 (déjà en place)
+avait déjà `stage`("staging"/"production")/`promoted_at` + une règle "un
+seul modèle production par dataset+cible" + un journal d'audit
+("model.promoted") — qu'est-ce qui manque vraiment ?
+**Retenu**, pour `MLModel` (pilier supervisé) seulement :
+- `version: int`, dénormalisé une fois à la création
+  (`services/model_versioning.py::next_version`, numérotation par lignée
+  organisation+dataset+cible, jamais recalculée).
+- `stage` étendu à une 4ᵉ valeur `"archived"` (retire du registre actif
+  SANS supprimer — `GET /models/registry` exclut désormais explicitement
+  les modèles archivés, avant : tout `stage` non NULL y apparaissait).
+- `GET /jobs/{id}/model/versions` — toute la lignée, la plus récente
+  d'abord (retrouver le job_id d'une version antérieure).
+- `GET /jobs/{id}/model/history` — lit `AuditLog` (déjà écrit par
+  `promote_model` depuis le Lot 9), jamais un second mécanisme de
+  journalisation parallèle.
+- Rollback : AUCUN endpoint dédié — repromouvoir une version antérieure
+  en "production" démet automatiquement la version courante (mécanisme
+  de démotion du Lot 9, inchangé) ; documenté comme LE mécanisme de
+  rollback dans `promote_model`, jamais dupliqué.
+**Écarté** : un `alias` libre façon MLflow ("champion"/"challenger"
+personnalisables) — `stage` fonctionne déjà comme 2 alias fixes bien
+compris (staging/production) SANS UI de nommage à construire ; un
+système d'alias générique demanderait une surface produit (comment
+créer/renommer un alias ?) hors du périmètre de ce correctif backend,
+et pour laquelle aucun besoin concret n'est exprimé — inventer cette UI
+maintenant aurait été concevoir pour un besoin hypothétique.
+**Écarté aussi** : une table `ModelVersion` séparée de `MLModel` — le
+"numéro de version" n'est qu'un attribut de plus du modèle déjà
+existant (comme `stage`), pas une nouvelle ENTITÉ avec un cycle de vie
+propre ; une table séparée aurait imposé une jointure supplémentaire à
+chaque lecture pour un gain nul ici.
+**Extension aux 5 autres types (clustering, dimensionnalité, anomalies
+tabulaires, classification vision, anomalies vision) : DIFFÉRÉE**,
+décision explicite et non un oubli — chacun exigerait sa propre colonne
+`version`+`dataset_id` dénormalisé, sa propre migration (avec le même
+rétropeuplement soigné que celui testé ici), son propre triplet
+d'endpoints. Cinq fois le travail fait ici, pour des pilotes dont
+l'usage "plusieurs versions du même problème" est aujourd'hui moins
+établi que pour le supervisé (Lot 9 y était déjà rodé). Voir I2 (D5.1)
+pour le même raisonnement de scope déjà appliqué dans ce lot.
+**Vérifié, pas supposé** : migration (`f983e8e87dcb`) testée contre une
+base SQLite PEUPLÉE (pas seulement vide) — plusieurs "problèmes"
+distincts (même dataset+cibles différentes, datasets différents+même
+nom de cible), vérifié que chaque lignée reçoit bien 1, 2, 3... dans
+l'ordre `id` croissant, jamais `created_at` (même leçon que D4.2) —
+upgrade → vérification ligne par ligne → downgrade → vérification que
+les colonnes disparaissent sans perte des autres lignes → ré-upgrade.
+Bug réel trouvé en écrivant les tests : `tests/test_model_registry.py`
+avait un helper `_complete_job` qui codait en dur `target_column="cible"`
+dans le modèle créé, indépendamment de la vraie cible du job (masqué
+avant ce lot par un correctif a posteriori `model.target_column = "x2"`
+dans 2 tests) — la nouvelle contrainte UNIQUE l'a fait échouer
+immédiatement (`UNIQUE constraint failed`), révélant l'incohérence.
+Corrigé à la source (`target_column=job.target_column`) plutôt que
+patché une fois de plus.
+**Remise en cause si** : un besoin produit réel pour l'extension aux 5
+autres types, ou pour un alias nommé librement, est exprimé — traiter
+alors comme un correctif séparé, avec son propre "fait quand".
+
+### D5.6 — P2 : hash SHA-256 + détection de doublon, `DatasetVersion` explicitement écarté (aucun re-upload n'existe)
+
+**Question** : P2 (AUDIT_DATALAB_2026-08-16.md §P2) demande "`DatasetVersion`
++ SHA-256 ; le modèle référence une version, pas un id" — une ligne,
+sans détail. Que signifie concrètement "versionner" un dataset dans CE
+produit ?
+**Vérifié, pas supposé** : `grep` sur `api/routers/datasets.py` confirme
+qu'il n'existe QU'UN SEUL endpoint mutateur, `POST /datasets` (upload) —
+aucun PUT/PATCH pour "remplacer" ou "mettre à jour" le fichier d'un
+dataset existant. Documenté ailleurs dans ce projet, de façon répétée et
+déjà structurante pour d'autres décisions (D4.6, D4.9 sur `lot-4-perf`,
+`get_dataset_eda` sur cette branche) : *"un dataset peut changer de
+statut mais son fichier ne change jamais une fois uploadé"*. Chaque ligne
+`Dataset` est donc DÉJÀ, par construction, une version immuable unique —
+il n'existe aujourd'hui aucune action utilisateur qui produirait une
+"version 2" d'un dataset existant.
+**Retenu** : `content_hash` (SHA-256, calculé à l'upload depuis les
+octets déjà en mémoire — aucune relecture disque) + `duplicate_of_dataset_id`
+(renseigné si un dataset de LA MÊME organisation partage déjà ce hash,
+jamais bloquant — l'upload aboutit toujours, purement informatif, même
+philosophie "informer, ne jamais bloquer" que `services/data_quality.py`).
+Donne un usage réel et immédiat au hash (repérer un ré-upload
+accidentel du même fichier, vérifier l'intégrité d'un fichier stocké)
+sans rien inventer au-delà de ce que permet le produit actuel.
+**Écarté** : scinder `Dataset` en `Dataset` (entité logique) +
+`DatasetVersion` (fichier uploadé versionné), avec migration de TOUTES
+les FK `dataset_id` existantes (`TrainingJob`, `ClusteringJob`,
+`DimensionalityJob`, `AnomalyJob`, `MLModel` — ce dernier tout juste
+ajouté par P1, D5.5) vers `dataset_version_id`. Sans fonctionnalité de
+remplacement de fichier, cette scission n'aurait AUCUN effet
+observable : une seule version aurait jamais existé pour chaque
+dataset, la FK aurait pointé exactement vers la même donnée qu'aujourd'hui,
+juste à travers une table intermédiaire de plus. "Le modèle référence
+une version, pas un id" est déjà vrai EN PRATIQUE (chaque `Dataset` est
+sa propre version unique et immuable) — le formaliser en une seconde
+table maintenant, avant qu'un vrai besoin de remplacement existe, aurait
+été concevoir pour un besoin hypothétique, contre les principes de ce
+projet et contre le choix déjà fait en D5.5 pour l'extension P1 aux 5
+autres pilotes.
+**Vérifié aussi** : migration (`d6231c7548cf`) — colonnes nullables,
+AUCUN rétropeuplement (contrairement à P1/D5.5) : recalculer le hash
+exigerait de relire chaque fichier sur disque depuis la migration elle-même,
+chemin non garanti identique entre environnements (dev/CI/prod) et
+potentiellement lent sur de gros fichiers — hors périmètre d'une
+migration de schéma. Dégradation honnête : `content_hash IS NULL` pour
+tout dataset antérieur à ce lot, pour toujours, comme `stage`/
+`promoted_at` sur `ml_models` avant ce lot. upgrade → downgrade →
+ré-upgrade testés avant ce commit.
+**Remise en cause si** : une fonctionnalité de remplacement/mise à jour
+d'un dataset existant est demandée — c'est EXACTEMENT le moment où
+`DatasetVersion` (et la migration de `dataset_id` vers
+`dataset_version_id` sur les 5 tables qui le référencent) devient
+nécessaire, pas avant.

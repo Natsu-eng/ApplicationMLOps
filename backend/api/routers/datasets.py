@@ -8,6 +8,7 @@ l'organisation, pas réservé au owner : un dataset appartient à l'équipe.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 from datetime import datetime
@@ -76,6 +77,10 @@ class ColumnSchema(BaseModel):
 
 class DatasetDetail(DatasetSummary):
     columns: List[ColumnSchema] = []
+    # Lot 5 (correctif P2) — content_hash absent (None) pour tout dataset
+    # uploadé avant ce lot, jamais recalculé a posteriori.
+    content_hash: Optional[str] = None
+    duplicate_of_dataset_id: Optional[int] = None
 
 
 class PreviewResponse(BaseModel):
@@ -218,7 +223,12 @@ def _to_summary(dataset: Dataset) -> DatasetSummary:
 
 def _to_detail(dataset: Dataset) -> DatasetDetail:
     columns = [ColumnSchema(**c) for c in json.loads(dataset.columns_json)] if dataset.columns_json else []
-    return DatasetDetail(**_to_summary(dataset).model_dump(), columns=columns)
+    return DatasetDetail(
+        **_to_summary(dataset).model_dump(),
+        columns=columns,
+        content_hash=dataset.content_hash,
+        duplicate_of_dataset_id=dataset.duplicate_of_dataset_id,
+    )
 
 
 def _get_org_dataset(dataset_id: int, current_user: User, db: Session) -> Dataset:
@@ -274,6 +284,16 @@ async def upload_dataset(
             },
         )
 
+    # Lot 5 (correctif P2) — SHA-256 du contenu brut, jamais du fichier une
+    # fois écrit sur disque (mêmes octets de toute façon, mais évite une
+    # relecture disque : `content` est déjà en mémoire ci-dessus).
+    content_hash = hashlib.sha256(content).hexdigest()
+    duplicate = (
+        db.query(Dataset)
+        .filter(Dataset.organization_id == current_user.organization_id, Dataset.content_hash == content_hash)
+        .first()
+    )
+
     # La ligne DB est créée avant l'écriture sur disque pour obtenir un id
     # (utilisé dans le nom du fichier stocké — voir api/core/storage.py).
     dataset = Dataset(
@@ -283,6 +303,10 @@ async def upload_dataset(
         file_path="",
         file_size_bytes=len(content),
         status="processing",
+        content_hash=content_hash,
+        # Jamais bloquant (voir docstring du modèle) : signalé, l'upload
+        # aboutit quand même — l'utilisateur décide si c'est voulu.
+        duplicate_of_dataset_id=duplicate.id if duplicate else None,
     )
     db.add(dataset)
     db.flush()

@@ -23,6 +23,7 @@ from services.datasets import read_dataset_dataframe
 from services.feature_engineering import FeatureEngineeringSpecError, apply_upstream_feature_engineering
 from services.ml_preprocessing import DataLeakageError, TrainingAbortedError, split_dataset
 from services.ml_training import TrainingConfig, train_and_evaluate
+from services.model_versioning import next_version
 
 logger = logging.getLogger("datalab.training_worker")
 
@@ -152,6 +153,8 @@ def run_training_job(job_id: int) -> None:
             ml_model = MLModel(
                 organization_id=job.organization_id,
                 training_job_id=job.id,
+                dataset_id=job.dataset_id,
+                version=next_version(db, job.organization_id, job.dataset_id, job.target_column),
                 algorithm=result.algorithm,
                 task_type=job.task_type,
                 target_column=job.target_column,

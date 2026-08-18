@@ -133,6 +133,7 @@ def test_audit_log_records_anomaly_job_deleted(client):
 
 def test_audit_log_records_model_promotion(client, db_session):
     from api.core.models import MLModel, TrainingJob
+    from services.model_versioning import next_version
     import json as _json
 
     headers = _register(client)
@@ -142,7 +143,9 @@ def test_audit_log_records_model_promotion(client, db_session):
     job_row = db_session.query(TrainingJob).filter(TrainingJob.id == job["id"]).first()
     job_row.status = "completed"
     db_session.add(MLModel(
-        organization_id=org_id, training_job_id=job_row.id, algorithm="LightGBM", task_type="regression",
+        organization_id=org_id, training_job_id=job_row.id, dataset_id=job_row.dataset_id,
+        version=next_version(db_session, org_id, job_row.dataset_id, job_row.target_column),
+        algorithm="LightGBM", task_type="regression",
         target_column="cible", feature_columns_json=_json.dumps(["x1", "x2"]), file_path="unused.joblib",
         metrics_json=_json.dumps({"r2_test": 0.9}),
     ))
