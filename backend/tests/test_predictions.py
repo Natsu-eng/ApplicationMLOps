@@ -28,7 +28,7 @@ _FAST_CONFIG = TrainingConfig(optuna_trials=3, cv_folds=3)
 
 def _register(client, email="owner@bureau.fr", org="Bureau"):
     resp = client.post(
-        "/auth/register",
+        "/api/auth/register",
         json={"email": email, "nom": "Owner", "password": "motdepasse123", "organization_name": org},
     ).json()
     return {"Authorization": f"Bearer {resp['access_token']}"}
@@ -102,11 +102,11 @@ def test_successful_prediction_is_persisted_and_listed(client, db_session):
     job = _train_and_persist_model(db_session, organization_id=1)
 
     resp = client.post(
-        f"/training/jobs/{job.id}/predict", headers=headers, json={"data": {"x1": 50, "x2": 20}}
+        f"/api/training/jobs/{job.id}/predict", headers=headers, json={"data": {"x1": 50, "x2": 20}}
     )
     assert resp.status_code == 200
 
-    history = client.get(f"/training/jobs/{job.id}/predictions", headers=headers)
+    history = client.get(f"/api/training/jobs/{job.id}/predictions", headers=headers)
     assert history.status_code == 200
     entries = history.json()["entries"]
     assert len(entries) == 1
@@ -121,10 +121,10 @@ def test_failed_prediction_is_not_persisted(client, db_session):
     headers = _register(client)
     job = _train_and_persist_model(db_session, organization_id=1)
 
-    resp = client.post(f"/training/jobs/{job.id}/predict", headers=headers, json={"data": {"x1": 50}})
+    resp = client.post(f"/api/training/jobs/{job.id}/predict", headers=headers, json={"data": {"x1": 50}})
     assert resp.status_code == 400
 
-    history = client.get(f"/training/jobs/{job.id}/predictions", headers=headers)
+    history = client.get(f"/api/training/jobs/{job.id}/predictions", headers=headers)
     assert history.json()["entries"] == []
 
 
@@ -135,7 +135,7 @@ def test_persisted_output_never_includes_the_local_explanation(client, db_sessio
     job = _train_and_persist_model(db_session, organization_id=1)
 
     resp = client.post(
-        f"/training/jobs/{job.id}/predict", headers=headers, json={"data": {"x1": 50, "x2": 20}}
+        f"/api/training/jobs/{job.id}/predict", headers=headers, json={"data": {"x1": 50, "x2": 20}}
     )
     assert resp.json()["explanation"] is not None  # bien renvoyée dans la réponse HTTP...
 
@@ -146,12 +146,12 @@ def test_persisted_output_never_includes_the_local_explanation(client, db_sessio
 def test_predictions_are_isolated_by_organization(client, db_session):
     headers_a = _register(client, email="a@bureau-a.fr", org="Bureau A")
     job_a = _train_and_persist_model(db_session, organization_id=1)
-    client.post(f"/training/jobs/{job_a.id}/predict", headers=headers_a, json={"data": {"x1": 50, "x2": 20}})
+    client.post(f"/api/training/jobs/{job_a.id}/predict", headers=headers_a, json={"data": {"x1": 50, "x2": 20}})
 
     headers_b = _register(client, email="b@bureau-b.fr", org="Bureau B")
 
     # Org B ne peut ni lister ni avoir accès au job d'org A.
-    resp = client.get(f"/training/jobs/{job_a.id}/predictions", headers=headers_b)
+    resp = client.get(f"/api/training/jobs/{job_a.id}/predictions", headers=headers_b)
     assert resp.status_code == 404
 
 
@@ -171,7 +171,7 @@ def test_old_predictions_are_purged_on_the_next_prediction(client, db_session):
     db_session.commit()
 
     resp = client.post(
-        f"/training/jobs/{job.id}/predict", headers=headers, json={"data": {"x1": 50, "x2": 20}}
+        f"/api/training/jobs/{job.id}/predict", headers=headers, json={"data": {"x1": 50, "x2": 20}}
     )
     assert resp.status_code == 200
 

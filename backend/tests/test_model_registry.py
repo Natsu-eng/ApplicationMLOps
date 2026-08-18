@@ -249,8 +249,8 @@ def test_second_model_on_the_same_problem_gets_version_2(client, db_session):
     _complete_job(db_session, job1["id"], org_id, algorithm="LightGBM")
     _complete_job(db_session, job2["id"], org_id, algorithm="CatBoost")
 
-    m1 = client.get(f"/training/jobs/{job1['id']}/model", headers=headers).json()
-    m2 = client.get(f"/training/jobs/{job2['id']}/model", headers=headers).json()
+    m1 = client.get(f"/api/training/jobs/{job1['id']}/model", headers=headers).json()
+    m2 = client.get(f"/api/training/jobs/{job2['id']}/model", headers=headers).json()
     assert m1["version"] == 1
     assert m2["version"] == 2
 
@@ -260,7 +260,7 @@ def test_model_on_a_different_target_starts_its_own_version_sequence(client, db_
     rows = "\n".join(f"{i},{i * 2},{i * 3}" for i in range(50))
     content = f"x1,x2,cible\n{rows}\n".encode()
     dataset = client.post(
-        "/datasets", headers=headers, files={"file": ("d.csv", io.BytesIO(content), "text/csv")}
+        "/api/datasets", headers=headers, files={"file": ("d.csv", io.BytesIO(content), "text/csv")}
     ).json()
     job1 = _create_job(client, headers, dataset["id"], target_column="cible")
     job2 = _create_job(client, headers, dataset["id"], target_column="x2")
@@ -268,8 +268,8 @@ def test_model_on_a_different_target_starts_its_own_version_sequence(client, db_
     _complete_job(db_session, job1["id"], org_id)
     _complete_job(db_session, job2["id"], org_id)
 
-    m1 = client.get(f"/training/jobs/{job1['id']}/model", headers=headers).json()
-    m2 = client.get(f"/training/jobs/{job2['id']}/model", headers=headers).json()
+    m1 = client.get(f"/api/training/jobs/{job1['id']}/model", headers=headers).json()
+    m2 = client.get(f"/api/training/jobs/{job2['id']}/model", headers=headers).json()
     assert m1["version"] == 1
     assert m2["version"] == 1  # lignée séparée (cible différente), pas 2
 
@@ -280,13 +280,13 @@ def test_promote_to_archived_is_accepted_and_excluded_from_the_registry(client, 
     job = _create_job(client, headers, dataset["id"])
     org_id = db_session.query(TrainingJob).filter(TrainingJob.id == job["id"]).first().organization_id
     _complete_job(db_session, job["id"], org_id)
-    client.post(f"/training/jobs/{job['id']}/model/promote", headers=headers, json={"stage": "production"})
+    client.post(f"/api/training/jobs/{job['id']}/model/promote", headers=headers, json={"stage": "production"})
 
-    resp = client.post(f"/training/jobs/{job['id']}/model/promote", headers=headers, json={"stage": "archived"})
+    resp = client.post(f"/api/training/jobs/{job['id']}/model/promote", headers=headers, json={"stage": "archived"})
     assert resp.status_code == 200
     assert resp.json()["stage"] == "archived"
 
-    registry = client.get("/training/models/registry", headers=headers).json()["entries"]
+    registry = client.get("/api/training/models/registry", headers=headers).json()["entries"]
     assert registry == []  # jamais dans le registre actif, même s'il fut "production"
 
 
@@ -299,7 +299,7 @@ def test_versions_endpoint_lists_the_whole_lineage_most_recent_first(client, db_
     _complete_job(db_session, job1["id"], org_id, algorithm="LightGBM")
     _complete_job(db_session, job2["id"], org_id, algorithm="CatBoost")
 
-    resp = client.get(f"/training/jobs/{job1['id']}/model/versions", headers=headers)
+    resp = client.get(f"/api/training/jobs/{job1['id']}/model/versions", headers=headers)
     assert resp.status_code == 200
     entries = resp.json()["entries"]
     assert [e["version"] for e in entries] == [2, 1]
@@ -320,13 +320,13 @@ def test_rollback_via_repromoting_an_earlier_version(client, db_session):
     _complete_job(db_session, job1["id"], org_id, algorithm="LightGBM")
     _complete_job(db_session, job2["id"], org_id, algorithm="CatBoost")
 
-    client.post(f"/training/jobs/{job1['id']}/model/promote", headers=headers, json={"stage": "production"})
-    client.post(f"/training/jobs/{job2['id']}/model/promote", headers=headers, json={"stage": "production"})
+    client.post(f"/api/training/jobs/{job1['id']}/model/promote", headers=headers, json={"stage": "production"})
+    client.post(f"/api/training/jobs/{job2['id']}/model/promote", headers=headers, json={"stage": "production"})
     # Rollback : version 1 reprend la production.
-    resp = client.post(f"/training/jobs/{job1['id']}/model/promote", headers=headers, json={"stage": "production"})
+    resp = client.post(f"/api/training/jobs/{job1['id']}/model/promote", headers=headers, json={"stage": "production"})
     assert resp.json()["stage"] == "production"
 
-    m2 = client.get(f"/training/jobs/{job2['id']}/model", headers=headers).json()
+    m2 = client.get(f"/api/training/jobs/{job2['id']}/model", headers=headers).json()
     assert m2["stage"] == "staging"  # démis par le rollback
 
 
@@ -339,10 +339,10 @@ def test_history_endpoint_reflects_promotions_across_the_lineage(client, db_sess
     _complete_job(db_session, job1["id"], org_id, algorithm="LightGBM")
     _complete_job(db_session, job2["id"], org_id, algorithm="CatBoost")
 
-    client.post(f"/training/jobs/{job1['id']}/model/promote", headers=headers, json={"stage": "production"})
-    client.post(f"/training/jobs/{job2['id']}/model/promote", headers=headers, json={"stage": "production"})
+    client.post(f"/api/training/jobs/{job1['id']}/model/promote", headers=headers, json={"stage": "production"})
+    client.post(f"/api/training/jobs/{job2['id']}/model/promote", headers=headers, json={"stage": "production"})
 
-    resp = client.get(f"/training/jobs/{job1['id']}/model/history", headers=headers)
+    resp = client.get(f"/api/training/jobs/{job1['id']}/model/history", headers=headers)
     assert resp.status_code == 200
     entries = resp.json()["entries"]
     assert len(entries) == 2  # 2 promotions au total sur cette lignée
@@ -358,8 +358,8 @@ def test_versions_and_history_isolated_between_organizations(client, db_session)
     job_a = _create_job(client, headers_a, dataset_a["id"])
     org_a_id = db_session.query(TrainingJob).filter(TrainingJob.id == job_a["id"]).first().organization_id
     _complete_job(db_session, job_a["id"], org_a_id)
-    client.post(f"/training/jobs/{job_a['id']}/model/promote", headers=headers_a, json={"stage": "production"})
+    client.post(f"/api/training/jobs/{job_a['id']}/model/promote", headers=headers_a, json={"stage": "production"})
 
     headers_b = _register(client, "b@bureau-b.fr", "Bureau B")
-    assert client.get(f"/training/jobs/{job_a['id']}/model/versions", headers=headers_b).status_code == 404
-    assert client.get(f"/training/jobs/{job_a['id']}/model/history", headers=headers_b).status_code == 404
+    assert client.get(f"/api/training/jobs/{job_a['id']}/model/versions", headers=headers_b).status_code == 404
+    assert client.get(f"/api/training/jobs/{job_a['id']}/model/history", headers=headers_b).status_code == 404
