@@ -106,8 +106,8 @@ export const PILLARS: Pillar[] = [
     icon: ScanEye,
     examples: ["Contrôle qualité visuel", "Tri automatique de pièces", "Détection de défauts de fabrication"],
     // Lot 15 : classification d'images (transfer learning, Grad-CAM) et
-    // détection d'anomalies visuelles MVTec AD actives. Détection d'objets
-    // et annotation assistée hors périmètre (Lot 16+, non cadré).
+    // détection d'anomalies visuelles (structure normal/défaut) actives.
+    // Détection d'objets et annotation assistée hors périmètre (Lot 16+, non cadré).
     status: "active",
     route: "/vision/classification",
     navItems: [

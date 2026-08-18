@@ -60,7 +60,7 @@ def _classification_zip_bytes(n_per_class=4, n_classes=2) -> bytes:
 
 def _upload_vision_dataset(client, headers, content, name="dataset.zip"):
     return client.post(
-        "/api/vision/datasets", headers=headers, files={"file": (name, io.BytesIO(content), "application/zip")}
+        "/api/vision/datasets", headers=headers, files={"files": (name, io.BytesIO(content), "application/zip")}
     ).json()
 
 

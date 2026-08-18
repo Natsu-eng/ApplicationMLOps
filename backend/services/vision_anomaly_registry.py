@@ -1,5 +1,5 @@
 """Registre des architectures de détection d'anomalies visuelles — pilier
-Vision, Lot 15 sous-lot C (MVTec AD).
+Vision, Lot 15 sous-lot C (structure normal/défaut).
 
 Même esprit que `services/vision_classification_registry.py` : ajouter une
 architecture = ajouter une entrée, jamais toucher le moteur

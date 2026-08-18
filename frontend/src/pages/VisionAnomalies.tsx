@@ -38,8 +38,8 @@ function phaseOf(job: VisionAnomalyJobSummary | null): Phase {
   return job.status === "completed" ? "results" : "failed";
 }
 
-/** Pilier Vision — détection d'anomalies visuelles MVTec AD (sous-lot C).
- * Même architecture que VisionClassification.tsx/AnomalyDetection.tsx. */
+/** Pilier Vision — détection d'anomalies visuelles (structure normal/défaut,
+ * sous-lot C). Même architecture que VisionClassification.tsx/AnomalyDetection.tsx. */
 export default function VisionAnomalies() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [activeJob, setActiveJob] = useState<VisionAnomalyJobSummary | null>(null);
@@ -123,7 +123,7 @@ export default function VisionAnomalies() {
         title={titles[phase]}
         description={
           phase === "configure"
-            ? "Entraînez un modèle à reconnaître des pièces normales à partir de photos sans défaut, pour repérer automatiquement celles qui s'en écartent (structure MVTec AD)."
+            ? "Entraînez un modèle à reconnaître des pièces normales à partir de photos sans défaut, pour repérer automatiquement celles qui s'en écartent (structure normal/défaut)."
             : undefined
         }
         icon={AlertTriangle}
@@ -237,7 +237,7 @@ function AnomalyVisionForm({ onJobCreated }: { onJobCreated: (job: VisionAnomaly
     <Card className="p-5">
       <form onSubmit={handleSubmit} className="space-y-4">
         <div>
-          <label className="block text-sm text-muted-foreground mb-1.5">Dataset d'images (structure MVTec AD)</label>
+          <label className="block text-sm text-muted-foreground mb-1.5">Dataset d'images (structure normal/défaut)</label>
           <VisionDatasetPicker structureType="mvtec_ad" value={datasetId} onChange={(id) => setDatasetId(id)} />
         </div>
 

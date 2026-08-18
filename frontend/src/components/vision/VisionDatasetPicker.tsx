@@ -11,15 +11,19 @@ import { Button } from "../ui/Button";
 import { Select } from "../ui/Select";
 import { VisionDatasetExplorer } from "./VisionDatasetExplorer";
 
+// "mvtec_ad" reste la valeur technique stockée en base — voir
+// DECISIONS.md D0.3/D6A.x : seul le libellé change, structure générique,
+// pas exclusive au jeu de données industriel MVTec AD au sens strict.
 const STRUCTURE_LABELS: Record<VisionDatasetStructureType, string> = {
   classification: "un dossier par classe",
-  mvtec_ad: "MVTec AD (train/good + test/good + test/<défaut>)",
+  mvtec_ad: "Normal / défaut (train/good + test/good + test/<défaut>)",
 };
 
-/** Sélecteur de dataset image partagé — upload (ZIP) OU choix d'un dataset
- * déjà prêt, filtré par structure attendue (classification vs MVTec AD).
- * Pas de page dédiée séparée (décision actée au sous-lot A) : ce composant
- * est intégré directement dans le wizard de chaque module vision. */
+/** Sélecteur de dataset image partagé — upload (archive .zip/.tar/.tar.gz
+ * ou dossier, Lot 6A) OU choix d'un dataset déjà prêt, filtré par
+ * structure attendue (classification vs normal/défaut). Pas de page
+ * dédiée séparée (décision actée au sous-lot A) : ce composant est
+ * intégré directement dans le wizard de chaque module vision. */
 export function VisionDatasetPicker({
   structureType,
   value,
@@ -36,6 +40,7 @@ export function VisionDatasetPicker({
   const [selectedDetail, setSelectedDetail] = useState<VisionDatasetDetail | null>(null);
   const [exploring, setExploring] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const folderInputRef = useRef<HTMLInputElement>(null);
 
   const load = useCallback(async () => {
     try {
@@ -50,29 +55,54 @@ export function VisionDatasetPicker({
     load();
   }, [load]);
 
-  async function handleFiles(files: FileList | null) {
+  useEffect(() => {
+    // Attributs non standard, absents du typage JSX de React (voir
+    // VisionDatasets.tsx, même motif) — posés impérativement.
+    folderInputRef.current?.setAttribute("webkitdirectory", "");
+    folderInputRef.current?.setAttribute("directory", "");
+  }, []);
+
+  function applyUploadedDataset(detail: VisionDatasetDetail) {
+    if (detail.status === "error") {
+      setError(detail.error_message ?? "Structure de l'archive non reconnue");
+    } else if (detail.structure_type !== structureType) {
+      setError(
+        `Ce dataset a été détecté comme "${STRUCTURE_LABELS[detail.structure_type]}" — attendu ici : "${STRUCTURE_LABELS[structureType]}".`,
+      );
+    } else {
+      onChange(detail.id, detail);
+      setSelectedDetail(detail);
+    }
+  }
+
+  async function handleArchiveFiles(files: FileList | null) {
     const file = files?.[0];
     if (!file) return;
     setIsUploading(true);
     setError(null);
     try {
-      const detail = await api.visionDatasets.upload(file);
+      applyUploadedDataset(await api.visionDatasets.upload(file));
       await load();
-      if (detail.status === "error") {
-        setError(detail.error_message ?? "Structure du ZIP non reconnue");
-      } else if (detail.structure_type !== structureType) {
-        setError(
-          `Ce ZIP a été détecté comme "${STRUCTURE_LABELS[detail.structure_type]}" — attendu ici : "${STRUCTURE_LABELS[structureType]}".`,
-        );
-      } else {
-        onChange(detail.id, detail);
-        setSelectedDetail(detail);
-      }
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Échec de l'upload");
     } finally {
       setIsUploading(false);
       if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  }
+
+  async function handleFolderFiles(files: FileList | null) {
+    if (!files || files.length === 0) return;
+    setIsUploading(true);
+    setError(null);
+    try {
+      applyUploadedDataset(await api.visionDatasets.uploadFolder(Array.from(files)));
+      await load();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Échec de l'upload");
+    } finally {
+      setIsUploading(false);
+      if (folderInputRef.current) folderInputRef.current.value = "";
     }
   }
 
@@ -94,7 +124,7 @@ export function VisionDatasetPicker({
   function onDrop(event: DragEvent<HTMLDivElement>) {
     event.preventDefault();
     setIsDragging(false);
-    handleFiles(event.dataTransfer.files);
+    handleArchiveFiles(event.dataTransfer.files);
   }
 
   return (
@@ -115,13 +145,20 @@ export function VisionDatasetPicker({
         <input
           ref={fileInputRef}
           type="file"
-          accept=".zip"
+          accept=".zip,.tar,.tar.gz,.tgz"
           className="hidden"
-          onChange={(e) => handleFiles(e.target.files)}
+          onChange={(e) => handleArchiveFiles(e.target.files)}
+        />
+        <input
+          ref={folderInputRef}
+          type="file"
+          multiple
+          className="hidden"
+          onChange={(e) => handleFolderFiles(e.target.files)}
         />
         <UploadCloud className="text-muted-foreground flex-shrink-0" size={20} />
         <div className="min-w-0 flex-1">
-          <p className="text-sm text-foreground">Glissez une archive .zip ici, ou parcourez</p>
+          <p className="text-sm text-foreground">Glissez une archive (.zip, .tar, .tar.gz) ici, ou parcourez</p>
           <p className="text-xs text-muted-foreground">Structure attendue : {STRUCTURE_LABELS[structureType]}</p>
         </div>
         <Button
@@ -133,6 +170,16 @@ export function VisionDatasetPicker({
           className="flex-shrink-0"
         >
           {isUploading ? "Envoi…" : "Parcourir"}
+        </Button>
+        <Button
+          variant="secondary"
+          size="sm"
+          type="button"
+          onClick={() => folderInputRef.current?.click()}
+          disabled={isUploading}
+          className="flex-shrink-0"
+        >
+          Dossier
         </Button>
       </div>
 

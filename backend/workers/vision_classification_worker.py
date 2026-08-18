@@ -70,7 +70,7 @@ def run_vision_classification_job(job_id: int) -> None:
             if dataset.structure_type != "classification":
                 raise TrainingAbortedError(
                     "Ce dataset n'a pas une structure de classification (dossiers de classes) — "
-                    "un dataset MVTec AD ne peut pas être utilisé pour la classification"
+                    "un dataset normal/défaut ne peut pas être utilisé pour la classification"
                 )
 
             config = ClassificationConfig(**json.loads(job.config_json))

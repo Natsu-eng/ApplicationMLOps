@@ -51,6 +51,58 @@ IMAGENET_STD = [0.229, 0.224, 0.225]
 MIN_IMAGES_PER_CLASS_FOR_TRAINING = 6
 MAX_EXAMPLES_PER_KIND = 12  # exemples corrects/erronés conservés pour l'UI
 
+# Lot 6A (correctif I9, AUDIT_DATALAB_2026-08-16.md §I9) — jusqu'ici une
+# seule augmentation FIGÉE (flip + rotation 10° + jitter léger),
+# l'utilisateur ne contrôlait rien. 4 presets, du plus faible au plus fort
+# — jamais de valeurs choisies au hasard : chaque niveau ajoute une
+# transformation à celles du niveau précédent, jamais une combinaison
+# disjointe (progression cohérente, prévisible pour l'utilisateur).
+AUGMENTATION_PRESET_IDS = ("aucune", "legere", "standard", "forte")
+DEFAULT_AUGMENTATION_PRESET = "standard"  # comportement historique, inchangé par défaut
+
+
+def _augmentation_transforms(preset: str) -> list:
+    if preset == "aucune":
+        return []
+    if preset == "legere":
+        return [transforms.RandomHorizontalFlip()]
+    if preset == "standard":
+        return [
+            transforms.RandomHorizontalFlip(),
+            transforms.RandomRotation(10),
+            transforms.ColorJitter(brightness=0.2, contrast=0.2),
+        ]
+    if preset == "forte":
+        return [
+            transforms.RandomHorizontalFlip(),
+            transforms.RandomRotation(20),
+            transforms.ColorJitter(brightness=0.4, contrast=0.4, saturation=0.3),
+            transforms.RandomAffine(degrees=0, translate=(0.1, 0.1), scale=(0.9, 1.1)),
+        ]
+    raise ValueError(f"Preset d'augmentation inconnu : {preset!r} (attendu parmi {AUGMENTATION_PRESET_IDS})")
+
+
+# Seuils empiriques (pas une science exacte) fondés sur la taille de la
+# classe la plus PETITE — le goulot d'étranglement réel pour le risque de
+# sur-apprentissage, jamais le total d'images (masquerait un déséquilibre
+# sévère : 1000 images dont une classe à 5 reste une classe à 5). Peu
+# d'images par classe → sur-apprentissage plus probable → augmentation
+# plus forte pour diversifier artificiellement le peu de données
+# disponibles ; beaucoup d'images → la variété réelle suffit déjà, une
+# augmentation trop forte distordrait inutilement la distribution et
+# ralentirait la convergence sans bénéfice.
+_RECOMMENDATION_THRESHOLDS = ((20, "forte"), (50, "standard"), (150, "legere"))
+
+
+def recommend_augmentation_preset(min_class_size: int) -> str:
+    """Recommandation fondée sur la taille du dataset (I9) — indicative,
+    jamais appliquée automatiquement : l'utilisateur choisit toujours
+    explicitement le preset final (voir ClassificationConfig.augmentation_preset)."""
+    for threshold, preset in _RECOMMENDATION_THRESHOLDS:
+        if min_class_size < threshold:
+            return preset
+    return "aucune"
+
 
 @dataclass
 class ClassificationConfig:
@@ -68,6 +120,30 @@ class ClassificationConfig:
     seed: int = 42
     # Garde-fou de temps interne — voir docstring du module.
     max_training_seconds: int = 1500
+    # Lot 6A (correctif I8, AUDIT_DATALAB_2026-08-16.md §I8) — jusqu'ici
+    # CrossEntropyLoss() sans pondération : sur un dataset déséquilibré (une
+    # classe très majoritaire), le modèle apprenait à toujours prédire la
+    # classe majoritaire tout en affichant une accuracy trompeusement haute.
+    # Pondération par fréquence inverse des classes DU SPLIT D'ENTRAÎNEMENT
+    # (jamais validation/test, qui ne doivent influencer ni la perte ni
+    # l'optimisation) — voir _class_weights. Généralise à N classes (pas
+    # seulement binaire) : un poids par classe, quel que soit leur nombre.
+    class_weighting: bool = True
+    # Arrête l'entraînement si val_loss ne s'améliore plus depuis ce nombre
+    # d'époques consécutives (poids de la meilleure époque déjà conservés,
+    # voir best_state ci-dessous — l'early stopping économise seulement du
+    # calcul, ne change jamais QUEL modèle est retenu). None = désactivé
+    # (comportement historique : toujours num_epochs époques, sous réserve
+    # de max_training_seconds).
+    early_stopping_patience: Optional[int] = 3
+    # ReduceLROnPlateau sur val_loss — réduit le taux d'apprentissage quand
+    # la progression stagne, plutôt qu'un taux fixe du début à la fin.
+    use_lr_scheduler: bool = True
+    # Lot 6A (correctif I9) — voir AUGMENTATION_PRESET_IDS ci-dessus.
+    # "standard" reproduit exactement l'augmentation historique (seule
+    # option avant ce lot) — défaut inchangé, comportement identique pour
+    # quiconque ne choisit pas explicitement un autre preset.
+    augmentation_preset: str = DEFAULT_AUGMENTATION_PRESET
 
 
 @dataclass
@@ -118,16 +194,36 @@ def build_eval_transform() -> transforms.Compose:
     ])
 
 
-def _build_transforms() -> tuple[transforms.Compose, transforms.Compose]:
+def _build_transforms(augmentation_preset: str) -> tuple[transforms.Compose, transforms.Compose]:
     train_transform = transforms.Compose([
         transforms.Resize((IMAGE_SIZE, IMAGE_SIZE)),
-        transforms.RandomHorizontalFlip(),
-        transforms.RandomRotation(10),
-        transforms.ColorJitter(brightness=0.2, contrast=0.2),
+        *_augmentation_transforms(augmentation_preset),
         transforms.ToTensor(),
         transforms.Normalize(IMAGENET_MEAN, IMAGENET_STD),
     ])
     return train_transform, build_eval_transform()
+
+
+def _should_stop_early(epochs_without_improvement: int, patience: Optional[int]) -> bool:
+    """Décision d'arrêt anticipé — extraite en fonction pure (patience=None
+    désactive) pour rester testable sans dépendre de la dynamique réelle
+    d'un entraînement (bruit de convergence sur un dataset synthétique
+    minuscule, non déterministe d'une exécution à l'autre)."""
+    return patience is not None and epochs_without_improvement >= patience
+
+
+def _class_weights(targets: list[int], train_idx: list[int], n_classes: int) -> torch.Tensor:
+    """Poids par fréquence inverse (`total / (n_classes * n_c)`), calculés
+    UNIQUEMENT sur le split d'entraînement — jamais validation/test, qui ne
+    doivent influencer ni la perte ni l'optimisation. Généralise à N
+    classes : un poids par classe, jamais un traitement spécial "binaire
+    vs multiclasse" (`CrossEntropyLoss(weight=...)` accepte nativement un
+    poids par classe, quel que soit leur nombre)."""
+    train_targets = [targets[i] for i in train_idx]
+    counts = Counter(train_targets)
+    total = len(train_targets)
+    weights = [total / (n_classes * counts.get(c, 1)) for c in range(n_classes)]
+    return torch.tensor(weights, dtype=torch.float32)
 
 
 def _stratified_split(targets: list[int], seed: int) -> tuple[list[int], list[int], list[int]]:
@@ -170,11 +266,16 @@ def train_and_evaluate_classification(
     """Point d'entrée principal. `dataset_dir` doit être un `VisionDataset`
     de structure "classification" (dossiers de classes — voir
     `services/vision_datasets.py`), jamais MVTec AD."""
+    if config.augmentation_preset not in AUGMENTATION_PRESET_IDS:
+        raise TrainingAbortedError(
+            f"Preset d'augmentation inconnu : {config.augmentation_preset!r} "
+            f"(attendu parmi {', '.join(AUGMENTATION_PRESET_IDS)})"
+        )
     torch.manual_seed(config.seed)
     progress_cb("Préparation des données", 3)
 
     spec = get_backbone_spec(config.backbone_id)
-    train_transform, eval_transform = _build_transforms()
+    train_transform, eval_transform = _build_transforms(config.augmentation_preset)
 
     probe = ImageFolder(str(dataset_dir))
     class_names = probe.classes
@@ -207,23 +308,45 @@ def train_and_evaluate_classification(
     if config.freeze_backbone:
         freeze_backbone(model, spec)
 
-    criterion = nn.CrossEntropyLoss()
+    if config.class_weighting:
+        criterion = nn.CrossEntropyLoss(weight=_class_weights(probe.targets, train_idx, len(class_names)))
+    else:
+        criterion = nn.CrossEntropyLoss()
 
     def _make_optimizer() -> torch.optim.Optimizer:
         return torch.optim.Adam((p for p in model.parameters() if p.requires_grad), lr=config.learning_rate)
 
+    def _make_scheduler(opt: torch.optim.Optimizer):
+        # patience=2 : plus courte que early_stopping_patience (défaut 3) —
+        # le taux d'apprentissage doit avoir une chance de se réduire et de
+        # relancer la progression AVANT que l'arrêt anticipé n'intervienne,
+        # sans quoi le scheduler ne servirait jamais à rien en pratique.
+        if not config.use_lr_scheduler:
+            return None
+        return torch.optim.lr_scheduler.ReduceLROnPlateau(opt, mode="min", patience=2, factor=0.5)
+
     optimizer = _make_optimizer()
+    scheduler = _make_scheduler(optimizer)
 
     history: list[EpochMetrics] = []
     best_val_loss = float("inf")
     best_state = {k: v.clone() for k, v in model.state_dict().items()}
     time_capped = False
+    early_stopped = False
+    epochs_without_improvement = 0
     start_time = time.monotonic()
 
     for epoch in range(config.num_epochs):
         if config.unfreeze_after_epoch is not None and epoch == config.unfreeze_after_epoch:
             unfreeze_backbone(model)
             optimizer = _make_optimizer()  # nouveaux paramètres entraînables à suivre
+            scheduler = _make_scheduler(optimizer)
+            # Dégeler change substantiellement la dynamique d'entraînement
+            # (beaucoup plus de paramètres optimisables d'un coup) — repartir
+            # avec un budget de patience frais évite un arrêt anticipé
+            # déclenché par la hausse transitoire de val_loss qui suit
+            # souvent un dégel, pas par une réelle stagnation.
+            epochs_without_improvement = 0
 
         train_loss, train_acc = _run_epoch(model, train_loader, criterion, optimizer)
         val_loss, val_acc = _run_epoch(model, val_loader, criterion, optimizer=None)
@@ -233,12 +356,22 @@ def train_and_evaluate_classification(
         if val_loss < best_val_loss:
             best_val_loss = val_loss
             best_state = {k: v.clone() for k, v in model.state_dict().items()}
+            epochs_without_improvement = 0
+        else:
+            epochs_without_improvement += 1
+
+        if scheduler is not None:
+            scheduler.step(val_loss)
 
         percent = 10 + int(75 * (epoch + 1) / config.num_epochs)
         progress_cb(f"Époque {epoch + 1}/{config.num_epochs}", percent)
 
         if time.monotonic() - start_time > config.max_training_seconds:
             time_capped = True
+            break
+
+        if _should_stop_early(epochs_without_improvement, config.early_stopping_patience):
+            early_stopped = True
             break
 
     model.load_state_dict(best_state)  # poids de la meilleure époque (val_loss mini), pas la dernière
@@ -296,6 +429,16 @@ def train_and_evaluate_classification(
         "num_epochs_requested": config.num_epochs,
         "num_epochs_run": len(history),
         "time_capped": time_capped,
+        # Lot 6A (correctif I8) — honnêteté sur CE qui a réellement déterminé
+        # la fin de l'entraînement, jamais supposé implicitement égal à
+        # num_epochs_requested (même principe que time_capped, déjà en
+        # place) : early_stopped=True et num_epochs_run < num_epochs_requested
+        # signifie "arrêté par manque de progression", pas par le budget de
+        # temps (time_capped) ni par épuisement du budget d'époques demandé.
+        "early_stopped": early_stopped,
+        "class_weighting_applied": config.class_weighting,
+        "lr_scheduler_used": config.use_lr_scheduler,
+        "augmentation_preset": config.augmentation_preset,
         "freeze_backbone": config.freeze_backbone,
         "unfreeze_after_epoch": config.unfreeze_after_epoch,
         "seed": config.seed,

@@ -1502,3 +1502,270 @@ d'un dataset existant est demandée — c'est EXACTEMENT le moment où
 `DatasetVersion` (et la migration de `dataset_id` vers
 `dataset_version_id` sur les 5 tables qui le référencent) devient
 nécessaire, pas avant.
+
+## Lot 6A — Hisser la Vision au niveau du tabulaire (Phase 5 de l'audit, correctifs I8, I9, expansion du registre, généralisation de l'ingestion, D0.3)
+
+Branche `lot-6a-vision-wizard`, basée sur `main`. Périmètre étendu en
+cours de lot, à la demande explicite de l'utilisateur : au-delà de
+I8/I9/I10 (les 3 items Phase 5 concernant l'entraînement/le wizard), le
+registre de backbones et toute l'ingestion de dataset Vision (formats
+d'archive, import de dossier, détection de structure) ont été
+généralisés dans le même lot, jugés directement liés ("hisser la Vision
+au niveau du tabulaire" couvre aussi la robustesse de l'ingestion, pas
+seulement l'entraînement).
+
+### D6A.1 — I8 : pondération de classes + arrêt anticipé + scheduler, tous 3 activés par défaut
+
+**Question** : I8 demande 3 mécanismes manquants (pondération de
+classes, early stopping, scheduler de taux d'apprentissage) — activés
+par défaut ou seulement optionnels ?
+**Retenu** : les 3 activés par défaut (`class_weighting=True`,
+`early_stopping_patience=3`, `use_lr_scheduler=True`) — ce sont des
+bonnes pratiques ML standard, pas des choix de style contestables ; les
+laisser désactivés par défaut aurait reproduit le problème qu'I8 signale
+("pas de pondération de classes") pour quiconque ne change pas les
+défauts. Exposés en configuration (jamais imposés en dur) pour rester
+désactivables si un besoin réel s'en présente.
+**Vérifié** : pondération par fréquence inverse calculée UNIQUEMENT sur
+le split d'entraînement (jamais validation/test) — testé explicitement
+(`test_class_weights_only_uses_the_training_split`). Généralise à N
+classes nativement (`CrossEntropyLoss(weight=...)` accepte un poids par
+classe quel que soit leur nombre) — testé avec un dataset à 3 classes
+(`test_training_handles_three_classes`), le produit supportait déjà le
+multiclasse nativement (`ImageFolder`/métriques macro), vérifié plutôt
+que supposé.
+**Décision de conception** : `_should_stop_early` extraite en fonction
+pure plutôt que la logique inline dans la boucle — la dynamique réelle
+d'un entraînement sur un dataset synthétique minuscule n'est pas
+déterministe (bruit de convergence), rendre la DÉCISION testable
+séparément de l'entraînement réel évite des tests fragiles.
+**Remise en cause si** : un utilisateur signale qu'un des 3 défauts nuit
+à un cas d'usage réel (ex. pondération de classes qui dégrade un dataset
+déjà équilibré) — ajuster le défaut, pas seulement documenter qu'il faut
+le désactiver.
+
+### D6A.2 — I9 : 4 presets d'augmentation, recommandation fondée sur la classe la plus petite
+
+**Question** : quels seuils pour la recommandation "fondée sur la taille
+du dataset" ?
+**Retenu** : fondée sur la classe la plus PETITE (`min_class_size`),
+jamais le total d'images — un dataset de 1000 images dont une classe à 5
+reste, pour cette classe, un cas de sur-apprentissage à haut risque ; le
+total masquerait ce déséquilibre. Seuils empiriques (< 20 → "forte", <
+50 → "standard", < 150 → "légère", sinon "aucune"), documentés comme
+indicatifs et non une science exacte. "standard" reproduit exactement
+l'augmentation historique (seule option avant ce lot) — défaut
+`augmentation_preset` inchangé pour quiconque ne choisit pas
+explicitement un autre preset.
+**Retenu aussi** : la recommandation n'est JAMAIS appliquée
+automatiquement — un champ `recommended_augmentation_preset` sur
+`GET /vision/datasets/{id}`, l'utilisateur choisit toujours explicitement
+le preset final à l'entraînement.
+**Remise en cause si** : les seuils s'avèrent mal calibrés en usage réel
+— ajuster `_RECOMMENDATION_THRESHOLDS`, un seul point de vérité.
+
+### D6A.3 — Registre de backbones étendu à 7 (au lieu de 2), jamais les 17 du legacy
+
+**Question** (posée explicitement à l'utilisateur, scope conflictuel
+avec une contrainte déjà documentée — voir le docstring pré-existant du
+registre citant "aucun GPU... seuls des backbones légers") : fallait-il
+étendre le registre de backbones vision, et jusqu'où ?
+**Retenu**, réponse de l'utilisateur : ajouter "une poignée" de plus,
+CPU-praticables — resnet34, mobilenet_v3_large, efficientnet_b0,
+shufflenet_v2, densenet121 (7 au total avec les 2 existants). Chaque
+backbone déclare `build_model`/`backbone_children`/`gradcam_target_layer`
+(même contrat que l'existant) — `_resnet_backbone_children` et
+`_mobilenet_backbone_children` réutilisées telles quelles quand la
+structure interne coïncide (générique par NOM d'attribut, pas par
+architecture), jamais dupliquées inutilement.
+**Écarté** : les 17 backbones du legacy (VGG16/19, ResNet101/152...) —
+le garde-fou de temps (`max_training_seconds`) empêcherait un blocage,
+mais un backbone trop lourd compléterait très peu d'époques dans ce
+budget, qualité douteuse en pratique — pas une vraie option utilisable,
+juste une entrée de menu trompeuse.
+**Vérifié** : les 3 tests déjà PARAMÉTRÉS sur `CLASSIFICATION_BACKBONE_REGISTRY`
+(forward pass, freeze/unfreeze, support Grad-CAM) couvrent les 7
+backbones automatiquement, sans modification. Ajouté en plus : 2 tests
+Grad-CAM bout-en-bout (pas seulement "target existe") sur les motifs
+`gradcam_target_layer` génuinement nouveaux (`.layer4` famille resnet,
+`.conv5` shufflenet) — `.features` (mobilenet/efficientnet/densenet)
+déjà couvert bout-en-bout par le backbone par défaut.
+
+### D6A.4 — Ingestion Vision généralisée : zip/tar/tar.gz + import de dossier + classification pré-découpée, jamais de rétrogradation vers l'ancien flux zip-only
+
+**Question** (posée explicitement à l'utilisateur) : pourquoi l'upload
+Vision n'acceptait-il QUE .zip ? Réponse demandée : "la meilleure option
+moderne", formats d'archive élargis ET import de dossier.
+**Retenu** :
+1. `services/vision_datasets.py` refactorisé autour d'une représentation
+   UNIQUE et format-agnostique (`_ExtractedMember` : chemin relatif +
+   contenu déjà en mémoire) — toute la logique de détection de
+   structure/validation/déduplication ignore désormais complètement
+   d'où viennent les octets. Trois sources alimentent cette liste :
+   `_extract_zip_members`, `_extract_tar_members` (zip/tar/tar.gz/tgz,
+   format détecté par SIGNATURE BINAIRE réelle, jamais par l'extension
+   déclarée — défense en profondeur), `_members_from_uploaded_files`
+   (dossier, chemins relatifs portés par `webkitRelativePath` côté
+   navigateur).
+2. `POST /vision/datasets` accepte désormais `files: List[UploadFile]` —
+   1 fichier ⇒ tenté comme archive, plusieurs ⇒ import de dossier (même
+   endpoint, jamais deux routes séparées à maintenir en parallèle).
+3. Frontend (`VisionDatasets.tsx` ET `VisionDatasetPicker.tsx`, les DEUX
+   points d'entrée d'upload Vision) : bouton "Importer un dossier" en plus
+   du glisser-déposer archive, `<input webkitdirectory>` posé
+   impérativement (attribut non standard, absent du typage JSX React).
+**Vérifié en conditions réelles** (pas seulement des fixtures
+synthétiques — demande explicite de l'utilisateur, dossier de test
+fourni) : un vrai `tile.zip` MVTec AD (zip sans dossier englobant,
+347 images, `ground_truth/` correctement exclu), un vrai dossier
+`capsule/` DÉPLIÉ SUR DISQUE walké directement (462 fichiers réels,
+351 images valides après exclusion de 111 fichiers non-dataset —
+masques ground_truth + license.txt/readme.txt), un vrai dossier
+`carpet/` (488 fichiers, 397 images valides) — tous corrects, zéro
+faux positif/négatif.
+**Écarté** : le glisser-déposer d'un DOSSIER entier (traversée de
+`DataTransferItem.webkitGetAsEntry()`, récursive) — chantier séparé,
+plus complexe qu'un bouton `<input webkitdirectory>` (bien supporté,
+standard de facto) ; le glisser-déposer reste réservé aux archives.
+
+### D6A.5 — Classification pré-découpée en train/test(/val) reconnue et fusionnée par classe, jamais rejetée
+
+**Question** (trouvée en vérifiant avec les vrais fichiers de
+l'utilisateur, pas anticipée à l'origine) : un dataset structuré
+`train/<classe>/`, `test/<classe>/` (parfois aussi `val/<classe>/`) SANS
+dossier "good" — donc pas une structure normal/défaut malgré la même
+profondeur à 3 niveaux — était REJETÉ ("Structure de classification
+invalide : doit être directement sous <classe>/"), alors qu'il s'agit
+d'un dataset de classification légitime, juste pré-découpé en splits.
+**Retenu** : `_detect_structure` distingue désormais les deux cas par le
+contenu de `train/` : exactement `{"good"}` ⇒ structure normal/défaut
+(validation stricte inchangée), n'importe quoi d'autre (ou vide) ⇒
+classification pré-découpée — les 3 splits sont FUSIONNÉS par nom de
+classe (même sac que la classification simple). Généralisé à train/test
+**et** val (pas seulement train/test) pour les deux structures.
+**Conséquence assumée** : le split d'origine (train/test/val) n'est PAS
+respecté — `services/vision_classification_training.py` refait de toute
+façon son propre split aléatoire stratifié à l'entraînement (aucune
+notion de "respecter un split figé" n'existe ailleurs dans ce produit) ;
+inventer cette notion aurait été un chantier séparé, hors périmètre ici.
+**Bug réel trouvé en implémentant** : fusionner des splits par nom de
+classe peut faire collisionner deux fichiers SOURCE distincts partageant
+le même nom final (`train/chat/0.png` et `test/chat/0.png` copiés vers
+la même classe) — la copie sur disque écrasait silencieusement l'un des
+deux. Corrigé par désambiguïsation (`_2`, `_3`... suffixé) dans
+`_validate_and_copy_images`, jamais un écrasement silencieux — testé
+explicitement (`test_pre_split_classification_resolves_filename_collisions_across_splits`)
+avec deux images de contenu RÉELLEMENT différent partageant le même nom.
+**Changement de comportement assumé** : un dataset `train/good/` +
+`train/scratch/` + équivalent sous `test/` — auparavant REJETÉ
+("train/ ne doit contenir que des images normales") — est maintenant
+accepté comme classification à 2 classes ("good" vs "scratch"). Jugé
+strictement meilleur : le dataset est exploité plutôt que perdu, aucun
+utilisateur ne préfère un rejet à un résultat exploitable quand les deux
+interprétations sont structurellement valides. `test_mvtec_train_with_defect_folder_rejected`
+renommé `test_train_with_a_non_good_folder_is_reinterpreted_as_classification`
+pour refléter ce changement délibéré.
+**Vérifié en conditions réelles** : les 3 fichiers "multiclasse" fournis
+par l'utilisateur (`cable_multiclass.zip`, `leather_multiclass.zip`,
+`screw_multiclass.zip` — train/test/val, 5 à 8 classes de défauts
+nommées, aucun dossier "good"), auparavant tous rejetés, sont désormais
+tous correctement détectés comme classification avec le bon compte
+d'images par classe et ZÉRO perte de fichier (comptes sur disque
+vérifiés égaux aux comptes rapportés).
+**Remise en cause si** : un besoin de RESPECTER le split d'origine
+(train/test/val figés, pas un re-split aléatoire) est exprimé — chantier
+séparé, toucherait `vision_classification_training.py` en profondeur.
+
+### D6A.6 — Terminologie "MVTec AD" : `structure_type` stocké inchangé, seuls les libellés/messages utilisateur renommés
+
+**Question** (D0.3, reportée depuis le Lot 0) : `structure_type ==
+"mvtec_ad"` et les messages associés nomment explicitement "MVTec AD"
+alors que la structure est générique. Renommer quoi exactement ?
+**Retenu** : `structure_type` reste littéralement `"mvtec_ad"` en base
+(valeur technique interne, jamais vue par un utilisateur, déjà utilisée
+par des enregistrements existants — la renommer exigerait une migration
+de données pour zéro bénéfice utilisateur). Seuls les LIBELLÉS et
+MESSAGES vus par un utilisateur changent : "MVTec AD" → "Normal /
+défaut" (frontend, `STRUCTURE_LABELS` dans `VisionDatasets.tsx` ET
+`VisionDatasetPicker.tsx`), messages d'erreur API/worker (`vision_anomalies.py`,
+`vision_datasets.py`, `vision_anomaly_worker.py`, `vision_classification_worker.py`),
+docstrings de module/classe décrivant le PÉRIMÈTRE de la fonctionnalité.
+**Écarté** : les commentaires décrivant des particularités RÉELLES du
+vrai jeu de données MVTec AD (ex. "un téléchargement MVTec AD officiel
+inclut un dossier ground_truth/", "certaines catégories MVTec AD
+officielles ont moins de 10 images") — laissés tels quels, ce sont des
+références factuelles exactes justifiant un choix technique, pas un
+mauvais étiquetage de LA fonctionnalité elle-même.
+**Remise en cause si** : un besoin réel de renommer aussi la valeur
+stockée apparaît (ex. rebranding produit) — migration de données
+dédiée à ce moment, jamais mélangée à un correctif de libellés.
+
+### D6A.7 — I10 : wizard 4 étapes (pas 5), stepper reconstruit avec les tokens corrigés plutôt que copié tel quel
+
+**Question** : `Training.tsx` sur CETTE branche (basée sur `main`, avant
+la branche `lot-2a-design-system` non fusionnée) porte encore le
+stepper D'AVANT ses propres correctifs UI trouvés en revue directe
+cette session (`overflow-x-auto` + boutons de défilement plutôt que
+`flex-wrap`, `bg-white text-white` cassant en thème sombre). Fallait-il
+porter fidèlement CE code (bug compris), ou la version déjà corrigée ?
+**Retenu** : reconstruit avec le pattern CORRIGÉ (`flex flex-wrap`,
+jamais de défilement + flèches ; `bg-card`/`text-primary-foreground`
+pour les pastilles, jamais `bg-white`/`text-white`) — les deux tokens
+existent déjà sur cette branche (vérifié dans `index.css` avant
+utilisation, pas supposé), aucune raison de réintroduire un bug déjà
+diagnostiqué et corrigé ailleurs dans une toute NOUVELLE page. `Training.tsx`
+lui-même non touché (hors périmètre de ce lot, vit sur une autre
+branche) — la convergence se fera à la fusion des branches.
+**Retenu aussi** : 4 étapes ("Données & modèle" / "Augmentation" / "Mode
+expert" / "Lancement"), pas 5 — Vision n'a pas d'équivalent à l'étape
+"Qualité des données" de `Training.tsx` (pas d'EDA sur des images).
+L'esprit du pattern (pastilles navigables, mode expert replié par
+défaut, récapitulatif avant lancement) est porté fidèlement ; le NOMBRE
+d'étapes de `Training.tsx` (5) était descriptif de SES étapes à lui,
+jamais une exigence universelle.
+**Retenu aussi** : le preset d'augmentation (I9) est pré-rempli avec la
+recommandation du dataset choisi (`recommended_augmentation_preset`),
+mais seulement tant que l'utilisateur n'a pas lui-même cliqué un preset
+(`augmentationTouched`) — change de dataset après coup ne doit jamais
+écraser un choix déjà fait explicitement.
+**Vérifié** : `tsc -b` (0 erreur), `eslint` (0 erreur, mêmes
+avertissements pré-existants sans rapport), `vite build` complet, build
+de production réussi. Contrat API vérifié champ par champ contre
+`VisionClassificationJobCreate` (backend) — tous les noms de champs du
+payload envoyé correspondent exactement.
+**Non vérifié visuellement** : aucun outil de capture d'écran
+disponible dans cet environnement au moment de ce lot (tenté avec
+Playwright, retiré à la demande explicite de l'utilisateur — "je teste
+moi-même"). Le rendu réel (espacement, retour à la ligne des cartes de
+preset, alignement de la pastille courante) n'a été vérifié que par les
+tokens/classes utilisés, jamais par une capture — à confirmer par
+l'utilisateur en conditions réelles.
+
+### D6A.8 — Régression réelle trouvée à la fusion vers `main` : `uploadFiles()` sans préfixe `/api`
+
+**Trouvé en résolvant le conflit `frontend/src/api/client.ts`** : la
+fusion automatique de `lot-6a-vision-wizard` dans `main` n'a signalé
+AUCUN conflit sur ce fichier pour la fonction `uploadFiles<T>()` (Lot 6A,
+upload multi-fichiers pour l'import de dossier) — parce que cette
+fonction est une pure addition, absente de `main` avant ce lot, donc rien
+à réconcilier du point de vue de `git merge`. Mais son corps appelait
+`fetch(\`${BASE_URL}${path}\`, ...)`, jamais `fetch(apiUrl(path), ...)`
+comme les 4 autres fonctions de fetch du fichier — parce que la branche
+`lot-6a-vision-wizard` a été créée AVANT le correctif `fix-api-prefix-routing`
+et n'a jamais vu `apiUrl()` exister. Résultat : `api.visionDatasets.upload()`
+et `.uploadFolder()` auraient silencieusement appelé `/vision/datasets` au
+lieu de `/api/vision/datasets` une fois fusionnées — exactement la classe de
+bug que l'utilisateur avait explicitement demandé de surveiller à chaque
+fusion pour ce fichier précis, mais sous une forme qu'un simple `git diff`
+des conflits n'aurait jamais révélée (pas de marqueur de conflit à lire —
+il fallait relire tout le fichier fusionné, pas seulement les hunks
+marqués `UU`).
+**Retenu** : `uploadFiles()` migrée vers `fetch(apiUrl(path), ...)`, comme
+les 4 autres. Aucun test frontend n'aurait attrapé ça (les tests Vitest de
+ce fichier ne montent pas de vrai `fetch` réseau) — trouvé uniquement en
+relisant le fichier fusionné ligne par ligne avant de committer, pas par
+un gate automatisé.
+**Remise en cause si** : d'autres branches en attente de fusion (aucune
+identifiée à ce jour) ajoutent elles aussi un appel `fetch()` direct —
+relire systématiquement `client.ts` en ENTIER après toute fusion future,
+pas seulement les sections marquées en conflit par Git.

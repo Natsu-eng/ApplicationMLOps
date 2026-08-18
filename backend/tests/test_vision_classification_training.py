@@ -11,8 +11,13 @@ from PIL import Image
 
 from services.ml_preprocessing import TrainingAbortedError
 from services.vision_classification_training import (
+    AUGMENTATION_PRESET_IDS,
     MIN_IMAGES_PER_CLASS_FOR_TRAINING,
     ClassificationConfig,
+    _augmentation_transforms,
+    _class_weights,
+    _should_stop_early,
+    recommend_augmentation_preset,
     train_and_evaluate_classification,
 )
 
@@ -113,3 +118,149 @@ def test_example_relative_path_uses_forward_slashes(tmp_path):
     assert len(result.examples) > 0
     for example in result.examples:
         assert "\\" not in example.relative_path
+
+
+def test_training_handles_three_classes(tmp_path):
+    """Multiclasse (pas seulement binaire) — ImageFolder/CrossEntropyLoss/
+    métriques macro généralisent nativement à N classes, vérifié ici
+    explicitement plutôt que supposé."""
+    _write_classification_dataset(tmp_path, {"classe_a": 8, "classe_b": 8, "classe_c": 8})
+    config = ClassificationConfig(backbone_id="mobilenet_v3_small", num_epochs=1, batch_size=4)
+
+    result = train_and_evaluate_classification(tmp_path, config, _noop_progress)
+
+    assert result.class_names == ["classe_a", "classe_b", "classe_c"]
+    assert len(result.confusion_matrix) == 3 and all(len(row) == 3 for row in result.confusion_matrix)
+    assert result.model_artifact["class_names"] == ["classe_a", "classe_b", "classe_c"]
+
+
+# ── Lot 6A, correctif I8 — pondération de classes, arrêt anticipé, scheduler ─
+
+
+def test_class_weights_are_inversely_proportional_to_frequency():
+    # 3 classes, comptes déséquilibrés parmi les indices d'entraînement
+    # (classe 0 : 3 fois, classe 1 : 1 fois, classe 2 : 2 fois).
+    targets = [0, 0, 0, 1, 2, 2]
+    train_idx = [0, 1, 2, 3, 4, 5]
+    weights = _class_weights(targets, train_idx, n_classes=3)
+
+    assert weights.shape == (3,)
+    # total=6, n_classes=3 : poids = 6/(3*compte) -> classe la moins
+    # fréquente (1 exemple) doit avoir le poids le plus élevé.
+    assert weights[1] > weights[2] > weights[0]
+    assert weights[1].item() == pytest.approx(6 / (3 * 1))
+    assert weights[0].item() == pytest.approx(6 / (3 * 3))
+
+
+def test_class_weights_only_uses_the_training_split():
+    """Les comptes de validation/test ne doivent JAMAIS influencer les
+    poids — seul train_idx compte, même si targets couvre tout le dataset."""
+    targets = [0, 0, 0, 0, 0, 1]  # classe 1 très minoritaire dans TOUT le dataset...
+    train_idx = [0, 1, 5]  # ...mais équilibrée dans le split d'entraînement (2 vs 1)
+    weights = _class_weights(targets, train_idx, n_classes=2)
+    assert weights[0].item() == pytest.approx(3 / (2 * 2))
+    assert weights[1].item() == pytest.approx(3 / (2 * 1))
+
+
+def test_should_stop_early_triggers_at_patience_threshold():
+    assert _should_stop_early(epochs_without_improvement=2, patience=2) is True
+    assert _should_stop_early(epochs_without_improvement=1, patience=2) is False
+
+
+def test_should_stop_early_disabled_when_patience_is_none():
+    assert _should_stop_early(epochs_without_improvement=1000, patience=None) is False
+
+
+def test_class_weighting_can_be_disabled(tmp_path):
+    _write_classification_dataset(tmp_path, {"classe_a": 8, "classe_b": 8})
+    config = ClassificationConfig(num_epochs=1, batch_size=4, class_weighting=False)
+
+    result = train_and_evaluate_classification(tmp_path, config, _noop_progress)
+    assert result.model_card["class_weighting_applied"] is False
+
+
+def test_class_weighting_enabled_by_default(tmp_path):
+    _write_classification_dataset(tmp_path, {"classe_a": 8, "classe_b": 8})
+    config = ClassificationConfig(num_epochs=1, batch_size=4)
+
+    result = train_and_evaluate_classification(tmp_path, config, _noop_progress)
+    assert result.model_card["class_weighting_applied"] is True
+
+
+def test_lr_scheduler_can_be_disabled(tmp_path):
+    _write_classification_dataset(tmp_path, {"classe_a": 8, "classe_b": 8})
+    config = ClassificationConfig(num_epochs=2, batch_size=4, use_lr_scheduler=False)
+
+    result = train_and_evaluate_classification(tmp_path, config, _noop_progress)
+    assert result.model_card["lr_scheduler_used"] is False
+
+
+def test_early_stopping_disabled_runs_full_budget(tmp_path):
+    _write_classification_dataset(tmp_path, {"classe_a": 8, "classe_b": 8})
+    config = ClassificationConfig(num_epochs=2, batch_size=4, early_stopping_patience=None)
+
+    result = train_and_evaluate_classification(tmp_path, config, _noop_progress)
+    assert result.model_card["early_stopped"] is False
+    assert result.model_card["num_epochs_run"] == 2
+
+
+def test_model_card_reports_are_internally_consistent(tmp_path):
+    """early_stopped=True implique num_epochs_run < num_epochs_requested —
+    jamais l'inverse, quelle que soit la dynamique réelle de convergence
+    (non déterministe sur un dataset synthétique minuscule)."""
+    _write_classification_dataset(tmp_path, {"classe_a": 8, "classe_b": 8})
+    config = ClassificationConfig(num_epochs=6, batch_size=4, early_stopping_patience=1)
+
+    result = train_and_evaluate_classification(tmp_path, config, _noop_progress)
+    if result.model_card["early_stopped"]:
+        assert result.model_card["num_epochs_run"] < 6
+
+
+# ── Lot 6A, correctif I9 — presets d'augmentation configurables ─────────────
+
+
+@pytest.mark.parametrize("preset", AUGMENTATION_PRESET_IDS)
+def test_every_preset_id_is_a_valid_transform_list(preset):
+    transforms_list = _augmentation_transforms(preset)
+    assert isinstance(transforms_list, list)
+
+
+def test_augmentation_presets_form_a_strict_progression():
+    """Chaque niveau ajoute une transformation à celles du niveau
+    précédent — jamais une combinaison disjointe (progression cohérente,
+    prévisible pour l'utilisateur)."""
+    counts = [len(_augmentation_transforms(p)) for p in AUGMENTATION_PRESET_IDS]
+    assert counts == sorted(counts)
+    assert counts[0] == 0  # "aucune" : pas d'augmentation du tout
+
+
+def test_unknown_augmentation_preset_raises():
+    with pytest.raises(ValueError):
+        _augmentation_transforms("extreme")
+
+
+def test_training_rejects_unknown_augmentation_preset(tmp_path):
+    _write_classification_dataset(tmp_path, {"classe_a": 8, "classe_b": 8})
+    config = ClassificationConfig(num_epochs=1, batch_size=4, augmentation_preset="extreme")
+    with pytest.raises(TrainingAbortedError):
+        train_and_evaluate_classification(tmp_path, config, _noop_progress)
+
+
+@pytest.mark.parametrize("preset", AUGMENTATION_PRESET_IDS)
+def test_training_runs_with_every_augmentation_preset(tmp_path, preset):
+    _write_classification_dataset(tmp_path, {"classe_a": 8, "classe_b": 8})
+    config = ClassificationConfig(num_epochs=1, batch_size=4, augmentation_preset=preset)
+
+    result = train_and_evaluate_classification(tmp_path, config, _noop_progress)
+    assert result.model_card["augmentation_preset"] == preset
+
+
+def test_recommend_augmentation_preset_thresholds():
+    assert recommend_augmentation_preset(5) == "forte"
+    assert recommend_augmentation_preset(19) == "forte"
+    assert recommend_augmentation_preset(20) == "standard"
+    assert recommend_augmentation_preset(49) == "standard"
+    assert recommend_augmentation_preset(50) == "legere"
+    assert recommend_augmentation_preset(149) == "legere"
+    assert recommend_augmentation_preset(150) == "aucune"
+    assert recommend_augmentation_preset(10_000) == "aucune"

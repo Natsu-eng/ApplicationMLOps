@@ -698,7 +698,7 @@ class AnomalyObservationRecord(Base):
 class VisionDataset(Base):
     """Un dataset d'images uploadé (pilier Vision, Lot 15 sous-lot A) —
     fondation partagée par la classification d'images et la détection
-    d'anomalies visuelles MVTec AD (`structure_type` distingue les deux).
+    d'anomalies visuelles (structure_type distingue les deux, valeur "mvtec_ad" pour la structure normal/défaut).
     Contrairement à `Dataset` (un seul fichier tabulaire), un dataset vision
     est un dossier d'images extraites du ZIP uploadé — voir
     `api/core/storage.py::vision_dataset_dir`."""
@@ -802,7 +802,7 @@ class VisionClassificationModel(Base):
 
 
 class VisionAnomalyJob(Base):
-    """Un entraînement de détection d'anomalies visuelles MVTec AD (pilier
+    """Un entraînement de détection d'anomalies visuelles (structure normal/défaut, pilier
     Vision, Lot 15 sous-lot C) — même mécanisme de tâche de fond que
     `VisionClassificationJob`. Le dataset source doit être un
     `VisionDataset` de structure "mvtec_ad" (vérifié par le router avant

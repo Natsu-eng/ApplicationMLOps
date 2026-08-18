@@ -3,8 +3,8 @@ sous-lot A) — sans dépendance HTTP, directement testable.
 
 Fondation partagée par la classification d'images (sous-lot B) et la
 détection d'anomalies visuelles MVTec AD (sous-lot C) : les deux ont besoin
-d'ingérer un ZIP d'images, de détecter sa structure et de le valider. Écrit
-une seule fois ici plutôt que dupliqué dans deux endpoints (même
+d'ingérer une archive d'images, de détecter sa structure et de la valider.
+Écrit une seule fois ici plutôt que dupliqué dans deux endpoints (même
 raisonnement que `services/job_quota.py` pour les jobs).
 
 Corrige le bug #1 déjà documenté dans
@@ -12,11 +12,23 @@ Corrige le bug #1 déjà documenté dans
 dataset MVTec AD jamais validés avant training, risque de partir en mode
 supervisé par accident) : ici la structure est validée AU MOMENT DE
 L'UPLOAD, de façon stricte — jamais une supposition silencieuse.
+
+Lot 6A — jusqu'ici .zip strictement obligatoire (contrairement au
+téléchargement officiel MVTec AD, distribué en .tar.xz) et aucun moyen
+d'importer un dossier déjà déplié sans le re-compresser à la main. Toute
+la logique de détection de structure/validation/déduplication
+(`_detect_structure`/`_validate_and_copy_images`) opère désormais sur une
+liste de `_ExtractedMember` (chemin relatif + contenu déjà en mémoire) —
+format-agnostique par construction. Trois sources alimentent cette liste
+uniforme : `_extract_zip_members`, `_extract_tar_members`,
+`_members_from_uploaded_files` (dossier) — chacune la SEULE responsable de
+son format, jamais mélangée au reste du pipeline.
 """
 from __future__ import annotations
 
 import hashlib
 import io
+import tarfile
 import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
@@ -26,6 +38,7 @@ from PIL import Image, UnidentifiedImageError
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
 _IGNORED_NAME_PREFIXES = ("__MACOSX/", ".")
 _IGNORED_FILENAMES = {".ds_store", "thumbs.db"}
+ARCHIVE_EXTENSIONS = {".zip", ".tar", ".tar.gz", ".tgz"}
 
 MIN_IMAGE_DIMENSION_PX = 20
 MIN_IMAGES_PER_CLASS = 2
@@ -34,17 +47,27 @@ CLASS_IMBALANCE_WARNING_RATIO = 10.0
 
 
 class VisionDatasetError(ValueError):
-    """Le ZIP a été reçu mais ne peut pas être ingéré comme dataset d'images
-    (structure non reconnue, contenu dangereux, aucune image exploitable)."""
+    """L'archive/le dossier a été reçu(e) mais ne peut pas être ingéré(e)
+    comme dataset d'images (structure non reconnue, contenu dangereux,
+    aucune image exploitable)."""
 
 
 class UnsupportedFileType(ValueError):
     """Extension de fichier non supportée pour un dataset vision."""
 
 
-def validate_zip_extension(filename: str) -> None:
-    if Path(filename).suffix.lower() != ".zip":
-        raise UnsupportedFileType("Le dataset d'images doit être fourni sous forme d'archive .zip")
+def validate_archive_extension(filename: str) -> str:
+    """Vérification RAPIDE côté nom de fichier (retour immédiat à
+    l'utilisateur avant tout upload) — jamais la seule ligne de défense :
+    `_extract_archive_members` sniffe le contenu réel (signature
+    binaire), une extension mensongère est rejetée là, pas ici."""
+    name = filename.lower()
+    for ext in sorted(ARCHIVE_EXTENSIONS, key=len, reverse=True):  # ".tar.gz" avant ".gz" implicite
+        if name.endswith(ext):
+            return ext
+    raise UnsupportedFileType(
+        f"Le dataset d'images doit être fourni sous forme d'archive ({', '.join(sorted(ARCHIVE_EXTENSIONS))})"
+    )
 
 
 @dataclass
@@ -95,98 +118,234 @@ def _safe_member_path(name: str) -> PurePosixPath | None:
     return posix
 
 
-def _open_zip_members(content: bytes, max_images: int, max_uncompressed_bytes: int) -> list[tuple[PurePosixPath, zipfile.ZipInfo]]:
-    try:
-        zf = zipfile.ZipFile(io.BytesIO(content))
-    except zipfile.BadZipFile as exc:
-        raise VisionDatasetError(f"Archive ZIP illisible : {exc}") from exc
+@dataclass(frozen=True)
+class _ExtractedMember:
+    """Une image déjà extraite en mémoire (chemin relatif + contenu) —
+    représentation UNIQUE et format-agnostique consommée par
+    `_detect_structure`/`_validate_and_copy_images`, quelle que soit la
+    source (zip, tar, dossier). Le contenu est matérialisé ICI, à
+    l'extraction, jamais relu plus tard depuis un objet zip/tar rouvert :
+    `max_uncompressed_bytes` borne déjà la taille totale, matérialiser
+    n'aggrave pas le pic mémoire par rapport à l'ancien flux (qui relisait
+    de toute façon chaque image entière pour la hasher/valider)."""
+    rel_path: PurePosixPath
+    content: bytes
 
-    members: list[tuple[PurePosixPath, zipfile.ZipInfo]] = []
-    total_uncompressed = 0
-    for info in zf.infolist():
-        rel_path = _safe_member_path(info.filename)
-        if rel_path is None:
-            continue
-        if rel_path.suffix.lower() not in IMAGE_EXTENSIONS:
-            continue
-        total_uncompressed += info.file_size
-        if total_uncompressed > max_uncompressed_bytes:
-            raise VisionDatasetError(
-                f"Archive trop volumineuse une fois décompressée (max {max_uncompressed_bytes // (1024 * 1024)} Mo)"
-            )
-        members.append((rel_path, info))
-        if len(members) > max_images:
-            raise VisionDatasetError(f"Trop d'images dans l'archive (max {max_images})")
 
+def _accumulate_member(
+    rel_path: PurePosixPath | None,
+    content: bytes,
+    members: list[_ExtractedMember],
+    total_uncompressed: int,
+    max_images: int,
+    max_uncompressed_bytes: int,
+) -> int:
+    """Filtre + garde-fous communs aux 3 sources (extension image, taille
+    cumulée, nombre max) — extrait pour ne jamais dupliquer ces 3 vérifications
+    entre zip/tar/dossier. Retourne le nouveau total cumulé."""
+    if rel_path is None or rel_path.suffix.lower() not in IMAGE_EXTENSIONS:
+        return total_uncompressed
+    total_uncompressed += len(content)
+    if total_uncompressed > max_uncompressed_bytes:
+        raise VisionDatasetError(
+            f"Archive trop volumineuse une fois décompressée (max {max_uncompressed_bytes // (1024 * 1024)} Mo)"
+        )
+    members.append(_ExtractedMember(rel_path=rel_path, content=content))
+    if len(members) > max_images:
+        raise VisionDatasetError(f"Trop d'images dans l'archive (max {max_images})")
+    return total_uncompressed
+
+
+def _finalize_members(members: list[_ExtractedMember]) -> list[_ExtractedMember]:
     if not members:
         raise VisionDatasetError("Aucune image exploitable trouvée dans l'archive (formats acceptés : "
                                   f"{', '.join(sorted(IMAGE_EXTENSIONS))})")
     return members
 
 
-def _detect_structure(members: list[tuple[PurePosixPath, zipfile.ZipInfo]]) -> tuple[str, dict[str, list[tuple[PurePosixPath, zipfile.ZipInfo]]]]:
+def _extract_zip_members(content: bytes, max_images: int, max_uncompressed_bytes: int) -> list[_ExtractedMember]:
+    try:
+        zf = zipfile.ZipFile(io.BytesIO(content))
+    except zipfile.BadZipFile as exc:
+        raise VisionDatasetError(f"Archive ZIP illisible : {exc}") from exc
+
+    members: list[_ExtractedMember] = []
+    total_uncompressed = 0
+    for info in zf.infolist():
+        rel_path = _safe_member_path(info.filename)
+        if rel_path is None or rel_path.suffix.lower() not in IMAGE_EXTENSIONS:
+            continue
+        total_uncompressed = _accumulate_member(
+            rel_path, zf.read(info), members, total_uncompressed, max_images, max_uncompressed_bytes
+        )
+    return _finalize_members(members)
+
+
+def _extract_tar_members(content: bytes, max_images: int, max_uncompressed_bytes: int) -> list[_ExtractedMember]:
+    try:
+        # mode="r:*" détecte automatiquement gzip/bzip2/xz ou l'absence de
+        # compression depuis le contenu réel — jamais depuis l'extension
+        # fournie par le client (défense en profondeur, même principe que
+        # le sniff zip vs tar dans _extract_archive_members).
+        tf = tarfile.open(fileobj=io.BytesIO(content), mode="r:*")
+    except tarfile.TarError as exc:
+        raise VisionDatasetError(f"Archive TAR illisible : {exc}") from exc
+
+    members: list[_ExtractedMember] = []
+    total_uncompressed = 0
+    with tf:
+        for info in tf.getmembers():
+            # Seuls les fichiers réguliers — jamais un lien symbolique/dur,
+            # exploitable pour pointer hors de l'archive (classe de faille
+            # distincte du zip-slip, propre au format tar).
+            if not info.isfile():
+                continue
+            rel_path = _safe_member_path(info.name)
+            if rel_path is None or rel_path.suffix.lower() not in IMAGE_EXTENSIONS:
+                continue
+            extracted = tf.extractfile(info)
+            if extracted is None:
+                continue
+            total_uncompressed = _accumulate_member(
+                rel_path, extracted.read(), members, total_uncompressed, max_images, max_uncompressed_bytes
+            )
+    return _finalize_members(members)
+
+
+def _members_from_uploaded_files(
+    files: list[tuple[str, bytes]], max_images: int, max_uncompressed_bytes: int
+) -> list[_ExtractedMember]:
+    """Import d'un DOSSIER (Lot 6A) — chaque fichier vient du navigateur
+    avec son chemin relatif déjà porté par son nom (`webkitRelativePath`,
+    voir `POST /vision/datasets` côté routeur) : pas d'archive à ouvrir,
+    seulement le même filtrage/mêmes garde-fous que zip/tar."""
+    members: list[_ExtractedMember] = []
+    total_uncompressed = 0
+    for filename, content in files:
+        rel_path = _safe_member_path(filename)
+        total_uncompressed = _accumulate_member(
+            rel_path, content, members, total_uncompressed, max_images, max_uncompressed_bytes
+        )
+    return _finalize_members(members)
+
+
+_ZIP_MAGIC = b"PK\x03\x04"
+_ZIP_EMPTY_MAGIC = b"PK\x05\x06"  # archive zip vide (aucun fichier) — signature distincte
+
+
+def _extract_archive_members(content: bytes, max_images: int, max_uncompressed_bytes: int) -> list[_ExtractedMember]:
+    """Point d'entrée archive (zip/tar/tar.gz/tgz) — détecte le format
+    RÉEL par signature binaire (jamais par l'extension déclarée, qui peut
+    mentir) puis délègue à l'extracteur correspondant."""
+    if content.startswith(_ZIP_MAGIC) or content.startswith(_ZIP_EMPTY_MAGIC):
+        return _extract_zip_members(content, max_images, max_uncompressed_bytes)
+    if tarfile.is_tarfile(io.BytesIO(content)):
+        return _extract_tar_members(content, max_images, max_uncompressed_bytes)
+    raise VisionDatasetError(
+        f"Format d'archive non reconnu (formats acceptés : {', '.join(sorted(ARCHIVE_EXTENSIONS))})"
+    )
+
+
+_SPLIT_NAMES = {"train", "test", "val"}
+
+
+def _detect_structure(members: list[_ExtractedMember]) -> tuple[str, dict[str, list[_ExtractedMember]]]:
     """Détecte "classification" (dossiers de classes) ou "mvtec_ad"
     (train/good + test/good + test/<defaut>) à partir des chemins présents
-    dans l'archive. Ne devine jamais silencieusement : lève une erreur
-    explicite si aucune structure reconnue ne correspond (correctif du bug
-    #1 — plus de mode détecté par accident).
+    dans l'archive/le dossier. Ne devine jamais silencieusement : lève une
+    erreur explicite si aucune structure reconnue ne correspond (correctif
+    du bug #1 — plus de mode détecté par accident).
+
+    Lot 6A — troisième cas reconnu, testé contre un vrai dataset
+    utilisateur (pas seulement des fixtures synthétiques) :
+    classification PRÉ-DÉCOUPÉE en train/test(/val), un sous-dossier par
+    classe sous chaque split (ex. train/bent_wire/, test/bent_wire/...),
+    SANS dossier "good" — donc pas un dataset normal/défaut, malgré la
+    même profondeur de 3 niveaux. Distingué de la structure normal/défaut
+    par le contenu de train/ : `{"good"}` exactement ⇒ normal/défaut,
+    n'importe quoi d'autre ⇒ classification pré-découpée. Les trois
+    splits sont FUSIONNÉS par nom de classe (même sac que la
+    classification simple) : ce produit n'a pas de notion de split
+    figé — `services/vision_classification_training.py` refait de toute
+    façon son propre split aléatoire stratifié, respecter le split
+    d'origine exigerait une fonctionnalité séparée, hors périmètre ici.
 
     Retourne le type détecté et les membres groupés par "bucket" (nom de
     classe pour la classification, "train/good"/"test/good"/"test/<x>" pour
-    MVTec AD)."""
-    top_level_dirs = {m[0].parts[0] for m in members if len(m[0].parts) >= 2}
+    normal/défaut)."""
+    top_level_dirs = {m.rel_path.parts[0] for m in members if len(m.rel_path.parts) >= 2}
 
     # Un téléchargement MVTec AD officiel est zippé PAR CATÉGORIE
     # (ex. bottle.tar.gz → bottle/train/good/..., bottle/test/...) : un seul
-    # dossier de plus au-dessus de train/test, jamais l'archive elle-même.
-    # Détecté ici plutôt que d'obliger l'utilisateur à re-zipper manuellement
-    # le contenu du dossier catégorie (bug réel trouvé en testant avec un
-    # vrai dataset MVTec AD, pas seulement des fixtures synthétiques).
-    mvtec_offset = 0
-    if top_level_dirs != {"train", "test"} and len(top_level_dirs) == 1:
+    # dossier de plus au-dessus de train/test(/val), jamais l'archive
+    # elle-même. Détecté ici plutôt que d'obliger l'utilisateur à re-zipper
+    # manuellement le contenu du dossier catégorie (bug réel trouvé en
+    # testant avec un vrai dataset MVTec AD, pas seulement des fixtures
+    # synthétiques). Généralisé à train/test/val (Lot 6A, pas seulement
+    # train/test) pour couvrir aussi la classification pré-découpée.
+    split_offset = 0
+    effective_split_dirs = top_level_dirs
+    if not ({"train", "test"} <= top_level_dirs) and len(top_level_dirs) == 1:
         wrapper_dir = next(iter(top_level_dirs))
         second_level_dirs = {
-            m[0].parts[1] for m in members if len(m[0].parts) >= 3 and m[0].parts[0] == wrapper_dir
+            m.rel_path.parts[1] for m in members if len(m.rel_path.parts) >= 3 and m.rel_path.parts[0] == wrapper_dir
         }
-        if second_level_dirs == {"train", "test"}:
-            mvtec_offset = 1
+        if second_level_dirs <= _SPLIT_NAMES and {"train", "test"} <= second_level_dirs:
+            split_offset = 1
+            effective_split_dirs = second_level_dirs
 
-    if mvtec_offset == 1 or top_level_dirs == {"train", "test"}:
-        buckets: dict[str, list[tuple[PurePosixPath, zipfile.ZipInfo]]] = {}
-        for rel_path, info in members:
-            parts = rel_path.parts[mvtec_offset:]
+    is_split_layout = effective_split_dirs <= _SPLIT_NAMES and {"train", "test"} <= effective_split_dirs
+
+    if is_split_layout:
+        raw_buckets: dict[tuple[str, str], list[_ExtractedMember]] = {}
+        for member in members:
+            parts = member.rel_path.parts[split_offset:]
             if len(parts) != 3:
                 raise VisionDatasetError(
-                    f"Structure MVTec AD invalide : '{rel_path}' doit être directement sous "
-                    "train/<categorie>/ ou test/<categorie>/ (pas de sous-dossier supplémentaire)"
+                    f"Structure invalide : '{member.rel_path}' doit être directement sous "
+                    "train/<categorie>/, test/<categorie>/ ou val/<categorie>/ (pas de sous-dossier supplémentaire)"
                 )
             split, category = parts[0], parts[1]
-            bucket = f"{split}/{category}"
-            buckets.setdefault(bucket, []).append((rel_path, info))
+            if split not in _SPLIT_NAMES:
+                raise VisionDatasetError(
+                    f"Dossier de premier niveau inattendu : '{split}' (attendu parmi train/test/val)"
+                )
+            raw_buckets.setdefault((split, category), []).append(member)
 
-        if len(buckets.get("train/good", [])) < MIN_TRAIN_GOOD_IMAGES:
+        train_categories = {cat for (split, cat) in raw_buckets if split == "train"}
+
+        if train_categories == {"good"}:
+            # ─── Structure normal/défaut (validation stricte inchangée) ───
+            buckets = {f"{split}/{cat}": items for (split, cat), items in raw_buckets.items()}
+
+            if len(buckets.get("train/good", [])) < MIN_TRAIN_GOOD_IMAGES:
+                raise VisionDatasetError(
+                    f"Structure normal/défaut invalide : train/good/ doit contenir au moins "
+                    f"{MIN_TRAIN_GOOD_IMAGES} images normales (trouvé {len(buckets.get('train/good', []))})"
+                )
+            test_categories = {b.split("/", 1)[1] for b in buckets if b.startswith("test/")}
+            if "good" not in test_categories:
+                raise VisionDatasetError(
+                    "Structure normal/défaut invalide : test/good/ est requis (nécessaire pour calibrer le seuil "
+                    "de détection, voir docs/legacy/ANALYSE_COMPLETE_COMPUTER_VISION.md #12)"
+                )
+            if len(test_categories) < 2:
+                raise VisionDatasetError(
+                    "Structure normal/défaut invalide : test/ doit contenir au moins une catégorie de défaut "
+                    "en plus de good/ (ex. test/scratch/, test/crack/)"
+                )
+            return "mvtec_ad", buckets
+
+        # ─── Classification pré-découpée en splits — fusionnée par classe ───
+        buckets = {}
+        for (split, category), items in raw_buckets.items():
+            buckets.setdefault(category, []).extend(items)
+        if len(buckets) < 2:
             raise VisionDatasetError(
-                f"Structure MVTec AD invalide : train/good/ doit contenir au moins "
-                f"{MIN_TRAIN_GOOD_IMAGES} images normales (trouvé {len(buckets.get('train/good', []))})"
+                "Structure non reconnue : les dossiers train/test(/val) ne contiennent pas assez de "
+                "classes distinctes (minimum 2) pour une classification pré-découpée"
             )
-        train_categories = {b.split("/", 1)[1] for b in buckets if b.startswith("train/")}
-        if train_categories != {"good"}:
-            raise VisionDatasetError(
-                "Structure MVTec AD invalide : train/ ne doit contenir que des images normales "
-                f"(dossier 'good'), trouvé : {', '.join(sorted(train_categories))}"
-            )
-        test_categories = {b.split("/", 1)[1] for b in buckets if b.startswith("test/")}
-        if "good" not in test_categories:
-            raise VisionDatasetError(
-                "Structure MVTec AD invalide : test/good/ est requis (nécessaire pour calibrer le seuil "
-                "de détection, voir docs/legacy/ANALYSE_COMPLETE_COMPUTER_VISION.md #12)"
-            )
-        if len(test_categories) < 2:
-            raise VisionDatasetError(
-                "Structure MVTec AD invalide : test/ doit contenir au moins une catégorie de défaut "
-                "en plus de good/ (ex. test/scratch/, test/crack/)"
-            )
-        return "mvtec_ad", buckets
+        return "classification", buckets
 
     # Diagnostic dédié : le téléchargement officiel MVTec AD complet
     # (ex. dossier "MVTec AD/" avec bottle/, cable/, capsule/, ... — 15
@@ -201,11 +360,13 @@ def _detect_structure(members: list[tuple[PurePosixPath, zipfile.ZipInfo]]) -> t
         categories_with_train_test = [
             d
             for d in top_level_dirs
-            if {m[0].parts[1] for m in members if len(m[0].parts) >= 3 and m[0].parts[0] == d} >= {"train", "test"}
+            if {
+                m.rel_path.parts[1] for m in members if len(m.rel_path.parts) >= 3 and m.rel_path.parts[0] == d
+            } >= {"train", "test"}
         ]
         if len(categories_with_train_test) >= 2:
             raise VisionDatasetError(
-                "Cette archive contient plusieurs catégories MVTec AD à la fois "
+                "Cette archive contient plusieurs catégories normal/défaut à la fois "
                 f"({', '.join(sorted(categories_with_train_test))}) — un dataset ne peut représenter "
                 "qu'une seule catégorie. Zippez le dossier d'une seule catégorie (ex. juste 'bottle/', "
                 "ou son contenu train/+test/) et importez chaque catégorie séparément."
@@ -222,26 +383,26 @@ def _detect_structure(members: list[tuple[PurePosixPath, zipfile.ZipInfo]]) -> t
     if len(top_level_dirs) == 1:
         wrapper_dir = next(iter(top_level_dirs))
         candidate_classes = {
-            m[0].parts[1] for m in members if len(m[0].parts) >= 3 and m[0].parts[0] == wrapper_dir
+            m.rel_path.parts[1] for m in members if len(m.rel_path.parts) >= 3 and m.rel_path.parts[0] == wrapper_dir
         }
         if len(candidate_classes) >= 2:
             classification_offset = 1
 
     buckets = {}
-    for rel_path, info in members:
-        parts = rel_path.parts[classification_offset:]
+    for member in members:
+        parts = member.rel_path.parts[classification_offset:]
         if len(parts) != 2:
             raise VisionDatasetError(
-                f"Structure de classification invalide : '{rel_path}' doit être directement sous "
+                f"Structure de classification invalide : '{member.rel_path}' doit être directement sous "
                 "<classe>/ (pas de sous-dossier supplémentaire, pas de fichier à la racine)"
             )
         class_name = parts[0]
-        buckets.setdefault(class_name, []).append((rel_path, info))
+        buckets.setdefault(class_name, []).append(member)
 
     if len(buckets) < 2:
         raise VisionDatasetError(
             "Structure non reconnue : fournissez soit au moins 2 dossiers de classes "
-            "(classification), soit une structure train/good + test/good + test/<defaut> (MVTec AD)"
+            "(classification), soit une structure train/good + test/good + test/<defaut> (normal/défaut)"
         )
     return "classification", buckets
 
@@ -251,11 +412,11 @@ class _ValidImage:
     """Une image ayant passé les contrôles d'intégrité (pas corrompue, pas
     sous-dimensionnée) — étape intermédiaire nécessaire avant de décider
     quelle copie garder en cas de doublon : cette décision doit voir TOUTES
-    les occurrences du même hash dans le ZIP entier, y compris dans un
-    bucket pas encore parcouru, donc impossible en un seul passage
+    les occurrences du même hash dans l'archive/le dossier entier, y compris
+    dans un bucket pas encore parcouru, donc impossible en un seul passage
     streaming comme avant ce correctif (copie immédiate sur disque)."""
     rel_path: PurePosixPath
-    info: zipfile.ZipInfo
+    content: bytes
     bucket_name: str
     digest: str
 
@@ -299,8 +460,7 @@ def _bucket_split(bucket_name: str, structure_type: str) -> str | None:
 
 
 def _validate_and_copy_images(
-    zip_content: bytes,
-    buckets: dict[str, list[tuple[PurePosixPath, zipfile.ZipInfo]]],
+    buckets: dict[str, list[_ExtractedMember]],
     target_dir: Path,
     structure_type: str,
 ) -> _ValidationOutcome:
@@ -334,14 +494,13 @@ def _validate_and_copy_images(
     empreinte SHA-256, donc strictement bit-à-bit. Une image recadrée,
     redimensionnée, recompressée ou réenregistrée dans un autre format
     n'est pas détectée — hachage perceptuel hors périmètre de ce correctif."""
-    zf = zipfile.ZipFile(io.BytesIO(zip_content))
     corrupted_files: list[str] = []
     undersized_files: list[str] = []
     valid_images: list[_ValidImage] = []
 
     for bucket_name, entries in buckets.items():
-        for rel_path, info in entries:
-            raw = zf.read(info)
+        for member in entries:
+            raw = member.content
             try:
                 img = Image.open(io.BytesIO(raw))
                 img.verify()
@@ -351,15 +510,17 @@ def _validate_and_copy_images(
                 width, height = img.size
                 img.load()
             except (UnidentifiedImageError, OSError, ValueError):
-                corrupted_files.append(str(rel_path))
+                corrupted_files.append(str(member.rel_path))
                 continue
 
             if width < MIN_IMAGE_DIMENSION_PX or height < MIN_IMAGE_DIMENSION_PX:
-                undersized_files.append(str(rel_path))
+                undersized_files.append(str(member.rel_path))
                 continue
 
             digest = hashlib.sha256(raw).hexdigest()
-            valid_images.append(_ValidImage(rel_path=rel_path, info=info, bucket_name=bucket_name, digest=digest))
+            valid_images.append(
+                _ValidImage(rel_path=member.rel_path, content=raw, bucket_name=bucket_name, digest=digest)
+            )
 
     by_digest: dict[str, list[_ValidImage]] = {}
     for vi in valid_images:
@@ -403,8 +564,19 @@ def _validate_and_copy_images(
     for vi in valid_images:
         if str(vi.rel_path) in all_excluded:
             continue
-        raw = zf.read(vi.info)
-        (target_dir / vi.bucket_name / vi.rel_path.name).write_bytes(raw)
+        dest = target_dir / vi.bucket_name / vi.rel_path.name
+        if dest.exists():
+            # Collision entre deux chemins SOURCE distincts partageant le
+            # même nom de fichier final — possible depuis la classification
+            # pré-découpée (Lot 6A) qui fusionne train/test/val dans la
+            # même classe (ex. train/chat/003.png et test/chat/003.png) :
+            # jamais un écrasement silencieux, désambiguïsé par un suffixe.
+            stem, suffix = vi.rel_path.stem, vi.rel_path.suffix
+            counter = 1
+            while dest.exists():
+                dest = target_dir / vi.bucket_name / f"{stem}__{counter}{suffix}"
+                counter += 1
+        dest.write_bytes(vi.content)
         n_valid += 1
 
     return _ValidationOutcome(
@@ -419,21 +591,45 @@ def _validate_and_copy_images(
     )
 
 
-def analyze_and_extract_vision_zip(
+def analyze_and_extract_vision_archive(
     content: bytes,
     target_dir: Path,
     max_images: int,
     max_uncompressed_bytes: int,
 ) -> VisionDatasetReport:
-    """Point d'entrée principal — valide le ZIP, détecte la structure,
-    valide, déduplique et copie les images retenues vers `target_dir`. Lève
-    `VisionDatasetError` pour tout problème structurel (jamais pour une
-    image individuelle corrompue ou un doublon, qui sont simplement exclus
-    et reportés)."""
-    members = _open_zip_members(content, max_images, max_uncompressed_bytes)
+    """Point d'entrée archive (zip/tar/tar.gz/tgz, Lot 6A — voir
+    `_extract_archive_members` pour le sniff de format) — valide, détecte
+    la structure, déduplique et copie les images retenues vers
+    `target_dir`. Lève `VisionDatasetError` pour tout problème structurel
+    (jamais pour une image individuelle corrompue ou un doublon, qui sont
+    simplement exclus et reportés)."""
+    members = _extract_archive_members(content, max_images, max_uncompressed_bytes)
+    return _analyze_and_extract(members, target_dir)
+
+
+def analyze_and_extract_vision_folder(
+    files: list[tuple[str, bytes]],
+    target_dir: Path,
+    max_images: int,
+    max_uncompressed_bytes: int,
+) -> VisionDatasetReport:
+    """Point d'entrée dossier (Lot 6A) — `files` : liste (chemin relatif,
+    contenu) telle qu'envoyée par le navigateur pour un import de dossier
+    (`webkitRelativePath` porté par chaque fichier, voir
+    `POST /vision/datasets` côté routeur). Mêmes garanties que
+    `analyze_and_extract_vision_archive`, seule la source diffère."""
+    members = _members_from_uploaded_files(files, max_images, max_uncompressed_bytes)
+    return _analyze_and_extract(members, target_dir)
+
+
+def _analyze_and_extract(members: list[_ExtractedMember], target_dir: Path) -> VisionDatasetReport:
+    """Cœur commun aux deux points d'entrée ci-dessus — détecte la
+    structure, valide, déduplique, copie. Format-agnostique par
+    construction (`_ExtractedMember` ne porte plus aucune trace de sa
+    source zip/tar/dossier à ce stade)."""
     structure_type, buckets = _detect_structure(members)
 
-    outcome = _validate_and_copy_images(content, buckets, target_dir, structure_type)
+    outcome = _validate_and_copy_images(buckets, target_dir, structure_type)
 
     if structure_type == "classification":
         empty_classes = sorted(c for c, n in outcome.class_distribution.items() if n == 0)

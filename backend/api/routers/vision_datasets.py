@@ -27,11 +27,13 @@ from api.core.rate_limit import rate_limit_dependency
 from api.core.storage import delete_vision_dataset_dir, vision_dataset_dir
 from api.routers.auth import get_current_user
 from services.audit import log_action
+from services.vision_classification_training import recommend_augmentation_preset
 from services.vision_datasets import (
     UnsupportedFileType,
     VisionDatasetError,
-    analyze_and_extract_vision_zip,
-    validate_zip_extension,
+    analyze_and_extract_vision_archive,
+    analyze_and_extract_vision_folder,
+    validate_archive_extension,
 )
 
 logger = logging.getLogger("datalab.vision_datasets")
@@ -64,6 +66,11 @@ class VisionDatasetSummary(BaseModel):
 class VisionDatasetDetail(VisionDatasetSummary):
     class_distribution: dict[str, int] = {}
     validation_report: dict = {}
+    # Lot 6A (correctif I9, AUDIT_DATALAB_2026-08-16.md §I9) — indicative
+    # uniquement (jamais appliquée automatiquement), absente (None) pour
+    # un dataset "mvtec_ad" (l'augmentation d'images ne concerne que
+    # l'entraînement de classification).
+    recommended_augmentation_preset: Optional[str] = None
 
 
 class VisionDatasetImageList(BaseModel):
@@ -91,10 +98,20 @@ def _to_summary(dataset: VisionDataset) -> VisionDatasetSummary:
 
 
 def _to_detail(dataset: VisionDataset) -> VisionDatasetDetail:
+    class_distribution = json.loads(dataset.class_distribution_json) if dataset.class_distribution_json else {}
+    # Lot 6A (correctif I9) — fondée sur la classe la plus PETITE (le
+    # goulot d'étranglement réel), jamais un dataset "mvtec_ad" (recommandation
+    # sans objet — l'augmentation d'images ne concerne que la classification).
+    recommended_preset = (
+        recommend_augmentation_preset(min(class_distribution.values()))
+        if dataset.structure_type == "classification" and class_distribution
+        else None
+    )
     return VisionDatasetDetail(
         **_to_summary(dataset).model_dump(),
-        class_distribution=json.loads(dataset.class_distribution_json) if dataset.class_distribution_json else {},
+        class_distribution=class_distribution,
         validation_report=json.loads(dataset.validation_report_json) if dataset.validation_report_json else {},
+        recommended_augmentation_preset=recommended_preset,
     )
 
 
@@ -120,34 +137,55 @@ _upload_rate_limit = rate_limit_dependency(
 )
 
 
+def _derive_folder_dataset_name(filenames: list[str]) -> str:
+    """Nom du dataset pour un import de dossier (Lot 6A) — le dossier
+    commun porté par `webkitRelativePath` sur chaque fichier (ex.
+    "MonDataset/chat/1.png" → "MonDataset"), jamais un nom de fichier
+    individuel qui n'aurait aucun sens comme nom de dataset."""
+    tops = {Path(f).parts[0] for f in filenames if Path(f).parts}
+    if len(tops) == 1:
+        return next(iter(tops))
+    return "dataset (dossier)"
+
+
 @router.post(
     "", response_model=VisionDatasetDetail, status_code=status.HTTP_201_CREATED, dependencies=[Depends(_upload_rate_limit)]
 )
 async def upload_vision_dataset(
-    file: UploadFile = File(...),
+    files: List[UploadFile] = File(...),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Upload d'un dataset d'images (ZIP) — dossiers de classes
-    (classification) ou structure MVTec AD (train/good + test/good +
-    test/<defaut>), détectée automatiquement et validée strictement (jamais
-    devinée en silence — correctif du bug #1,
-    docs/legacy/ANALYSE_COMPLETE_COMPUTER_VISION.md)."""
-    try:
-        validate_zip_extension(file.filename or "")
-    except UnsupportedFileType as exc:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"code": "VISION_DATASET_FORMAT_NON_SUPPORTE", "message": str(exc)},
-        )
+    """Upload d'un dataset d'images — dossiers de classes (classification)
+    ou structure MVTec AD (train/good + test/good + test/<defaut>),
+    détectée automatiquement et validée strictement (jamais devinée en
+    silence — correctif du bug #1,
+    docs/legacy/ANALYSE_COMPLETE_COMPUTER_VISION.md).
 
-    content = await file.read()
-    if len(content) == 0:
+    Deux formes (Lot 6A) : un SEUL fichier archive (`.zip`/`.tar`/
+    `.tar.gz`/`.tgz`, sniffée par contenu réel, jamais par extension
+    déclarée — voir `services/vision_datasets.py::_extract_archive_members`)
+    ou PLUSIEURS fichiers représentant un dossier déjà déplié (chaque
+    `UploadFile.filename` porte son chemin relatif complet, envoyé par le
+    frontend via `webkitRelativePath` — voir `VisionDatasets.tsx`)."""
+    is_folder_upload = len(files) > 1
+    if not is_folder_upload:
+        try:
+            validate_archive_extension(files[0].filename or "")
+        except UnsupportedFileType as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"code": "VISION_DATASET_FORMAT_NON_SUPPORTE", "message": str(exc)},
+            )
+
+    read_files: list[tuple[str, bytes]] = [(f.filename or "", await f.read()) for f in files]
+    total_size = sum(len(content) for _, content in read_files)
+    if total_size == 0:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={"code": "VISION_DATASET_FICHIER_VIDE", "message": "L'archive est vide"},
         )
-    if len(content) > _MAX_UPLOAD_BYTES:
+    if total_size > _MAX_UPLOAD_BYTES:
         raise HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
             detail={
@@ -156,10 +194,13 @@ async def upload_vision_dataset(
             },
         )
 
+    dataset_name = _derive_folder_dataset_name([f for f, _ in read_files]) if is_folder_upload else (
+        read_files[0][0] or "dataset"
+    )
     dataset = VisionDataset(
         organization_id=current_user.organization_id,
         uploaded_by_id=current_user.id,
-        name=file.filename or "dataset.zip",
+        name=dataset_name,
         structure_type="",
         storage_dir="",
         status="processing",
@@ -171,12 +212,20 @@ async def upload_vision_dataset(
     dataset.storage_dir = str(target_dir)
 
     try:
-        report = analyze_and_extract_vision_zip(
-            content,
-            target_dir,
-            max_images=_settings.max_vision_dataset_images,
-            max_uncompressed_bytes=_MAX_UPLOAD_BYTES * 4,
-        )
+        if is_folder_upload:
+            report = analyze_and_extract_vision_folder(
+                read_files,
+                target_dir,
+                max_images=_settings.max_vision_dataset_images,
+                max_uncompressed_bytes=_MAX_UPLOAD_BYTES * 4,
+            )
+        else:
+            report = analyze_and_extract_vision_archive(
+                read_files[0][1],
+                target_dir,
+                max_images=_settings.max_vision_dataset_images,
+                max_uncompressed_bytes=_MAX_UPLOAD_BYTES * 4,
+            )
         dataset.structure_type = report.structure_type
         dataset.n_images = report.n_images
         dataset.n_classes = report.n_classes
@@ -202,7 +251,7 @@ async def upload_vision_dataset(
     except VisionDatasetError as exc:
         dataset.status = "error"
         dataset.error_message = str(exc)
-        logger.warning("[VisionDatasets] Échec de validation pour %s : %s", file.filename, exc)
+        logger.warning("[VisionDatasets] Échec de validation pour %s : %s", dataset_name, exc)
 
     db.commit()
     db.refresh(dataset)

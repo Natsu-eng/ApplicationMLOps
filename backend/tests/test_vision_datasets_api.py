@@ -46,7 +46,7 @@ def _classification_zip_bytes(n_per_class=4, n_classes=2) -> bytes:
 
 def _upload_vision_dataset(client, headers, content: bytes, name="dataset.zip"):
     return client.post(
-        "/api/vision/datasets", headers=headers, files={"file": (name, io.BytesIO(content), "application/zip")}
+        "/api/vision/datasets", headers=headers, files={"files": (name, io.BytesIO(content), "application/zip")}
     )
 
 
@@ -78,19 +78,62 @@ def test_upload_blocked_after_too_many_attempts(client):
     assert blocked.json()["detail"]["code"] == "TROP_DE_REQUETES"
 
 
-def test_upload_rejects_non_zip_extension(client):
+def test_upload_rejects_unsupported_extension(client):
+    """Lot 6A — un seul fichier dont l'extension n'est ni .zip/.tar/
+    .tar.gz/.tgz est rejeté avant même la lecture du contenu (vérification
+    rapide côté nom de fichier, voir validate_archive_extension). Plus
+    d'un fichier bascule automatiquement sur le chemin "import de dossier"
+    (VISION_DATASET_FORMAT_NON_SUPPORTE ne s'applique qu'à ce cas précis :
+    un seul fichier, extension inconnue)."""
     headers = _register(client)
     resp = client.post(
-        "/api/vision/datasets", headers=headers, files={"file": ("dataset.png", io.BytesIO(b"x"), "image/png")}
+        "/api/vision/datasets", headers=headers, files={"files": ("dataset.png", io.BytesIO(b"x"), "image/png")}
     )
     assert resp.status_code == 400
     assert resp.json()["detail"]["code"] == "VISION_DATASET_FORMAT_NON_SUPPORTE"
 
 
+def test_upload_of_a_tar_gz_archive_is_accepted(client):
+    """Lot 6A — le téléchargement officiel MVTec AD est distribué en
+    .tar.xz (jamais .zip) : le format doit être accepté, pas seulement
+    toléré en façade (voir services/vision_datasets.py::_extract_tar_members)."""
+    import tarfile
+
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tf:
+        for c in range(2):
+            for i in range(4):
+                content = _png_bytes([(255, 0, 0), (0, 255, 0)][c], variant=i + 1)
+                info = tarfile.TarInfo(name=f"classe_{c}/img_{i}.png")
+                info.size = len(content)
+                tf.addfile(info, io.BytesIO(content))
+    resp = client.post(
+        "/api/vision/datasets", headers=_register(client),
+        files={"files": ("dataset.tar.gz", io.BytesIO(buf.getvalue()), "application/gzip")},
+    )
+    assert resp.status_code == 201
+    assert resp.json()["status"] == "ready"
+
+
+def test_upload_of_a_folder_multiple_files_is_accepted(client):
+    """Lot 6A — plusieurs fichiers sous le même champ "files" (pas
+    d'archive à ouvrir), chaque nom de fichier porte son chemin relatif
+    complet (webkitRelativePath côté navigateur)."""
+    files = [
+        ("files", (f"mon_dataset/classe_{c}/img_{i}.png", io.BytesIO(_png_bytes([(255, 0, 0), (0, 255, 0)][c], variant=i + 1)), "image/png"))
+        for c in range(2) for i in range(4)
+    ]
+    resp = client.post("/api/vision/datasets", headers=_register(client), files=files)
+    assert resp.status_code == 201
+    body = resp.json()
+    assert body["status"] == "ready"
+    assert body["name"] == "mon_dataset"
+
+
 def test_upload_rejects_empty_archive(client):
     headers = _register(client)
     resp = client.post(
-        "/api/vision/datasets", headers=headers, files={"file": ("dataset.zip", io.BytesIO(b""), "application/zip")}
+        "/api/vision/datasets", headers=headers, files={"files": ("dataset.zip", io.BytesIO(b""), "application/zip")}
     )
     assert resp.status_code == 400
     assert resp.json()["detail"]["code"] == "VISION_DATASET_FICHIER_VIDE"
@@ -135,6 +178,37 @@ def test_delete_dataset_removes_it_and_its_files(client):
     resp = client.delete(f"/api/vision/datasets/{dataset['id']}", headers=headers)
     assert resp.status_code == 204
     assert client.get(f"/api/vision/datasets/{dataset['id']}", headers=headers).status_code == 404
+
+
+def test_get_dataset_detail_includes_augmentation_recommendation(client):
+    """Lot 6A (correctif I9) — fondée sur la classe la plus petite (8 < 20
+    ici) : "forte" attendu (voir services/vision_classification_training.py
+    ::recommend_augmentation_preset)."""
+    headers = _register(client)
+    dataset = _upload_vision_dataset(client, headers, _classification_zip_bytes(n_per_class=8)).json()
+
+    resp = client.get(f"/api/vision/datasets/{dataset['id']}", headers=headers)
+    assert resp.json()["recommended_augmentation_preset"] == "forte"
+
+
+def test_augmentation_recommendation_absent_for_mvtec_dataset(client):
+    """Sans objet pour un dataset "mvtec_ad" — l'augmentation d'images ne
+    concerne que l'entraînement de classification."""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        for i in range(12):
+            zf.writestr(f"train/good/{i}.png", _png_bytes((120, 120, 120), variant=i + 1))
+        for i in range(3):
+            zf.writestr(f"test/good/{i}.png", _png_bytes((120, 120, 120), variant=1000 + i))
+        for i in range(3):
+            zf.writestr(f"test/scratch/{i}.png", _png_bytes((220, 20, 20), variant=2000 + i))
+
+    headers = _register(client)
+    dataset = _upload_vision_dataset(client, headers, buf.getvalue()).json()
+
+    resp = client.get(f"/api/vision/datasets/{dataset['id']}", headers=headers)
+    assert resp.json()["structure_type"] == "mvtec_ad"
+    assert resp.json()["recommended_augmentation_preset"] is None
 
 
 def test_get_dataset_detail_includes_validation_report(client):

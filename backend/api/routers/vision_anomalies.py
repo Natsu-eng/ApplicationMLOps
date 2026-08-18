@@ -1,4 +1,4 @@
-"""Router détection d'anomalies visuelles MVTec AD — pilier Vision, Lot 15
+"""Router détection d'anomalies visuelles (structure normal/défaut) — pilier Vision, Lot 15
 sous-lot C.
 
 Mêmes principes que `api/routers/vision_classification.py` : isolation
@@ -187,7 +187,7 @@ def create_vision_anomaly_job(
             status_code=status.HTTP_409_CONFLICT,
             detail={
                 "code": "VISION_DATASET_STRUCTURE_INVALIDE",
-                "message": "Ce dataset n'a pas une structure MVTec AD (train/good + test/good + test/<defaut>)",
+                "message": "Ce dataset n'a pas une structure normal/défaut (train/good + test/good + test/<defaut>)",
             },
         )
 
