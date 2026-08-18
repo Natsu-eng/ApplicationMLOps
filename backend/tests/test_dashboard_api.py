@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 def _register(client, email="owner@bureau.fr", org="Bureau"):
     resp = client.post(
-        "/auth/register",
+        "/api/auth/register",
         json={"email": email, "nom": "Owner", "password": "motdepasse123", "organization_name": org},
     ).json()
     return {"Authorization": f"Bearer {resp['access_token']}"}
@@ -17,13 +17,13 @@ def _register(client, email="owner@bureau.fr", org="Bureau"):
 
 def _upload_dataset(client, headers, name="d.csv"):
     content = b"x1,x2,cible\n" + b"\n".join(f"{i},{i * 2},{i % 2}".encode() for i in range(20))
-    resp = client.post("/datasets", headers=headers, files={"file": (name, io.BytesIO(content), "text/csv")})
+    resp = client.post("/api/datasets", headers=headers, files={"file": (name, io.BytesIO(content), "text/csv")})
     return resp.json()
 
 
 def test_summary_reflects_empty_organization(client):
     headers = _register(client)
-    resp = client.get("/dashboard/summary", headers=headers)
+    resp = client.get("/api/dashboard/summary", headers=headers)
     assert resp.status_code == 200
     body = resp.json()
     assert body["members_count"] == 1  # le owner lui-même
@@ -41,7 +41,7 @@ def test_summary_counts_datasets_and_recent_list(client):
     for i in range(3):
         _upload_dataset(client, headers, name=f"d{i}.csv")
 
-    body = client.get("/dashboard/summary", headers=headers).json()
+    body = client.get("/api/dashboard/summary", headers=headers).json()
     assert body["datasets_count"] == 3
     assert len(body["recent_datasets"]) == 3
     # Le plus récent en tête (created_at desc), même ordre que GET /datasets.
@@ -54,18 +54,18 @@ def test_summary_counts_jobs_per_pillar(client):
 
     with patch("api.routers.training.training_queue") as mock_queue:
         mock_queue.enqueue.return_value.id = "fake-rq-id"
-        client.post("/training/jobs", headers=headers, json={"dataset_id": dataset["id"], "target_column": "cible"})
+        client.post("/api/training/jobs", headers=headers, json={"dataset_id": dataset["id"], "target_column": "cible"})
 
     with patch("api.routers.clustering.analysis_queue") as mock_queue:
         mock_queue.enqueue.return_value.id = "fake-rq-id"
         client.post(
-            "/clustering/jobs", headers=headers, json={"dataset_id": dataset["id"], "feature_columns": ["x1", "x2"]}
+            "/api/clustering/jobs", headers=headers, json={"dataset_id": dataset["id"], "feature_columns": ["x1", "x2"]}
         )
         client.post(
-            "/clustering/jobs", headers=headers, json={"dataset_id": dataset["id"], "feature_columns": ["x1", "x2"]}
+            "/api/clustering/jobs", headers=headers, json={"dataset_id": dataset["id"], "feature_columns": ["x1", "x2"]}
         )
 
-    body = client.get("/dashboard/summary", headers=headers).json()
+    body = client.get("/api/dashboard/summary", headers=headers).json()
     assert body["supervised_count"] == 1
     assert body["unsupervised_count"] == 2  # clustering seul ici, mais compté dans le total non supervisé
     assert body["vision_count"] == 0
@@ -80,7 +80,7 @@ def test_summary_isolated_between_organizations(client):
 
     headers_b = _register(client, "b@bureau-b.fr", "Bureau B")
 
-    body_b = client.get("/dashboard/summary", headers=headers_b).json()
+    body_b = client.get("/api/dashboard/summary", headers=headers_b).json()
     assert body_b["datasets_count"] == 0
     assert body_b["recent_datasets"] == []
     assert body_b["members_count"] == 1  # uniquement le owner de B, jamais celui de A
@@ -93,8 +93,8 @@ def test_summary_recent_supervised_matches_list_training_jobs_shape(client):
     dataset = _upload_dataset(client, headers)
     with patch("api.routers.training.training_queue") as mock_queue:
         mock_queue.enqueue.return_value.id = "fake-rq-id"
-        client.post("/training/jobs", headers=headers, json={"dataset_id": dataset["id"], "target_column": "cible"})
+        client.post("/api/training/jobs", headers=headers, json={"dataset_id": dataset["id"], "target_column": "cible"})
 
-    from_list = client.get("/training/jobs", headers=headers).json()[0]
-    from_summary = client.get("/dashboard/summary", headers=headers).json()["recent_supervised"][0]
+    from_list = client.get("/api/training/jobs", headers=headers).json()[0]
+    from_summary = client.get("/api/dashboard/summary", headers=headers).json()["recent_supervised"][0]
     assert from_list == from_summary
