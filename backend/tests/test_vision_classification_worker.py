@@ -121,7 +121,7 @@ def test_worker_rejects_mvtec_dataset(db_session, tmp_path):
     db_session.expire_all()
     refreshed = db_session.query(VisionClassificationJob).filter(VisionClassificationJob.id == job.id).first()
     assert refreshed.status == "failed"
-    assert "MVTec" in refreshed.error_message
+    assert "normal/défaut" in refreshed.error_message
 
 
 def test_worker_never_leaks_raw_traceback_on_failure(db_session, tmp_path, monkeypatch):

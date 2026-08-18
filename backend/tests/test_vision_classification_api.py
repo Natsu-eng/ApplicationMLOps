@@ -103,7 +103,7 @@ def test_create_job_defaults_to_standard_augmentation(client, db_session):
 
     headers = _register(client)
     dataset = _upload_vision_dataset(client, headers)
-    with patch("api.routers.vision_classification.training_queue") as mock_queue:
+    with patch("api.routers.vision_classification.vision_queue") as mock_queue:
         mock_queue.enqueue.return_value.id = "fake-rq-id"
         job_id = client.post(
             "/api/vision/classification/jobs", headers=headers,

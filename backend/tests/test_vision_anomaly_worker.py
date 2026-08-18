@@ -135,7 +135,7 @@ def test_worker_rejects_classification_dataset(db_session, tmp_path):
     db_session.expire_all()
     refreshed = db_session.query(VisionAnomalyJob).filter(VisionAnomalyJob.id == job.id).first()
     assert refreshed.status == "failed"
-    assert "MVTec" in refreshed.error_message
+    assert "structure normal/défaut" in refreshed.error_message
 
 
 def test_worker_never_leaks_raw_traceback_on_failure(db_session, tmp_path, monkeypatch):
