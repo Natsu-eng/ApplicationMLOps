@@ -33,6 +33,7 @@ from services.ml_inference import InferenceError, load_bundle, predict_one
 from services.prediction_retention import purge_old_predictions
 from services.ml_registry import MODEL_REGISTRY
 from services.duration_estimate import estimate_training_duration
+from services.job_lifecycle import ACTIVE_STATUSES, CANCELLED_MESSAGE, try_cancel_rq_job
 from services.ml_task import detect_task_type
 from services.ml_training import selection_metric_label
 from services.model_verdict import compute_verdict
@@ -1170,6 +1171,30 @@ def list_job_predictions(
     return PredictionHistoryResponse(entries=entries)
 
 
+@router.post("/jobs/{job_id}/cancel", response_model=TrainingJobSummary)
+def cancel_training_job(job_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Annule un entraînement en attente ou en cours (Lot 7, §J.2) —
+    contrairement à `DELETE /jobs/{id}`, garde une trace consultable
+    (`status="cancelled"`) plutôt que de supprimer le job."""
+    job = _get_org_job(job_id, current_user, db)
+    if job.status not in ACTIVE_STATUSES:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"code": "JOB_NON_ANNULABLE", "message": "Cet entraînement n'est plus en attente ni en cours"},
+        )
+    try_cancel_rq_job(job.rq_job_id, training_queue)
+    job.status = "cancelled"
+    job.error_message = CANCELLED_MESSAGE
+    job.finished_at = datetime.now(timezone.utc)
+    log_action(
+        db, current_user.organization_id, current_user.id, "training_job.cancelled",
+        target_type="training_job", target_id=job.id, details={"target_column": job.target_column},
+    )
+    db.commit()
+    db.refresh(job)
+    return _to_summary(job)
+
+
 @router.delete("/jobs/{job_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_training_job(job_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     """Supprime un entraînement (et le modèle associé, s'il existe).
@@ -1182,15 +1207,8 @@ def delete_training_job(job_id: int, current_user: User = Depends(get_current_us
     """
     job = _get_org_job(job_id, current_user, db)
 
-    if job.status in ("queued", "running") and job.rq_job_id:
-        try:
-            from rq.job import Job as RQJob
-
-            rq_job = RQJob.fetch(job.rq_job_id, connection=training_queue.connection)
-            rq_job.cancel()
-            rq_job.delete()
-        except Exception:
-            pass  # best-effort — la suppression en base reste sûre dans tous les cas
+    if job.status in ACTIVE_STATUSES:
+        try_cancel_rq_job(job.rq_job_id, training_queue)
 
     if job.model:
         # Supprimé explicitement ici (pas seulement via le ON DELETE CASCADE

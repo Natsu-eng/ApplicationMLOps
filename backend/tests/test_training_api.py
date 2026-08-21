@@ -155,6 +155,56 @@ def test_delete_rejects_cross_organization(mock_queue, client):
 
     resp = client.delete(f"/api/training/jobs/{job['id']}", headers=headers_b)
     assert resp.status_code == 404
+
+
+# ── Lot 7, §J.2 — annulation (garde une trace, contrairement à la suppression) ─
+
+
+@patch("api.routers.training.training_queue")
+def test_cancel_queued_job_marks_it_cancelled_and_keeps_history(mock_queue, client):
+    mock_queue.enqueue.return_value.id = "fake-rq-id"
+    headers = _register(client)
+    dataset = _upload_dataset(client, headers)
+    job = client.post(
+        "/api/training/jobs", headers=headers, json={"dataset_id": dataset["id"], "target_column": "cible"}
+    ).json()
+
+    resp = client.post(f"/api/training/jobs/{job['id']}/cancel", headers=headers)
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "cancelled"
+    assert client.get(f"/api/training/jobs/{job['id']}", headers=headers).json()["status"] == "cancelled"
+
+
+@patch("api.routers.training.training_queue")
+def test_cancel_rejects_already_completed_job(mock_queue, client, db_session):
+    mock_queue.enqueue.return_value.id = "fake-rq-id"
+    headers = _register(client)
+    dataset = _upload_dataset(client, headers)
+    job_id = client.post(
+        "/api/training/jobs", headers=headers, json={"dataset_id": dataset["id"], "target_column": "cible"}
+    ).json()["id"]
+
+    job = db_session.query(TrainingJob).filter(TrainingJob.id == job_id).first()
+    job.status = "completed"
+    db_session.commit()
+
+    resp = client.post(f"/api/training/jobs/{job_id}/cancel", headers=headers)
+    assert resp.status_code == 409
+    assert resp.json()["detail"]["code"] == "JOB_NON_ANNULABLE"
+
+
+@patch("api.routers.training.training_queue")
+def test_cancel_404_for_other_organization(mock_queue, client):
+    mock_queue.enqueue.return_value.id = "fake-rq-id"
+    headers_a = _register(client, "a@bureau-a.fr", "Bureau A")
+    headers_b = _register(client, "b@bureau-b.fr", "Bureau B")
+    dataset = _upload_dataset(client, headers_a)
+    job = client.post(
+        "/api/training/jobs", headers=headers_a, json={"dataset_id": dataset["id"], "target_column": "cible"}
+    ).json()
+
+    resp = client.post(f"/api/training/jobs/{job['id']}/cancel", headers=headers_b)
+    assert resp.status_code == 404
     # toujours là côté organisation A — la tentative de B n'a rien supprimé
     assert client.get(f"/api/training/jobs/{job['id']}", headers=headers_a).status_code == 200
 
