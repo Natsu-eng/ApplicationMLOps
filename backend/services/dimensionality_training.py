@@ -129,6 +129,18 @@ def train_and_evaluate_dimensionality(
         variance_ratio.append(0.0)
 
     feature_names = list(preprocessor.get_feature_names_out())
+
+    # Transparence catégorielle (Lot 6B, §F.2) — un one-hot sur une colonne à
+    # forte cardinalité peut dominer les distances calculées par la
+    # projection sans que l'utilisateur en soit informé. `build_preprocessor`
+    # nomme toujours ses transformateurs "num"/"cat" (appelé ici sans
+    # `feature_engineering_config`, seule la branche simple s'applique — voir
+    # `services/ml_preprocessing.py::build_preprocessor`), donc chaque colonne
+    # encodée en one-hot produit un ou plusieurs noms préfixés "cat__".
+    categorical_columns = [c for c in X_used.columns if not pd.api.types.is_numeric_dtype(X_used[c])]
+    numeric_columns = [c for c in X_used.columns if c not in categorical_columns]
+    n_categorical_dimensions = sum(1 for f in feature_names if f.startswith("cat__"))
+
     components = pca.components_
     loadings: list[LoadingResult] = []
     for i, feature in enumerate(feature_names):
@@ -170,6 +182,10 @@ def train_and_evaluate_dimensionality(
         "trustworthiness_primary": trust_primary,
         "trustworthiness_pca": trust_pca,
         "seed": config.seed,
+        "categorical_columns": categorical_columns,
+        "numeric_columns": numeric_columns,
+        "n_dimensions_after_encoding": len(feature_names),
+        "n_categorical_dimensions": n_categorical_dimensions,
     }
 
     return DimensionalityResult(

@@ -138,3 +138,26 @@ def test_single_exploitable_column_degrades_gracefully_instead_of_crashing():
     with pytest.raises(TrainingAbortedError):
         # Une seule colonne = < 2 variables exploitables, dégradation propre attendue.
         train_and_evaluate_dimensionality(df, DimensionalityConfig(seed=42), _NOOP)
+
+
+# ── Lot 6B, §F.2 : transparence catégorielle ────────────────────────────────
+
+
+def test_categorical_columns_reported_with_encoded_dimension_count():
+    """Une colonne catégorielle à 3 modalités doit être signalée comme telle
+    et son one-hot doit produire exactement 3 dimensions supplémentaires —
+    jusqu'ici cette information n'était pas exposée (Lot 6B, §F.2)."""
+    df = _make_two_blobs_df()
+    df["categorie"] = np.tile(["A", "B", "C"], len(df) // 3 + 1)[: len(df)]
+    result = train_and_evaluate_dimensionality(df, DimensionalityConfig(algorithm_id="pca", seed=42), _NOOP)
+    assert result.model_card["categorical_columns"] == ["categorie"]
+    assert set(result.model_card["numeric_columns"]) == {"signal", "noise"}
+    assert result.model_card["n_categorical_dimensions"] == 3
+    assert result.model_card["n_dimensions_after_encoding"] == 2 + 3
+
+
+def test_no_categorical_dimensions_when_dataset_is_purely_numeric():
+    df = _make_two_blobs_df()
+    result = train_and_evaluate_dimensionality(df, DimensionalityConfig(algorithm_id="pca", seed=42), _NOOP)
+    assert result.model_card["categorical_columns"] == []
+    assert result.model_card["n_categorical_dimensions"] == 0

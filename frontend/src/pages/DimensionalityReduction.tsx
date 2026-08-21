@@ -34,6 +34,9 @@ import { Table, type TableColumn } from "../components/ui/Table";
 import { useConfirmAction } from "../hooks/useConfirmAction";
 import { CHART_GRID_STROKE, CHART_SERIES_COLORS, CHART_TICK_STYLE, CHART_TOOLTIP_STYLE } from "../theme/charts";
 import { binIndexForValue, computeQuantileEdges, formatBinLabel } from "../utils/quantileBins";
+import { DataQualityWarnings } from "../components/training/DataQualityWarnings";
+import { assessTrustworthinessQuality } from "../utils/dimensionalityQuality";
+import { QUALITY_TONE_ACCENT } from "../utils/qualityAssessment";
 
 const ACTIVE_STATUSES = new Set(["queued", "running"]);
 const POLL_INTERVAL_MS = 3000;
@@ -302,6 +305,17 @@ function DimensionalityForm({
     });
   }
 
+  // Toujours une exclusion, jamais un simple toggle (voir
+  // DataQualityWarnings.tsx) — approuver une suggestion du contrôle qualité
+  // doit exclure la colonne, jamais la réintégrer si déjà exclue.
+  function excludeFeatures(names: string[]) {
+    setSelectedFeatures((prev) => {
+      const next = new Set(prev);
+      names.forEach((n) => next.delete(n));
+      return next;
+    });
+  }
+
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
     if (!datasetId || selectedFeatures.size === 0) return;
@@ -402,6 +416,17 @@ function DimensionalityForm({
           </div>
         )}
 
+        {datasetId && (
+          <div>
+            <p className="block text-sm text-muted-foreground mb-1.5">Qualité des données</p>
+            <DataQualityWarnings
+              datasetId={datasetId}
+              selectedFeatures={selectedFeatures}
+              onExcludeColumns={excludeFeatures}
+            />
+          </div>
+        )}
+
         {error && (
           <div className="flex items-center gap-2 text-sm text-destructive bg-destructive/10 border border-destructive/20 rounded-lg px-3 py-2">
             <AlertCircle size={15} className="flex-shrink-0" />
@@ -498,6 +523,7 @@ function DimensionalityResultView({ jobId }: { jobId: number }) {
   if (!result) return <p className="text-sm text-muted-foreground text-center">Chargement…</p>;
 
   const series = buildSeries(points, colorByData);
+  const quality = assessTrustworthinessQuality(result.trustworthiness_primary);
 
   return (
     <div className="max-w-4xl mx-auto space-y-5">
@@ -514,6 +540,14 @@ function DimensionalityResultView({ jobId }: { jobId: number }) {
           )}
           <MetricTile label="Conservation des voisinages" value={result.trustworthiness_primary.toFixed(3)} color="teal" />
         </div>
+        <div className={`rounded-xl border p-3 mt-4 ${accentSurfaceClass(QUALITY_TONE_ACCENT[quality.tone])}`}>
+          <span
+            className={`inline-flex items-center text-overline px-2 py-0.5 rounded-full bg-card/80 ${accentValueTextClass(QUALITY_TONE_ACCENT[quality.tone])}`}
+          >
+            {quality.label}
+          </span>
+          <p className="text-xs text-foreground/70 mt-1.5">{quality.caveat}</p>
+        </div>
         {result.algorithm_id !== "pca" && (
           <p className={`text-xs mt-3 rounded-lg border px-3 py-2 ${accentSurfaceClass("violet")}`}>
             <span className={`font-medium ${accentValueTextClass("violet")}`}>Référence PCA</span>
@@ -529,6 +563,17 @@ function DimensionalityResultView({ jobId }: { jobId: number }) {
           <p className="text-xs text-muted-foreground mt-3">
             Calculé sur un échantillon de {result.n_samples_used} observations sur {result.n_samples_total} au total
             (dataset volumineux — échantillonnage déterministe, reproductible).
+          </p>
+        )}
+        {Array.isArray(result.model_card.categorical_columns) && result.model_card.categorical_columns.length > 0 && (
+          <p className="text-xs text-muted-foreground mt-3">
+            {result.model_card.categorical_columns.length} variable
+            {result.model_card.categorical_columns.length > 1 ? "s" : ""} catégorielle
+            {result.model_card.categorical_columns.length > 1 ? "s" : ""} encodée
+            {result.model_card.categorical_columns.length > 1 ? "s" : ""} en {String(result.model_card.n_categorical_dimensions)}{" "}
+            dimension{Number(result.model_card.n_categorical_dimensions) > 1 ? "s" : ""} (sur{" "}
+            {String(result.model_card.n_dimensions_after_encoding)} au total) avant projection — une variable à
+            beaucoup de valeurs distinctes peut peser plus lourd dans les distances calculées.
           </p>
         )}
       </Card>
