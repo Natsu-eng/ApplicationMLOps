@@ -2019,3 +2019,148 @@ elle-même (métriques non comparables entre piliers).
 **Vérifié** : tests unitaires dédiés pour chaque nouvelle fonction
 d'évaluation (`assessStabilityQuality`, `assessTrustworthinessQuality`,
 `assessConsensusQuality`), suite Vitest complète verte (53/53).
+
+## Lot 7 — Produit et parcours (§J.1, §J.2, §J.3, P5-P9, I11/I12/I14)
+
+### D7.1 — Avertissement de suppression en cascade : décompte chiffré, pas un texte générique
+
+**Constat** : les 4 tables de job (`TrainingJob`/`ClusterModel` via
+`ClusteringJob`/`DimensionalityJob`/`AnomalyJob`) référencent déjà
+`datasets.id` en `ON DELETE CASCADE` — la suppression était déjà SÛRE côté
+base, seul l'utilisateur n'était jamais informé de son ampleur avant de
+confirmer (confirmation générique à deux clics, `useConfirmAction`).
+**Retenu** : nouvel endpoint `GET /datasets/{id}/usage` (décompte par type
+de job, lecture seule) — appelé côté frontend UNIQUEMENT à l'armement de la
+confirmation (premier clic sur "Supprimer"), pas au montage de chaque carte
+(éviterait une requête par dataset affiché pour une info consultée
+seulement en cas de suppression réelle). Le message n'apparaît que si
+`total > 0`.
+**Vérifié** : décompte exact multi-types testé (entraînement + clustering
+sur le même dataset), isolation multi-tenant testée, dataset neuf → décompte
+nul.
+
+### D7.2 — Estimation de durée avant lancement : dérivée de l'historique réel, jamais une constante inventée
+
+**Question** : comment estimer une durée d'entraînement sans donnée de
+calibration existante, sachant que le principe du produit interdit tout
+chiffre inventé (skill senior-ai-saas-engineer, data-science.md) ?
+**Écarté** : une formule à coefficients fixes (ex. "X secondes par ligne")
+— ce serait exactement le genre de statistique inventée que le reste du
+produit refuse systématiquement (SHAP, profils de clusters...).
+**Retenu** : `services/duration_estimate.py` calcule un taux
+(durée / (lignes × modèles × essais Optuna × folds)) sur les
+entraînements RÉELLEMENT terminés de l'organisation (`TrainingJob.started_at`/
+`finished_at`, 50 plus récents), médiane des taux (pas la moyenne — un seul
+entraînement anormalement long ne doit pas décaler l'estimation), appliqué
+aux paramètres du nouveau job. Dégradation honnête (`status: "degraded"`)
+en dessous de `MIN_COMPLETED_JOBS_FOR_ESTIMATE = 3` — pas d'organisation
+"type" pour combler l'absence d'historique. Affiché uniquement à l'étape
+récapitulative de `Training.tsx`, jamais comme une garantie ("repère
+indicatif").
+**Vérifié** : dégradation honnête sans historique et sous le seuil minimal ;
+proportionnalité vérifiée explicitement (doubler `n_models` double
+l'estimation, sur le même taux historique) ; un job sans `row_count` connu
+ne fausse jamais le taux (ignoré, pas une division par zéro).
+
+### D7.3 — Mémoire du dernier pilier : un raccourci "Reprendre", jamais une redirection automatique
+
+**Question** : "revenir sur `/` force aujourd'hui à rechoisir" — fallait-il
+rediriger automatiquement vers le dernier pilier utilisé ?
+**Écarté** : redirection automatique — l'écran d'orientation (`Orientation.tsx`)
+a pour fonction explicite de faire choisir un OBJECTIF à chaque visite
+(voir son propre commentaire de tête) ; une redirection systématique
+retirerait ce choix plutôt que de l'assister, et surprendrait un
+utilisateur qui revient volontairement sur `/` pour changer d'objectif.
+**Retenu** : `frontend/src/utils/lastPillar.ts` (localStorage, dégrade
+silencieusement si indisponible) — `AppShell` enregistre le pilier courant
+à chaque page qui en a un ; `Orientation.tsx` affiche un lien "Reprendre « nom du pilier »" au-dessus
+de la grille des 3 cartes, TOUJOURS visibles, jamais masquées.
+
+### D7.4 — `n_models` par défaut de l'estimation de durée fixé à 4, vérifié dans le registre (pas une supposition)
+
+**Constat** : `services/ml_registry.py::MODEL_REGISTRY` a exactement 4
+entrées `is_default=True` ("stratégie produit B — boosters + RandomForest",
+commentaire déjà présent dans le registre). La valeur par défaut du
+paramètre `n_models` de `GET /training/estimate-duration` (et l'appel
+frontend en mode guidé) est donc `4`, vérifiée par lecture directe du
+registre — pas une estimation approximative du nombre de modèles comparés
+par défaut.
+
+### D7.5 — Annulation de job : un statut `"cancelled"` distinct, jamais confondu avec `"failed"` ni avec une suppression
+
+**Question** : les 6 types de job (`TrainingJob`/`ClusteringJob`/
+`DimensionalityJob`/`AnomalyJob`/`VisionClassificationJob`/`VisionAnomalyJob`)
+n'avaient qu'un `DELETE /jobs/{id}` (annule le job RQ best-effort PUIS
+supprime la ligne) — aucun moyen de stopper un job sans perdre toute trace
+qu'il a existé.
+**Retenu** : `POST /jobs/{id}/cancel` sur les 6 routers — statut
+`"cancelled"` (nouvelle valeur, colonne déjà `String` libre, aucune
+migration nécessaire), `error_message = "Annulé par l'utilisateur."`,
+`finished_at` renseigné. Rejette avec 409 (`JOB_NON_ANNULABLE`) si le job
+n'est plus `queued`/`running`. Le job reste consultable dans l'historique
+— `DELETE` reste inchangé, distinct, pour qui veut réellement l'effacer.
+**Retenu aussi** : extraction de `services/job_lifecycle.py`
+(`try_cancel_rq_job`, `ACTIVE_STATUSES`, `CANCELLED_MESSAGE`) — la logique
+d'annulation RQ best-effort était déjà dupliquée à l'identique dans les 6
+`DELETE`, ce lot l'aurait sinon fait passer à 12 exemplaires. Extraction
+justifiée par CE lot (sert directement le nouvel endpoint), pas un
+refactoring opportuniste hors périmètre — les 6 `DELETE` existants
+réutilisent la même fonction au passage plutôt que de garder l'ancien code
+dupliqué à côté du nouveau.
+**Retenu aussi (frontend)** : `"cancelled"` devient sa propre `Phase`
+distincte de `"failed"` sur les 6 pages de job — un rendu neutre (icône
+`Ban`, tons `muted`) remplace le rendu rouge `AlertCircle`/`destructive`
+utilisé pour un vrai échec, pour qu'une annulation délibérée par
+l'utilisateur ne se lise jamais comme si quelque chose s'était mal passé.
+Bouton "Annuler" ajouté sur chaque carte de progression (clic simple, pas
+de confirmation à deux clics — contrairement à la suppression, annuler
+laisse une trace consultable, donc moins destructif).
+**Vérifié** : 113 tests backend (annulation réussie + statut conservé en
+historique, rejet 409 sur job déjà terminé, isolation multi-tenant) sur
+les 6 routers ; `tsc -b`/`eslint`/vitest (58/58)/`vite build` verts côté
+frontend.
+
+### D7.6 — Relance depuis une configuration existante : reconstruction du corps de création + appel direct de la fonction existante, jamais une copie de sa validation
+
+**Question** : "le geste le plus fréquent en pratique, impossible aujourd'hui — l'utilisateur ressaisit tout." Comment l'implémenter sans dupliquer (et risquer de faire diverger) la validation déjà écrite dans chaque `POST /jobs` ?
+**Retenu** : `POST /jobs/{id}/rerun` sur les 6 routers — lit `config_json`
+(+ les colonnes dédiées : `feature_columns_json`, `target_column`,
+`group_column`, `task_type`, `feature_engineering_json` pour le
+supervisé), reconstruit le Pydantic `*JobCreate` d'origine, puis appelle
+DIRECTEMENT la fonction Python `create_*_job(body, current_user, db)` —
+jamais une requête HTTP interne, jamais une réécriture partielle de sa
+validation (dataset toujours prêt, colonnes toujours présentes, quota
+non dépassé...). Un job relancé traverse exactement le même chemin
+qu'un job créé à la main, donc ne peut jamais diverger avec le temps.
+**Deux stratégies de reconstruction selon la forme du `config_json`
+existant** :
+- Vision (classification/anomalies) : `config_json` reprend déjà TOUS
+  les champs de son `*JobCreate` à l'identique (vérifié champ par champ
+  contre le schéma avant de choisir cette voie) → dépaquetage direct
+  (`VisionClassificationJobCreate(vision_dataset_id=job.vision_dataset_id, **config)`),
+  aucune reconstruction manuelle.
+- Supervisé/clustering/réduction de dimension/anomalies : `config_json`
+  ne contient qu'un SOUS-ENSEMBLE des champs (le reste vit dans des
+  colonnes dédiées, ex. `feature_columns_json`) → reconstruction
+  explicite champ par champ, jamais un dépaquetage aveugle qui
+  échouerait silencieusement ou lèverait une erreur Pydantic peu claire
+  sur un champ inconnu.
+**Cas particulier anomalies** : `config_json["contamination"]` vaut soit
+`"auto"` (chaîne) soit une fraction (nombre) — reconstruit vers `None`
+(réglage automatique) dans le premier cas, jamais passé tel quel à
+`AnomalyJobCreate.contamination: Optional[float]` qui rejetterait une
+chaîne.
+**Piège rencontré en testant** : les tests `_create_job()` de chaque
+fichier utilisent `with patch(".../analysis_queue") as mock_queue:` en
+gestionnaire de contexte scopé au SEUL appel de création initiale — le
+job relancé, créé par un DEUXIÈME appel HTTP hors de ce `with`, tentait
+donc un vrai `enqueue()` contre Redis (absent en test), échec en
+`ConnectionError`. Corrigé en enveloppant aussi l'appel `/rerun` dans le
+même mock, dans chacun des 5 fichiers concernés (le test training,
+utilisant un `@patch` en décorateur couvrant toute la fonction de test,
+n'a pas eu besoin de ce correctif). Pas un bug de production — Redis/RQ
+tournent réellement en dehors des tests — mais un piège à connaître pour
+tout futur test qui enchaîne deux appels de création dans le même test.
+**Vérifié** : nouvelle configuration identique au job d'origine (dataset,
+colonnes, hyperparamètres) sur les 6 routers, isolation multi-tenant
+testée.

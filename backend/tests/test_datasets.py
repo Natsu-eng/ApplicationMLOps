@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import io
+from unittest.mock import patch
 
 
 def _register(client, email="owner@bureau.fr", org="Bureau"):
@@ -116,6 +117,60 @@ def test_delete_removes_dataset(client):
 
     assert client.delete(f"/api/datasets/{created['id']}", headers=headers).status_code == 204
     assert client.get(f"/api/datasets/{created['id']}", headers=headers).status_code == 404
+
+
+# ── Lot 7, §J.3 — avertissement de suppression en cascade (décompte d'usage) ─
+
+
+def test_usage_is_zero_for_a_fresh_dataset(client):
+    headers = _register(client)
+    created = client.post("/api/datasets", headers=headers, files=_csv_file()).json()
+
+    resp = client.get(f"/api/datasets/{created['id']}/usage", headers=headers)
+    assert resp.status_code == 200
+    assert resp.json() == {
+        "training_jobs": 0,
+        "clustering_jobs": 0,
+        "dimensionality_jobs": 0,
+        "anomaly_jobs": 0,
+        "total": 0,
+    }
+
+
+@patch("api.routers.clustering.analysis_queue")
+@patch("api.routers.training.training_queue")
+def test_usage_counts_jobs_referencing_this_dataset(mock_training_queue, mock_clustering_queue, client):
+    mock_training_queue.enqueue.return_value.id = "fake-rq-id"
+    mock_clustering_queue.enqueue.return_value.id = "fake-rq-id"
+    headers = _register(client)
+    rows = "\n".join(f"{i},{i * 2}\n" for i in range(20))
+    content = f"x1,x2\n{rows}".encode()
+    dataset = client.post(
+        "/api/datasets", headers=headers, files={"file": ("d.csv", io.BytesIO(content), "text/csv")}
+    ).json()
+
+    client.post(
+        "/api/training/jobs", headers=headers, json={"dataset_id": dataset["id"], "target_column": "x2"}
+    )
+    client.post(
+        "/api/clustering/jobs", headers=headers, json={"dataset_id": dataset["id"], "feature_columns": ["x1", "x2"]}
+    )
+
+    resp = client.get(f"/api/datasets/{dataset['id']}/usage", headers=headers)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["training_jobs"] == 1
+    assert body["clustering_jobs"] == 1
+    assert body["total"] == 2
+
+
+def test_usage_404_for_other_organization(client):
+    headers_a = _register(client, "a@bureau-a.fr", "Bureau A")
+    dataset_a = client.post("/api/datasets", headers=headers_a, files=_csv_file()).json()
+
+    headers_b = _register(client, "b@bureau-b.fr", "Bureau B")
+    resp = client.get(f"/api/datasets/{dataset_a['id']}/usage", headers=headers_b)
+    assert resp.status_code == 404
 
 
 def test_preview_returns_sample_rows(client):

@@ -9,6 +9,7 @@ from unittest.mock import patch
 from PIL import Image
 
 from api.core.config import get_settings
+from api.core.models import VisionClassificationJob
 from workers.vision_classification_worker import run_vision_classification_job
 
 
@@ -186,6 +187,73 @@ def test_delete_job_removes_it_from_history(client):
     resp = client.delete(f"/api/vision/classification/jobs/{job['id']}", headers=headers)
     assert resp.status_code == 204
     assert client.get(f"/api/vision/classification/jobs/{job['id']}", headers=headers).status_code == 404
+
+
+# ── Lot 7, §J.2 — annulation (garde une trace, contrairement à la suppression) ─
+
+
+def test_cancel_queued_job_marks_it_cancelled_and_keeps_history(client):
+    headers = _register(client)
+    dataset = _upload_vision_dataset(client, headers)
+    job = _create_job(client, headers, dataset["id"]).json()
+
+    resp = client.post(f"/api/vision/classification/jobs/{job['id']}/cancel", headers=headers)
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "cancelled"
+    assert client.get(f"/api/vision/classification/jobs/{job['id']}", headers=headers).json()["status"] == "cancelled"
+
+
+def test_cancel_rejects_already_completed_job(client, db_session):
+    headers = _register(client)
+    dataset = _upload_vision_dataset(client, headers)
+    job_id = _create_job(client, headers, dataset["id"]).json()["id"]
+
+    job = db_session.query(VisionClassificationJob).filter(VisionClassificationJob.id == job_id).first()
+    job.status = "completed"
+    db_session.commit()
+
+    resp = client.post(f"/api/vision/classification/jobs/{job_id}/cancel", headers=headers)
+    assert resp.status_code == 409
+    assert resp.json()["detail"]["code"] == "JOB_NON_ANNULABLE"
+
+
+def test_cancel_404_for_other_organization(client):
+    headers_a = _register(client, "a@bureau-a.fr", "Bureau A")
+    dataset_a = _upload_vision_dataset(client, headers_a)
+    job = _create_job(client, headers_a, dataset_a["id"]).json()
+
+    headers_b = _register(client, "b@bureau-b.fr", "Bureau B")
+    resp = client.post(f"/api/vision/classification/jobs/{job['id']}/cancel", headers=headers_b)
+    assert resp.status_code == 404
+
+
+# ── Lot 7, §J.2 — relance depuis une configuration existante ────────────────
+
+
+def test_rerun_creates_a_new_job_with_the_same_configuration(client):
+    headers = _register(client)
+    dataset = _upload_vision_dataset(client, headers)
+    original = _create_job(client, headers, dataset["id"], num_epochs=3).json()
+
+    with patch("api.routers.vision_classification.vision_queue") as mock_queue:
+        mock_queue.enqueue.return_value.id = "fake-rq-id"
+        resp = client.post(f"/api/vision/classification/jobs/{original['id']}/rerun", headers=headers)
+    assert resp.status_code == 201
+    body = resp.json()
+    assert body["id"] != original["id"]
+    assert body["vision_dataset_id"] == original["vision_dataset_id"]
+    assert body["backbone_id"] == original["backbone_id"]
+    assert body["status"] == "queued"
+
+
+def test_rerun_404_for_other_organization(client):
+    headers_a = _register(client, "a@bureau-a.fr", "Bureau A")
+    dataset_a = _upload_vision_dataset(client, headers_a)
+    job = _create_job(client, headers_a, dataset_a["id"]).json()
+
+    headers_b = _register(client, "b@bureau-b.fr", "Bureau B")
+    resp = client.post(f"/api/vision/classification/jobs/{job['id']}/rerun", headers=headers_b)
+    assert resp.status_code == 404
 
 
 def test_quota_shared_with_other_job_types(client):

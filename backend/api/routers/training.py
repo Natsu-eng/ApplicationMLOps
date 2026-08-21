@@ -32,6 +32,8 @@ from services.job_watchdog import reconcile_stale_jobs
 from services.ml_inference import InferenceError, load_bundle, predict_one
 from services.prediction_retention import purge_old_predictions
 from services.ml_registry import MODEL_REGISTRY
+from services.duration_estimate import estimate_training_duration
+from services.job_lifecycle import ACTIVE_STATUSES, CANCELLED_MESSAGE, try_cancel_rq_job
 from services.ml_task import detect_task_type
 from services.ml_training import selection_metric_label
 from services.model_verdict import compute_verdict
@@ -470,6 +472,46 @@ def get_models_catalog(current_user: User = Depends(get_current_user)):
             )
         )
     return ModelCatalogResponse(models=entries)
+
+
+class DurationEstimateOut(BaseModel):
+    status: str  # "estimated" | "degraded"
+    estimated_seconds: Optional[float] = None
+    based_on_n_jobs: int
+    message: Optional[str] = None
+
+
+@router.get("/estimate-duration", response_model=DurationEstimateOut)
+def get_duration_estimate(
+    dataset_id: int,
+    n_models: int = Query(4, ge=1, le=9),
+    optuna_trials: int = Query(20, ge=3, le=100),
+    cv_folds: int = Query(4, ge=2, le=10),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Estimation de la durée AVANT lancement (Lot 7, §J.1) — dérivée des
+    entraînements RÉELLEMENT terminés par cette organisation, jamais d'une
+    constante inventée. Voir `services/duration_estimate.py`."""
+    dataset = (
+        db.query(Dataset)
+        .filter(Dataset.id == dataset_id, Dataset.organization_id == current_user.organization_id)
+        .first()
+    )
+    if dataset is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "DATASET_INTROUVABLE", "message": "Dataset introuvable"},
+        )
+    estimate = estimate_training_duration(
+        db, current_user.organization_id, dataset.row_count or 0, n_models, optuna_trials, cv_folds
+    )
+    return DurationEstimateOut(
+        status=estimate.status,
+        estimated_seconds=estimate.estimated_seconds,
+        based_on_n_jobs=estimate.based_on_n_jobs,
+        message=estimate.message,
+    )
 
 
 @router.post("/jobs", response_model=TrainingJobSummary, status_code=status.HTTP_201_CREATED)
@@ -1129,6 +1171,59 @@ def list_job_predictions(
     return PredictionHistoryResponse(entries=entries)
 
 
+@router.post("/jobs/{job_id}/cancel", response_model=TrainingJobSummary)
+def cancel_training_job(job_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Annule un entraînement en attente ou en cours (Lot 7, §J.2) —
+    contrairement à `DELETE /jobs/{id}`, garde une trace consultable
+    (`status="cancelled"`) plutôt que de supprimer le job."""
+    job = _get_org_job(job_id, current_user, db)
+    if job.status not in ACTIVE_STATUSES:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"code": "JOB_NON_ANNULABLE", "message": "Cet entraînement n'est plus en attente ni en cours"},
+        )
+    try_cancel_rq_job(job.rq_job_id, training_queue)
+    job.status = "cancelled"
+    job.error_message = CANCELLED_MESSAGE
+    job.finished_at = datetime.now(timezone.utc)
+    log_action(
+        db, current_user.organization_id, current_user.id, "training_job.cancelled",
+        target_type="training_job", target_id=job.id, details={"target_column": job.target_column},
+    )
+    db.commit()
+    db.refresh(job)
+    return _to_summary(job)
+
+
+@router.post("/jobs/{job_id}/rerun", response_model=TrainingJobSummary, status_code=status.HTTP_201_CREATED)
+def rerun_training_job(job_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Relance un entraînement avec EXACTEMENT la même configuration (Lot 7,
+    §J.2) — le geste le plus fréquent en pratique, jusqu'ici impossible sans
+    tout ressaisir. Reconstruit le corps de `POST /jobs` depuis le job
+    d'origine et réutilise SA validation complète (dataset toujours prêt,
+    colonnes toujours présentes...) — jamais une copie partielle de cette
+    logique, qui divergerait avec le temps."""
+    job = _get_org_job(job_id, current_user, db)
+    config = json.loads(job.config_json)
+    fe = json.loads(job.feature_engineering_json) if job.feature_engineering_json else None
+    body = TrainingJobCreate(
+        dataset_id=job.dataset_id,
+        target_column=job.target_column,
+        feature_columns=json.loads(job.feature_columns_json),
+        task_type=job.task_type,
+        group_column=job.group_column,
+        test_size=config.get("test_size", 0.2),
+        optuna_trials=config.get("optuna_trials"),
+        cv_folds=config.get("cv_folds"),
+        seed=config.get("seed"),
+        cqr_alpha=config.get("cqr_alpha"),
+        model_ids=config.get("model_ids"),
+        feature_engineering=FeatureEngineeringConfig(upstream=fe["upstream"], pipeline=fe["pipeline"]) if fe else None,
+        class_rebalancing=config.get("class_rebalancing", False),
+    )
+    return create_training_job(body, current_user, db)
+
+
 @router.delete("/jobs/{job_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_training_job(job_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     """Supprime un entraînement (et le modèle associé, s'il existe).
@@ -1141,15 +1236,8 @@ def delete_training_job(job_id: int, current_user: User = Depends(get_current_us
     """
     job = _get_org_job(job_id, current_user, db)
 
-    if job.status in ("queued", "running") and job.rq_job_id:
-        try:
-            from rq.job import Job as RQJob
-
-            rq_job = RQJob.fetch(job.rq_job_id, connection=training_queue.connection)
-            rq_job.cancel()
-            rq_job.delete()
-        except Exception:
-            pass  # best-effort — la suppression en base reste sûre dans tous les cas
+    if job.status in ACTIVE_STATUSES:
+        try_cancel_rq_job(job.rq_job_id, training_queue)
 
     if job.model:
         # Supprimé explicitement ici (pas seulement via le ON DELETE CASCADE

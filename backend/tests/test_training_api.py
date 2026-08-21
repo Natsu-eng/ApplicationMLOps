@@ -155,8 +155,94 @@ def test_delete_rejects_cross_organization(mock_queue, client):
 
     resp = client.delete(f"/api/training/jobs/{job['id']}", headers=headers_b)
     assert resp.status_code == 404
+
+
+# ── Lot 7, §J.2 — annulation (garde une trace, contrairement à la suppression) ─
+
+
+@patch("api.routers.training.training_queue")
+def test_cancel_queued_job_marks_it_cancelled_and_keeps_history(mock_queue, client):
+    mock_queue.enqueue.return_value.id = "fake-rq-id"
+    headers = _register(client)
+    dataset = _upload_dataset(client, headers)
+    job = client.post(
+        "/api/training/jobs", headers=headers, json={"dataset_id": dataset["id"], "target_column": "cible"}
+    ).json()
+
+    resp = client.post(f"/api/training/jobs/{job['id']}/cancel", headers=headers)
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "cancelled"
+    assert client.get(f"/api/training/jobs/{job['id']}", headers=headers).json()["status"] == "cancelled"
+
+
+@patch("api.routers.training.training_queue")
+def test_cancel_rejects_already_completed_job(mock_queue, client, db_session):
+    mock_queue.enqueue.return_value.id = "fake-rq-id"
+    headers = _register(client)
+    dataset = _upload_dataset(client, headers)
+    job_id = client.post(
+        "/api/training/jobs", headers=headers, json={"dataset_id": dataset["id"], "target_column": "cible"}
+    ).json()["id"]
+
+    job = db_session.query(TrainingJob).filter(TrainingJob.id == job_id).first()
+    job.status = "completed"
+    db_session.commit()
+
+    resp = client.post(f"/api/training/jobs/{job_id}/cancel", headers=headers)
+    assert resp.status_code == 409
+    assert resp.json()["detail"]["code"] == "JOB_NON_ANNULABLE"
+
+
+@patch("api.routers.training.training_queue")
+def test_cancel_404_for_other_organization(mock_queue, client):
+    mock_queue.enqueue.return_value.id = "fake-rq-id"
+    headers_a = _register(client, "a@bureau-a.fr", "Bureau A")
+    headers_b = _register(client, "b@bureau-b.fr", "Bureau B")
+    dataset = _upload_dataset(client, headers_a)
+    job = client.post(
+        "/api/training/jobs", headers=headers_a, json={"dataset_id": dataset["id"], "target_column": "cible"}
+    ).json()
+
+    resp = client.post(f"/api/training/jobs/{job['id']}/cancel", headers=headers_b)
+    assert resp.status_code == 404
     # toujours là côté organisation A — la tentative de B n'a rien supprimé
     assert client.get(f"/api/training/jobs/{job['id']}", headers=headers_a).status_code == 200
+
+
+# ── Lot 7, §J.2 — relance depuis une configuration existante ────────────────
+
+
+@patch("api.routers.training.training_queue")
+def test_rerun_creates_a_new_job_with_the_same_configuration(mock_queue, client):
+    mock_queue.enqueue.return_value.id = "fake-rq-id"
+    headers = _register(client)
+    dataset = _upload_dataset(client, headers)
+    original = client.post(
+        "/api/training/jobs", headers=headers,
+        json={"dataset_id": dataset["id"], "target_column": "cible", "optuna_trials": 5, "cv_folds": 3},
+    ).json()
+
+    resp = client.post(f"/api/training/jobs/{original['id']}/rerun", headers=headers)
+    assert resp.status_code == 201
+    body = resp.json()
+    assert body["id"] != original["id"]
+    assert body["dataset_id"] == original["dataset_id"]
+    assert body["target_column"] == "cible"
+    assert body["status"] == "queued"
+
+
+@patch("api.routers.training.training_queue")
+def test_rerun_404_for_other_organization(mock_queue, client):
+    mock_queue.enqueue.return_value.id = "fake-rq-id"
+    headers_a = _register(client, "a@bureau-a.fr", "Bureau A")
+    headers_b = _register(client, "b@bureau-b.fr", "Bureau B")
+    dataset = _upload_dataset(client, headers_a)
+    job = client.post(
+        "/api/training/jobs", headers=headers_a, json={"dataset_id": dataset["id"], "target_column": "cible"}
+    ).json()
+
+    resp = client.post(f"/api/training/jobs/{job['id']}/rerun", headers=headers_b)
+    assert resp.status_code == 404
 
 
 # ── Lot E2 — mode guidé/expert : catalogue de modèles + manettes ───────────
@@ -466,3 +552,30 @@ def test_candidates_endpoint_isolated_between_organizations(mock_queue, client, 
 
     assert client.get(f"/api/training/jobs/{job['id']}/candidates", headers=headers_b).status_code == 404
     assert client.get(f"/api/training/jobs/{job['id']}/candidates", headers=headers_a).status_code == 200
+
+
+# ── Lot 7, §J.1 — estimation de durée avant lancement ───────────────────────
+
+
+def test_estimate_duration_degrades_honestly_without_history(client):
+    headers = _register(client)
+    dataset = _upload_dataset(client, headers)
+    resp = client.get(f"/api/training/estimate-duration?dataset_id={dataset['id']}", headers=headers)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "degraded"
+    assert body["estimated_seconds"] is None
+
+
+def test_estimate_duration_404_for_missing_dataset(client):
+    headers = _register(client)
+    resp = client.get("/api/training/estimate-duration?dataset_id=999999", headers=headers)
+    assert resp.status_code == 404
+
+
+def test_estimate_duration_isolated_between_organizations(client):
+    headers_a = _register(client, "a@bureau-a.fr", "Bureau A")
+    dataset_a = _upload_dataset(client, headers_a)
+    headers_b = _register(client, "b@bureau-b.fr", "Bureau B")
+    resp = client.get(f"/api/training/estimate-duration?dataset_id={dataset_a['id']}", headers=headers_b)
+    assert resp.status_code == 404

@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { Link } from "react-router-dom";
-import { AlertCircle, BrainCircuit, Check, ChevronLeft, ChevronRight, Loader2, PlayCircle, Trash2 } from "lucide-react";
+import { AlertCircle, Ban, BrainCircuit, Check, ChevronLeft, ChevronRight, Loader2, PlayCircle, RotateCcw, Trash2 } from "lucide-react";
 import {
   ApiError,
   api,
   type ColumnSchema,
   type DatasetSummary,
+  type DurationEstimate,
   type FeatureEngineeringSpec,
   type TrainingJobSummary,
 } from "../api/client";
@@ -26,7 +27,7 @@ import { Card } from "../components/ui/Card";
 import { PageHeader } from "../components/ui/PageHeader";
 import { Select } from "../components/ui/Select";
 import { useConfirmAction } from "../hooks/useConfirmAction";
-import { formatDateTime } from "../utils/format";
+import { formatDateTime, formatDuration } from "../utils/format";
 import { buildTrainingJobPayload } from "../utils/trainingPayload";
 
 const DEFAULT_OPTUNA_TRIALS = 20; // `api.core.config.Settings.optuna_trials_default`
@@ -46,12 +47,13 @@ const STEP_LABELS = [
   { number: 5, label: "Lancement" },
 ];
 
-type Phase = "configure" | "progress" | "results" | "failed";
+type Phase = "configure" | "progress" | "results" | "failed" | "cancelled";
 
 function phaseOf(job: TrainingJobSummary | null): Phase {
   if (!job) return "configure";
   if (ACTIVE_STATUSES.has(job.status)) return "progress";
-  return job.status === "completed" ? "results" : "failed";
+  if (job.status === "completed") return "results";
+  return job.status === "cancelled" ? "cancelled" : "failed";
 }
 
 /** Page dédiée à l'entraînement (Lot E1-ter, sur demande explicite) : pas
@@ -144,11 +146,36 @@ export default function Training() {
     resetToConfigure();
   }
 
+  async function handleCancelActiveJob() {
+    if (!activeJob) return;
+    try {
+      setActiveJob(await api.training.cancel(activeJob.id));
+    } catch {
+      // le prochain poll (ou un rafraîchissement) reflétera l'état réel
+    }
+  }
+
+  const [rerunning, setRerunning] = useState(false);
+  const [rerunError, setRerunError] = useState<string | null>(null);
+  async function handleRerunActiveJob() {
+    if (!activeJob) return;
+    setRerunning(true);
+    setRerunError(null);
+    try {
+      setActiveJob(await api.training.rerun(activeJob.id));
+    } catch (err) {
+      setRerunError(err instanceof ApiError ? err.message : "Impossible de relancer cet entraînement");
+    } finally {
+      setRerunning(false);
+    }
+  }
+
   const titles: Record<Phase, string> = {
     configure: "Entraîner un modèle",
     progress: "Entraînement en cours",
     results: "Résultat de l'entraînement",
     failed: "Échec de l'entraînement",
+    cancelled: "Entraînement annulé",
   };
 
   return (
@@ -164,21 +191,27 @@ export default function Training() {
         action={
           phase !== "configure" ? (
             <div className="flex items-center gap-2">
-              {(phase === "results" || phase === "failed") && (
-                <button
-                  type="button"
-                  onClick={() => confirmDelete.trigger(true, handleDeleteActiveJob)}
-                  onMouseLeave={confirmDelete.reset}
-                  aria-label={confirmDelete.isPending(true) ? "Confirmer la suppression" : "Supprimer cet entraînement"}
-                  title={confirmDelete.isPending(true) ? "Cliquer à nouveau pour confirmer" : "Supprimer cet entraînement"}
-                  className={`p-2 rounded-lg transition-colors ${
-                    confirmDelete.isPending(true)
-                      ? "text-destructive bg-destructive/15"
-                      : "text-muted-foreground hover:text-destructive hover:bg-destructive/10"
-                  }`}
-                >
-                  <Trash2 size={16} />
-                </button>
+              {(phase === "results" || phase === "failed" || phase === "cancelled") && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => confirmDelete.trigger(true, handleDeleteActiveJob)}
+                    onMouseLeave={confirmDelete.reset}
+                    aria-label={confirmDelete.isPending(true) ? "Confirmer la suppression" : "Supprimer cet entraînement"}
+                    title={confirmDelete.isPending(true) ? "Cliquer à nouveau pour confirmer" : "Supprimer cet entraînement"}
+                    className={`p-2 rounded-lg transition-colors ${
+                      confirmDelete.isPending(true)
+                        ? "text-destructive bg-destructive/15"
+                        : "text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+                    }`}
+                  >
+                    <Trash2 size={16} />
+                  </button>
+                  <Button variant="secondary" size="sm" onClick={handleRerunActiveJob} disabled={rerunning}>
+                    <RotateCcw size={14} />
+                    {rerunning ? "Relance…" : "Relancer"}
+                  </Button>
+                </>
               )}
               <Button variant="secondary" size="sm" onClick={resetToConfigure}>
                 <PlayCircle size={14} />
@@ -188,6 +221,11 @@ export default function Training() {
           ) : undefined
         }
       />
+      {rerunError && (
+        <p className="text-sm text-destructive bg-destructive/10 border border-destructive/20 rounded-lg px-3 py-2 max-w-xl mx-auto mb-4">
+          {rerunError}
+        </p>
+      )}
 
       {restoringJob ? (
         <div className="flex items-center justify-center py-16 text-sm text-muted-foreground gap-2">
@@ -207,9 +245,9 @@ export default function Training() {
         </div>
       )}
 
-      {phase === "progress" && activeJob && <TrainingProgress job={activeJob} />}
+      {phase === "progress" && activeJob && <TrainingProgress job={activeJob} onCancel={handleCancelActiveJob} />}
 
-      {phase === "failed" && activeJob && <TrainingFailed job={activeJob} />}
+      {(phase === "failed" || phase === "cancelled") && activeJob && <TrainingFailed job={activeJob} />}
 
       {phase === "results" && activeJob && (
         <div className="max-w-4xl mx-auto">
@@ -220,7 +258,8 @@ export default function Training() {
   );
 }
 
-function TrainingProgress({ job }: { job: TrainingJobSummary }) {
+function TrainingProgress({ job, onCancel }: { job: TrainingJobSummary; onCancel: () => void }) {
+  const [cancelling, setCancelling] = useState(false);
   return (
     <Card className="max-w-xl mx-auto p-8 text-center">
       <div className="mx-auto mb-4 h-14 w-14 rounded-2xl bg-primary/10 border border-primary/20 flex items-center justify-center">
@@ -242,19 +281,40 @@ function TrainingProgress({ job }: { job: TrainingJobSummary }) {
       <p className="text-sm text-muted-foreground">
         {job.progress_step ?? "En attente d'un worker disponible…"}
       </p>
-      <p className="text-xs text-muted-foreground mt-4">
+      <p className="text-xs text-muted-foreground mt-4 mb-4">
         La durée dépend de la taille du dataset et du nombre d'essais — cette page se met à jour
         automatiquement, vous pouvez aussi la quitter et revenir plus tard.
       </p>
+      <Button
+        variant="ghost"
+        size="sm"
+        onClick={() => {
+          setCancelling(true);
+          onCancel();
+        }}
+        disabled={cancelling}
+      >
+        <Ban size={14} />
+        {cancelling ? "Annulation…" : "Annuler cet entraînement"}
+      </Button>
     </Card>
   );
 }
 
 function TrainingFailed({ job }: { job: TrainingJobSummary }) {
+  const cancelled = job.status === "cancelled";
   return (
     <Card className="max-w-xl mx-auto p-8 text-center">
-      <div className="mx-auto mb-4 h-14 w-14 rounded-2xl bg-destructive/10 border border-destructive/20 flex items-center justify-center">
-        <AlertCircle className="text-destructive" size={26} />
+      <div
+        className={`mx-auto mb-4 h-14 w-14 rounded-2xl border flex items-center justify-center ${
+          cancelled ? "bg-muted border-border" : "bg-destructive/10 border-destructive/20"
+        }`}
+      >
+        {cancelled ? (
+          <Ban className="text-muted-foreground" size={26} />
+        ) : (
+          <AlertCircle className="text-destructive" size={26} />
+        )}
       </div>
       <h2 className="text-base font-medium text-foreground">
         {job.dataset_name ?? "Dataset"} <span className="text-muted-foreground">→</span> {job.target_column}
@@ -263,7 +323,13 @@ function TrainingFailed({ job }: { job: TrainingJobSummary }) {
         {job.task_type === "regression" ? "Régression" : "Classification"} · lancé {formatDateTime(job.created_at)}
       </p>
       {job.error_message && (
-        <p className="text-sm text-destructive bg-destructive/10 border border-destructive/20 rounded-lg px-3 py-2 text-left">
+        <p
+          className={`text-sm rounded-lg px-3 py-2 text-left border ${
+            cancelled
+              ? "text-muted-foreground bg-muted border-border"
+              : "text-destructive bg-destructive/10 border-destructive/20"
+          }`}
+        >
           {job.error_message}
         </p>
       )}
@@ -304,6 +370,23 @@ function TrainingForm({
   const [seed, setSeed] = useState(DEFAULT_SEED);
   const [cqrAlpha, setCqrAlpha] = useState(DEFAULT_CQR_ALPHA);
   const [selectedModelIds, setSelectedModelIds] = useState<Set<string>>(new Set());
+  const [durationEstimate, setDurationEstimate] = useState<DurationEstimate | null>(null);
+
+  // Estimation de durée avant lancement (Lot 7, §J.1) — dérivée de
+  // l'historique réel de l'organisation (services/duration_estimate.py),
+  // jamais une constante inventée. Recalculée à chaque changement pertinent,
+  // affichée seulement à l'étape récapitulative (voir plus bas).
+  useEffect(() => {
+    if (!datasetId) {
+      setDurationEstimate(null);
+      return;
+    }
+    const nModels = expertMode ? Math.max(1, selectedModelIds.size) : 4;
+    api.training
+      .estimateDuration(datasetId, nModels, optunaTrials, cvFolds)
+      .then(setDurationEstimate)
+      .catch(() => setDurationEstimate(null));
+  }, [datasetId, expertMode, selectedModelIds.size, optunaTrials, cvFolds]);
 
   // Wizard horizontal (refonte UI) — une étape visible à la fois, navigable
   // par les pastilles ou Précédent/Continuer. `maxReachedStep` autorise à
@@ -629,7 +712,29 @@ function TrainingForm({
                 <Fact label="Rééquilibrage des classes" value={classRebalancing ? "Activé" : "Désactivé"} />
                 <Fact label="Ingénierie de variables" value={featureEngineering ? "Activée" : "Non appliquée"} />
                 <Fact label="Variables utilisées" value={String(selectedFeatures.size)} />
+                <Fact
+                  label="Durée estimée"
+                  value={
+                    durationEstimate?.status === "estimated" && durationEstimate.estimated_seconds !== null
+                      ? formatDuration(durationEstimate.estimated_seconds)
+                      : "Indisponible"
+                  }
+                />
               </dl>
+              {durationEstimate?.status === "degraded" && (
+                <p className="text-xs text-muted-foreground mt-3 pt-3 border-t border-border/60">
+                  {durationEstimate.message ?? "Estimation indisponible."} L'estimation se construit à partir de vos
+                  entraînements terminés.
+                </p>
+              )}
+              {durationEstimate?.status === "estimated" && (
+                <p className="text-xs text-muted-foreground mt-3 pt-3 border-t border-border/60">
+                  Estimation fondée sur {durationEstimate.based_on_n_jobs} entraînement
+                  {durationEstimate.based_on_n_jobs > 1 ? "s" : ""} précédent
+                  {durationEstimate.based_on_n_jobs > 1 ? "s" : ""} de votre organisation — repère indicatif, pas une
+                  garantie.
+                </p>
+              )}
             </div>
 
             {error && (

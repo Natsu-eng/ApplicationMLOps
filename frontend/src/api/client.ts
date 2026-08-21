@@ -263,6 +263,14 @@ export interface DatasetDetail extends DatasetSummary {
   columns: ColumnSchema[];
 }
 
+export interface DatasetUsage {
+  training_jobs: number;
+  clustering_jobs: number;
+  dimensionality_jobs: number;
+  anomaly_jobs: number;
+  total: number;
+}
+
 export interface PreviewResponse {
   columns: string[];
   rows: Record<string, unknown>[];
@@ -406,7 +414,7 @@ export interface FeatureEngineeringSpec {
 }
 
 export type TaskType = "classification" | "regression";
-export type JobStatus = "queued" | "running" | "completed" | "failed";
+export type JobStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
 
 // ── Clustering (Lot 11+ — ML non supervisé) ──────────────────────────────
 
@@ -888,6 +896,13 @@ export interface ModelCatalogEntry {
   slow: boolean;
 }
 
+export interface DurationEstimate {
+  status: "estimated" | "degraded";
+  estimated_seconds: number | null;
+  based_on_n_jobs: number;
+  message: string | null;
+}
+
 export interface HeadlineMetric {
   name: string;
   value: number | null;
@@ -1199,6 +1214,7 @@ export const api = {
     preview: (id: number, limit = 50) =>
       request<PreviewResponse>(`/datasets/${id}/preview?limit=${limit}`),
     remove: (id: number) => request<void>(`/datasets/${id}`, { method: "DELETE" }),
+    usage: (id: number) => request<DatasetUsage>(`/datasets/${id}/usage`),
     eda: (id: number, targetColumn?: string) =>
       request<EdaResponse>(
         `/datasets/${id}/eda${targetColumn ? `?target_column=${encodeURIComponent(targetColumn)}` : ""}`,
@@ -1236,6 +1252,10 @@ export const api = {
         body: JSON.stringify(data),
       }),
     modelsCatalog: () => request<{ models: ModelCatalogEntry[] }>("/training/models-catalog"),
+    estimateDuration: (datasetId: number, nModels: number, optunaTrials: number, cvFolds: number) =>
+      request<DurationEstimate>(
+        `/training/estimate-duration?dataset_id=${datasetId}&n_models=${nModels}&optuna_trials=${optunaTrials}&cv_folds=${cvFolds}`,
+      ),
     listJobs: () => request<TrainingJobSummary[]>("/training/jobs"),
     getJob: (id: number) => request<TrainingJobSummary>(`/training/jobs/${id}`),
     getModel: (id: number) => request<MLModelDetail>(`/training/jobs/${id}/model`),
@@ -1249,6 +1269,8 @@ export const api = {
         method: "POST",
         body: JSON.stringify({ data }),
       }),
+    cancel: (id: number) => request<TrainingJobSummary>(`/training/jobs/${id}/cancel`, { method: "POST" }),
+    rerun: (id: number) => request<TrainingJobSummary>(`/training/jobs/${id}/rerun`, { method: "POST" }),
     remove: (id: number) => request<void>(`/training/jobs/${id}`, { method: "DELETE" }),
     // Lot 9 — registre de modèles versionné.
     promoteModel: (jobId: number, stageValue: Exclude<ModelStage, null> | "none") =>
@@ -1298,6 +1320,8 @@ export const api = {
         method: "POST",
         body: JSON.stringify({ data }),
       }),
+    cancel: (id: number) => request<ClusteringJobSummary>(`/clustering/jobs/${id}/cancel`, { method: "POST" }),
+    rerun: (id: number) => request<ClusteringJobSummary>(`/clustering/jobs/${id}/rerun`, { method: "POST" }),
     remove: (id: number) => request<void>(`/clustering/jobs/${id}`, { method: "DELETE" }),
   },
 
@@ -1314,6 +1338,8 @@ export const api = {
     getPoints: (id: number) => request<DimensionalityPoint[]>(`/dimensionality/jobs/${id}/points`),
     getColorBy: (id: number, column: string) =>
       request<DimensionalityColorByResponse>(`/dimensionality/jobs/${id}/color-by?column=${encodeURIComponent(column)}`),
+    cancel: (id: number) => request<DimensionalityJobSummary>(`/dimensionality/jobs/${id}/cancel`, { method: "POST" }),
+    rerun: (id: number) => request<DimensionalityJobSummary>(`/dimensionality/jobs/${id}/rerun`, { method: "POST" }),
     remove: (id: number) => request<void>(`/dimensionality/jobs/${id}`, { method: "DELETE" }),
   },
 
@@ -1327,6 +1353,8 @@ export const api = {
     getJob: (id: number) => request<AnomalyJobSummary>(`/anomalies/jobs/${id}`),
     getResult: (id: number) => request<AnomalyResult>(`/anomalies/jobs/${id}/result`),
     getObservations: (id: number) => request<AnomalyObservation[]>(`/anomalies/jobs/${id}/observations`),
+    cancel: (id: number) => request<AnomalyJobSummary>(`/anomalies/jobs/${id}/cancel`, { method: "POST" }),
+    rerun: (id: number) => request<AnomalyJobSummary>(`/anomalies/jobs/${id}/rerun`, { method: "POST" }),
     remove: (id: number) => request<void>(`/anomalies/jobs/${id}`, { method: "DELETE" }),
   },
 
@@ -1364,6 +1392,10 @@ export const api = {
         file,
         targetLabel ? { target_label: targetLabel } : {},
       ),
+    cancel: (id: number) =>
+      request<VisionClassificationJobSummary>(`/vision/classification/jobs/${id}/cancel`, { method: "POST" }),
+    rerun: (id: number) =>
+      request<VisionClassificationJobSummary>(`/vision/classification/jobs/${id}/rerun`, { method: "POST" }),
     remove: (id: number) => request<void>(`/vision/classification/jobs/${id}`, { method: "DELETE" }),
   },
 
@@ -1378,6 +1410,8 @@ export const api = {
     getJob: (id: number) => request<VisionAnomalyJobSummary>(`/vision/anomalies/jobs/${id}`),
     getResult: (id: number) => request<VisionAnomalyResult>(`/vision/anomalies/jobs/${id}/result`),
     getExamples: (id: number) => request<VisionAnomalyExample[]>(`/vision/anomalies/jobs/${id}/examples`),
+    cancel: (id: number) => request<VisionAnomalyJobSummary>(`/vision/anomalies/jobs/${id}/cancel`, { method: "POST" }),
+    rerun: (id: number) => request<VisionAnomalyJobSummary>(`/vision/anomalies/jobs/${id}/rerun`, { method: "POST" }),
     remove: (id: number) => request<void>(`/vision/anomalies/jobs/${id}`, { method: "DELETE" }),
   },
 };

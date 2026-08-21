@@ -165,6 +165,75 @@ def test_delete_job_removes_it_from_history(client):
     assert client.get(f"/api/clustering/jobs/{job['id']}", headers=headers).status_code == 404
 
 
+# ── Lot 7, §J.2 — annulation (garde une trace, contrairement à la suppression) ─
+
+
+def test_cancel_queued_job_marks_it_cancelled_and_keeps_history(client):
+    headers = _register(client)
+    dataset = _upload_dataset(client, headers)
+    job = _create_job(client, headers, dataset["id"]).json()
+
+    resp = client.post(f"/api/clustering/jobs/{job['id']}/cancel", headers=headers)
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "cancelled"
+
+    # Contrairement à DELETE, le job reste consultable dans l'historique.
+    still_there = client.get(f"/api/clustering/jobs/{job['id']}", headers=headers)
+    assert still_there.status_code == 200
+    assert still_there.json()["status"] == "cancelled"
+
+
+def test_cancel_rejects_already_completed_job(client, db_session):
+    headers = _register(client)
+    dataset = _upload_dataset(client, headers, n=60)
+    job = _create_job(client, headers, dataset["id"], algorithm_ids=["kmeans"]).json()
+    run_clustering_job(job["id"])
+    db_session.expire_all()
+
+    resp = client.post(f"/api/clustering/jobs/{job['id']}/cancel", headers=headers)
+    assert resp.status_code == 409
+    assert resp.json()["detail"]["code"] == "JOB_NON_ANNULABLE"
+
+
+def test_cancel_404_for_other_organization(client):
+    headers_a = _register(client, "a@bureau-a.fr", "Bureau A")
+    dataset_a = _upload_dataset(client, headers_a, "a.csv")
+    job = _create_job(client, headers_a, dataset_a["id"]).json()
+
+    headers_b = _register(client, "b@bureau-b.fr", "Bureau B")
+    resp = client.post(f"/api/clustering/jobs/{job['id']}/cancel", headers=headers_b)
+    assert resp.status_code == 404
+
+
+# ── Lot 7, §J.2 — relance depuis une configuration existante ────────────────
+
+
+def test_rerun_creates_a_new_job_with_the_same_configuration(client):
+    headers = _register(client)
+    dataset = _upload_dataset(client, headers)
+    original = _create_job(client, headers, dataset["id"], algorithm_ids=["kmeans"], seed=7).json()
+
+    with patch("api.routers.clustering.analysis_queue") as mock_queue:
+        mock_queue.enqueue.return_value.id = "fake-rq-id"
+        resp = client.post(f"/api/clustering/jobs/{original['id']}/rerun", headers=headers)
+    assert resp.status_code == 201
+    body = resp.json()
+    assert body["id"] != original["id"]
+    assert body["dataset_id"] == original["dataset_id"]
+    assert body["feature_columns"] == original["feature_columns"]
+    assert body["status"] == "queued"
+
+
+def test_rerun_404_for_other_organization(client):
+    headers_a = _register(client, "a@bureau-a.fr", "Bureau A")
+    dataset_a = _upload_dataset(client, headers_a, "a.csv")
+    job = _create_job(client, headers_a, dataset_a["id"]).json()
+
+    headers_b = _register(client, "b@bureau-b.fr", "Bureau B")
+    resp = client.post(f"/api/clustering/jobs/{job['id']}/rerun", headers=headers_b)
+    assert resp.status_code == 404
+
+
 def test_quota_is_shared_between_supervised_and_clustering_jobs(client):
     """Un seul worker physique traite les deux types de job — la quota doit
     compter les deux ensemble, pas des limites séparées qui laisseraient une

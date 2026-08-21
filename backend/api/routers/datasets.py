@@ -21,7 +21,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from api.core.config import get_settings
 from api.core.database import get_db
-from api.core.models import Dataset, User
+from api.core.models import AnomalyJob, ClusteringJob, Dataset, DimensionalityJob, TrainingJob, User
 from api.core.pagination import paginate_by_id
 from api.core.rate_limit import rate_limit_dependency
 from api.core.storage import dataset_file_path, delete_dataset_file
@@ -201,6 +201,20 @@ class FeatureEngineeringSuggestion(BaseModel):
 
 class FeatureEngineeringSuggestionsResponse(BaseModel):
     suggestions: List[FeatureEngineeringSuggestion]
+
+
+class DatasetUsageResponse(BaseModel):
+    # Toutes les tables de job référencent `datasets.id` en `ON DELETE
+    # CASCADE` (voir api/core/models.py) — la suppression est donc déjà
+    # sûre côté base ; ce décompte sert uniquement à avertir l'utilisateur
+    # AVANT de confirmer (Lot 7, §J.3 — avertissement de suppression en
+    # cascade, absent jusqu'ici : seule une confirmation générique à deux
+    # clics existait).
+    training_jobs: int
+    clustering_jobs: int
+    dimensionality_jobs: int
+    anomaly_jobs: int
+    total: int
 
 
 def _to_summary(dataset: Dataset) -> DatasetSummary:
@@ -584,6 +598,34 @@ def get_dataset_feature_by_target(
             detail={"code": "FEATURE_NON_NUMERIQUE", "message": str(exc)},
         )
     return FeatureByTargetResponse(**result)
+
+
+@router.get("/{dataset_id}/usage", response_model=DatasetUsageResponse)
+def get_dataset_usage(dataset_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Décompte des jobs qui référencent ce dataset — appelé côté frontend
+    avant de confirmer une suppression (Lot 7), pour que l'avertissement de
+    suppression en cascade soit chiffré, pas générique."""
+    dataset = _get_org_dataset(dataset_id, current_user, db)
+    org_id = current_user.organization_id
+    training_jobs = db.query(TrainingJob).filter(
+        TrainingJob.dataset_id == dataset.id, TrainingJob.organization_id == org_id
+    ).count()
+    clustering_jobs = db.query(ClusteringJob).filter(
+        ClusteringJob.dataset_id == dataset.id, ClusteringJob.organization_id == org_id
+    ).count()
+    dimensionality_jobs = db.query(DimensionalityJob).filter(
+        DimensionalityJob.dataset_id == dataset.id, DimensionalityJob.organization_id == org_id
+    ).count()
+    anomaly_jobs = db.query(AnomalyJob).filter(
+        AnomalyJob.dataset_id == dataset.id, AnomalyJob.organization_id == org_id
+    ).count()
+    return DatasetUsageResponse(
+        training_jobs=training_jobs,
+        clustering_jobs=clustering_jobs,
+        dimensionality_jobs=dimensionality_jobs,
+        anomaly_jobs=anomaly_jobs,
+        total=training_jobs + clustering_jobs + dimensionality_jobs + anomaly_jobs,
+    )
 
 
 @router.delete("/{dataset_id}", status_code=status.HTTP_204_NO_CONTENT)

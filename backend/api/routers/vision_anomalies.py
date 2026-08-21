@@ -10,6 +10,7 @@ calcul ML dans la requête HTTP. Le dataset source doit être un
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, List, Optional
 
@@ -24,6 +25,7 @@ from api.core.models import User, VisionAnomalyExampleRecord, VisionAnomalyJob, 
 from api.core.pagination import paginate_by_id
 from api.routers.auth import get_current_user
 from services.audit import log_action
+from services.job_lifecycle import ACTIVE_STATUSES, CANCELLED_MESSAGE, try_cancel_rq_job
 from services.job_quota import ALL_JOB_MODELS, raise_if_quota_exceeded
 from services.job_watchdog import reconcile_stale_jobs
 from services.vision_anomaly_registry import ANOMALY_MODEL_REGISTRY, DEFAULT_ANOMALY_MODEL_ID
@@ -322,19 +324,46 @@ def get_vision_anomaly_examples(job_id: int, current_user: User = Depends(get_cu
     ]
 
 
+@router.post("/jobs/{job_id}/cancel", response_model=VisionAnomalyJobSummary)
+def cancel_vision_anomaly_job(job_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Annule un entraînement Vision (anomalies) en attente ou en cours
+    (Lot 7, §J.2) — garde une trace consultable (`status="cancelled"`)."""
+    job = _get_org_job(job_id, current_user, db)
+    if job.status not in ACTIVE_STATUSES:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"code": "JOB_NON_ANNULABLE", "message": "Cet entraînement n'est plus en attente ni en cours"},
+        )
+    try_cancel_rq_job(job.rq_job_id, vision_queue)
+    job.status = "cancelled"
+    job.error_message = CANCELLED_MESSAGE
+    job.finished_at = datetime.now(timezone.utc)
+    log_action(
+        db, current_user.organization_id, current_user.id, "vision_anomaly_job.cancelled",
+        target_type="vision_anomaly_job", target_id=job.id, details={"vision_dataset_id": job.vision_dataset_id},
+    )
+    db.commit()
+    db.refresh(job)
+    return _to_summary(job)
+
+
+@router.post("/jobs/{job_id}/rerun", response_model=VisionAnomalyJobSummary, status_code=status.HTTP_201_CREATED)
+def rerun_vision_anomaly_job(job_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Relance un entraînement Vision (anomalies) avec EXACTEMENT la même
+    configuration (Lot 7, §J.2) — `config_json` reprend ici tous les champs
+    de `VisionAnomalyJobCreate` à l'identique, dépaquetage direct."""
+    job = _get_org_job(job_id, current_user, db)
+    config = json.loads(job.config_json)
+    body = VisionAnomalyJobCreate(vision_dataset_id=job.vision_dataset_id, **config)
+    return create_vision_anomaly_job(body, current_user, db)
+
+
 @router.delete("/jobs/{job_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_vision_anomaly_job(job_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     job = _get_org_job(job_id, current_user, db)
 
-    if job.status in ("queued", "running") and job.rq_job_id:
-        try:
-            from rq.job import Job as RQJob
-
-            rq_job = RQJob.fetch(job.rq_job_id, connection=vision_queue.connection)
-            rq_job.cancel()
-            rq_job.delete()
-        except Exception:
-            pass
+    if job.status in ACTIVE_STATUSES:
+        try_cancel_rq_job(job.rq_job_id, vision_queue)
 
     if job.result:
         if job.result.file_path:

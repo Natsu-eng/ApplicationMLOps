@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { AlertCircle, AlertTriangle, BarChart3, CheckCircle2, Loader2, PlayCircle, Search, Trash2 } from "lucide-react";
+import { AlertCircle, AlertTriangle, Ban, BarChart3, CheckCircle2, Loader2, PlayCircle, RotateCcw, Search, Trash2 } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip as RechartsTooltip, XAxis, YAxis } from "recharts";
 import {
   ApiError,
@@ -37,12 +37,13 @@ const DEFAULT_TOP_N = 50;
 const MAX_TOP_N = 200;
 const DEFAULT_CONTAMINATION_PCT = 5;
 
-type Phase = "configure" | "progress" | "results" | "failed";
+type Phase = "configure" | "progress" | "results" | "failed" | "cancelled";
 
 function phaseOf(job: AnomalyJobSummary | null): Phase {
   if (!job) return "configure";
   if (ACTIVE_STATUSES.has(job.status)) return "progress";
-  return job.status === "completed" ? "results" : "failed";
+  if (job.status === "completed") return "results";
+  return job.status === "cancelled" ? "cancelled" : "failed";
 }
 
 const AGREEMENT_LABELS: Record<AnomalyAgreement, string> = {
@@ -153,11 +154,40 @@ export default function AnomalyDetection() {
     resetToConfigure();
   }
 
+  const [cancelling, setCancelling] = useState(false);
+  async function handleCancelActiveJob() {
+    if (!activeJob) return;
+    setCancelling(true);
+    try {
+      setActiveJob(await api.anomalies.cancel(activeJob.id));
+    } catch {
+      // best-effort — le prochain poll reflétera l'état réel
+    } finally {
+      setCancelling(false);
+    }
+  }
+
+  const [rerunning, setRerunning] = useState(false);
+  const [rerunError, setRerunError] = useState<string | null>(null);
+  async function handleRerunActiveJob() {
+    if (!activeJob) return;
+    setRerunning(true);
+    setRerunError(null);
+    try {
+      openJob(await api.anomalies.rerun(activeJob.id));
+    } catch (err) {
+      setRerunError(err instanceof ApiError ? err.message : "Impossible de relancer cette détection");
+    } finally {
+      setRerunning(false);
+    }
+  }
+
   const titles: Record<Phase, string> = {
     configure: "Repérer les observations atypiques",
     progress: "Détection en cours",
     results: "Observations atypiques détectées",
     failed: "Échec de la détection",
+    cancelled: "Détection annulée",
   };
 
   return (
@@ -175,21 +205,27 @@ export default function AnomalyDetection() {
         action={
           phase !== "configure" ? (
             <div className="flex items-center gap-2">
-              {(phase === "results" || phase === "failed") && (
-                <button
-                  type="button"
-                  onClick={() => confirmDelete.trigger(true, handleDeleteActiveJob)}
-                  onMouseLeave={confirmDelete.reset}
-                  aria-label={confirmDelete.isPending(true) ? "Confirmer la suppression" : "Supprimer cette détection"}
-                  title={confirmDelete.isPending(true) ? "Cliquer à nouveau pour confirmer" : "Supprimer cette détection"}
-                  className={`p-2 rounded-lg transition-colors ${
-                    confirmDelete.isPending(true)
-                      ? "text-destructive bg-destructive/15"
-                      : "text-muted-foreground hover:text-destructive hover:bg-destructive/10"
-                  }`}
-                >
-                  <Trash2 size={16} />
-                </button>
+              {(phase === "results" || phase === "failed" || phase === "cancelled") && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => confirmDelete.trigger(true, handleDeleteActiveJob)}
+                    onMouseLeave={confirmDelete.reset}
+                    aria-label={confirmDelete.isPending(true) ? "Confirmer la suppression" : "Supprimer cette détection"}
+                    title={confirmDelete.isPending(true) ? "Cliquer à nouveau pour confirmer" : "Supprimer cette détection"}
+                    className={`p-2 rounded-lg transition-colors ${
+                      confirmDelete.isPending(true)
+                        ? "text-destructive bg-destructive/15"
+                        : "text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+                    }`}
+                  >
+                    <Trash2 size={16} />
+                  </button>
+                  <Button variant="secondary" size="sm" onClick={handleRerunActiveJob} disabled={rerunning}>
+                    <RotateCcw size={14} />
+                    {rerunning ? "Relance…" : "Relancer"}
+                  </Button>
+                </>
               )}
               <Button variant="secondary" size="sm" onClick={resetToConfigure}>
                 <PlayCircle size={14} />
@@ -199,6 +235,11 @@ export default function AnomalyDetection() {
           ) : undefined
         }
       />
+      {rerunError && (
+        <p className="text-sm text-destructive bg-destructive/10 border border-destructive/20 rounded-lg px-3 py-2 max-w-2xl mx-auto mb-4">
+          {rerunError}
+        </p>
+      )}
 
       {restoringJob ? (
         <div className="flex items-center justify-center py-16 text-sm text-muted-foreground gap-2">
@@ -219,17 +260,31 @@ export default function AnomalyDetection() {
         <Card className="max-w-2xl mx-auto p-8 text-center">
           <Loader2 size={28} className="animate-spin mx-auto mb-4 text-primary" />
           <p className="text-sm text-foreground mb-1">{activeJob.progress_step ?? "Préparation…"}</p>
-          <div className="w-full h-1.5 rounded-full bg-muted overflow-hidden mt-4">
+          <div className="w-full h-1.5 rounded-full bg-muted overflow-hidden mt-4 mb-4">
             <div
               className="h-full rounded-full bg-primary transition-all duration-500"
               style={{ width: `${activeJob.progress_percent}%` }}
             />
           </div>
+          <Button variant="ghost" size="sm" onClick={handleCancelActiveJob} disabled={cancelling}>
+            <Ban size={14} />
+            {cancelling ? "Annulation…" : "Annuler cette détection"}
+          </Button>
         </Card>
-      ) : phase === "failed" && activeJob ? (
+      ) : (phase === "failed" || phase === "cancelled") && activeJob ? (
         <Card className="max-w-2xl mx-auto p-6">
-          <div className="flex items-start gap-3 text-destructive bg-destructive/10 border border-destructive/20 rounded-lg p-4">
-            <AlertCircle size={18} className="flex-shrink-0 mt-0.5" />
+          <div
+            className={`flex items-start gap-3 rounded-lg p-4 border ${
+              phase === "cancelled"
+                ? "text-muted-foreground bg-muted border-border"
+                : "text-destructive bg-destructive/10 border-destructive/20"
+            }`}
+          >
+            {phase === "cancelled" ? (
+              <Ban size={18} className="flex-shrink-0 mt-0.5" />
+            ) : (
+              <AlertCircle size={18} className="flex-shrink-0 mt-0.5" />
+            )}
             <p className="text-sm">{activeJob.error_message ?? "La détection a échoué."}</p>
           </div>
         </Card>
