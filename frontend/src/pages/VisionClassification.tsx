@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import {
   AlertCircle,
+  Ban,
   Boxes,
   ChevronLeft,
   ChevronRight,
@@ -66,12 +67,13 @@ const ACTIVE_STATUSES = new Set(["queued", "running"]);
 const POLL_INTERVAL_MS = 3000;
 const ACTIVE_JOB_STORAGE_KEY = "datalab_active_vision_classification_job_id";
 
-type Phase = "configure" | "progress" | "results" | "failed";
+type Phase = "configure" | "progress" | "results" | "failed" | "cancelled";
 
 function phaseOf(job: VisionClassificationJobSummary | null): Phase {
   if (!job) return "configure";
   if (ACTIVE_STATUSES.has(job.status)) return "progress";
-  return job.status === "completed" ? "results" : "failed";
+  if (job.status === "completed") return "results";
+  return job.status === "cancelled" ? "cancelled" : "failed";
 }
 
 /** Pilier Vision — classification d'images par transfer learning (sous-lot
@@ -145,11 +147,25 @@ export default function VisionClassification() {
     resetToConfigure();
   }
 
+  const [cancelling, setCancelling] = useState(false);
+  async function handleCancelActiveJob() {
+    if (!activeJob) return;
+    setCancelling(true);
+    try {
+      setActiveJob(await api.visionClassification.cancel(activeJob.id));
+    } catch {
+      // best-effort — le prochain poll reflétera l'état réel
+    } finally {
+      setCancelling(false);
+    }
+  }
+
   const titles: Record<Phase, string> = {
     configure: "Classifier des images",
     progress: "Entraînement en cours",
     results: "Résultats de la classification",
     failed: "Échec de l'entraînement",
+    cancelled: "Entraînement annulé",
   };
 
   return (
@@ -167,7 +183,7 @@ export default function VisionClassification() {
         action={
           phase !== "configure" ? (
             <div className="flex items-center gap-2">
-              {(phase === "results" || phase === "failed") && (
+              {(phase === "results" || phase === "failed" || phase === "cancelled") && (
                 <button
                   type="button"
                   onClick={() => confirmDelete.trigger(true, handleDeleteActiveJob)}
@@ -205,17 +221,31 @@ export default function VisionClassification() {
         <Card className="max-w-2xl mx-auto p-8 text-center">
           <Loader2 size={28} className="animate-spin mx-auto mb-4 text-primary" />
           <p className="text-sm text-foreground mb-1">{activeJob.progress_step ?? "Préparation…"}</p>
-          <div className="w-full h-1.5 rounded-full bg-muted overflow-hidden mt-4">
+          <div className="w-full h-1.5 rounded-full bg-muted overflow-hidden mt-4 mb-4">
             <div
               className="h-full rounded-full bg-primary transition-all duration-500"
               style={{ width: `${activeJob.progress_percent}%` }}
             />
           </div>
+          <Button variant="ghost" size="sm" onClick={handleCancelActiveJob} disabled={cancelling}>
+            <Ban size={14} />
+            {cancelling ? "Annulation…" : "Annuler cet entraînement"}
+          </Button>
         </Card>
-      ) : phase === "failed" && activeJob ? (
+      ) : (phase === "failed" || phase === "cancelled") && activeJob ? (
         <Card className="max-w-2xl mx-auto p-6">
-          <div className="flex items-start gap-3 text-destructive bg-destructive/10 border border-destructive/20 rounded-lg p-4">
-            <AlertCircle size={18} className="flex-shrink-0 mt-0.5" />
+          <div
+            className={`flex items-start gap-3 rounded-lg p-4 border ${
+              phase === "cancelled"
+                ? "text-muted-foreground bg-muted border-border"
+                : "text-destructive bg-destructive/10 border-destructive/20"
+            }`}
+          >
+            {phase === "cancelled" ? (
+              <Ban size={18} className="flex-shrink-0 mt-0.5" />
+            ) : (
+              <AlertCircle size={18} className="flex-shrink-0 mt-0.5" />
+            )}
             <p className="text-sm">{activeJob.error_message ?? "L'entraînement a échoué."}</p>
           </div>
         </Card>

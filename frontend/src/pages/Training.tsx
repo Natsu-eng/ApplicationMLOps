@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { Link } from "react-router-dom";
-import { AlertCircle, BrainCircuit, Check, ChevronLeft, ChevronRight, Loader2, PlayCircle, Trash2 } from "lucide-react";
+import { AlertCircle, Ban, BrainCircuit, Check, ChevronLeft, ChevronRight, Loader2, PlayCircle, Trash2 } from "lucide-react";
 import {
   ApiError,
   api,
@@ -47,12 +47,13 @@ const STEP_LABELS = [
   { number: 5, label: "Lancement" },
 ];
 
-type Phase = "configure" | "progress" | "results" | "failed";
+type Phase = "configure" | "progress" | "results" | "failed" | "cancelled";
 
 function phaseOf(job: TrainingJobSummary | null): Phase {
   if (!job) return "configure";
   if (ACTIVE_STATUSES.has(job.status)) return "progress";
-  return job.status === "completed" ? "results" : "failed";
+  if (job.status === "completed") return "results";
+  return job.status === "cancelled" ? "cancelled" : "failed";
 }
 
 /** Page dédiée à l'entraînement (Lot E1-ter, sur demande explicite) : pas
@@ -145,11 +146,21 @@ export default function Training() {
     resetToConfigure();
   }
 
+  async function handleCancelActiveJob() {
+    if (!activeJob) return;
+    try {
+      setActiveJob(await api.training.cancel(activeJob.id));
+    } catch {
+      // le prochain poll (ou un rafraîchissement) reflétera l'état réel
+    }
+  }
+
   const titles: Record<Phase, string> = {
     configure: "Entraîner un modèle",
     progress: "Entraînement en cours",
     results: "Résultat de l'entraînement",
     failed: "Échec de l'entraînement",
+    cancelled: "Entraînement annulé",
   };
 
   return (
@@ -165,7 +176,7 @@ export default function Training() {
         action={
           phase !== "configure" ? (
             <div className="flex items-center gap-2">
-              {(phase === "results" || phase === "failed") && (
+              {(phase === "results" || phase === "failed" || phase === "cancelled") && (
                 <button
                   type="button"
                   onClick={() => confirmDelete.trigger(true, handleDeleteActiveJob)}
@@ -208,9 +219,9 @@ export default function Training() {
         </div>
       )}
 
-      {phase === "progress" && activeJob && <TrainingProgress job={activeJob} />}
+      {phase === "progress" && activeJob && <TrainingProgress job={activeJob} onCancel={handleCancelActiveJob} />}
 
-      {phase === "failed" && activeJob && <TrainingFailed job={activeJob} />}
+      {(phase === "failed" || phase === "cancelled") && activeJob && <TrainingFailed job={activeJob} />}
 
       {phase === "results" && activeJob && (
         <div className="max-w-4xl mx-auto">
@@ -221,7 +232,8 @@ export default function Training() {
   );
 }
 
-function TrainingProgress({ job }: { job: TrainingJobSummary }) {
+function TrainingProgress({ job, onCancel }: { job: TrainingJobSummary; onCancel: () => void }) {
+  const [cancelling, setCancelling] = useState(false);
   return (
     <Card className="max-w-xl mx-auto p-8 text-center">
       <div className="mx-auto mb-4 h-14 w-14 rounded-2xl bg-primary/10 border border-primary/20 flex items-center justify-center">
@@ -243,19 +255,40 @@ function TrainingProgress({ job }: { job: TrainingJobSummary }) {
       <p className="text-sm text-muted-foreground">
         {job.progress_step ?? "En attente d'un worker disponible…"}
       </p>
-      <p className="text-xs text-muted-foreground mt-4">
+      <p className="text-xs text-muted-foreground mt-4 mb-4">
         La durée dépend de la taille du dataset et du nombre d'essais — cette page se met à jour
         automatiquement, vous pouvez aussi la quitter et revenir plus tard.
       </p>
+      <Button
+        variant="ghost"
+        size="sm"
+        onClick={() => {
+          setCancelling(true);
+          onCancel();
+        }}
+        disabled={cancelling}
+      >
+        <Ban size={14} />
+        {cancelling ? "Annulation…" : "Annuler cet entraînement"}
+      </Button>
     </Card>
   );
 }
 
 function TrainingFailed({ job }: { job: TrainingJobSummary }) {
+  const cancelled = job.status === "cancelled";
   return (
     <Card className="max-w-xl mx-auto p-8 text-center">
-      <div className="mx-auto mb-4 h-14 w-14 rounded-2xl bg-destructive/10 border border-destructive/20 flex items-center justify-center">
-        <AlertCircle className="text-destructive" size={26} />
+      <div
+        className={`mx-auto mb-4 h-14 w-14 rounded-2xl border flex items-center justify-center ${
+          cancelled ? "bg-muted border-border" : "bg-destructive/10 border-destructive/20"
+        }`}
+      >
+        {cancelled ? (
+          <Ban className="text-muted-foreground" size={26} />
+        ) : (
+          <AlertCircle className="text-destructive" size={26} />
+        )}
       </div>
       <h2 className="text-base font-medium text-foreground">
         {job.dataset_name ?? "Dataset"} <span className="text-muted-foreground">→</span> {job.target_column}
@@ -264,7 +297,13 @@ function TrainingFailed({ job }: { job: TrainingJobSummary }) {
         {job.task_type === "regression" ? "Régression" : "Classification"} · lancé {formatDateTime(job.created_at)}
       </p>
       {job.error_message && (
-        <p className="text-sm text-destructive bg-destructive/10 border border-destructive/20 rounded-lg px-3 py-2 text-left">
+        <p
+          className={`text-sm rounded-lg px-3 py-2 text-left border ${
+            cancelled
+              ? "text-muted-foreground bg-muted border-border"
+              : "text-destructive bg-destructive/10 border-destructive/20"
+          }`}
+        >
           {job.error_message}
         </p>
       )}

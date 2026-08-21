@@ -414,7 +414,7 @@ export interface FeatureEngineeringSpec {
 }
 
 export type TaskType = "classification" | "regression";
-export type JobStatus = "queued" | "running" | "completed" | "failed";
+export type JobStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
 
 // ── Clustering (Lot 11+ — ML non supervisé) ──────────────────────────────
 
@@ -1269,6 +1269,7 @@ export const api = {
         method: "POST",
         body: JSON.stringify({ data }),
       }),
+    cancel: (id: number) => request<TrainingJobSummary>(`/training/jobs/${id}/cancel`, { method: "POST" }),
     remove: (id: number) => request<void>(`/training/jobs/${id}`, { method: "DELETE" }),
     // Lot 9 — registre de modèles versionné.
     promoteModel: (jobId: number, stageValue: Exclude<ModelStage, null> | "none") =>
@@ -1318,6 +1319,7 @@ export const api = {
         method: "POST",
         body: JSON.stringify({ data }),
       }),
+    cancel: (id: number) => request<ClusteringJobSummary>(`/clustering/jobs/${id}/cancel`, { method: "POST" }),
     remove: (id: number) => request<void>(`/clustering/jobs/${id}`, { method: "DELETE" }),
   },
 
@@ -1334,6 +1336,7 @@ export const api = {
     getPoints: (id: number) => request<DimensionalityPoint[]>(`/dimensionality/jobs/${id}/points`),
     getColorBy: (id: number, column: string) =>
       request<DimensionalityColorByResponse>(`/dimensionality/jobs/${id}/color-by?column=${encodeURIComponent(column)}`),
+    cancel: (id: number) => request<DimensionalityJobSummary>(`/dimensionality/jobs/${id}/cancel`, { method: "POST" }),
     remove: (id: number) => request<void>(`/dimensionality/jobs/${id}`, { method: "DELETE" }),
   },
 
@@ -1347,6 +1350,7 @@ export const api = {
     getJob: (id: number) => request<AnomalyJobSummary>(`/anomalies/jobs/${id}`),
     getResult: (id: number) => request<AnomalyResult>(`/anomalies/jobs/${id}/result`),
     getObservations: (id: number) => request<AnomalyObservation[]>(`/anomalies/jobs/${id}/observations`),
+    cancel: (id: number) => request<AnomalyJobSummary>(`/anomalies/jobs/${id}/cancel`, { method: "POST" }),
     remove: (id: number) => request<void>(`/anomalies/jobs/${id}`, { method: "DELETE" }),
   },
 
@@ -1384,6 +1388,8 @@ export const api = {
         file,
         targetLabel ? { target_label: targetLabel } : {},
       ),
+    cancel: (id: number) =>
+      request<VisionClassificationJobSummary>(`/vision/classification/jobs/${id}/cancel`, { method: "POST" }),
     remove: (id: number) => request<void>(`/vision/classification/jobs/${id}`, { method: "DELETE" }),
   },
 
@@ -1398,6 +1404,7 @@ export const api = {
     getJob: (id: number) => request<VisionAnomalyJobSummary>(`/vision/anomalies/jobs/${id}`),
     getResult: (id: number) => request<VisionAnomalyResult>(`/vision/anomalies/jobs/${id}/result`),
     getExamples: (id: number) => request<VisionAnomalyExample[]>(`/vision/anomalies/jobs/${id}/examples`),
+    cancel: (id: number) => request<VisionAnomalyJobSummary>(`/vision/anomalies/jobs/${id}/cancel`, { method: "POST" }),
     remove: (id: number) => request<void>(`/vision/anomalies/jobs/${id}`, { method: "DELETE" }),
   },
 };
