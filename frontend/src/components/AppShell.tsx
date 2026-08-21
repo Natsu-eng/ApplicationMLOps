@@ -1,4 +1,4 @@
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { HelpCircle, LayoutDashboard, LogOut, Menu, Target, X } from "lucide-react";
 import { useAuth } from "../contexts/AuthContext";
@@ -6,6 +6,7 @@ import { Avatar } from "./ui/Avatar";
 import { Badge } from "./ui/Badge";
 import { HelpModal } from "./HelpModal";
 import { PILLARS, type PillarId } from "../config/pillars";
+import { setLastPillar } from "../utils/lastPillar";
 
 /** Coquille commune à toutes les pages protégées — sidebar fixe façon SaaS
  * moderne (refonte UI, calquée sur la maquette de référence) : logo en
@@ -32,6 +33,10 @@ export default function AppShell({ children, pillarId }: { children: ReactNode; 
   const location = useLocation();
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
+
+  useEffect(() => {
+    if (pillarId) setLastPillar(pillarId);
+  }, [pillarId]);
 
   if (!user) return null;
 
