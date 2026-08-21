@@ -193,6 +193,35 @@ def test_cancel_404_for_other_organization(client):
     assert resp.status_code == 404
 
 
+# ── Lot 7, §J.2 — relance depuis une configuration existante ────────────────
+
+
+def test_rerun_creates_a_new_job_with_the_same_configuration(client):
+    headers = _register(client)
+    dataset = _upload_vision_dataset(client, headers, _mvtec_zip_bytes())
+    original = _create_job(client, headers, dataset["id"], num_epochs=3).json()
+
+    with patch("api.routers.vision_anomalies.vision_queue") as mock_queue:
+        mock_queue.enqueue.return_value.id = "fake-rq-id"
+        resp = client.post(f"/api/vision/anomalies/jobs/{original['id']}/rerun", headers=headers)
+    assert resp.status_code == 201
+    body = resp.json()
+    assert body["id"] != original["id"]
+    assert body["vision_dataset_id"] == original["vision_dataset_id"]
+    assert body["model_id"] == original["model_id"]
+    assert body["status"] == "queued"
+
+
+def test_rerun_404_for_other_organization(client):
+    headers_a = _register(client, "a@bureau-a.fr", "Bureau A")
+    dataset_a = _upload_vision_dataset(client, headers_a, _mvtec_zip_bytes())
+    job = _create_job(client, headers_a, dataset_a["id"]).json()
+
+    headers_b = _register(client, "b@bureau-b.fr", "Bureau B")
+    resp = client.post(f"/api/vision/anomalies/jobs/{job['id']}/rerun", headers=headers_b)
+    assert resp.status_code == 404
+
+
 def test_quota_shared_with_other_job_types(client):
     headers = _register(client)
     dataset = _upload_vision_dataset(client, headers, _mvtec_zip_bytes())

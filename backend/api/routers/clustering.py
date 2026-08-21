@@ -408,6 +408,21 @@ def cancel_clustering_job(job_id: int, current_user: User = Depends(get_current_
     return _to_summary(job)
 
 
+@router.post("/jobs/{job_id}/rerun", response_model=ClusteringJobSummary, status_code=status.HTTP_201_CREATED)
+def rerun_clustering_job(job_id: int, current_user: User = Depends(get_current_user), db=Depends(get_db)):
+    """Relance un clustering avec EXACTEMENT la même configuration (Lot 7,
+    §J.2) — réutilise la validation complète de `POST /jobs`."""
+    job = _get_org_job(job_id, current_user, db)
+    config = json.loads(job.config_json)
+    body = ClusteringJobCreate(
+        dataset_id=job.dataset_id,
+        feature_columns=json.loads(job.feature_columns_json),
+        seed=config.get("seed"),
+        algorithm_ids=config.get("algorithm_ids"),
+    )
+    return create_clustering_job(body, current_user, db)
+
+
 @router.delete("/jobs/{job_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_clustering_job(job_id: int, current_user: User = Depends(get_current_user), db=Depends(get_db)):
     """Supprime un clustering (et son résultat, s'il existe) — même logique

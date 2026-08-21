@@ -430,6 +430,19 @@ def cancel_vision_classification_job(job_id: int, current_user: User = Depends(g
     return _to_summary(job)
 
 
+@router.post("/jobs/{job_id}/rerun", response_model=VisionClassificationJobSummary, status_code=status.HTTP_201_CREATED)
+def rerun_vision_classification_job(job_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Relance un entraînement Vision (classification) avec EXACTEMENT la
+    même configuration (Lot 7, §J.2) — `config_json` reprend ici tous les
+    champs de `VisionClassificationJobCreate` à l'identique (voir sa
+    construction dans `create_vision_classification_job`), dépaquetage
+    direct sans reconstruction champ par champ."""
+    job = _get_org_job(job_id, current_user, db)
+    config = json.loads(job.config_json)
+    body = VisionClassificationJobCreate(vision_dataset_id=job.vision_dataset_id, **config)
+    return create_vision_classification_job(body, current_user, db)
+
+
 @router.delete("/jobs/{job_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_vision_classification_job(job_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     job = _get_org_job(job_id, current_user, db)

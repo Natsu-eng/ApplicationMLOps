@@ -209,6 +209,42 @@ def test_cancel_404_for_other_organization(mock_queue, client):
     assert client.get(f"/api/training/jobs/{job['id']}", headers=headers_a).status_code == 200
 
 
+# ── Lot 7, §J.2 — relance depuis une configuration existante ────────────────
+
+
+@patch("api.routers.training.training_queue")
+def test_rerun_creates_a_new_job_with_the_same_configuration(mock_queue, client):
+    mock_queue.enqueue.return_value.id = "fake-rq-id"
+    headers = _register(client)
+    dataset = _upload_dataset(client, headers)
+    original = client.post(
+        "/api/training/jobs", headers=headers,
+        json={"dataset_id": dataset["id"], "target_column": "cible", "optuna_trials": 5, "cv_folds": 3},
+    ).json()
+
+    resp = client.post(f"/api/training/jobs/{original['id']}/rerun", headers=headers)
+    assert resp.status_code == 201
+    body = resp.json()
+    assert body["id"] != original["id"]
+    assert body["dataset_id"] == original["dataset_id"]
+    assert body["target_column"] == "cible"
+    assert body["status"] == "queued"
+
+
+@patch("api.routers.training.training_queue")
+def test_rerun_404_for_other_organization(mock_queue, client):
+    mock_queue.enqueue.return_value.id = "fake-rq-id"
+    headers_a = _register(client, "a@bureau-a.fr", "Bureau A")
+    headers_b = _register(client, "b@bureau-b.fr", "Bureau B")
+    dataset = _upload_dataset(client, headers_a)
+    job = client.post(
+        "/api/training/jobs", headers=headers_a, json={"dataset_id": dataset["id"], "target_column": "cible"}
+    ).json()
+
+    resp = client.post(f"/api/training/jobs/{job['id']}/rerun", headers=headers_b)
+    assert resp.status_code == 404
+
+
 # ── Lot E2 — mode guidé/expert : catalogue de modèles + manettes ───────────
 
 

@@ -1195,6 +1195,35 @@ def cancel_training_job(job_id: int, current_user: User = Depends(get_current_us
     return _to_summary(job)
 
 
+@router.post("/jobs/{job_id}/rerun", response_model=TrainingJobSummary, status_code=status.HTTP_201_CREATED)
+def rerun_training_job(job_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Relance un entraînement avec EXACTEMENT la même configuration (Lot 7,
+    §J.2) — le geste le plus fréquent en pratique, jusqu'ici impossible sans
+    tout ressaisir. Reconstruit le corps de `POST /jobs` depuis le job
+    d'origine et réutilise SA validation complète (dataset toujours prêt,
+    colonnes toujours présentes...) — jamais une copie partielle de cette
+    logique, qui divergerait avec le temps."""
+    job = _get_org_job(job_id, current_user, db)
+    config = json.loads(job.config_json)
+    fe = json.loads(job.feature_engineering_json) if job.feature_engineering_json else None
+    body = TrainingJobCreate(
+        dataset_id=job.dataset_id,
+        target_column=job.target_column,
+        feature_columns=json.loads(job.feature_columns_json),
+        task_type=job.task_type,
+        group_column=job.group_column,
+        test_size=config.get("test_size", 0.2),
+        optuna_trials=config.get("optuna_trials"),
+        cv_folds=config.get("cv_folds"),
+        seed=config.get("seed"),
+        cqr_alpha=config.get("cqr_alpha"),
+        model_ids=config.get("model_ids"),
+        feature_engineering=FeatureEngineeringConfig(upstream=fe["upstream"], pipeline=fe["pipeline"]) if fe else None,
+        class_rebalancing=config.get("class_rebalancing", False),
+    )
+    return create_training_job(body, current_user, db)
+
+
 @router.delete("/jobs/{job_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_training_job(job_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     """Supprime un entraînement (et le modèle associé, s'il existe).

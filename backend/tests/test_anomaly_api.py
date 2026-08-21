@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 import io
+import json
 from unittest.mock import patch
 
 from api.core.config import get_settings
+from api.core.models import AnomalyJob
 from workers.anomaly_worker import run_anomaly_job
 
 
@@ -149,6 +151,48 @@ def test_cancel_404_for_other_organization(client):
 
     headers_b = _register(client, "b@bureau-b.fr", "Bureau B")
     resp = client.post(f"/api/anomalies/jobs/{job['id']}/cancel", headers=headers_b)
+    assert resp.status_code == 404
+
+
+# ── Lot 7, §J.2 — relance depuis une configuration existante ────────────────
+
+
+def test_rerun_creates_a_new_job_with_the_same_configuration(client):
+    headers = _register(client)
+    dataset = _upload_dataset(client, headers)
+    original = _create_job(client, headers, dataset["id"], top_n=15, contamination=0.1).json()
+
+    with patch("api.routers.anomalies.analysis_queue") as mock_queue:
+        mock_queue.enqueue.return_value.id = "fake-rq-id"
+        resp = client.post(f"/api/anomalies/jobs/{original['id']}/rerun", headers=headers)
+    assert resp.status_code == 201
+    body = resp.json()
+    assert body["id"] != original["id"]
+    assert body["dataset_id"] == original["dataset_id"]
+    assert body["feature_columns"] == original["feature_columns"]
+    assert body["status"] == "queued"
+
+
+def test_rerun_preserves_auto_contamination(client, db_session):
+    headers = _register(client)
+    dataset = _upload_dataset(client, headers)
+    original = _create_job(client, headers, dataset["id"]).json()
+
+    with patch("api.routers.anomalies.analysis_queue") as mock_queue:
+        mock_queue.enqueue.return_value.id = "fake-rq-id"
+        resp = client.post(f"/api/anomalies/jobs/{original['id']}/rerun", headers=headers)
+    assert resp.status_code == 201
+    new_job = db_session.query(AnomalyJob).filter(AnomalyJob.id == resp.json()["id"]).first()
+    assert json.loads(new_job.config_json)["contamination"] == "auto"
+
+
+def test_rerun_404_for_other_organization(client):
+    headers_a = _register(client, "a@bureau-a.fr", "Bureau A")
+    dataset_a = _upload_dataset(client, headers_a, "a.csv")
+    job = _create_job(client, headers_a, dataset_a["id"]).json()
+
+    headers_b = _register(client, "b@bureau-b.fr", "Bureau B")
+    resp = client.post(f"/api/anomalies/jobs/{job['id']}/rerun", headers=headers_b)
     assert resp.status_code == 404
 
 

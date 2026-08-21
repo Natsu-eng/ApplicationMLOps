@@ -347,6 +347,17 @@ def cancel_vision_anomaly_job(job_id: int, current_user: User = Depends(get_curr
     return _to_summary(job)
 
 
+@router.post("/jobs/{job_id}/rerun", response_model=VisionAnomalyJobSummary, status_code=status.HTTP_201_CREATED)
+def rerun_vision_anomaly_job(job_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Relance un entraînement Vision (anomalies) avec EXACTEMENT la même
+    configuration (Lot 7, §J.2) — `config_json` reprend ici tous les champs
+    de `VisionAnomalyJobCreate` à l'identique, dépaquetage direct."""
+    job = _get_org_job(job_id, current_user, db)
+    config = json.loads(job.config_json)
+    body = VisionAnomalyJobCreate(vision_dataset_id=job.vision_dataset_id, **config)
+    return create_vision_anomaly_job(body, current_user, db)
+
+
 @router.delete("/jobs/{job_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_vision_anomaly_job(job_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     job = _get_org_job(job_id, current_user, db)
