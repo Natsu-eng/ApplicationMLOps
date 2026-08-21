@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { Link } from "react-router-dom";
-import { AlertCircle, Ban, BrainCircuit, Check, ChevronLeft, ChevronRight, Loader2, PlayCircle, RotateCcw, Trash2 } from "lucide-react";
+import { AlertCircle, Ban, BrainCircuit, Check, ChevronLeft, ChevronRight, Loader2, PlayCircle, RotateCcw, Target, Trash2 } from "lucide-react";
 import {
   ApiError,
   api,
@@ -8,6 +8,7 @@ import {
   type DatasetSummary,
   type DurationEstimate,
   type FeatureEngineeringSpec,
+  type TargetSuggestion,
   type TrainingJobSummary,
 } from "../api/client";
 import AppShell from "../components/AppShell";
@@ -349,6 +350,7 @@ function TrainingForm({
   const [datasetId, setDatasetId] = useState<number | "">("");
   const [columns, setColumns] = useState<ColumnSchema[]>([]);
   const [targetColumn, setTargetColumn] = useState("");
+  const [targetSuggestions, setTargetSuggestions] = useState<TargetSuggestion[]>([]);
   const [groupColumn, setGroupColumn] = useState("");
   const [selectedFeatures, setSelectedFeatures] = useState<Set<string>>(new Set());
   const [showFeaturePicker, setShowFeaturePicker] = useState(false);
@@ -413,6 +415,7 @@ function TrainingForm({
     setError(null);
     setTargetColumn("");
     setGroupColumn("");
+    setTargetSuggestions([]);
     if (!id) {
       setDatasetId("");
       setColumns([]);
@@ -426,6 +429,12 @@ function TrainingForm({
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Impossible de charger les colonnes");
     }
+    // Suggestion de cible (Lot 7, §J.1) — best-effort, jamais bloquant :
+    // une erreur ici ne doit jamais empêcher de choisir une cible à la main.
+    api.datasets
+      .targetSuggestions(numericId)
+      .then((res) => setTargetSuggestions(res.suggestions))
+      .catch(() => setTargetSuggestions([]));
   }
 
   async function handleSubmit(event: FormEvent) {
@@ -561,6 +570,27 @@ function TrainingForm({
                     C'est la valeur que le modèle apprendra à prédire. Classification ou régression détectée
                     automatiquement selon cette colonne.
                   </p>
+                  {targetSuggestions.length > 0 && !targetColumn && (
+                    <div className="mt-2">
+                      <p className="text-xs text-muted-foreground mb-1.5">
+                        Colonnes les plus plausibles pour ce dataset :
+                      </p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {targetSuggestions.map((s) => (
+                          <button
+                            key={s.column}
+                            type="button"
+                            onClick={() => setTargetColumn(s.column)}
+                            title={s.reasons.join(" · ")}
+                            className="inline-flex items-center gap-1 rounded-full border border-primary/20 bg-primary/5 px-2.5 py-1 text-xs font-medium text-primary hover:bg-primary/10 transition-colors"
+                          >
+                            <Target size={11} />
+                            {s.column}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 {targetColumn && (
