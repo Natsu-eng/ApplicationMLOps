@@ -440,7 +440,10 @@ export interface ClusterProfile {
   size: number;
   size_pct: number;
   numeric_summary: Record<string, { mean: number; median: number; z_score: number }>;
-  categorical_summary: Record<string, { top_category: string; top_pct: number }>;
+  categorical_summary: Record<
+    string,
+    { top_category: string; top_pct: number; population_pct: number; lift: number | null }
+  >;
   differentiating_variables: string[];
 }
 
@@ -475,6 +478,18 @@ export interface AlgorithmCatalogEntry {
   label: string;
   family: string;
   is_default: boolean;
+}
+
+export type ClusterAssignmentMethod =
+  | "exact"
+  | "approximate_centroid"
+  | "approximate_nearest_core"
+  | "unsupported";
+
+export interface ClusterPrediction {
+  cluster_id: number | null;
+  is_noise: boolean;
+  assignment_method: ClusterAssignmentMethod;
 }
 
 // ── Réduction de dimension (Lot 13 — ML non supervisé) ───────────────────
@@ -545,6 +560,7 @@ export interface AnomalyJobCreatePayload {
   feature_columns: string[];
   top_n?: number;
   seed?: number;
+  contamination?: number;
 }
 
 export interface AnomalyJobSummary {
@@ -1277,6 +1293,11 @@ export const api = {
     getJob: (id: number) => request<ClusteringJobSummary>(`/clustering/jobs/${id}`),
     getResult: (id: number) => request<ClusteringResult>(`/clustering/jobs/${id}/result`),
     getCandidates: (id: number) => request<ClusterCandidate[]>(`/clustering/jobs/${id}/candidates`),
+    predict: (id: number, data: Record<string, unknown>) =>
+      request<ClusterPrediction>(`/clustering/jobs/${id}/predict`, {
+        method: "POST",
+        body: JSON.stringify({ data }),
+      }),
     remove: (id: number) => request<void>(`/clustering/jobs/${id}`, { method: "DELETE" }),
   },
 

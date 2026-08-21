@@ -25,10 +25,12 @@ from api.core.models import ClusterCandidateRecord, ClusterModel, ClusteringJob,
 from api.core.pagination import paginate_by_id
 from api.routers.auth import get_current_user
 from services.audit import log_action
+from services.clustering_inference import ClusterInferenceError, assign_cluster
 from services.clustering_registry import CLUSTER_REGISTRY, DEFAULT_ALGORITHM_IDS
 from services.datasets import DatasetParsingError, read_dataset_dataframe
 from services.job_quota import ALL_JOB_MODELS, raise_if_quota_exceeded
 from services.job_watchdog import reconcile_stale_jobs
+from services.ml_inference import InferenceError, load_bundle
 
 router = APIRouter(prefix="/clustering", tags=["clustering"])
 _settings = get_settings()
@@ -104,6 +106,20 @@ class AlgorithmCatalogEntry(BaseModel):
 
 class AlgorithmCatalogResponse(BaseModel):
     algorithms: List[AlgorithmCatalogEntry]
+
+
+class ClusterPredictionRequest(BaseModel):
+    data: dict[str, Any]
+
+
+class ClusterPredictionResponse(BaseModel):
+    cluster_id: Optional[int]
+    is_noise: bool
+    # "exact" (KMeans/K-Means rapide) / "approximate_centroid" (hiérarchique)
+    # / "approximate_nearest_core" (DBSCAN) / "unsupported" (clustering
+    # entraîné avant ce lot, ou famille future non couverte) — voir
+    # services/clustering_inference.py pour le détail de chaque méthode.
+    assignment_method: str
 
 
 # ── Aides ────────────────────────────────────────────────────────────────
@@ -305,6 +321,39 @@ def get_clustering_result(job_id: int, current_user: User = Depends(get_current_
         profiles=[ClusterProfileOut(**p) for p in json.loads(result.profiles_json)],
         model_card=json.loads(result.model_card_json or "{}"),
     )
+
+
+@router.post("/jobs/{job_id}/predict", response_model=ClusterPredictionResponse)
+def predict_cluster(
+    job_id: int,
+    body: ClusterPredictionRequest,
+    current_user: User = Depends(get_current_user),
+    db=Depends(get_db),
+):
+    """Assigne une nouvelle observation à un groupe déjà découvert par ce
+    clustering (Lot 6B, §F.2) — referme la même boucle que
+    `training.py::predict_with_model` côté supervisé. Voir
+    `services/clustering_inference.py` pour le détail des 3 méthodes
+    d'assignation selon la famille d'algorithme retenue."""
+    job = _get_org_job(job_id, current_user, db)
+    if job.result is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"code": "RESULTAT_INDISPONIBLE", "message": "Ce clustering n'a pas encore de résultat"},
+        )
+    result = job.result
+    feature_columns = json.loads(result.feature_columns_json)
+
+    try:
+        bundle = load_bundle(result.file_path)
+        assignment = assign_cluster(bundle, feature_columns, body.data)
+    except (InferenceError, ClusterInferenceError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": "ASSIGNATION_IMPOSSIBLE", "message": str(exc)},
+        )
+
+    return ClusterPredictionResponse(**assignment)
 
 
 @router.get("/jobs/{job_id}/candidates", response_model=List[ClusterCandidateOut])

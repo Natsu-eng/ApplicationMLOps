@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { ClusterCandidate, ClusterProfile } from "../api/client";
-import { assessSilhouetteQuality, buildRecommendationExplanation, computeClusterDistribution } from "./clusterQuality";
+import {
+  assessSilhouetteQuality,
+  assessStabilityQuality,
+  buildRecommendationExplanation,
+  computeClusterDistribution,
+} from "./clusterQuality";
 
 function candidate(overrides: Partial<ClusterCandidate>): ClusterCandidate {
   return {
@@ -42,6 +47,23 @@ describe("assessSilhouetteQuality", () => {
   });
   it("gère l'absence de score sans planter", () => {
     const result = assessSilhouetteQuality(null);
+    expect(result.tone).toBe("low");
+    expect(result.label).toMatch(/non évaluable/i);
+  });
+});
+
+describe("assessStabilityQuality", () => {
+  it("classe un ARI bas en regroupement peu stable", () => {
+    expect(assessStabilityQuality(0.3).tone).toBe("low");
+  });
+  it("classe un ARI intermédiaire en stabilité modérée", () => {
+    expect(assessStabilityQuality(0.6).tone).toBe("moderate");
+  });
+  it("classe un ARI élevé en regroupement stable", () => {
+    expect(assessStabilityQuality(0.9).tone).toBe("good");
+  });
+  it("gère l'absence de score (dataset trop petit) sans planter", () => {
+    const result = assessStabilityQuality(null);
     expect(result.tone).toBe("low");
     expect(result.label).toMatch(/non évaluable/i);
   });

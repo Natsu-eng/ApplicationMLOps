@@ -5,6 +5,7 @@ import io
 from unittest.mock import patch
 
 from api.core.config import get_settings
+from workers.clustering_worker import run_clustering_job
 
 
 def _register(client, email="owner@bureau.fr", org="Bureau"):
@@ -111,6 +112,46 @@ def test_result_endpoint_404_before_completion(client):
     job = _create_job(client, headers, dataset["id"]).json()
     resp = client.get(f"/api/clustering/jobs/{job['id']}/result", headers=headers)
     assert resp.status_code == 404
+    assert resp.json()["detail"]["code"] == "RESULTAT_INDISPONIBLE"
+
+
+def test_predict_endpoint_assigns_new_observation_after_completion(client, db_session):
+    headers = _register(client)
+    dataset = _upload_dataset(client, headers, n=60)
+    job = _create_job(client, headers, dataset["id"], algorithm_ids=["kmeans"]).json()
+
+    run_clustering_job(job["id"])
+    db_session.expire_all()
+
+    resp = client.post(
+        f"/api/clustering/jobs/{job['id']}/predict", headers=headers, json={"data": {"x1": 0, "x2": 0}}
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["assignment_method"] == "exact"
+    assert body["cluster_id"] is not None
+    assert body["is_noise"] is False
+
+
+def test_predict_endpoint_rejects_missing_feature(client, db_session):
+    headers = _register(client)
+    dataset = _upload_dataset(client, headers, n=60)
+    job = _create_job(client, headers, dataset["id"], algorithm_ids=["kmeans"]).json()
+
+    run_clustering_job(job["id"])
+    db_session.expire_all()
+
+    resp = client.post(f"/api/clustering/jobs/{job['id']}/predict", headers=headers, json={"data": {"x1": 0}})
+    assert resp.status_code == 400
+    assert resp.json()["detail"]["code"] == "ASSIGNATION_IMPOSSIBLE"
+
+
+def test_predict_endpoint_409_before_completion(client):
+    headers = _register(client)
+    dataset = _upload_dataset(client, headers)
+    job = _create_job(client, headers, dataset["id"]).json()
+    resp = client.post(f"/api/clustering/jobs/{job['id']}/predict", headers=headers, json={"data": {"x1": 0, "x2": 0}})
+    assert resp.status_code == 409
     assert resp.json()["detail"]["code"] == "RESULTAT_INDISPONIBLE"
 
 

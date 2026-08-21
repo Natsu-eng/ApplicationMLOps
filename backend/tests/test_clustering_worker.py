@@ -80,6 +80,10 @@ def test_worker_persists_result_and_candidates(db_session):
     assert len(profiles) == 3
     assert sum(p["size"] for p in profiles) <= 120  # <= n_total (peut être < si bruit DBSCAN)
 
+    model_card = json.loads(result.model_card_json)
+    assert model_card["sampled"] is False
+    assert model_card["n_samples_total"] == model_card["n_samples_used"] == 120
+
     candidates = (
         db_session.query(ClusterCandidateRecord).filter(ClusterCandidateRecord.clustering_job_id == job.id).all()
     )
