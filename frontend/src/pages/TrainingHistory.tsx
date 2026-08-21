@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Award, BrainCircuit, GitCompareArrows, History } from "lucide-react";
+import { Link } from "react-router-dom";
+import { Award, BrainCircuit, GitCompareArrows, History, Search } from "lucide-react";
 import {
   ApiError,
   api,
   type JobComparisonResponse,
+  type JobStatus,
   type ModelRegistryEntry,
   type TrainingJobSummary,
 } from "../api/client";
@@ -13,10 +15,22 @@ import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
 import { ColorIconBadge, accentColorForId } from "../components/ui/ColorIconBadge";
+import { Input } from "../components/ui/Input";
 import { PageHeader } from "../components/ui/PageHeader";
+import { Select } from "../components/ui/Select";
 import { SectionHeader } from "../components/ui/SectionHeader";
 import { JobStatusBadge } from "../components/ui/StatusBadge";
+import { Table, type TableColumn } from "../components/ui/Table";
 import { formatDateTime, formatMetricLabel, formatMetricValue } from "../utils/format";
+
+const STATUS_FILTER_OPTIONS: { value: JobStatus | "all"; label: string }[] = [
+  { value: "all", label: "Tous les statuts" },
+  { value: "queued", label: "En file" },
+  { value: "running", label: "En cours" },
+  { value: "completed", label: "Terminé" },
+  { value: "failed", label: "Échec" },
+  { value: "cancelled", label: "Annulé" },
+];
 
 const CONFIG_ROWS: { key: string; label: string }[] = [
   { key: "test_size", label: "Part du jeu de test" },
@@ -51,6 +65,8 @@ export default function TrainingHistory() {
   const [compareError, setCompareError] = useState<string | null>(null);
   const [registry, setRegistry] = useState<ModelRegistryEntry[] | null>(null);
   const [registryError, setRegistryError] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState<JobStatus | "all">("all");
 
   const load = useCallback(() => {
     api.training
@@ -73,13 +89,8 @@ export default function TrainingHistory() {
     load();
   }, [load]);
 
-  function toggle(id: number) {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
+  function handleSelectionChange(keys: Set<string | number>) {
+    setSelected(keys as Set<number>);
     setComparison(null);
   }
 
@@ -106,6 +117,93 @@ export default function TrainingHistory() {
     // cv_score/headline en tête, puis le reste dans un ordre stable.
     return Array.from(keys).sort((a, b) => (a === "cv_score" ? -1 : b === "cv_score" ? 1 : a.localeCompare(b)));
   }, [comparison]);
+
+  const filteredJobs = useMemo(() => {
+    if (!jobs) return [];
+    const term = search.trim().toLowerCase();
+    return jobs.filter((job) => {
+      if (statusFilter !== "all" && job.status !== statusFilter) return false;
+      if (!term) return true;
+      const haystack = `${job.dataset_name ?? ""} ${job.target_column} ${job.algorithm ?? ""}`.toLowerCase();
+      return haystack.includes(term);
+    });
+  }, [jobs, search, statusFilter]);
+
+  const columns = useMemo<TableColumn<TrainingJobSummary>[]>(
+    () => [
+      {
+        key: "dataset",
+        header: "Dataset → Cible",
+        sortable: true,
+        sortValue: (job) => job.dataset_name ?? "",
+        sticky: true,
+        render: (job) => (
+          <div className="flex items-center gap-2.5 min-w-0">
+            <ColorIconBadge icon={BrainCircuit} color={accentColorForId(job.id)} size="sm" />
+            <div className="min-w-0">
+              <p className="text-sm text-foreground truncate">
+                {job.dataset_name ?? "Dataset"} <span className="text-muted-foreground">→</span> {job.target_column}
+              </p>
+            </div>
+          </div>
+        ),
+      },
+      {
+        key: "algorithm",
+        header: "Algorithme",
+        sortable: true,
+        sortValue: (job) => job.algorithm ?? "",
+        render: (job) => job.algorithm ?? "—",
+      },
+      {
+        key: "metric",
+        header: "Métrique",
+        align: "right",
+        sortValue: (job) => job.headline_metric?.value ?? null,
+        render: (job) =>
+          job.headline_metric?.value !== null && job.headline_metric?.value !== undefined ? (
+            <span className="text-xs text-muted-foreground tabular-nums">
+              {job.headline_metric.name} = {job.headline_metric.value.toFixed(3)}
+            </span>
+          ) : (
+            "—"
+          ),
+      },
+      {
+        key: "status",
+        header: "Statut",
+        sortable: true,
+        sortValue: (job) => job.status,
+        render: (job) => <JobStatusBadge status={job.status} />,
+      },
+      {
+        key: "created_by",
+        header: "Auteur",
+        sortable: true,
+        sortValue: (job) => job.created_by ?? "",
+        render: (job) => job.created_by ?? "—",
+      },
+      {
+        key: "created_at",
+        header: "Date",
+        align: "right",
+        sortable: true,
+        sortValue: (job) => job.created_at,
+        render: (job) => formatDateTime(job.created_at),
+      },
+      {
+        key: "actions",
+        header: "",
+        align: "right",
+        render: (job) => (
+          <Link to={`/training?job=${job.id}`} className="text-xs text-primary hover:text-primary/80 whitespace-nowrap">
+            Voir →
+          </Link>
+        ),
+      },
+    ],
+    [],
+  );
 
   return (
     <AppShell pillarId="supervised">
@@ -165,43 +263,40 @@ export default function TrainingHistory() {
 
       <Card className="p-5 mb-6">
         <SectionHeader icon={History} color="blue" label="Tous les entraînements" />
-        {jobs === null ? (
-          error ? null : <p className="text-sm text-muted-foreground">Chargement…</p>
-        ) : jobs.length === 0 ? (
-          <p className="text-sm text-muted-foreground">Aucun entraînement pour l'instant.</p>
-        ) : (
-          <ul className="divide-y divide-border">
-            {jobs.map((job) => (
-              <li key={job.id} className="py-2.5 flex items-center gap-3">
-                <input
-                  type="checkbox"
-                  className="accent-primary flex-shrink-0"
-                  checked={selected.has(job.id)}
-                  onChange={() => toggle(job.id)}
-                  aria-label={`Sélectionner l'entraînement ${job.id}`}
-                />
-                <ColorIconBadge icon={BrainCircuit} color={accentColorForId(job.id)} size="sm" />
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm text-foreground truncate">
-                    {job.dataset_name ?? "Dataset"} <span className="text-muted-foreground">→</span> {job.target_column}
-                  </p>
-                  <p className="text-xs text-muted-foreground">
-                    {formatDateTime(job.created_at)}
-                    {job.algorithm ? ` · ${job.algorithm}` : ""}
-                  </p>
-                </div>
-                <div className="flex items-center gap-2 flex-shrink-0">
-                  {job.headline_metric?.value !== null && job.headline_metric?.value !== undefined && (
-                    <span className="text-xs text-muted-foreground tabular-nums">
-                      {job.headline_metric.name} = {job.headline_metric.value.toFixed(3)}
-                    </span>
-                  )}
-                  <JobStatusBadge status={job.status} />
-                </div>
-              </li>
+
+        <div className="grid gap-3 sm:grid-cols-3 mb-4">
+          <div className="relative sm:col-span-2">
+            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
+            <Input
+              placeholder="Rechercher un dataset, une cible, un algorithme…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="pl-9"
+            />
+          </div>
+          <Select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as JobStatus | "all")}>
+            {STATUS_FILTER_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
             ))}
-          </ul>
-        )}
+          </Select>
+        </div>
+
+        <Table
+          columns={columns}
+          rows={filteredJobs}
+          rowKey={(job) => job.id}
+          caption="Historique de tous les entraînements supervisés"
+          loading={jobs === null && !error}
+          pageSize={15}
+          selectable
+          selectedKeys={selected}
+          onSelectionChange={handleSelectionChange}
+          emptyMessage={
+            jobs && jobs.length > 0 ? "Aucun entraînement ne correspond à ces filtres." : "Aucun entraînement pour l'instant."
+          }
+        />
       </Card>
 
       {compareError && <p className="text-sm text-destructive mb-4">{compareError}</p>}
