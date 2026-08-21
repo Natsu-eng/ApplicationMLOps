@@ -26,12 +26,16 @@ import { Select } from "../components/ui/Select";
 import { Table, type TableColumn } from "../components/ui/Table";
 import { useConfirmAction } from "../hooks/useConfirmAction";
 import { CHART_COLOR_PRIMARY, CHART_GRID_STROKE, CHART_TICK_STYLE_SM, CHART_TOOLTIP_STYLE } from "../theme/charts";
+import { DataQualityWarnings } from "../components/training/DataQualityWarnings";
+import { assessConsensusQuality } from "../utils/anomalyQuality";
+import { QUALITY_TONE_ACCENT } from "../utils/qualityAssessment";
 
 const ACTIVE_STATUSES = new Set(["queued", "running"]);
 const POLL_INTERVAL_MS = 3000;
 const ACTIVE_JOB_STORAGE_KEY = "datalab_active_anomaly_job_id";
 const DEFAULT_TOP_N = 50;
 const MAX_TOP_N = 200;
+const DEFAULT_CONTAMINATION_PCT = 5;
 
 type Phase = "configure" | "progress" | "results" | "failed";
 
@@ -262,6 +266,11 @@ function AnomalyForm({
   const [columns, setColumns] = useState<ColumnSchema[]>([]);
   const [selectedFeatures, setSelectedFeatures] = useState<Set<string>>(new Set());
   const [topN, setTopN] = useState(DEFAULT_TOP_N);
+  // `null` = réglage automatique (comportement historique, formule du papier
+  // original de chaque algorithme) — même principe que le mode guidé du
+  // reste du produit : pas de paramètre à régler par défaut, réglable
+  // explicitement seulement si l'utilisateur active le mode manuel.
+  const [contaminationPct, setContaminationPct] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [prefillApplied, setPrefillApplied] = useState(false);
@@ -305,6 +314,17 @@ function AnomalyForm({
     });
   }
 
+  // Toujours une exclusion, jamais un simple toggle (voir
+  // DataQualityWarnings.tsx) — approuver une suggestion du contrôle qualité
+  // doit exclure la colonne, jamais la réintégrer si déjà exclue.
+  function excludeFeatures(names: string[]) {
+    setSelectedFeatures((prev) => {
+      const next = new Set(prev);
+      names.forEach((n) => next.delete(n));
+      return next;
+    });
+  }
+
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
     if (!datasetId || selectedFeatures.size === 0) return;
@@ -315,6 +335,7 @@ function AnomalyForm({
         dataset_id: datasetId,
         feature_columns: Array.from(selectedFeatures),
         top_n: topN,
+        contamination: contaminationPct !== null ? contaminationPct / 100 : undefined,
       });
       onJobCreated(job);
     } catch (err) {
@@ -390,6 +411,17 @@ function AnomalyForm({
           </div>
         )}
 
+        {datasetId && (
+          <div>
+            <p className="block text-sm text-muted-foreground mb-1.5">Qualité des données</p>
+            <DataQualityWarnings
+              datasetId={datasetId}
+              selectedFeatures={selectedFeatures}
+              onExcludeColumns={excludeFeatures}
+            />
+          </div>
+        )}
+
         <div>
           <label htmlFor="anomaly-top-n" className="block text-sm text-muted-foreground mb-1">
             Nombre d'observations à classer
@@ -402,6 +434,35 @@ function AnomalyForm({
             value={topN}
             onChange={(e) => setTopN(Math.min(MAX_TOP_N, Math.max(1, Number(e.target.value) || 1)))}
           />
+        </div>
+
+        <div>
+          <label className="flex items-center gap-2 text-sm text-muted-foreground mb-1.5">
+            <input
+              type="checkbox"
+              checked={contaminationPct !== null}
+              onChange={(e) => setContaminationPct(e.target.checked ? DEFAULT_CONTAMINATION_PCT : null)}
+              className="accent-primary"
+            />
+            Régler moi-même la proportion attendue d'anomalies
+          </label>
+          {contaminationPct !== null && (
+            <>
+              <Input
+                id="anomaly-contamination"
+                type="number"
+                min={1}
+                max={50}
+                step={1}
+                value={contaminationPct}
+                onChange={(e) => setContaminationPct(Math.min(50, Math.max(1, Number(e.target.value) || 1)))}
+              />
+              <p className="text-xs text-muted-foreground mt-1">
+                % de vos données attendu comme atypique — par défaut, ce seuil est déduit automatiquement de vos
+                données (recommandé si vous ne savez pas à l'avance quelle proportion est concernée).
+              </p>
+            </>
+          )}
         </div>
 
         {error && (
@@ -492,6 +553,8 @@ function AnomalyResultView({ jobId }: { jobId: number }) {
     count,
   }));
 
+  const quality = assessConsensusQuality(result.anomaly_rate_consensus);
+
   return (
     <div className="max-w-4xl mx-auto space-y-5">
       <Card className={`p-5 ${accentSurfaceClass("amber")}`}>
@@ -506,12 +569,25 @@ function AnomalyResultView({ jobId }: { jobId: number }) {
           <MetricTile label="LOF" value={`${(result.anomaly_rate_lof * 100).toFixed(1)} %`} color="teal" />
           <MetricTile label="Consensus (les 2 méthodes)" value={`${(result.anomaly_rate_consensus * 100).toFixed(1)} %`} color="amber" />
         </div>
+        <div className={`rounded-xl border p-3 mt-4 ${accentSurfaceClass(QUALITY_TONE_ACCENT[quality.tone])}`}>
+          <span
+            className={`inline-flex items-center text-overline px-2 py-0.5 rounded-full bg-card/80 ${accentValueTextClass(QUALITY_TONE_ACCENT[quality.tone])}`}
+          >
+            {quality.label}
+          </span>
+          <p className="text-xs text-foreground/70 mt-1.5">{quality.caveat}</p>
+        </div>
         {result.sampled && (
           <p className="text-xs text-muted-foreground mt-3">
             Calculé sur un échantillon de {result.n_samples_used} observations sur {result.n_samples_total} au total
             (dataset volumineux — échantillonnage déterministe, reproductible).
           </p>
         )}
+        <p className="text-xs text-muted-foreground mt-3">
+          {result.model_card.contamination === "auto"
+            ? "Proportion attendue d'anomalies déduite automatiquement de vos données."
+            : `Proportion attendue d'anomalies réglée manuellement à ${(Number(result.model_card.contamination) * 100).toFixed(0)} %.`}
+        </p>
       </Card>
 
       <Card className="p-5">

@@ -42,6 +42,11 @@ _RARE_CATEGORY_THRESHOLD = 0.05  # même seuil d'esprit que RARE_CATEGORY_FREQUE
 class AnomalyConfig:
     top_n: int = DEFAULT_TOP_N
     seed: int = 42
+    # "auto" (défaut, formule du papier original) ou une fraction explicite
+    # de la population attendue comme anomalie — jusqu'ici codé en dur dans
+    # `anomaly_registry.py`, jamais exposé (Lot 6B, §F.2). Validé côté API
+    # (0, 0.5], voir `api/routers/anomalies.py::AnomalyJobCreate`.
+    contamination: str | float = "auto"
 
 
 @dataclass
@@ -145,13 +150,13 @@ def train_and_evaluate_anomalies(
     specs = {s.id: s for s in ANOMALY_REGISTRY}
 
     progress_cb("Isolation Forest", 25)
-    if_estimator = specs["isolation_forest"].build_estimator(n_used, config.seed)
+    if_estimator = specs["isolation_forest"].build_estimator(n_used, config.seed, config.contamination)
     if_estimator.fit(X_processed)
     labels_if = np.asarray(if_estimator.predict(X_processed))
     scores_if = np.asarray(if_estimator.score_samples(X_processed))  # plus bas = plus atypique
 
     progress_cb("Local Outlier Factor", 55)
-    lof_estimator = specs["lof"].build_estimator(n_used, config.seed)
+    lof_estimator = specs["lof"].build_estimator(n_used, config.seed, config.contamination)
     labels_lof = np.asarray(lof_estimator.fit_predict(X_processed))
     scores_lof = np.asarray(lof_estimator.negative_outlier_factor_)  # plus bas = plus atypique
 
@@ -212,7 +217,7 @@ def train_and_evaluate_anomalies(
         "n_samples_used": n_used,
         "sampled": sampled_flag,
         "seed": config.seed,
-        "contamination": "auto",
+        "contamination": config.contamination,
         "n_anomalies_isolation_forest": n_if,
         "n_anomalies_lof": n_lof,
         "n_anomalies_consensus": n_consensus,
