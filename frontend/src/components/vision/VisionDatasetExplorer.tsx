@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { AlertTriangle, Images } from "lucide-react";
-import { api, type VisionDatasetDetail, type VisionDatasetImageList } from "../../api/client";
+import { api, type VisionDatasetDetail, type VisionDatasetImageList, type VisionImageEda } from "../../api/client";
 import { Modal } from "../ui/Modal";
 import { Tabs, type TabItem } from "../ui/Tabs";
 import { VisionImage } from "./VisionImage";
@@ -107,6 +107,8 @@ function DatasetQualityReport({ dataset }: { dataset: VisionDatasetDetail }) {
   const report = dataset.validation_report;
   return (
     <div className="space-y-4 max-h-[65vh] overflow-y-auto pr-1">
+      {report.image_eda && <ImageEdaSummary eda={report.image_eda} />}
+
       {report.warnings.length > 0 ? (
         <div className="rounded-lg border border-warning/20 bg-warning/10 p-3 space-y-1.5">
           {report.warnings.map((w) => (
@@ -148,6 +150,73 @@ function DatasetQualityReport({ dataset }: { dataset: VisionDatasetDetail }) {
       {report.duplicate_detection_note && (
         <p className="text-xs text-muted-foreground italic">{report.duplicate_detection_note}</p>
       )}
+    </div>
+  );
+}
+
+/** EDA d'images (Lot 6A, AUDIT_DATALAB_2026-08-16.md §G.3/§G.4/§G.5) —
+ * jusqu'ici totalement absente (seul un minimum de 20px était vérifié en
+ * silence). Affiche la distribution RÉELLE des résolutions/formats/modes
+ * colorimétriques du dataset, calculée côté backend sur les images
+ * effectivement conservées (voir services/vision_datasets.py::_compute_image_eda)
+ * — ce composant ne fait qu'afficher, jamais un second calcul. */
+function ImageEdaSummary({ eda }: { eda: VisionImageEda }) {
+  const hasData = Object.keys(eda.resolution_buckets).length > 0;
+  if (!hasData) return null;
+
+  return (
+    <div className="rounded-lg border border-border bg-muted/40 p-3 space-y-4">
+      <p className="text-xs uppercase tracking-wide text-muted-foreground">Composition du dataset</p>
+
+      <div className="grid grid-cols-2 gap-3 text-xs">
+        <div>
+          <p className="text-muted-foreground mb-0.5">Largeur</p>
+          <p className="text-foreground tabular-nums">
+            {eda.width.min}–{eda.width.max}px (moyenne {eda.width.mean})
+          </p>
+        </div>
+        <div>
+          <p className="text-muted-foreground mb-0.5">Hauteur</p>
+          <p className="text-foreground tabular-nums">
+            {eda.height.min}–{eda.height.max}px (moyenne {eda.height.mean})
+          </p>
+        </div>
+      </div>
+
+      <DistributionBars title="Résolution (dimension la plus grande)" distribution={eda.resolution_buckets} />
+      <DistributionBars title="Format de fichier" distribution={eda.format_distribution} />
+      <DistributionBars title="Mode colorimétrique" distribution={eda.color_mode_distribution} />
+    </div>
+  );
+}
+
+/** Petit histogramme horizontal en CSS pur — cohérent avec le principe
+ * "sobre, dense, technique" du design system (Lot 2A) : pas besoin de
+ * Recharts pour 3-6 barres dans une modale. */
+function DistributionBars({ title, distribution }: { title: string; distribution: Record<string, number> }) {
+  const entries = Object.entries(distribution).sort((a, b) => b[1] - a[1]);
+  if (entries.length === 0) return null;
+  const total = entries.reduce((sum, [, count]) => sum + count, 0);
+  const max = Math.max(...entries.map(([, count]) => count));
+
+  return (
+    <div>
+      <p className="text-xs text-muted-foreground mb-1.5">{title}</p>
+      <div className="space-y-1">
+        {entries.map(([label, count]) => (
+          <div key={label} className="flex items-center gap-2 text-xs">
+            <span className="w-28 flex-shrink-0 truncate text-foreground/80" title={label}>
+              {label}
+            </span>
+            <div className="flex-1 h-3 rounded-sm bg-border/40 overflow-hidden">
+              <div className="h-full rounded-sm bg-primary/60" style={{ width: `${(count / max) * 100}%` }} />
+            </div>
+            <span className="w-20 flex-shrink-0 text-right tabular-nums text-muted-foreground">
+              {count} ({((count / total) * 100).toFixed(0)} %)
+            </span>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

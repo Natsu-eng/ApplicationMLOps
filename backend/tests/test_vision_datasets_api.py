@@ -60,6 +60,11 @@ def test_upload_valid_classification_dataset(client):
     assert body["n_classes"] == 2
     assert body["n_images"] == 8
     assert set(body["class_distribution"]) == {"classe_0", "classe_1"}
+    # Lot 6A (§G.3/§G.4/§G.5) — EDA d'images exposée dès l'upload, pas
+    # seulement au détail du dataset.
+    eda = body["validation_report"]["image_eda"]
+    assert sum(eda["resolution_buckets"].values()) == 8
+    assert eda["format_distribution"].get("PNG") == 8
 
 
 def test_upload_blocked_after_too_many_attempts(client):
