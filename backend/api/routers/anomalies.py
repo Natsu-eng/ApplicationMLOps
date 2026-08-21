@@ -17,11 +17,12 @@ from pathlib import Path
 from typing import Any, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import joinedload
 
 from api.core.config import get_settings
-from api.core.database import get_db
+from api.core.database import SessionLocal, get_db
 from api.core.job_queue import analysis_queue
 from api.core.models import AnomalyJob, AnomalyObservationRecord, Dataset, User
 from api.core.pagination import paginate_by_id
@@ -29,6 +30,7 @@ from api.routers.auth import get_current_user
 from services.anomaly_training import DEFAULT_TOP_N, MAX_TOP_N
 from services.audit import log_action
 from services.datasets import DatasetParsingError, read_dataset_dataframe
+from services.job_events import stream_job_updates
 from services.job_lifecycle import ACTIVE_STATUSES, CANCELLED_MESSAGE, try_cancel_rq_job
 from services.job_quota import ALL_JOB_MODELS, raise_if_quota_exceeded
 from services.job_watchdog import reconcile_stale_jobs
@@ -245,6 +247,40 @@ def list_anomaly_jobs(
 @router.get("/jobs/{job_id}", response_model=AnomalyJobSummary)
 def get_anomaly_job(job_id: int, current_user: User = Depends(get_current_user), db=Depends(get_db)):
     return _to_summary(_get_org_job(job_id, current_user, db))
+
+
+@router.get("/jobs/{job_id}/events")
+async def stream_anomaly_job_events(job_id: int, current_user: User = Depends(get_current_user)):
+    """Notifications de fin de job par SSE (Lot 7, §J.2) — voir
+    `training.py::stream_training_job_events` pour le raisonnement complet."""
+    organization_id = current_user.organization_id
+    db = SessionLocal()
+    try:
+        job = db.query(AnomalyJob).filter(AnomalyJob.id == job_id, AnomalyJob.organization_id == organization_id).first()
+        if job is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={"code": "ANOMALY_JOB_INTROUVABLE", "message": "Détection d'anomalies introuvable"},
+            )
+    finally:
+        db.close()
+
+    def fetch_snapshot():
+        session = SessionLocal()
+        try:
+            row = session.query(AnomalyJob).filter(AnomalyJob.id == job_id, AnomalyJob.organization_id == organization_id).first()
+            if row is None:
+                return None
+            return {
+                "status": row.status,
+                "progress_percent": row.progress_percent,
+                "progress_step": row.progress_step,
+                "error_message": row.error_message,
+            }
+        finally:
+            session.close()
+
+    return StreamingResponse(stream_job_updates(fetch_snapshot), media_type="text/event-stream")
 
 
 @router.get("/jobs/{job_id}/result", response_model=AnomalyResultOut)

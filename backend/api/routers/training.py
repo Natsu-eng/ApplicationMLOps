@@ -14,12 +14,12 @@ from pathlib import Path
 from typing import Any, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session, joinedload
 
 from api.core.config import get_settings
-from api.core.database import get_db
+from api.core.database import SessionLocal, get_db
 from api.core.job_queue import training_queue
 from api.core.models import AuditLog, Dataset, MLModel, ModelCandidate, Prediction, TrainingJob, User
 from api.core.pagination import paginate_by_id
@@ -33,6 +33,7 @@ from services.ml_inference import InferenceError, load_bundle, predict_one
 from services.prediction_retention import purge_old_predictions
 from services.ml_registry import MODEL_REGISTRY
 from services.duration_estimate import estimate_training_duration
+from services.job_events import stream_job_updates
 from services.job_lifecycle import ACTIVE_STATUSES, CANCELLED_MESSAGE, try_cancel_rq_job
 from services.ml_task import detect_task_type
 from services.ml_training import selection_metric_label
@@ -770,6 +771,42 @@ def compare_training_jobs(
 @router.get("/jobs/{job_id}", response_model=TrainingJobSummary)
 def get_training_job(job_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     return _to_summary(_get_org_job(job_id, current_user, db))
+
+
+@router.get("/jobs/{job_id}/events")
+async def stream_training_job_events(job_id: int, current_user: User = Depends(get_current_user)):
+    """Notifications de fin de job par SSE (Lot 7, §J.2) — remplace le
+    polling `setInterval` côté frontend. Vérifie l'existence/l'appartenance
+    du job une première fois avant d'ouvrir le flux (404 propre plutôt qu'un
+    flux qui s'ouvre puis échoue)."""
+    organization_id = current_user.organization_id
+    db = SessionLocal()
+    try:
+        job = db.query(TrainingJob).filter(TrainingJob.id == job_id, TrainingJob.organization_id == organization_id).first()
+        if job is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={"code": "TRAINING_JOB_INTROUVABLE", "message": "Entraînement introuvable"},
+            )
+    finally:
+        db.close()
+
+    def fetch_snapshot():
+        session = SessionLocal()
+        try:
+            row = session.query(TrainingJob).filter(TrainingJob.id == job_id, TrainingJob.organization_id == organization_id).first()
+            if row is None:
+                return None
+            return {
+                "status": row.status,
+                "progress_percent": row.progress_percent,
+                "progress_step": row.progress_step,
+                "error_message": row.error_message,
+            }
+        finally:
+            session.close()
+
+    return StreamingResponse(stream_job_updates(fetch_snapshot), media_type="text/event-stream")
 
 
 def _to_model_detail(model: MLModel, db: Session) -> MLModelDetail:

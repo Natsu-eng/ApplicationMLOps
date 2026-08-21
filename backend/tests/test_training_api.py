@@ -175,6 +175,39 @@ def test_cancel_queued_job_marks_it_cancelled_and_keeps_history(mock_queue, clie
     assert client.get(f"/api/training/jobs/{job['id']}", headers=headers).json()["status"] == "cancelled"
 
 
+# ── Lot 7, §J.2 — notifications SSE ──────────────────────────────────────────
+
+
+@patch("api.routers.training.training_queue")
+def test_events_stream_closes_immediately_on_terminal_job(mock_queue, client):
+    mock_queue.enqueue.return_value.id = "fake-rq-id"
+    headers = _register(client)
+    dataset = _upload_dataset(client, headers)
+    job = client.post(
+        "/api/training/jobs", headers=headers, json={"dataset_id": dataset["id"], "target_column": "cible"}
+    ).json()
+    client.post(f"/api/training/jobs/{job['id']}/cancel", headers=headers)
+
+    resp = client.get(f"/api/training/jobs/{job['id']}/events", headers=headers)
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("text/event-stream")
+    assert '"status": "cancelled"' in resp.text
+
+
+@patch("api.routers.training.training_queue")
+def test_events_stream_404_for_other_organization(mock_queue, client):
+    mock_queue.enqueue.return_value.id = "fake-rq-id"
+    headers_a = _register(client, "a@bureau-a.fr", "Bureau A")
+    headers_b = _register(client, "b@bureau-b.fr", "Bureau B")
+    dataset = _upload_dataset(client, headers_a)
+    job = client.post(
+        "/api/training/jobs", headers=headers_a, json={"dataset_id": dataset["id"], "target_column": "cible"}
+    ).json()
+
+    resp = client.get(f"/api/training/jobs/{job['id']}/events", headers=headers_b)
+    assert resp.status_code == 404
+
+
 @patch("api.routers.training.training_queue")
 def test_cancel_rejects_already_completed_job(mock_queue, client, db_session):
     mock_queue.enqueue.return_value.id = "fake-rq-id"

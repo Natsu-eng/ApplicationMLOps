@@ -132,6 +132,31 @@ def test_cancel_queued_job_marks_it_cancelled_and_keeps_history(client):
     assert client.get(f"/api/anomalies/jobs/{job['id']}", headers=headers).json()["status"] == "cancelled"
 
 
+# ── Lot 7, §J.2 — notifications SSE ──────────────────────────────────────────
+
+
+def test_events_stream_closes_immediately_on_terminal_job(client):
+    headers = _register(client)
+    dataset = _upload_dataset(client, headers)
+    job = _create_job(client, headers, dataset["id"]).json()
+    client.post(f"/api/anomalies/jobs/{job['id']}/cancel", headers=headers)
+
+    resp = client.get(f"/api/anomalies/jobs/{job['id']}/events", headers=headers)
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("text/event-stream")
+    assert '"status": "cancelled"' in resp.text
+
+
+def test_events_stream_404_for_other_organization(client):
+    headers_a = _register(client, "a@bureau-a.fr", "Bureau A")
+    dataset_a = _upload_dataset(client, headers_a, "a.csv")
+    job = _create_job(client, headers_a, dataset_a["id"]).json()
+
+    headers_b = _register(client, "b@bureau-b.fr", "Bureau B")
+    resp = client.get(f"/api/anomalies/jobs/{job['id']}/events", headers=headers_b)
+    assert resp.status_code == 404
+
+
 def test_cancel_rejects_already_completed_job(client, db_session):
     headers = _register(client)
     dataset = _upload_dataset(client, headers, n=60)
