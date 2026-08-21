@@ -2254,3 +2254,60 @@ dédoublonnage des ticks identiques consécutifs (un seul événement émis),
 événement d'erreur propre si le job disparaît en cours de flux, isolation
 multi-tenant (404 avant même l'ouverture du flux) — sur les 6 routers +
 tests unitaires purs du parsing SSE côté frontend.
+
+### D7.9 — Historique unifié : nouvelle page en plus des 3 existantes, jamais un remplacement ; `TrainingHistory.tsx` migré vers le composant `Table`
+
+**Question** : retour utilisateur direct — l'historique supervisé
+(`TrainingHistory.tsx`) restait une simple liste `<ul>` sans tri, sans
+pagination, sans recherche ("pas du tout moderne et manque de
+fonctionnalités"), et aucune vue ne permettait de voir l'activité des 6
+types de job (entraînement, clustering, réduction de dimension,
+anomalies, vision classification, vision anomalies) sur un seul écran.
+
+**Retenu (architecture)** : une page NOUVELLE, épinglée dans la barre
+latérale au même niveau que "Objectifs"/"Tableau de bord"
+(`frontend/src/pages/AllHistory.tsx`, route `/historique`), en PLUS des 3
+historiques déjà existants (`TrainingHistory.tsx` : comparaison
+inter-jobs + registre de modèles ; `UnsupervisedHistory.tsx` et
+`VisionHistory.tsx` : onglets par type) — confirmé explicitement par
+l'utilisateur (question posée, réponse : "Nouvelle page globale en
+plus"). Elle réutilise la même normalisation `ActivityKind`/métadonnées
+déjà éprouvée dans `Dashboard.tsx` (icône/couleur/libellé par type,
+construction du libellé de résultat), étendue avec des filtres
+(type/statut/auteur/période) et une recherche texte, absents du
+dashboard qui n'affiche qu'un aperçu des 6 dernières entrées.
+**Écarté** : fusionner les 3 historiques existants en un seul écran à
+onglets — aurait fait perdre la comparaison inter-jobs (propre au
+supervisé, sans équivalent côté non supervisé/vision) et grossi
+`AppShell` d'une logique de sous-onglets pilier-dépendante pour un gain
+net incertain ; le produit a déjà 3 patterns d'historique différents et
+stables, les dédupliquer n'était pas ce qui était demandé.
+**Chargement** : les 6 listes sont chargées via `Promise.allSettled` —
+l'échec d'UN type d'analyse n'empêche pas l'affichage des 5 autres
+(dégradation honnête, `ErrorNote` signale le nombre de types en échec
+sans bloquer la page), plutôt qu'un échec global comme
+`dashboard.summary()` (accepté là-bas pour une seule requête agrégée
+côté serveur — ici il n'existe pas d'endpoint agrégé équivalent, 6
+appels client restent le seul moyen).
+
+**Retenu (composant)** : `TrainingHistory.tsx` et la nouvelle page
+`AllHistory.tsx` utilisent toutes deux le composant `Table` du système de
+design (`frontend/src/components/ui/Table.tsx`, Lot 2A) — tri par
+colonne, pagination côté client (15/20 lignes par page), et pour
+`TrainingHistory.tsx` la sélection multiple existante (`selectable`/
+`selectedKeys`/`onSelectionChange`) réutilisée telle quelle pour la
+comparaison inter-jobs, sans réécrire cette logique. Recherche texte
+(dataset/cible/algorithme) et filtre de statut ajoutés en amont du
+tableau (filtrage côté client sur la liste déjà chargée, cohérent avec
+le reste du produit qui n'a pas de pagination serveur avant un futur
+Lot 4).
+**Vérifié** : `tsc -b` propre, `eslint` propre, `vite build` propre,
+suite `vitest` complète (64 tests, 11 fichiers) toujours verte —
+aucune régression sur les fonctions pures testées ailleurs
+(`utils/sse.ts`, etc.). Pas de test dédié écrit pour ces deux pages :
+uniquement de la composition de primitives déjà testées individuellement
+(`Table`, `useJobEvents` n'est pas concerné ici) et de la normalisation
+de données déjà exercée en production sur `Dashboard.tsx`.
+**Remise en cause si** : un 7ᵉ type de job apparaît — ajouter son entrée
+dans `KIND_META` (`AllHistory.tsx`) et dans le bloc de normalisation
+`Promise.allSettled`, sur le même modèle que les 6 existants.

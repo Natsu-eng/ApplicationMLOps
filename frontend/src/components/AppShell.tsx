@@ -1,6 +1,6 @@
 import { type ReactNode, useEffect, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
-import { HelpCircle, LayoutDashboard, LogOut, Menu, Target, X } from "lucide-react";
+import { HelpCircle, History, LayoutDashboard, LogOut, Menu, Target, X } from "lucide-react";
 import { useAuth } from "../contexts/AuthContext";
 import { Avatar } from "./ui/Avatar";
 import { Badge } from "./ui/Badge";
@@ -19,9 +19,10 @@ import { setLastPillar } from "../utils/lastPillar";
  * appliqué aux piliers "Bientôt"). À réintroduire seulement quand une vraie
  * fonctionnalité existe derrière.
  *
- * `pillarId` détermine QUEL pilier affiche ses modules — "Objectifs" et
- * "Tableau de bord" restent épinglés en haut, toujours accessibles quel que
- * soit le pilier actif ; en dessous, seule la section du pilier courant est
+ * `pillarId` détermine QUEL pilier affiche ses modules — "Objectifs",
+ * "Tableau de bord" et "Historique" restent épinglés en haut, toujours
+ * accessibles quel que soit le pilier actif ; en dessous, seule la section
+ * du pilier courant est
  * affichée (pas les 3 en permanence) — retour utilisateur direct : mieux
  * vaut choisir son objectif et voir SES modules que tout empiler à chaque
  * page, un choix qui s'aggraverait avec un 3ᵉ pilier (Vision) actif. Omis
@@ -74,6 +75,19 @@ export default function AppShell({ children, pillarId }: { children: ReactNode; 
         >
           <LayoutDashboard size={16} strokeWidth={2} className="flex-shrink-0" />
           Tableau de bord
+        </Link>
+
+        <Link
+          to="/historique"
+          onClick={() => setMobileNavOpen(false)}
+          className={`flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
+            location.pathname === "/historique"
+              ? "bg-sidebar-accent text-sidebar-accent-foreground"
+              : "text-sidebar-muted-foreground hover:bg-sidebar-accent/50 hover:text-sidebar-foreground"
+          }`}
+        >
+          <History size={16} strokeWidth={2} className="flex-shrink-0" />
+          Historique
         </Link>
 
         {PILLARS.filter((pillar) => pillar.id === pillarId).map((pillar) => (

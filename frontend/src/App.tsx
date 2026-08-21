@@ -2,6 +2,7 @@ import { Navigate, Route, BrowserRouter as Router, Routes } from "react-router-d
 import ProtectedRoute from "./components/ProtectedRoute";
 import { AuthProvider } from "./contexts/AuthContext";
 import { ThemeProvider } from "./contexts/ThemeContext";
+import AllHistory from "./pages/AllHistory";
 import AnomalyDetection from "./pages/AnomalyDetection";
 import Clustering from "./pages/Clustering";
 import Dashboard from "./pages/Dashboard";
@@ -49,6 +50,14 @@ export default function App() {
               element={
                 <ProtectedRoute>
                   <Profile />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/historique"
+              element={
+                <ProtectedRoute>
+                  <AllHistory />
                 </ProtectedRoute>
               }
             />
