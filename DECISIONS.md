@@ -2085,3 +2085,37 @@ paramètre `n_models` de `GET /training/estimate-duration` (et l'appel
 frontend en mode guidé) est donc `4`, vérifiée par lecture directe du
 registre — pas une estimation approximative du nombre de modèles comparés
 par défaut.
+
+### D7.5 — Annulation de job : un statut `"cancelled"` distinct, jamais confondu avec `"failed"` ni avec une suppression
+
+**Question** : les 6 types de job (`TrainingJob`/`ClusteringJob`/
+`DimensionalityJob`/`AnomalyJob`/`VisionClassificationJob`/`VisionAnomalyJob`)
+n'avaient qu'un `DELETE /jobs/{id}` (annule le job RQ best-effort PUIS
+supprime la ligne) — aucun moyen de stopper un job sans perdre toute trace
+qu'il a existé.
+**Retenu** : `POST /jobs/{id}/cancel` sur les 6 routers — statut
+`"cancelled"` (nouvelle valeur, colonne déjà `String` libre, aucune
+migration nécessaire), `error_message = "Annulé par l'utilisateur."`,
+`finished_at` renseigné. Rejette avec 409 (`JOB_NON_ANNULABLE`) si le job
+n'est plus `queued`/`running`. Le job reste consultable dans l'historique
+— `DELETE` reste inchangé, distinct, pour qui veut réellement l'effacer.
+**Retenu aussi** : extraction de `services/job_lifecycle.py`
+(`try_cancel_rq_job`, `ACTIVE_STATUSES`, `CANCELLED_MESSAGE`) — la logique
+d'annulation RQ best-effort était déjà dupliquée à l'identique dans les 6
+`DELETE`, ce lot l'aurait sinon fait passer à 12 exemplaires. Extraction
+justifiée par CE lot (sert directement le nouvel endpoint), pas un
+refactoring opportuniste hors périmètre — les 6 `DELETE` existants
+réutilisent la même fonction au passage plutôt que de garder l'ancien code
+dupliqué à côté du nouveau.
+**Retenu aussi (frontend)** : `"cancelled"` devient sa propre `Phase`
+distincte de `"failed"` sur les 6 pages de job — un rendu neutre (icône
+`Ban`, tons `muted`) remplace le rendu rouge `AlertCircle`/`destructive`
+utilisé pour un vrai échec, pour qu'une annulation délibérée par
+l'utilisateur ne se lise jamais comme si quelque chose s'était mal passé.
+Bouton "Annuler" ajouté sur chaque carte de progression (clic simple, pas
+de confirmation à deux clics — contrairement à la suppression, annuler
+laisse une trace consultable, donc moins destructif).
+**Vérifié** : 113 tests backend (annulation réussie + statut conservé en
+historique, rejet 409 sur job déjà terminé, isolation multi-tenant) sur
+les 6 routers ; `tsc -b`/`eslint`/vitest (58/58)/`vite build` verts côté
+frontend.
