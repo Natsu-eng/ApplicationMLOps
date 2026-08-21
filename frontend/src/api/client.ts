@@ -630,6 +630,17 @@ export interface VisionValidationReport {
   n_undersized: number;
   undersized_files: string[];
   warnings: string[];
+  // Lot 6A (§G.3/§G.4/§G.5) — absent sur les datasets uploadés avant ce
+  // correctif (rétrocompatibilité par absence).
+  image_eda?: VisionImageEda;
+}
+
+export interface VisionImageEda {
+  resolution_buckets: Record<string, number>;
+  width: { min: number | null; max: number | null; mean: number | null };
+  height: { min: number | null; max: number | null; mean: number | null };
+  format_distribution: Record<string, number>;
+  color_mode_distribution: Record<string, number>;
 }
 
 export interface VisionDatasetDetail extends VisionDatasetSummary {
@@ -737,6 +748,12 @@ export interface VisionClassificationResult {
   confusion_matrix: number[][];
   examples: VisionPredictionExample[];
   model_card: Record<string, unknown>;
+  // Lot 6A (correctif 16G) — même forme que ClassificationEvaluation
+  // (tabulaire) pour réutiliser EvaluationCharts.tsx tel quel. Absents
+  // (undefined) sur les modèles entraînés avant ce correctif.
+  roc_curves?: Record<string, RocCurve>;
+  pr_curves?: Record<string, PrCurve>;
+  test_roc_auc?: number | null;
 }
 
 export interface GradCamExplanation {

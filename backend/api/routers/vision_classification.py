@@ -134,6 +134,11 @@ class VisionClassificationResultOut(BaseModel):
     confusion_matrix: List[List[int]]
     examples: List[PredictionExampleOut]
     model_card: dict[str, Any]
+    # Lot 6A (correctif 16G) — None sur les modèles entraînés avant ce
+    # correctif (rétrocompatibilité par absence).
+    roc_curves: Optional[dict[str, dict[str, List[float]]]] = None
+    pr_curves: Optional[dict[str, dict[str, List[float]]]] = None
+    test_roc_auc: Optional[float] = None
 
 
 # ── Aides ────────────────────────────────────────────────────────────────
@@ -331,6 +336,9 @@ def get_vision_classification_result(job_id: int, current_user: User = Depends(g
         confusion_matrix=json.loads(result.confusion_matrix_json),
         examples=[PredictionExampleOut(**e) for e in json.loads(result.examples_json)],
         model_card=json.loads(result.model_card_json or "{}"),
+        roc_curves=json.loads(result.roc_curves_json) if result.roc_curves_json else None,
+        pr_curves=json.loads(result.pr_curves_json) if result.pr_curves_json else None,
+        test_roc_auc=result.test_roc_auc,
     )
 
 

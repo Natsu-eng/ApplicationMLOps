@@ -794,6 +794,13 @@ class VisionClassificationModel(Base):
     confusion_matrix_json: Mapped[str] = mapped_column(Text, nullable=False)
     examples_json: Mapped[str] = mapped_column(Text, nullable=False)
     model_card_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # Lot 6A (correctif 16G, AUDIT_DATALAB_2026-08-16.md §16G) — NULL sur les
+    # modèles entraînés avant ce correctif (rétrocompatibilité par absence,
+    # même motif que model_card_json ci-dessus) : jamais un dict vide qui
+    # suggérerait un calcul fait mais nul.
+    roc_curves_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    pr_curves_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    test_roc_auc: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     file_path: Mapped[str] = mapped_column(String(500), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
 

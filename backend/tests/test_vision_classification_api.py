@@ -229,6 +229,10 @@ def test_result_after_completion(client, db_session):
     assert body["n_train"] + body["n_val"] + body["n_test"] == 16
     assert len(body["history"]) == 1
     assert len(body["confusion_matrix"]) == 2
+    # Lot 6A (correctif 16G) — binaire (2 classes) : une seule courbe ROC/PR,
+    # persistée par le worker et exposée telle quelle par l'endpoint.
+    assert set(body["roc_curves"].keys()) == {"classe_1"}
+    assert body["test_roc_auc"] is not None
 
     job_resp = client.get(f"/api/vision/classification/jobs/{job['id']}", headers=headers)
     assert job_resp.json()["status"] == "completed"
