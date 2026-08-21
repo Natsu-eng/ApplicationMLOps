@@ -48,6 +48,20 @@ def test_create_job_rejects_top_n_out_of_range(client):
     assert resp.status_code == 422  # validation Pydantic (Field ge/le)
 
 
+def test_create_job_rejects_contamination_out_of_range(client):
+    headers = _register(client)
+    dataset = _upload_dataset(client, headers)
+    resp = _create_job(client, headers, dataset["id"], contamination=0.6)
+    assert resp.status_code == 422  # validation Pydantic (Field gt=0, le=0.5)
+
+
+def test_create_job_rejects_zero_contamination(client):
+    headers = _register(client)
+    dataset = _upload_dataset(client, headers)
+    resp = _create_job(client, headers, dataset["id"], contamination=0.0)
+    assert resp.status_code == 422
+
+
 def test_create_job_rejects_unknown_feature_columns(client):
     headers = _register(client)
     dataset = _upload_dataset(client, headers)
@@ -158,6 +172,31 @@ def test_result_and_observations_after_completion(client, db_session):
     assert len(observations) == 15
     assert observations == sorted(observations, key=lambda o: o["rank"])
     assert all(o["agreement"] in {"both", "isolation_forest_only", "lof_only", "none"} for o in observations)
+
+
+def test_explicit_contamination_flows_through_to_model_card(client, db_session):
+    headers = _register(client)
+    dataset = _upload_dataset(client, headers, n=60)
+    job = _create_job(client, headers, dataset["id"], contamination=0.1).json()
+
+    run_anomaly_job(job["id"])
+    db_session.expire_all()
+
+    result_resp = client.get(f"/api/anomalies/jobs/{job['id']}/result", headers=headers)
+    assert result_resp.status_code == 200
+    assert result_resp.json()["model_card"]["contamination"] == 0.1
+
+
+def test_default_contamination_is_auto_in_model_card(client, db_session):
+    headers = _register(client)
+    dataset = _upload_dataset(client, headers, n=60)
+    job = _create_job(client, headers, dataset["id"]).json()
+
+    run_anomaly_job(job["id"])
+    db_session.expire_all()
+
+    result_resp = client.get(f"/api/anomalies/jobs/{job['id']}/result", headers=headers)
+    assert result_resp.json()["model_card"]["contamination"] == "auto"
 
 
 def test_observations_isolated_between_organizations(client):

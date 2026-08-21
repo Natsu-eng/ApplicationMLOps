@@ -126,3 +126,37 @@ def test_categorical_flags_identify_rare_category():
     result = train_and_evaluate_anomalies(df, AnomalyConfig(top_n=10, seed=42), _NOOP)
     rare_flagged = [o for o in result.top_observations if "category" in o.categorical_flags]
     assert any(o.categorical_flags["category"]["value"] == "rare" for o in rare_flagged)
+
+
+# ── Lot 6B, §F.2 : exposition du taux de contamination ──────────────────────
+
+
+def test_contamination_defaults_to_auto_when_not_configured():
+    df = _make_dataset_with_injected_outliers()
+    result = train_and_evaluate_anomalies(df[["a", "b", "c"]], AnomalyConfig(seed=42), _NOOP)
+    assert result.model_card["contamination"] == "auto"
+
+
+def test_explicit_contamination_is_reported_and_matches_configured_rate():
+    """5 outliers injectés sur 100 lignes = 5 % — régler la contamination sur
+    la vraie proportion doit rapprocher le taux d'anomalies détecté de cette
+    valeur pour les DEUX méthodes (jusqu'ici codé en dur sur "auto", jamais
+    réglable — Lot 6B, §F.2)."""
+    df = _make_dataset_with_injected_outliers()
+    result = train_and_evaluate_anomalies(df[["a", "b", "c"]], AnomalyConfig(seed=42, contamination=0.05), _NOOP)
+    assert result.model_card["contamination"] == 0.05
+    assert result.anomaly_rate_isolation_forest == pytest.approx(0.05, abs=0.02)
+    assert result.anomaly_rate_lof == pytest.approx(0.05, abs=0.02)
+
+
+def test_lower_contamination_flags_no_more_anomalies_than_default_auto():
+    """Preuve que le paramètre est réellement câblé aux estimateurs (pas
+    seulement stocké dans le model_card) : une contamination stricte (1 %)
+    ne peut jamais flagger PLUS d'observations que le réglage "auto"."""
+    df = _make_dataset_with_injected_outliers()
+    result_auto = train_and_evaluate_anomalies(df[["a", "b", "c"]], AnomalyConfig(seed=42), _NOOP)
+    result_strict = train_and_evaluate_anomalies(
+        df[["a", "b", "c"]], AnomalyConfig(seed=42, contamination=0.01), _NOOP
+    )
+    assert result_strict.n_anomalies_isolation_forest <= result_auto.n_anomalies_isolation_forest
+    assert result_strict.n_anomalies_lof <= result_auto.n_anomalies_lof

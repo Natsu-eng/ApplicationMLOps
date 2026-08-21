@@ -1863,3 +1863,159 @@ et appartient à la clôture réelle du Lot 6A, pas à ce lot ni au Lot 6B
 **Remise en cause si** : une prochaine session Vision doit traiter le
 stage/version/promotion/export de modèles — repartir de zéro sur ce
 point, aucun code partiel n'existe à réutiliser.
+
+## Lot 6B — ML non supervisé (§F.2 : contrôle qualité, transparence, stabilité, assignation)
+
+### D6B.1 — Contrôle qualité intégré par pure réutilisation de `DataQualityWarnings.tsx`, aucun changement backend
+
+**Constat** : `analyze_data_quality()` supportait déjà `target_column=None`
+(détections structurelles uniquement) et `DataQualityWarnings.tsx` acceptait
+déjà `targetColumn` en optionnel — seuls les 3 pages non supervisées
+(Clustering/DimensionalityReduction/AnomalyDetection) ne le montaient jamais.
+**Retenu** : le composant est monté tel quel (sans `targetColumn`) dans les 3
+formulaires, avec `selectedFeatures`/`onExcludeColumns` branchés pour
+conserver l'action "Exclure" déjà existante côté tabulaire — zéro ligne de
+code backend, uniquement du câblage frontend.
+**Vérifié** : `tsc -b` (0 erreur), `eslint` (0 erreur), suite Vitest complète
+verte.
+
+### D6B.2 — Transparence d'échantillonnage pour le clustering : plafond à 5000 lignes (comme la réduction de dimension), pas 20 000 (comme les anomalies)
+
+**Question** : quel plafond adopter pour `MAX_ROWS_FOR_CLUSTERING`, sachant
+que le registre inclut un algorithme O(n²) en mémoire (hiérarchique, linkage
+de Ward) ?
+**Retenu** : 5000, aligné sur `MAX_ROWS_FOR_EMBEDDING` (réduction de
+dimension), pas sur `MAX_ROWS_FOR_ANOMALY` (20 000, Isolation Forest/LOF
+restent efficaces à cette échelle). Sans ce plafond, un dataset volumineux
+pouvait déclencher un `MemoryError` en cours de job sans avertissement
+préalable — code défensif déjà présent côté worker
+(`_user_safe_error_message`) mais jamais un garde-fou proactif.
+**Retenu aussi** : `model_card["n_samples"]` (nom historique déjà lu par
+`Clustering.tsx::totalSamples`) redéfini pour pointer vers les données
+RÉELLEMENT clusterisées (`n_samples_used`), pas le total avant échantillon —
+sinon la somme des tailles de profils ne correspondrait plus à ce total,
+cassant silencieusement le calcul de répartition déjà affiché.
+**Vérifié** : tests dédiés (plafond forcé bas via `monkeypatch`), aucune
+régression sur les 16 tests déjà existants.
+
+### D6B.3 — Transparence catégorielle du clustering : extension de `categorical_summary` (population_pct + lift), pas un nouveau concept parallèle à `categorical_flags`
+
+**Question** : la détection d'anomalies expose déjà `categorical_flags`
+(valeurs RARES par observation) — fallait-il reproduire exactement ce
+concept pour le clustering ?
+**Écarté** : dupliquer `categorical_flags` tel quel — le clustering décrit
+des SEGMENTS (agrégats), pas des observations individuelles ; une "valeur
+rare" par observation n'a pas de sens au niveau d'un profil de cluster.
+**Retenu** : étendre le `categorical_summary` déjà existant
+(`top_category`/`top_pct`) avec `population_pct` (fréquence de cette
+catégorie sur l'ENSEMBLE du dataset) et `lift` (sur-représentation dans ce
+cluster vs la population, `None` — jamais une division par zéro — si la
+catégorie est absente ailleurs) : même esprit que le z-score déjà calculé
+pour les variables numériques (`numeric_summary`), qui compare déjà chaque
+cluster à la population globale. Cohérence de conception plutôt qu'un
+concept importé tel quel d'un autre pilier.
+**Retenu aussi (réduction de dimension)** : `categorical_columns`/
+`numeric_columns`/`n_categorical_dimensions`/`n_dimensions_after_encoding`
+exposés dans le `model_card`, dérivés de `preprocessor.get_feature_names_out()`
+déjà calculé pour les loadings — zéro coût de calcul supplémentaire, juste
+un comptage des noms préfixés `cat__`.
+**Vérifié** : tests dédiés (lift ≈3 sur un cluster pur pesant 1/3 de la
+population, comptage exact des dimensions one-hot).
+
+### D6B.4 — Taux de contamination des anomalies : réglable en mode expert, "auto" reste le défaut guidé
+
+**Question** : exposer `contamination` (IsolationForest/LOF) comme paramètre
+utilisateur — jusqu'ici codé en dur sur `"auto"` dans
+`anomaly_registry.py` ?
+**Retenu** : `AnomalyJobCreate.contamination: Optional[float]` (borné
+`(0, 0.5]`, validation Pydantic) — `None`/absent conserve le comportement
+"auto" par défaut (mode guidé, cohérent avec le reste du produit : rien à
+régler tant que l'utilisateur n'en éprouve pas le besoin). Réglable
+explicitement via une case à cocher dédiée côté `AnomalyDetection.tsx`
+("Régler moi-même la proportion attendue d'anomalies"), jamais affiché par
+défaut.
+**Vérifié** : le paramètre est bien câblé aux DEUX estimateurs (pas
+seulement stocké dans le model_card) — test dédié confirmant qu'une
+contamination stricte (1 %) ne peut jamais flagger plus d'observations que
+le réglage "auto".
+
+### D6B.5 — Stabilité de k par sous-échantillonnage (ARI), pas une comparaison multi-seed
+
+**Question** : comment mesurer la sensibilité du nombre de clusters retenu
+aux données exactement utilisées, sachant que le registre mélange des
+algorithmes stochastiques (KMeans) et déterministes (hiérarchique, DBSCAN,
+pour lesquels une comparaison multi-seed n'aurait aucun sens) ?
+**Écarté** : comparaison multi-seed (méthode usuelle pour KMeans seul) —
+non généralisable à hiérarchique/DBSCAN, qui produiraient exactement le
+même résultat à chaque seed (déterministes par construction), donnant une
+fausse impression de stabilité parfaite.
+**Retenu** : sous-échantillonnage (80 % des lignes, sans remise, 5 rounds) —
+family-agnostic, méthode établie de la littérature sur la stabilité de
+clustering (von Luxburg et al.). Stabilité = ARI moyen entre les étiquettes
+obtenues sur les points communs à deux sous-échantillons consécutifs.
+Calculée UNIQUEMENT pour la configuration gagnante (pas tous les
+candidats, coût maîtrisé), sur un sous-ensemble borné indépendamment de
+`MAX_ROWS_FOR_CLUSTERING` (`MAX_ROWS_FOR_STABILITY = 1000`) — l'estimation
+n'a pas besoin de la totalité de l'échantillon principal, et l'hiérarchique
+(O(n²)) rendrait 5 refits coûteux sur un sous-échantillon déjà grand.
+**Retenu aussi** : `None` (jamais un score inventé) si moins de 20 lignes ou
+moins de 2 sous-échantillons ajustés avec succès — dégradation honnête,
+même principe que le reste du produit.
+**Vérifié** : stabilité >0.7 sur 3 groupes très séparés (comportement
+attendu, pas une valeur arbitraire) ; `None` confirmé sous le seuil minimal.
+
+### D6B.6 — Assignation de nouvelles observations : exacte pour K-Means, approximations documentées pour hiérarchique/DBSCAN (jamais un "impossible" silencieux)
+
+**Constat** : `AgglomerativeClustering`/`DBSCAN` (sklearn) n'ont PAS de
+méthode `.predict()` — ce sont des modèles transductifs, contrairement à
+KMeans/MiniBatchKMeans. Le pipeline_bundle clustering n'était de toute
+façon jamais exploité après l'entraînement (aucun endpoint de prédiction).
+**Retenu** : `services/clustering_inference.py` (nouveau module, séparé de
+`ml_inference.py` par le même raisonnement que `clustering_training.py`/
+`ml_training.py` — seul `load_bundle`, générique, est réutilisé tel quel) —
+3 méthodes selon la famille :
+
+- K-Means/K-Means rapide : `.predict()` natif → `assignment_method: "exact"`.
+- Hiérarchique : centroïdes calculés UNE SEULE FOIS à l'entraînement
+  (moyenne des points par cluster dans l'espace préprocessé) et persistés
+  dans le pipeline_bundle → assignation au centroïde le plus proche
+  (`"approximate_centroid"`).
+- DBSCAN : points "cœurs" (`core_sample_indices_`, déjà calculés par
+  sklearn) persistés → assignation au point cœur le plus proche SI la
+  distance est ≤ eps, sinon bruit/atypique (`"approximate_nearest_core"`) —
+  même règle que celle appliquée par DBSCAN à ses propres points
+  d'entraînement, pas une heuristique inventée.
+**Retenu aussi** : `assignment_method` toujours retourné (jamais silencieux
+sur la nature exacte/approchée de l'assignation) — y compris
+`"unsupported"` pour la rétrocompatibilité par absence : un clustering
+entraîné AVANT ce lot n'a pas les clés `centroids`/`core_points` dans son
+pipeline_bundle, dégradation honnête plutôt qu'un crash.
+**Vérifié** : assignation exacte K-Means vérifiée contre le centre le plus
+proche construit ; approximation centroïde hiérarchique testée ; DBSCAN
+testé à la fois pour un point proche d'un groupe ET un point isolé (bruit) ;
+dégradation "unsupported" testée en retirant artificiellement la clé
+`centroids` d'un bundle réel. Endpoint `POST /clustering/jobs/{id}/predict`
+testé bout-en-bout (worker réel + appel HTTP), même pattern que
+`training.py::predict_with_model` côté supervisé.
+
+### D6B.7 — Vocabulaire de verdict qualité extrait dans `qualityAssessment.ts`, partagé par les 3 piliers non supervisés
+
+**Problème identifié** : `Clustering.tsx` définissait localement
+`QUALITY_ACCENT: Record<QualityTone, AccentColor>` — étendre ce pattern à
+la réduction de dimension et aux anomalies sans extraction aurait
+nécessité soit une réimportation d'un type nommé "cluster*" dans des pages
+sans rapport avec le clustering, soit (pire) une redéfinition indépendante
+du même vocabulaire tone/label/caveat dans chaque page, avec le risque
+réel de divergence de seuils/couleurs signalé par l'audit.
+**Retenu** : `frontend/src/utils/qualityAssessment.ts` (nouveau) porte le
+type partagé `QualityTone`/`QualityAssessment` et la palette
+`QUALITY_TONE_ACCENT` — `clusterQuality.ts` réexporte les types (aucun
+import existant cassé), `dimensionalityQuality.ts`/`anomalyQuality.ts`
+(nouveaux) les importent directement. Chaque module de verdict garde sa
+propre fonction d'évaluation et ses propres seuils (silhouette, ARI de
+stabilité, trustworthiness, taux de consensus) — seule la FORME du verdict
+et sa palette de couleurs sont partagées, jamais la logique de seuillage
+elle-même (métriques non comparables entre piliers).
+**Vérifié** : tests unitaires dédiés pour chaque nouvelle fonction
+d'évaluation (`assessStabilityQuality`, `assessTrustworthinessQuality`,
+`assessConsensusQuality`), suite Vitest complète verte (53/53).

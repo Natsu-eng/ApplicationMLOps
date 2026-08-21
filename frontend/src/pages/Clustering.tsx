@@ -12,13 +12,16 @@ import {
   ScanSearch,
   Shapes,
   Sparkles,
+  Target,
   Trash2,
   Trophy,
 } from "lucide-react";
 import {
   ApiError,
   api,
+  type ClusterAssignmentMethod,
   type ClusterCandidate,
+  type ClusterPrediction,
   type ClusteringJobSummary,
   type ClusteringResult,
   type ColumnSchema,
@@ -28,19 +31,22 @@ import AppShell from "../components/AppShell";
 import { pillarColor } from "../config/pillars";
 import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
+import { Input } from "../components/ui/Input";
 import { ColorIconBadge, accentSurfaceClass, accentValueTextClass, type AccentColor } from "../components/ui/ColorIconBadge";
 import { PageHeader } from "../components/ui/PageHeader";
 import { SectionHeader } from "../components/ui/SectionHeader";
 import { Select } from "../components/ui/Select";
 import { Table, type TableColumn } from "../components/ui/Table";
+import { DataQualityWarnings } from "../components/training/DataQualityWarnings";
 import { useConfirmAction } from "../hooks/useConfirmAction";
 import { CHART_SERIES_COLORS } from "../theme/charts";
 import {
   assessSilhouetteQuality,
+  assessStabilityQuality,
   buildRecommendationExplanation,
   computeClusterDistribution,
-  type QualityTone,
 } from "../utils/clusterQuality";
+import { QUALITY_TONE_ACCENT } from "../utils/qualityAssessment";
 
 const ACTIVE_STATUSES = new Set(["queued", "running"]);
 const POLL_INTERVAL_MS = 3000;
@@ -277,6 +283,17 @@ function ClusteringForm({
     });
   }
 
+  // Toujours une exclusion, jamais un simple toggle (voir
+  // DataQualityWarnings.tsx) — approuver une suggestion du contrôle qualité
+  // doit exclure la colonne, jamais la réintégrer si déjà exclue.
+  function excludeFeatures(names: string[]) {
+    setSelectedFeatures((prev) => {
+      const next = new Set(prev);
+      names.forEach((n) => next.delete(n));
+      return next;
+    });
+  }
+
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
     if (!datasetId || selectedFeatures.size === 0) return;
@@ -365,6 +382,17 @@ function ClusteringForm({
           </div>
         )}
 
+        {datasetId && (
+          <div>
+            <p className="block text-sm text-muted-foreground mb-1.5">Qualité des données</p>
+            <DataQualityWarnings
+              datasetId={datasetId}
+              selectedFeatures={selectedFeatures}
+              onExcludeColumns={excludeFeatures}
+            />
+          </div>
+        )}
+
         {error && (
           <div className="flex items-center gap-2 text-sm text-destructive bg-destructive/10 border border-destructive/20 rounded-lg px-3 py-2">
             <AlertCircle size={15} className="flex-shrink-0" />
@@ -444,16 +472,6 @@ const CANDIDATE_COLUMNS: TableColumn<ClusterCandidate>[] = [
   },
 ];
 
-// Fond dédié, propre à la lecture qualitative de la silhouette — distinct du
-// fond de la carte englobante (retour utilisateur direct : un badge posé à
-// même le fond de carte se perdait visuellement). Réutilise la palette
-// d'accent du design system (ColorIconBadge), pas une couleur ad hoc.
-const QUALITY_ACCENT: Record<QualityTone, AccentColor> = {
-  low: "amber",
-  moderate: "blue",
-  good: "teal",
-};
-
 // Palette validée (theme/charts.ts) — jamais une teinte hex ad hoc pour une
 // série de données, même dans une barre empilée custom hors Recharts.
 const DISTRIBUTION_BAR_COLORS = CHART_SERIES_COLORS;
@@ -482,6 +500,8 @@ function ClusteringResultView({ job }: { job: ClusteringJobSummary }) {
 
   const winnerCandidate = candidates.find((c) => c.is_winner);
   const quality = assessSilhouetteQuality(result.metrics.silhouette);
+  const stabilityAri = result.model_card.stability_ari;
+  const stability = assessStabilityQuality(typeof stabilityAri === "number" ? stabilityAri : null);
   const recommendation = winnerCandidate ? buildRecommendationExplanation(winnerCandidate, candidates) : null;
   const totalSamples = Number(result.model_card.n_samples) || result.profiles.reduce((sum, p) => sum + p.size, 0);
   const distribution = computeClusterDistribution(result.profiles, totalSamples);
@@ -523,9 +543,9 @@ function ClusteringResultView({ job }: { job: ClusteringJobSummary }) {
           )}
         </div>
 
-        <div className={`rounded-xl border p-3 mt-4 ${accentSurfaceClass(QUALITY_ACCENT[quality.tone])}`}>
+        <div className={`rounded-xl border p-3 mt-4 ${accentSurfaceClass(QUALITY_TONE_ACCENT[quality.tone])}`}>
           <span
-            className={`inline-flex items-center text-overline px-2 py-0.5 rounded-full bg-card/80 ${accentValueTextClass(QUALITY_ACCENT[quality.tone])}`}
+            className={`inline-flex items-center text-overline px-2 py-0.5 rounded-full bg-card/80 ${accentValueTextClass(QUALITY_TONE_ACCENT[quality.tone])}`}
           >
             {quality.label}
           </span>
@@ -534,6 +554,23 @@ function ClusteringResultView({ job }: { job: ClusteringJobSummary }) {
             <p className="text-xs text-foreground/80 mt-2 pt-2 border-t border-border/40">{recommendation}</p>
           )}
         </div>
+        {typeof stabilityAri === "number" && (
+          <div className={`rounded-xl border p-3 mt-3 ${accentSurfaceClass(QUALITY_TONE_ACCENT[stability.tone])}`}>
+            <span
+              className={`inline-flex items-center text-overline px-2 py-0.5 rounded-full bg-card/80 ${accentValueTextClass(QUALITY_TONE_ACCENT[stability.tone])}`}
+            >
+              {stability.label} ({stabilityAri.toFixed(2)})
+            </span>
+            <p className="text-xs text-foreground/70 mt-1.5">{stability.caveat}</p>
+          </div>
+        )}
+        {Boolean(result.model_card.sampled) && (
+          <p className="text-xs text-muted-foreground mt-3">
+            Calculé sur un échantillon de {String(result.model_card.n_samples_used)} observations sur{" "}
+            {String(result.model_card.n_samples_total)} au total (dataset volumineux — échantillonnage déterministe,
+            reproductible).
+          </p>
+        )}
       </Card>
 
       {candidatesError ? (
@@ -647,7 +684,14 @@ function ClusteringResultView({ job }: { job: ClusteringJobSummary }) {
                       .map(([col, cat]) => (
                         <p key={col} className="text-xs text-foreground/90">
                           <span className="font-medium">{col}</span> dominant : {cat.top_category} (
-                          {cat.top_pct.toFixed(0)} %)
+                          {cat.top_pct.toFixed(0)} %
+                          {cat.lift !== null && (cat.lift >= 1.5 || cat.lift <= 0.67) && (
+                            <span className="text-muted-foreground">
+                              {" "}
+                              — vs {cat.population_pct.toFixed(0)} % sur l'ensemble, ×{cat.lift.toFixed(1)}
+                            </span>
+                          )}
+                          )
                         </p>
                       ))}
                   </div>
@@ -657,6 +701,8 @@ function ClusteringResultView({ job }: { job: ClusteringJobSummary }) {
           })}
         </div>
       </div>
+
+      <ClusterAssignmentForm jobId={jobId} featureColumns={job.feature_columns} />
 
       <Card className="p-4 flex items-center justify-between gap-3 flex-wrap">
         <div className="flex items-start gap-3">
@@ -684,6 +730,92 @@ function ClusteringResultView({ job }: { job: ClusteringJobSummary }) {
         </div>
       </Card>
     </div>
+  );
+}
+
+// Explication de la méthode d'assignation — voir
+// services/clustering_inference.py pour le raisonnement complet derrière
+// chaque cas (aucun algorithme du registre n'a de méthode d'assignation
+// "gratuite" hors K-Means/K-Means rapide, voir la docstring du module).
+const ASSIGNMENT_METHOD_LABELS: Record<ClusterAssignmentMethod, string> = {
+  exact: "Assignation exacte — même critère qu'à l'entraînement (distance au centroïde le plus proche).",
+  approximate_centroid:
+    "Assignation approchée par centroïde le plus proche — l'algorithme retenu (hiérarchique) n'a pas de méthode d'assignation native pour de nouvelles observations.",
+  approximate_nearest_core:
+    "Assignation approchée par voisinage le plus proche — l'algorithme retenu (densité) n'a pas de méthode d'assignation native pour de nouvelles observations.",
+  unsupported: "Assignation indisponible pour ce clustering — relancez un clustering pour en bénéficier.",
+};
+
+function ClusterAssignmentForm({ jobId, featureColumns }: { jobId: number; featureColumns: string[] }) {
+  const [values, setValues] = useState<Record<string, string>>({});
+  const [prediction, setPrediction] = useState<ClusterPrediction | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  async function handleSubmit(event: FormEvent) {
+    event.preventDefault();
+    setError(null);
+    setPrediction(null);
+    setIsSubmitting(true);
+    try {
+      const result = await api.clustering.predict(jobId, values);
+      setPrediction(result);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Impossible d'assigner cette observation");
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  return (
+    <Card className="p-5">
+      <SectionHeader
+        icon={Target}
+        color="violet"
+        label="Assigner une nouvelle observation"
+        help="Indiquez les valeurs d'une nouvelle observation pour voir à quel groupe déjà découvert elle se rattache le mieux, sans relancer un clustering complet."
+      />
+      <form onSubmit={handleSubmit} className="space-y-3">
+        <div className="grid sm:grid-cols-2 gap-3">
+          {featureColumns.map((col) => (
+            <div key={col}>
+              <label htmlFor={`assign-${col}`} className="block text-xs text-muted-foreground mb-1">
+                {col}
+              </label>
+              <Input
+                id={`assign-${col}`}
+                value={values[col] ?? ""}
+                onChange={(e) => setValues((prev) => ({ ...prev, [col]: e.target.value }))}
+                required
+              />
+            </div>
+          ))}
+        </div>
+        {error && (
+          <div className="flex items-center gap-2 text-sm text-destructive bg-destructive/10 border border-destructive/20 rounded-lg px-3 py-2">
+            <AlertCircle size={15} className="flex-shrink-0" />
+            {error}
+          </div>
+        )}
+        <Button type="submit" variant="secondary" size="sm" disabled={isSubmitting}>
+          {isSubmitting ? "Assignation…" : "Assigner"}
+        </Button>
+      </form>
+      {prediction && (
+        <div
+          className={`rounded-lg border p-3 mt-3 ${accentSurfaceClass(prediction.cluster_id !== null ? "teal" : "amber")}`}
+        >
+          <p className="text-sm text-foreground">
+            {prediction.cluster_id !== null
+              ? `Rattachée au segment ${prediction.cluster_id + 1}.`
+              : prediction.assignment_method === "unsupported"
+                ? "Assignation indisponible pour ce clustering."
+                : "Observation atypique — non rattachée à un groupe."}
+          </p>
+          <p className="text-xs text-muted-foreground mt-1">{ASSIGNMENT_METHOD_LABELS[prediction.assignment_method]}</p>
+        </div>
+      )}
+    </Card>
   );
 }
 

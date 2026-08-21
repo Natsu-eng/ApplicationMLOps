@@ -18,10 +18,11 @@ from typing import Any, Callable, Optional
 
 import numpy as np
 import pandas as pd
-from sklearn.metrics import calinski_harabasz_score, davies_bouldin_score, silhouette_score
+from sklearn.metrics import adjusted_rand_score, calinski_harabasz_score, davies_bouldin_score, silhouette_score
 
 from services.clustering_registry import CLUSTER_REGISTRY, resolve_dbscan_eps, specs_for
 from services.ml_preprocessing import TrainingAbortedError, build_preprocessor
+from services.stats_utils import sample_if_large
 
 ProgressCallback = Callable[[str, int], None]
 
@@ -34,6 +35,29 @@ ProgressCallback = Callable[[str, int], None]
 # visible dans le classement (transparence), juste relégué après les
 # candidats qui respectent le budget.
 MAX_SELECTABLE_NOISE_RATIO = 0.5
+
+# Même borne que `dimensionality_training.py::MAX_ROWS_FOR_EMBEDDING` (pas
+# `MAX_ROWS_FOR_ANOMALY`, plus généreuse : ce registre inclut le clustering
+# hiérarchique, dont le linkage de Ward est O(n²) en mémoire — Isolation
+# Forest/LOF, eux, restent efficaces à bien plus grande échelle). Sans ce
+# plafond, un dataset volumineux pouvait déclencher un MemoryError en cours
+# de job (Lot 6B, §F.2 — transparence d'échantillonnage manquante).
+MAX_ROWS_FOR_CLUSTERING = 5000
+_ROW_INDEX_COLUMN = "__cl_row_index__"
+
+# Indicateur de stabilité de k (Lot 6B, §F.2) — par SOUS-ÉCHANTILLONNAGE
+# (family-agnostic, contrairement à une comparaison multi-seed qui n'aurait
+# aucun sens pour DBSCAN/hiérarchique, déterministes par construction) :
+# ajuste le même algorithme sur plusieurs sous-ensembles aléatoires et mesure
+# l'accord (ARI) entre les étiquettes obtenues sur les points communs à deux
+# sous-ensembles consécutifs. Borné indépendamment de MAX_ROWS_FOR_CLUSTERING
+# — l'estimation de stabilité n'a pas besoin de la totalité de l'échantillon
+# principal, et hiérarchique (O(n²)) rendrait N_STABILITY_ROUNDS refits
+# coûteux sur un sous-échantillon déjà grand.
+N_STABILITY_ROUNDS = 5
+STABILITY_SUBSAMPLE_FRACTION = 0.8
+MAX_ROWS_FOR_STABILITY = 1000
+MIN_ROWS_FOR_STABILITY = 20
 
 
 @dataclass
@@ -128,6 +152,16 @@ def _build_cluster_profiles(X: pd.DataFrame, labels: np.ndarray) -> list[Cluster
     categorical_cols = [c for c in X.columns if c not in numeric_cols]
     global_mean = X[numeric_cols].mean() if numeric_cols else pd.Series(dtype=float)
     global_std = X[numeric_cols].std() if numeric_cols else pd.Series(dtype=float)
+    # Fréquence de chaque valeur catégorielle sur l'ENSEMBLE de la population
+    # (pas seulement au sein du cluster) — même esprit que le z-score
+    # numérique ci-dessus : distingue une valeur dominante réellement
+    # caractéristique du cluster d'une valeur simplement fréquente partout
+    # (Lot 6B, §F.2 — transparence catégorielle, absente jusqu'ici pour le
+    # clustering : `top_pct` seul, sans référence à la population globale).
+    global_category_pct: dict[str, dict[str, float]] = {
+        col: {str(idx): float(pct) for idx, pct in X[col].value_counts(normalize=True).items()}
+        for col in categorical_cols
+    }
 
     n_total = len(X)
     unique_labels = sorted(int(c) for c in set(labels.tolist()) if c != -1)
@@ -152,9 +186,18 @@ def _build_cluster_profiles(X: pd.DataFrame, labels: np.ndarray) -> list[Cluster
         for col in categorical_cols:
             counts = subset[col].value_counts()
             if len(counts) > 0 and size > 0:
+                top_category = str(counts.index[0])
+                top_pct = float(counts.iloc[0] / size * 100)
+                population_pct = global_category_pct.get(col, {}).get(top_category, 0.0) * 100
                 categorical_summary[col] = {
-                    "top_category": str(counts.index[0]),
-                    "top_pct": float(counts.iloc[0] / size * 100),
+                    "top_category": top_category,
+                    "top_pct": top_pct,
+                    "population_pct": population_pct,
+                    # Sur-représentation dans ce cluster vs le reste du
+                    # dataset — `None` (jamais 0 ni une division par zéro)
+                    # quand la catégorie est absente ailleurs, dégradation
+                    # honnête plutôt qu'un ratio infini inventé.
+                    "lift": (top_pct / population_pct) if population_pct > 0 else None,
                 }
 
         differentiating = sorted(z_scores, key=lambda c: z_scores[c], reverse=True)[:5]
@@ -197,6 +240,54 @@ def _rank_candidates_with_noise_budget(
     return excluded, True
 
 
+def _compute_cluster_stability(
+    X_processed: np.ndarray, spec: Any, params: dict[str, Any], seed: int
+) -> Optional[float]:
+    """Stabilité de la configuration gagnante par sous-échantillonnage — voir
+    la constante `N_STABILITY_ROUNDS` ci-dessus pour le raisonnement complet.
+    `None` (dégradation honnête, jamais un score inventé) si trop peu de
+    points pour une estimation fiable, ou si moins de 2 sous-échantillons ont
+    pu être ajustés avec succès."""
+    n = X_processed.shape[0]
+    if n < MIN_ROWS_FOR_STABILITY:
+        return None
+
+    working = X_processed if n <= MAX_ROWS_FOR_STABILITY else X_processed[:MAX_ROWS_FOR_STABILITY]
+    n_working = working.shape[0]
+    subsample_size = max(10, int(n_working * STABILITY_SUBSAMPLE_FRACTION))
+    rng = np.random.default_rng(seed)
+
+    runs: list[tuple[np.ndarray, np.ndarray]] = []
+    for i in range(N_STABILITY_ROUNDS):
+        idx = rng.choice(n_working, size=subsample_size, replace=False)
+        try:
+            estimator = spec.build_estimator(dict(params), seed + i + 1)
+            labels = np.asarray(estimator.fit_predict(working[idx]))
+        except Exception:
+            # Une configuration qui dégénère sur un sous-échantillon (ex.
+            # trop peu de points distincts) est simplement ignorée — la
+            # stabilité se calcule sur les rounds qui ont réussi, jamais un
+            # plantage pour un indicateur secondaire.
+            continue
+        runs.append((idx, labels))
+
+    if len(runs) < 2:
+        return None
+
+    scores: list[float] = []
+    for (idx_a, labels_a), (idx_b, labels_b) in zip(runs, runs[1:]):
+        pos_a = {int(v): k for k, v in enumerate(idx_a)}
+        pos_b = {int(v): k for k, v in enumerate(idx_b)}
+        common = sorted(set(pos_a) & set(pos_b))
+        if len(common) < 5:
+            continue
+        la = [labels_a[pos_a[c]] for c in common]
+        lb = [labels_b[pos_b[c]] for c in common]
+        scores.append(float(adjusted_rand_score(la, lb)))
+
+    return float(np.mean(scores)) if scores else None
+
+
 def train_and_evaluate_clustering(
     X: pd.DataFrame,
     config: ClusteringConfig,
@@ -208,14 +299,30 @@ def train_and_evaluate_clustering(
     retenu. Jamais de `y` : le clustering n'a pas de cible, contrairement au
     supervisé (`ml_training.py::train_and_evaluate`)."""
     progress_cb("Préparation des données", 5)
-    preprocessor = build_preprocessor(X)
-    X_processed = preprocessor.fit_transform(X)
+    n_samples_total = int(len(X))
+
+    # Échantillonnage déterministe si le dataset dépasse MAX_ROWS_FOR_CLUSTERING
+    # — même pattern que `dimensionality_training.py`/`anomaly_training.py`
+    # (index d'origine préservé via une colonne technique, retirée avant le
+    # préprocesseur). Sans ce plafond, le clustering hiérarchique (O(n²) en
+    # mémoire) pouvait déclencher un MemoryError en cours de job sur un gros
+    # dataset, sans avertissement préalable à l'utilisateur.
+    X_indexed = X.reset_index(drop=True).copy()
+    X_indexed[_ROW_INDEX_COLUMN] = np.arange(n_samples_total)
+    sampled_flag = n_samples_total > MAX_ROWS_FOR_CLUSTERING
+    X_sampled = sample_if_large(X_indexed, MAX_ROWS_FOR_CLUSTERING, config.seed)
+    X_used = X_sampled.drop(columns=[_ROW_INDEX_COLUMN]).reset_index(drop=True)
+    n_samples_used = int(len(X_used))
+
+    preprocessor = build_preprocessor(X_used)
+    X_processed = preprocessor.fit_transform(X_used)
     if hasattr(X_processed, "toarray"):
         # Contrairement au supervisé (Lot 3, sparse préservé pour les gros
         # volumes), tous les algorithmes de ce registre (KMeans, DBSCAN,
         # hiérarchique) exigent une entrée dense — un usage exploratoire de
         # clustering porte typiquement sur des jeux de données plus modestes
-        # que l'entraînement supervisé, le risque mémoire est bien moindre.
+        # que l'entraînement supervisé, le risque mémoire est bien moindre
+        # une fois le plafond ci-dessus appliqué.
         X_processed = X_processed.toarray()
 
     specs = specs_for(config.algorithm_ids)
@@ -312,14 +419,43 @@ def train_and_evaluate_clustering(
 
     winner = valid[0]
     progress_cb("Calcul des profils de segments", 92)
-    profiles = _build_cluster_profiles(X.reset_index(drop=True), winner["labels"])
+    profiles = _build_cluster_profiles(X_used, winner["labels"])
+
+    progress_cb("Vérification de la stabilité", 96)
+    stability_ari = _compute_cluster_stability(X_processed, winner["spec"], winner["params"], config.seed)
+
+    # Données d'assignation de nouvelles observations (Lot 6B, §F.2 —
+    # jusqu'ici, un clustering entraîné ne pouvait jamais être réutilisé).
+    # KMeans/MiniBatchKMeans exposent déjà `.predict()` en natif (rien à
+    # ajouter). Hiérarchique/DBSCAN n'ont PAS de `.predict()` en sklearn
+    # (modèles transductifs) — voir `services/clustering_inference.py` pour
+    # les approximations retenues, calculées ici une seule fois (jamais
+    # recalculées à l'inférence) et persistées dans le pipeline_bundle.
+    assignment_bundle_extra: dict[str, Any] = {}
+    if winner["spec"].id == "hierarchical":
+        labels_arr = winner["labels"]
+        assignment_bundle_extra["centroids"] = {
+            int(cid): X_processed[labels_arr == cid].mean(axis=0) for cid in sorted(set(labels_arr.tolist()))
+        }
+    elif winner["spec"].id == "dbscan":
+        core_idx = winner["estimator"].core_sample_indices_
+        assignment_bundle_extra["core_points"] = X_processed[core_idx]
+        assignment_bundle_extra["core_labels"] = winner["labels"][core_idx]
+        assignment_bundle_extra["eps"] = winner["params"]["eps"]
 
     model_card = {
         "algorithm": winner["spec"].label,
         "algorithm_id": winner["spec"].id,
         "family": winner["spec"].family,
         "n_clusters": winner["n_clusters"],
-        "n_samples": int(X.shape[0]),
+        # `n_samples` = nombre RÉELLEMENT clusterisé (X_used, potentiellement
+        # échantillonné) — conservé sous ce nom pour compatibilité avec les
+        # lecteurs existants (ex. `Clustering.tsx::totalSamples`, dont la
+        # somme des tailles de profils doit rester égale à cette valeur).
+        "n_samples": n_samples_used,
+        "n_samples_total": n_samples_total,
+        "n_samples_used": n_samples_used,
+        "sampled": sampled_flag,
         "silhouette": winner["silhouette"],
         "davies_bouldin": winner["davies_bouldin"],
         "calinski_harabasz": winner["calinski_harabasz"],
@@ -329,6 +465,9 @@ def train_and_evaluate_clustering(
         # Transparence sur le garde-fou bruit (P2) — jamais silencieux quand
         # aucune configuration testée ne respecte le budget par défaut.
         "noise_budget_exceeded_for_all": noise_budget_exceeded_for_all,
+        # `None` = pas assez de points pour une estimation fiable (dégradation
+        # honnête) — jamais un score inventé (Lot 6B, §F.2).
+        "stability_ari": stability_ari,
     }
 
     progress_cb("Terminé", 100)
@@ -346,5 +485,6 @@ def train_and_evaluate_clustering(
             "preprocessor": preprocessor,
             "model": winner["estimator"],
             "algorithm_id": winner["spec"].id,
+            **assignment_bundle_extra,
         },
     )

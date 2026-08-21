@@ -1,19 +1,19 @@
 import type { ClusterCandidate, ClusterProfile } from "../api/client";
+import type { QualityAssessment, QualityTone } from "./qualityAssessment";
 
 /** Lecture, interprétation et présentation du résultat d'un clustering —
  * fonctions pures, aucun appel réseau, testées indépendamment de
  * `pages/Clustering.tsx`. N'invente jamais de statistique : ne fait que
  * recouper/reformater des nombres déjà calculés côté backend (silhouette,
  * tailles de segments...), jamais de nouveau calcul ML (voir skill
- * senior-ai-saas-engineer, data-science.md : "jamais un texte inventé"). */
+ * senior-ai-saas-engineer, data-science.md : "jamais un texte inventé").
+ *
+ * Le vocabulaire de verdict (`QualityTone`/`QualityAssessment`) vit dans
+ * `qualityAssessment.ts`, PARTAGÉ avec `dimensionalityQuality.ts`/
+ * `anomalyQuality.ts` (Lot 6B, §F.2) — réexporté ici pour ne pas casser les
+ * imports existants (`pages/Clustering.tsx`). */
 
-export type QualityTone = "low" | "moderate" | "good";
-
-export interface QualityAssessment {
-  tone: QualityTone;
-  label: string;
-  caveat: string;
-}
+export type { QualityTone, QualityAssessment };
 
 /** Repère indicatif (échelle usuelle du score de silhouette, proche de
  * Kaufman & Rousseeuw) — PAS un seuil universel : présenté avec une
@@ -48,6 +48,44 @@ export function assessSilhouetteQuality(silhouette: number | null): QualityAsses
     label: "Structure plutôt bonne",
     caveat:
       "Les groupes sont bien séparés selon ce score — repère indicatif, à confirmer par la cohérence des profils de segments et la connaissance métier.",
+  };
+}
+
+/** Stabilité par sous-échantillonnage (Lot 6B, §F.2) — mesure à quel point
+ * le regroupement retenu dépend des données EXACTEMENT utilisées (ARI moyen
+ * entre sous-échantillons, calculé côté backend, voir
+ * `services/clustering_training.py::_compute_cluster_stability`). Seuils
+ * repris de la lecture usuelle de l'Adjusted Rand Index (>0.75 = accord
+ * quasi parfait, 0.5-0.75 = accord modéré, <0.5 = fragile) — mêmes
+ * précautions de formulation que `assessSilhouetteQuality` : un repère
+ * indicatif, jamais une affirmation absolue. */
+export function assessStabilityQuality(stabilityAri: number | null): QualityAssessment {
+  if (stabilityAri === null) {
+    return {
+      tone: "low",
+      label: "Stabilité non évaluable",
+      caveat: "Pas assez d'observations pour estimer la sensibilité du regroupement à l'échantillon utilisé.",
+    };
+  }
+  if (stabilityAri < 0.5) {
+    return {
+      tone: "low",
+      label: "Regroupement peu stable",
+      caveat:
+        "Refaire le calcul sur un sous-ensemble légèrement différent de vos données change sensiblement les groupes obtenus — à interpréter avec prudence, même si les métriques de qualité ci-dessus sont bonnes.",
+    };
+  }
+  if (stabilityAri < 0.75) {
+    return {
+      tone: "moderate",
+      label: "Stabilité modérée",
+      caveat: "Les groupes obtenus varient un peu selon les données exactement utilisées — repère indicatif.",
+    };
+  }
+  return {
+    tone: "good",
+    label: "Regroupement stable",
+    caveat: "Refaire le calcul sur un sous-ensemble légèrement différent de vos données change peu les groupes obtenus.",
   };
 }
 

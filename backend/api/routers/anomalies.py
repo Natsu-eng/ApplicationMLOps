@@ -43,6 +43,11 @@ class AnomalyJobCreate(BaseModel):
     feature_columns: List[str]
     top_n: int = Field(default=DEFAULT_TOP_N, ge=1, le=MAX_TOP_N)
     seed: Optional[int] = None
+    # `None` = "auto" (comportement par défaut, formule du papier original de
+    # chaque algorithme). Fraction explicite sinon — bornée à (0, 0.5] : 0
+    # n'aurait pas de sens (aucune anomalie), et sklearn rejette au-delà de
+    # 0.5 (la "majorité" ne peut pas être l'anomalie par définition).
+    contamination: Optional[float] = Field(default=None, gt=0.0, le=0.5)
 
 
 class AnomalyJobSummary(BaseModel):
@@ -181,7 +186,11 @@ def create_anomaly_job(
             detail={"code": "DATASET_LECTURE_ECHEC", "message": str(exc)},
         )
 
-    config = {"top_n": body.top_n, "seed": body.seed if body.seed is not None else _settings.model_seed}
+    config = {
+        "top_n": body.top_n,
+        "seed": body.seed if body.seed is not None else _settings.model_seed,
+        "contamination": body.contamination if body.contamination is not None else "auto",
+    }
 
     job = AnomalyJob(
         organization_id=current_user.organization_id,

@@ -5,6 +5,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from services import clustering_training
 from services.clustering_registry import CLUSTER_REGISTRY
 from services.clustering_training import (
     ClusteringConfig,
@@ -206,3 +207,63 @@ def test_only_default_subset_evaluated_when_algorithm_ids_is_none():
     df = _make_three_blobs_df()
     result = train_and_evaluate_clustering(df, ClusteringConfig(seed=42), _NOOP)
     assert {c.algorithm_id for c in result.all_candidates} <= DEFAULT_ALGORITHM_IDS
+
+
+# ── Lot 6B, §F.2 : transparence d'échantillonnage ──────────────────────────
+
+
+def test_sampling_caps_at_limit_and_reports_transparency(monkeypatch):
+    monkeypatch.setattr(clustering_training, "MAX_ROWS_FOR_CLUSTERING", 60)
+    df = _make_three_blobs_df(n_per_group=50)  # 150 lignes, > cap de test (60)
+    result = train_and_evaluate_clustering(df, ClusteringConfig(seed=42), _NOOP)
+    assert result.model_card["sampled"] is True
+    assert result.model_card["n_samples_total"] == 150
+    assert result.model_card["n_samples_used"] == 60
+    # `n_samples` (nom historique lu par le frontend) doit rester aligné sur
+    # les données RÉELLEMENT clusterisées, jamais le total avant échantillon.
+    assert result.model_card["n_samples"] == 60
+    total_in_profiles = sum(p.size for p in result.cluster_profiles)
+    assert total_in_profiles + result.noise_count == 60
+
+
+def test_no_sampling_when_dataset_under_cap():
+    df = _make_three_blobs_df(n_per_group=50)  # 150 lignes, sous le vrai cap (5000)
+    result = train_and_evaluate_clustering(df, ClusteringConfig(seed=42), _NOOP)
+    assert result.model_card["sampled"] is False
+    assert result.model_card["n_samples_total"] == 150
+    assert result.model_card["n_samples_used"] == 150
+
+
+# ── Lot 6B, §F.2 : transparence catégorielle (référence population) ────────
+
+
+def test_categorical_summary_exposes_population_baseline_and_lift():
+    """Chaque groupe pèse 1/3 de la population par construction — un cluster
+    pur (100 % d'une catégorie) sur une catégorie qui ne pèse qu'1/3
+    globalement doit afficher une sur-représentation (`lift`) proche de 3."""
+    df = _make_three_blobs_df()
+    result = train_and_evaluate_clustering(df, ClusteringConfig(seed=42), _NOOP)
+    for profile in result.cluster_profiles:
+        cat = profile.categorical_summary["categorie"]
+        assert cat["population_pct"] == pytest.approx(100 / 3, abs=1.0)
+        assert cat["lift"] == pytest.approx(3.0, abs=0.3)
+
+
+# ── Lot 6B, §F.2 : indicateur de stabilité de k ─────────────────────────────
+
+
+def test_stability_ari_is_high_on_well_separated_groups():
+    """3 groupes numériques très séparés : un sous-échantillonnage à 80 % ne
+    doit presque jamais changer la structure retrouvée — stabilité proche de
+    1 attendue, pas une valeur arbitraire."""
+    df = _make_three_blobs_df()
+    result = train_and_evaluate_clustering(df, ClusteringConfig(seed=42), _NOOP)
+    assert result.model_card["stability_ari"] is not None
+    assert result.model_card["stability_ari"] > 0.7
+
+
+def test_stability_ari_is_none_below_minimum_rows(monkeypatch):
+    monkeypatch.setattr(clustering_training, "MIN_ROWS_FOR_STABILITY", 10_000)
+    df = _make_three_blobs_df()
+    result = train_and_evaluate_clustering(df, ClusteringConfig(seed=42), _NOOP)
+    assert result.model_card["stability_ari"] is None
