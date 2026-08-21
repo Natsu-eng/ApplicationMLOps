@@ -40,6 +40,7 @@ import { SectionHeader } from "../components/ui/SectionHeader";
 import { Select } from "../components/ui/Select";
 import { Table, type TableColumn } from "../components/ui/Table";
 import { DataQualityWarnings } from "../components/training/DataQualityWarnings";
+import { useJobEvents } from "../hooks/useJobEvents";
 import { useConfirmAction } from "../hooks/useConfirmAction";
 import { CHART_SERIES_COLORS } from "../theme/charts";
 import {
@@ -51,7 +52,6 @@ import {
 import { QUALITY_TONE_ACCENT } from "../utils/qualityAssessment";
 
 const ACTIVE_STATUSES = new Set(["queued", "running"]);
-const POLL_INTERVAL_MS = 3000;
 const ACTIVE_JOB_STORAGE_KEY = "datalab_active_clustering_job_id";
 
 type Phase = "configure" | "progress" | "results" | "failed" | "cancelled";
@@ -126,17 +126,11 @@ export default function Clustering() {
 
   const phase = phaseOf(activeJob);
 
-  useEffect(() => {
-    if (phase !== "progress" || !activeJob) return;
-    const interval = setInterval(async () => {
-      try {
-        setActiveJob(await api.clustering.getJob(activeJob.id));
-      } catch {
-        // silencieux — nouvelle tentative au prochain tick
-      }
-    }, POLL_INTERVAL_MS);
-    return () => clearInterval(interval);
-  }, [phase, activeJob]);
+  // Notifications SSE (Lot 7, §J.2) — remplace le polling setInterval.
+  useJobEvents(
+    phase === "progress" && activeJob ? `/clustering/jobs/${activeJob.id}/events` : null,
+    (snapshot) => setActiveJob((prev) => (prev ? { ...prev, ...snapshot } : prev)),
+  );
 
   function resetToConfigure() {
     setActiveJob(null);

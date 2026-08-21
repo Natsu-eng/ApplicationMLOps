@@ -14,11 +14,12 @@ from typing import Any, List, Optional
 
 import pandas as pd
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import joinedload
 
 from api.core.config import get_settings
-from api.core.database import get_db
+from api.core.database import SessionLocal, get_db
 from api.core.job_queue import analysis_queue
 from api.core.models import Dataset, DimensionalityJob, DimensionalityPoint, User
 from api.core.pagination import paginate_by_id
@@ -26,6 +27,7 @@ from api.routers.auth import get_current_user
 from services.audit import log_action
 from services.datasets import DatasetParsingError, read_dataset_dataframe
 from services.dimensionality_registry import DEFAULT_ALGORITHM_ID, DIMENSIONALITY_REGISTRY
+from services.job_events import stream_job_updates
 from services.job_lifecycle import ACTIVE_STATUSES, CANCELLED_MESSAGE, try_cancel_rq_job
 from services.job_quota import ALL_JOB_MODELS, raise_if_quota_exceeded
 from services.job_watchdog import reconcile_stale_jobs
@@ -276,6 +278,40 @@ def list_dimensionality_jobs(
 @router.get("/jobs/{job_id}", response_model=DimensionalityJobSummary)
 def get_dimensionality_job(job_id: int, current_user: User = Depends(get_current_user), db=Depends(get_db)):
     return _to_summary(_get_org_job(job_id, current_user, db))
+
+
+@router.get("/jobs/{job_id}/events")
+async def stream_dimensionality_job_events(job_id: int, current_user: User = Depends(get_current_user)):
+    """Notifications de fin de job par SSE (Lot 7, §J.2) — voir
+    `training.py::stream_training_job_events` pour le raisonnement complet."""
+    organization_id = current_user.organization_id
+    db = SessionLocal()
+    try:
+        job = db.query(DimensionalityJob).filter(DimensionalityJob.id == job_id, DimensionalityJob.organization_id == organization_id).first()
+        if job is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={"code": "DIMENSIONALITY_JOB_INTROUVABLE", "message": "Calcul de réduction de dimension introuvable"},
+            )
+    finally:
+        db.close()
+
+    def fetch_snapshot():
+        session = SessionLocal()
+        try:
+            row = session.query(DimensionalityJob).filter(DimensionalityJob.id == job_id, DimensionalityJob.organization_id == organization_id).first()
+            if row is None:
+                return None
+            return {
+                "status": row.status,
+                "progress_percent": row.progress_percent,
+                "progress_step": row.progress_step,
+                "error_message": row.error_message,
+            }
+        finally:
+            session.close()
+
+    return StreamingResponse(stream_job_updates(fetch_snapshot), media_type="text/event-stream")
 
 
 @router.get("/jobs/{job_id}/result", response_model=DimensionalityResultOut)

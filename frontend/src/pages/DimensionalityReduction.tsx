@@ -35,11 +35,11 @@ import { useConfirmAction } from "../hooks/useConfirmAction";
 import { CHART_GRID_STROKE, CHART_SERIES_COLORS, CHART_TICK_STYLE, CHART_TOOLTIP_STYLE } from "../theme/charts";
 import { binIndexForValue, computeQuantileEdges, formatBinLabel } from "../utils/quantileBins";
 import { DataQualityWarnings } from "../components/training/DataQualityWarnings";
+import { useJobEvents } from "../hooks/useJobEvents";
 import { assessTrustworthinessQuality } from "../utils/dimensionalityQuality";
 import { QUALITY_TONE_ACCENT } from "../utils/qualityAssessment";
 
 const ACTIVE_STATUSES = new Set(["queued", "running"]);
-const POLL_INTERVAL_MS = 3000;
 const ACTIVE_JOB_STORAGE_KEY = "datalab_active_dimensionality_job_id";
 
 type Phase = "configure" | "progress" | "results" | "failed" | "cancelled";
@@ -111,17 +111,11 @@ export default function DimensionalityReduction() {
 
   const phase = phaseOf(activeJob);
 
-  useEffect(() => {
-    if (phase !== "progress" || !activeJob) return;
-    const interval = setInterval(async () => {
-      try {
-        setActiveJob(await api.dimensionality.getJob(activeJob.id));
-      } catch {
-        // silencieux — nouvelle tentative au prochain tick
-      }
-    }, POLL_INTERVAL_MS);
-    return () => clearInterval(interval);
-  }, [phase, activeJob]);
+  // Notifications SSE (Lot 7, §J.2) — remplace le polling setInterval.
+  useJobEvents(
+    phase === "progress" && activeJob ? `/dimensionality/jobs/${activeJob.id}/events` : null,
+    (snapshot) => setActiveJob((prev) => (prev ? { ...prev, ...snapshot } : prev)),
+  );
 
   function resetToConfigure() {
     setActiveJob(null);

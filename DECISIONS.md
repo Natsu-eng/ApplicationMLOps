@@ -2199,3 +2199,58 @@ suggérée, colonne trouée (>20 % manquant) jamais suggérée, une colonne au
 nom évocateur passe devant une colonne numériquement identique mais au nom
 neutre, `max_suggestions` respecté, chaque suggestion porte au moins une
 raison concrète.
+
+### D7.8 — Notifications SSE : polling serveur à sessions courtes, `fetch`+`ReadableStream` côté client (jamais `EventSource` natif)
+
+**Question** : "remplace du même coup six implémentations dupliquées de
+`setInterval(3000)`." Deux décisions distinctes à trancher : comment le
+serveur pousse-t-il les mises à jour, et comment le client les reçoit-il ?
+
+**Côté serveur — retenu** : `services/job_events.py::stream_job_updates()`,
+un simple générateur `StreamingResponse` (`text/event-stream`) qui
+interroge la base toutes les 1,5 s et n'émet un événement QUE si le
+statut/la progression a changé depuis le dernier tick — jamais un vrai
+push (pas de pub/sub Redis, pas de LISTEN/NOTIFY Postgres). Chaque tick
+ouvre sa PROPRE session DB courte (`SessionLocal()`/`db.close()`, même
+motif que les workers RQ) plutôt que de garder la session de la requête
+FastAPI ouverte pendant toute la durée du flux (potentiellement plusieurs
+minutes pour un entraînement) — évite d'épuiser le pool de connexions
+avec des flux SSE ouverts longtemps. La requête SQL tourne dans
+`asyncio.to_thread` pour ne jamais bloquer la boucle asyncio.
+**Écarté** : un vrai mécanisme de push (Redis pub/sub, LISTEN/NOTIFY) —
+ajouterait une brique d'infrastructure et un couplage nouveau entre le
+worker (qui devrait publier) et l'API (qui devrait s'abonner), pour un
+gain limité tant que l'intervalle de 1,5 s reste largement sous la
+granularité perçue par un utilisateur qui regarde une barre de
+progression. Réversible : si la fréquence de sondage devient un vrai
+problème de charge, le pub/sub est le prochain palier, sans changer le
+contrat `text/event-stream` côté client.
+**Filet de sécurité** : `MAX_STREAM_SECONDS = 3600` — ferme le flux après
+1h même sans statut terminal (ex. job resté "running" après un crash
+worker ; `job_watchdog.py` le marquera "failed" en base tôt ou tard, mais
+ce flux-ci ne doit pas rester ouvert indéfiniment en attendant).
+
+**Côté client — retenu** : `frontend/src/hooks/useJobEvents.ts` — `fetch`
++ `ReadableStream` (analyse manuelle du flux `text/event-stream` via
+`frontend/src/utils/sse.ts`, fonctions pures testées), PAS `EventSource`
+natif du navigateur.
+**Pourquoi pas `EventSource`** : il ne permet AUCUN en-tête personnalisé,
+donc aucun moyen d'envoyer `Authorization: Bearer <token>` comme le reste
+du client API (`api/client.ts::request()`). La seule alternative native
+aurait été de passer le token en paramètre de requête dans l'URL — un
+jeton d'authentification dans une URL finit dans les logs serveur/le
+cache/l'historique du navigateur/les en-têtes `Referer`, un risque de
+sécurité que ce projet n'accepte nulle part ailleurs (voir
+`api/client.ts` : le token voyage TOUJOURS en en-tête, jamais en query
+string). `fetch` garde exactement le même modèle d'authentification que
+tous les autres appels du client.
+**Retenu aussi** : les 6 pages remplacent leur bloc `setInterval`
+quasi-identique (dupliqué depuis les Lots 11-15) par le même appel à
+`useJobEvents(path, onUpdate)` — `path` vaut `null` hors de la phase
+"progress", ce qui ferme proprement la connexion `fetch` via
+`AbortController` au démontage/changement de dépendance.
+**Vérifié** : fermeture immédiate du flux sur un job déjà terminal,
+dédoublonnage des ticks identiques consécutifs (un seul événement émis),
+événement d'erreur propre si le job disparaît en cours de flux, isolation
+multi-tenant (404 avant même l'ouverture du flux) — sur les 6 routers +
+tests unitaires purs du parsing SSE côté frontend.
