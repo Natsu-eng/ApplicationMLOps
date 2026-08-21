@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { AlertCircle, Ban, BrainCircuit, Check, ChevronLeft, ChevronRight, Loader2, PlayCircle, RotateCcw, Target, Trash2 } from "lucide-react";
 import {
   ApiError,
@@ -62,6 +62,7 @@ function phaseOf(job: TrainingJobSummary | null): Phase {
  * sur cette même page. L'historique complet des entraînements passés vit
  * sur le tableau de bord ("Derniers entraînements"), pas ici. */
 export default function Training() {
+  const [searchParams, setSearchParams] = useSearchParams();
   const [datasets, setDatasets] = useState<DatasetSummary[]>([]);
   const [datasetsError, setDatasetsError] = useState<string | null>(null);
   const [activeJob, setActiveJob] = useState<TrainingJobSummary | null>(null);
@@ -79,8 +80,13 @@ export default function Training() {
   // bord. sessionStorage plutôt que localStorage : le job actif ne doit
   // resurgir que dans CETTE session de navigation (cet onglet, jusqu'à sa
   // fermeture), jamais des jours plus tard dans un nouvel onglet.
+  //
+  // Deep-link `?job=` (Lot 7, §J.2) — priorité sur sessionStorage, même
+  // ordre que les 5 autres pages de job : permet à l'historique unifié de
+  // rouvrir un entraînement précis, y compris depuis un lien partagé.
   useEffect(() => {
-    const storedId = sessionStorage.getItem(ACTIVE_JOB_STORAGE_KEY);
+    const queryJobId = searchParams.get("job");
+    const storedId = queryJobId ?? sessionStorage.getItem(ACTIVE_JOB_STORAGE_KEY);
     if (!storedId) {
       setRestoringJob(false);
       return;
@@ -88,8 +94,12 @@ export default function Training() {
     api.training
       .getJob(Number(storedId))
       .then(setActiveJob)
-      .catch(() => sessionStorage.removeItem(ACTIVE_JOB_STORAGE_KEY))
+      .catch(() => {
+        sessionStorage.removeItem(ACTIVE_JOB_STORAGE_KEY);
+        setSearchParams({}, { replace: true });
+      })
       .finally(() => setRestoringJob(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -99,6 +109,11 @@ export default function Training() {
       sessionStorage.removeItem(ACTIVE_JOB_STORAGE_KEY);
     }
   }, [activeJob]);
+
+  function openJob(job: TrainingJobSummary) {
+    setActiveJob(job);
+    setSearchParams({ job: String(job.id) }, { replace: false });
+  }
 
   const loadDatasets = useCallback(async () => {
     try {
@@ -129,6 +144,7 @@ export default function Training() {
 
   function resetToConfigure() {
     setActiveJob(null);
+    setSearchParams({}, { replace: false });
   }
 
   async function handleDeleteActiveJob() {
@@ -157,7 +173,7 @@ export default function Training() {
     setRerunning(true);
     setRerunError(null);
     try {
-      setActiveJob(await api.training.rerun(activeJob.id));
+      openJob(await api.training.rerun(activeJob.id));
     } catch (err) {
       setRerunError(err instanceof ApiError ? err.message : "Impossible de relancer cet entraînement");
     } finally {
@@ -229,7 +245,7 @@ export default function Training() {
         </div>
       ) : phase === "configure" && (
         <div className="max-w-3xl mx-auto">
-          <TrainingForm datasets={datasets} datasetsError={datasetsError} onJobCreated={setActiveJob} />
+          <TrainingForm datasets={datasets} datasetsError={datasetsError} onJobCreated={openJob} />
           <p className="text-xs text-muted-foreground text-center mt-4">
             Vos entraînements précédents restent consultables depuis le{" "}
             <Link to="/dashboard" className="text-primary hover:text-primary/80">
