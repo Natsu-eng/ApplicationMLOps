@@ -173,6 +173,34 @@ def test_usage_404_for_other_organization(client):
     assert resp.status_code == 404
 
 
+# ── Lot 7, §J.1 — suggestion de colonne cible ───────────────────────────────
+
+
+def test_target_suggestions_ranks_a_plausible_column_first(client):
+    headers = _register(client)
+    rows = "\n".join(f"{i},{i % 2}" for i in range(100))
+    content = f"mesure,target\n{rows}\n".encode()
+    created = client.post(
+        "/api/datasets", headers=headers, files={"file": ("d.csv", io.BytesIO(content), "text/csv")}
+    ).json()
+
+    resp = client.get(f"/api/datasets/{created['id']}/target-suggestions", headers=headers)
+    assert resp.status_code == 200
+    suggestions = resp.json()["suggestions"]
+    assert len(suggestions) > 0
+    assert suggestions[0]["column"] == "target"
+    assert len(suggestions[0]["reasons"]) > 0
+
+
+def test_target_suggestions_404_for_other_organization(client):
+    headers_a = _register(client, "a@bureau-a.fr", "Bureau A")
+    dataset_a = client.post("/api/datasets", headers=headers_a, files=_csv_file()).json()
+
+    headers_b = _register(client, "b@bureau-b.fr", "Bureau B")
+    resp = client.get(f"/api/datasets/{dataset_a['id']}/target-suggestions", headers=headers_b)
+    assert resp.status_code == 404
+
+
 def test_preview_returns_sample_rows(client):
     headers = _register(client)
     created = client.post("/api/datasets", headers=headers, files=_csv_file()).json()

@@ -28,6 +28,7 @@ from api.core.storage import dataset_file_path, delete_dataset_file
 from api.routers.auth import get_current_user
 from services.audit import log_action
 from services.data_quality import analyze_data_quality
+from services.target_suggestion import suggest_target_columns
 from services.dataset_eda import (
     compute_categorical_correlation_matrix,
     compute_column_stats,
@@ -186,6 +187,16 @@ class DataWarning(BaseModel):
 
 class DataQualityResponse(BaseModel):
     warnings: List[DataWarning]
+
+
+class TargetSuggestionOut(BaseModel):
+    column: str
+    score: float
+    reasons: List[str]
+
+
+class TargetSuggestionsResponse(BaseModel):
+    suggestions: List[TargetSuggestionOut]
 
 
 class FeatureEngineeringSuggestion(BaseModel):
@@ -523,6 +534,34 @@ def get_dataset_quality_check(
             detail={"code": "COLONNE_INTROUVABLE", "message": str(exc)},
         )
     return DataQualityResponse(warnings=[DataWarning(**w) for w in warnings])
+
+
+@router.get("/{dataset_id}/target-suggestions", response_model=TargetSuggestionsResponse)
+def get_dataset_target_suggestions(
+    dataset_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Suggestion de colonne cible (Lot 7, §J.1) — un score de plausibilité
+    et les raisons concrètes qui le justifient, jamais un choix fait à la
+    place de l'utilisateur (voir `services/target_suggestion.py`)."""
+    dataset = _get_org_dataset(dataset_id, current_user, db)
+    if dataset.status != "ready":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"code": "DATASET_NON_PRET", "message": "Ce dataset n'a pas pu être analysé"},
+        )
+    try:
+        df = read_dataset_dataframe(Path(dataset.file_path), Path(dataset.file_path).suffix)
+    except DatasetParsingError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"code": "DATASET_LECTURE_ECHEC", "message": str(exc)},
+        )
+    suggestions = suggest_target_columns(df)
+    return TargetSuggestionsResponse(
+        suggestions=[TargetSuggestionOut(column=s.column, score=s.score, reasons=s.reasons) for s in suggestions]
+    )
 
 
 @router.get("/{dataset_id}/feature-engineering-suggestions", response_model=FeatureEngineeringSuggestionsResponse)

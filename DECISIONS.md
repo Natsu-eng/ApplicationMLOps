@@ -2164,3 +2164,38 @@ tout futur test qui enchaîne deux appels de création dans le même test.
 **Vérifié** : nouvelle configuration identique au job d'origine (dataset,
 colonnes, hyperparamètres) sur les 6 routers, isolation multi-tenant
 testée.
+
+### D7.7 — Suggestion de colonne cible : score explicable sur des faits calculés, jamais un choix imposé
+
+**Question** : "l'utilisateur doit deviner quoi prédire... propose les
+candidats les plus plausibles, avec la raison — sans jamais choisir à sa
+place." Comment scorer sans machine learning superflu ni statistique
+inventée ?
+**Retenu** : `services/target_suggestion.py::suggest_target_columns()` —
+score additif à partir de faits RÉELLEMENT calculés sur le dataset (jamais
+un texte générique) : indice de nom (mots-clés français/anglais fréquents
+pour une cible), cardinalité cohérente avec une classification (réutilise
+`MAX_CLASSES_FOR_CLASSIFICATION` de `ml_task.py`, jamais un second seuil
+inventé) ou une régression (variable continue), position en dernière
+colonne (convention fréquente des exports tabulaires). Exclusions strictes
+avant même le score : colonne constante, quasi-identifiant (réutilise
+`CARDINALITY_RATIO_THRESHOLD`/`CARDINALITY_ABSOLUTE_THRESHOLD` de
+`data_quality.py`, mêmes seuils que le garde-fou "cardinalité excessive",
+jamais dupliqués avec une valeur différente), plus de 20 % de valeurs
+manquantes (inexploitable tel quel comme cible).
+**Retenu aussi (frontend)** : les suggestions n'apparaissent QUE tant
+qu'aucune cible n'est encore choisie (`!targetColumn`) — de simples
+pastilles cliquables sous le sélecteur, jamais une présélection
+automatique du menu déroulant. Le survol affiche les raisons concrètes
+(`title={s.reasons.join(" · ")}`), jamais un score brut sans explication.
+**Écarté** : un vrai calcul de corrélation croisée entre chaque paire de
+colonnes pour affiner le score (ex. AUC univariée déjà utilisée pour la
+fuite cible dans `data_quality.py`) — coût quadratique inutile pour une
+suggestion de confort, alors que les 3 signaux retenus (nom, cardinalité,
+position) suffisent à couvrir les cas réels sans recalcul lourd à chaque
+changement de dataset.
+**Vérifié** : identifiant jamais suggéré, colonne constante jamais
+suggérée, colonne trouée (>20 % manquant) jamais suggérée, une colonne au
+nom évocateur passe devant une colonne numériquement identique mais au nom
+neutre, `max_suggestions` respecté, chaque suggestion porte au moins une
+raison concrète.

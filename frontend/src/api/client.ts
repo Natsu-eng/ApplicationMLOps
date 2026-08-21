@@ -378,6 +378,16 @@ export interface DataQualityResponse {
   warnings: DataWarning[];
 }
 
+export interface TargetSuggestion {
+  column: string;
+  score: number;
+  reasons: string[];
+}
+
+export interface TargetSuggestionsResponse {
+  suggestions: TargetSuggestion[];
+}
+
 /** Fragment de transformation (Lot 4c) — forme volontairement souple (types
  * différents selon `type`, ex. datetime_decompose vs ratio vs imputation) :
  * renvoyée telle quelle par une suggestion, échoée telle quelle si approuvée. */
@@ -1243,6 +1253,7 @@ export const api = {
         `/datasets/${id}/feature-engineering-suggestions?target_column=${encodeURIComponent(targetColumn)}` +
           (groupColumn ? `&group_column=${encodeURIComponent(groupColumn)}` : ""),
       ),
+    targetSuggestions: (id: number) => request<TargetSuggestionsResponse>(`/datasets/${id}/target-suggestions`),
   },
 
   training: {
