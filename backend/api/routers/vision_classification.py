@@ -165,7 +165,7 @@ def _get_org_job(job_id: int, current_user: User, db: Session) -> VisionClassifi
     return job
 
 
-def _to_summary(job: VisionClassificationJob) -> VisionClassificationJobSummary:
+def to_summary(job: VisionClassificationJob) -> VisionClassificationJobSummary:
     config = json.loads(job.config_json)
     result = job.result
     return VisionClassificationJobSummary(
@@ -285,7 +285,7 @@ def create_vision_classification_job(
     db.commit()
     db.refresh(job)
 
-    return _to_summary(job)
+    return to_summary(job)
 
 
 @router.get("/jobs", response_model=List[VisionClassificationJobSummary])
@@ -309,12 +309,12 @@ def list_vision_classification_jobs(
         .order_by(VisionClassificationJob.id.desc())
     )
     jobs = paginate_by_id(query, VisionClassificationJob.id, response, cursor, limit)
-    return [_to_summary(j) for j in jobs]
+    return [to_summary(j) for j in jobs]
 
 
 @router.get("/jobs/{job_id}", response_model=VisionClassificationJobSummary)
 def get_vision_classification_job(job_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    return _to_summary(_get_org_job(job_id, current_user, db))
+    return to_summary(_get_org_job(job_id, current_user, db))
 
 
 @router.get("/jobs/{job_id}/events")
@@ -471,7 +471,7 @@ def cancel_vision_classification_job(job_id: int, current_user: User = Depends(g
     )
     db.commit()
     db.refresh(job)
-    return _to_summary(job)
+    return to_summary(job)
 
 
 @router.post("/jobs/{job_id}/rerun", response_model=VisionClassificationJobSummary, status_code=status.HTTP_201_CREATED)

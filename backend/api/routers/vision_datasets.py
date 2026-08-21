@@ -29,7 +29,7 @@ from api.core.storage import delete_vision_dataset_dir, vision_dataset_dir
 from api.routers.auth import get_current_user
 from services.audit import log_action
 from services.vision_anomaly_registry import IMAGE_SIZE as ANOMALY_IMAGE_SIZE
-from services.vision_classification_training import (
+from services.vision_shared import (
     AUGMENTATION_PRESET_IDS,
     IMAGE_SIZE as CLASSIFICATION_IMAGE_SIZE,
     augmentation_transforms,

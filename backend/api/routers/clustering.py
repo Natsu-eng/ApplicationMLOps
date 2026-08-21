@@ -34,7 +34,7 @@ from services.job_events import stream_job_updates
 from services.job_lifecycle import ACTIVE_STATUSES, CANCELLED_MESSAGE, try_cancel_rq_job
 from services.job_quota import ALL_JOB_MODELS, raise_if_quota_exceeded
 from services.job_watchdog import reconcile_stale_jobs
-from services.ml_inference import InferenceError, load_bundle
+from services.model_bundle import InferenceError, load_bundle
 
 router = APIRouter(prefix="/clustering", tags=["clustering"])
 _settings = get_settings()
@@ -143,7 +143,7 @@ def _get_org_job(job_id: int, current_user: User, db) -> ClusteringJob:
     return job
 
 
-def _to_summary(job: ClusteringJob) -> ClusteringJobSummary:
+def to_summary(job: ClusteringJob) -> ClusteringJobSummary:
     result = job.result
     metrics = json.loads(result.metrics_json) if result else None
     return ClusteringJobSummary(
@@ -279,7 +279,7 @@ def create_clustering_job(
     db.commit()
     db.refresh(job)
 
-    return _to_summary(job)
+    return to_summary(job)
 
 
 @router.get("/jobs", response_model=List[ClusteringJobSummary])
@@ -301,12 +301,12 @@ def list_clustering_jobs(
         .order_by(ClusteringJob.id.desc())
     )
     jobs = paginate_by_id(query, ClusteringJob.id, response, cursor, limit)
-    return [_to_summary(j) for j in jobs]
+    return [to_summary(j) for j in jobs]
 
 
 @router.get("/jobs/{job_id}", response_model=ClusteringJobSummary)
 def get_clustering_job(job_id: int, current_user: User = Depends(get_current_user), db=Depends(get_db)):
-    return _to_summary(_get_org_job(job_id, current_user, db))
+    return to_summary(_get_org_job(job_id, current_user, db))
 
 
 @router.get("/jobs/{job_id}/events")
@@ -441,7 +441,7 @@ def cancel_clustering_job(job_id: int, current_user: User = Depends(get_current_
     )
     db.commit()
     db.refresh(job)
-    return _to_summary(job)
+    return to_summary(job)
 
 
 @router.post("/jobs/{job_id}/rerun", response_model=ClusteringJobSummary, status_code=status.HTTP_201_CREATED)

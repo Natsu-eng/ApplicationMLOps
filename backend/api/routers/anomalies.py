@@ -115,7 +115,7 @@ def _get_org_job(job_id: int, current_user: User, db) -> AnomalyJob:
     return job
 
 
-def _to_summary(job: AnomalyJob) -> AnomalyJobSummary:
+def to_summary(job: AnomalyJob) -> AnomalyJobSummary:
     result = job.result
     return AnomalyJobSummary(
         id=job.id,
@@ -215,7 +215,7 @@ def create_anomaly_job(
     db.commit()
     db.refresh(job)
 
-    return _to_summary(job)
+    return to_summary(job)
 
 
 @router.get("/jobs", response_model=List[AnomalyJobSummary])
@@ -241,12 +241,12 @@ def list_anomaly_jobs(
         .order_by(AnomalyJob.id.desc())
     )
     jobs = paginate_by_id(query, AnomalyJob.id, response, cursor, limit)
-    return [_to_summary(j) for j in jobs]
+    return [to_summary(j) for j in jobs]
 
 
 @router.get("/jobs/{job_id}", response_model=AnomalyJobSummary)
 def get_anomaly_job(job_id: int, current_user: User = Depends(get_current_user), db=Depends(get_db)):
-    return _to_summary(_get_org_job(job_id, current_user, db))
+    return to_summary(_get_org_job(job_id, current_user, db))
 
 
 @router.get("/jobs/{job_id}/events")
@@ -353,7 +353,7 @@ def cancel_anomaly_job(job_id: int, current_user: User = Depends(get_current_use
     )
     db.commit()
     db.refresh(job)
-    return _to_summary(job)
+    return to_summary(job)
 
 
 @router.post("/jobs/{job_id}/rerun", response_model=AnomalyJobSummary, status_code=status.HTTP_201_CREATED)

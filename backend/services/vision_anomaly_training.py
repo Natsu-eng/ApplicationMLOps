@@ -43,7 +43,7 @@ from torchvision.datasets import ImageFolder
 
 from services.ml_preprocessing import TrainingAbortedError
 from services.vision_anomaly_registry import IMAGE_SIZE, get_anomaly_model_spec
-from services.vision_classification_training import AUGMENTATION_PRESET_IDS, augmentation_transforms
+from services.vision_shared import AUGMENTATION_PRESET_IDS, augmentation_transforms
 from services.vision_localization import (
     DEFAULT_MASK_PERCENTILE,
     encode_mask_png,

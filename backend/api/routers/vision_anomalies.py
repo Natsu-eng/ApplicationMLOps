@@ -31,7 +31,7 @@ from services.job_lifecycle import ACTIVE_STATUSES, CANCELLED_MESSAGE, try_cance
 from services.job_quota import ALL_JOB_MODELS, raise_if_quota_exceeded
 from services.job_watchdog import reconcile_stale_jobs
 from services.vision_anomaly_registry import ANOMALY_MODEL_REGISTRY, DEFAULT_ANOMALY_MODEL_ID
-from services.vision_classification_training import AUGMENTATION_PRESET_IDS
+from services.vision_shared import AUGMENTATION_PRESET_IDS
 from services.vision_localization import DEFAULT_MASK_PERCENTILE
 
 router = APIRouter(prefix="/vision/anomalies", tags=["vision"])
@@ -132,7 +132,7 @@ def _get_org_job(job_id: int, current_user: User, db: Session) -> VisionAnomalyJ
     return job
 
 
-def _to_summary(job: VisionAnomalyJob) -> VisionAnomalyJobSummary:
+def to_summary(job: VisionAnomalyJob) -> VisionAnomalyJobSummary:
     config = json.loads(job.config_json)
     result = job.result
     return VisionAnomalyJobSummary(
@@ -238,7 +238,7 @@ def create_vision_anomaly_job(
     db.commit()
     db.refresh(job)
 
-    return _to_summary(job)
+    return to_summary(job)
 
 
 @router.get("/jobs", response_model=List[VisionAnomalyJobSummary])
@@ -262,12 +262,12 @@ def list_vision_anomaly_jobs(
         .order_by(VisionAnomalyJob.id.desc())
     )
     jobs = paginate_by_id(query, VisionAnomalyJob.id, response, cursor, limit)
-    return [_to_summary(j) for j in jobs]
+    return [to_summary(j) for j in jobs]
 
 
 @router.get("/jobs/{job_id}", response_model=VisionAnomalyJobSummary)
 def get_vision_anomaly_job(job_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    return _to_summary(_get_org_job(job_id, current_user, db))
+    return to_summary(_get_org_job(job_id, current_user, db))
 
 
 @router.get("/jobs/{job_id}/events")
@@ -388,7 +388,7 @@ def cancel_vision_anomaly_job(job_id: int, current_user: User = Depends(get_curr
     )
     db.commit()
     db.refresh(job)
-    return _to_summary(job)
+    return to_summary(job)
 
 
 @router.post("/jobs/{job_id}/rerun", response_model=VisionAnomalyJobSummary, status_code=status.HTTP_201_CREATED)

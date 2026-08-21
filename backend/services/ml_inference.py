@@ -9,15 +9,14 @@ Explicabilité locale) de quoi construire l'explainer SHAP à la demande.
 from __future__ import annotations
 
 import logging
-from pathlib import Path
 from typing import Any, Optional
 
-import joblib
 import numpy as np
 import pandas as pd
 
 from services.feature_engineering import FeatureEngineeringSpecError, apply_upstream_feature_engineering
 from services.ml_explainability import build_explainer, normalize_base_value, select_class_matrix, shap_values_per_class
+from services.model_bundle import InferenceError, load_bundle
 
 logger = logging.getLogger("datalab.ml_inference")
 
@@ -28,28 +27,10 @@ logger = logging.getLogger("datalab.ml_inference")
 # l'utilisateur).
 LOCAL_EXPLAIN_TOP_FEATURES = 10
 
-
-class InferenceError(ValueError):
-    """La donnée fournie ne peut pas être utilisée pour prédire (colonne
-    manquante, valeur non convertible...)."""
-
-
-def load_bundle(file_path: str) -> dict[str, Any]:
-    # Lot 1.4 (§C.2.7/R11, AUDIT_DATALAB_2026-08-16.md) — même risque que
-    # torch.load côté vision (api/routers/vision_classification.py) : ce
-    # fichier n'est aujourd'hui écrit que par notre propre worker
-    # (services/ml_training.py), jamais par un import utilisateur, mais
-    # `joblib.load` reste un pickle non restreint (exécution de code
-    # arbitraire si le fichier venait d'ailleurs). Contrairement à
-    # `torch.load`, joblib/pickle n'a PAS d'équivalent `weights_only=True` —
-    # aucune restructuration ne referme ce risque ici, seule une frontière
-    # de confiance (jamais de fichier fourni par un utilisateur passé à
-    # cette fonction) le tient aujourd'hui. Si l'import de modèle externe
-    # devient une fonctionnalité réelle (hors périmètre actuel), ce point
-    # devra être retraité en profondeur (format non-pickle, ou sandboxing).
-    if not Path(file_path).exists():
-        raise InferenceError("Artefact du modèle introuvable sur le serveur")
-    return joblib.load(file_path)
+# Réexportés pour compatibilité — `InferenceError`/`load_bundle` vivent
+# désormais dans `services/model_bundle.py` (Lot 8, §Phase 0 : chargement
+# générique, sans raison d'être un import training-domain pour clustering).
+__all__ = ["InferenceError", "load_bundle", "explain_one", "predict_one"]
 
 
 def _build_input_frame(row: dict[str, Any], feature_columns: list[str]) -> pd.DataFrame:

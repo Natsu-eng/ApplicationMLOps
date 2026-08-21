@@ -29,7 +29,8 @@ from services.datasets import DatasetParsingError, read_dataset_dataframe
 from services.feature_engineering import CURRENT_SPEC_VERSION
 from services.job_quota import ALL_JOB_MODELS, raise_if_quota_exceeded
 from services.job_watchdog import reconcile_stale_jobs
-from services.ml_inference import InferenceError, load_bundle, predict_one
+from services.ml_inference import predict_one
+from services.model_bundle import InferenceError, load_bundle
 from services.prediction_retention import purge_old_predictions
 from services.ml_registry import MODEL_REGISTRY
 from services.duration_estimate import estimate_training_duration
@@ -369,7 +370,7 @@ def _headline_metric(task_type: str, metrics: dict[str, Any]) -> dict[str, Any]:
     return {"name": "cv_score", "value": metrics.get("cv_score")}
 
 
-def _to_summary(job: TrainingJob) -> TrainingJobSummary:
+def to_summary(job: TrainingJob) -> TrainingJobSummary:
     model = job.model
     metrics = json.loads(model.metrics_json) if model else None
     return TrainingJobSummary(
@@ -654,7 +655,7 @@ def create_training_job(
     db.commit()
     db.refresh(job)
 
-    return _to_summary(job)
+    return to_summary(job)
 
 
 @router.get("/jobs", response_model=List[TrainingJobSummary])
@@ -665,7 +666,7 @@ def list_training_jobs(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    # joinedload (Lot 4, correctif I3) : _to_summary accède à job.dataset,
+    # joinedload (Lot 4, correctif I3) : to_summary accède à job.dataset,
     # job.created_by et job.model — sans ça, 3 requêtes SQL PAR JOB
     # (N+1, AUDIT_DATALAB_2026-08-16.md §C.2.4). Un seul aller-retour
     # désormais, quel que soit le nombre de jobs.
@@ -677,7 +678,7 @@ def list_training_jobs(
         .order_by(TrainingJob.id.desc())
     )
     jobs = paginate_by_id(query, TrainingJob.id, response, cursor, limit)
-    return [_to_summary(j) for j in jobs]
+    return [to_summary(j) for j in jobs]
 
 
 def _config_field_value(config: dict[str, Any], field: str) -> Any:
@@ -770,7 +771,7 @@ def compare_training_jobs(
 
 @router.get("/jobs/{job_id}", response_model=TrainingJobSummary)
 def get_training_job(job_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    return _to_summary(_get_org_job(job_id, current_user, db))
+    return to_summary(_get_org_job(job_id, current_user, db))
 
 
 @router.get("/jobs/{job_id}/events")
@@ -1229,7 +1230,7 @@ def cancel_training_job(job_id: int, current_user: User = Depends(get_current_us
     )
     db.commit()
     db.refresh(job)
-    return _to_summary(job)
+    return to_summary(job)
 
 
 @router.post("/jobs/{job_id}/rerun", response_model=TrainingJobSummary, status_code=status.HTTP_201_CREATED)

@@ -47,10 +47,29 @@ from services.vision_classification_registry import (
     get_backbone_spec,
     unfreeze_backbone,
 )
+from services.vision_shared import (
+    AUGMENTATION_PRESET_IDS,
+    IMAGE_SIZE,
+    augmentation_transforms,
+    recommend_augmentation_preset,
+)
+
+# Réexportés pour compatibilité — `IMAGE_SIZE`/`AUGMENTATION_PRESET_IDS`/
+# `augmentation_transforms`/`recommend_augmentation_preset` vivent désormais
+# dans `services/vision_shared.py` (Lot 8, §Phase 0 : consommés par
+# vision_anomalies et vision_datasets, qui n'ont aucune raison de dépendre
+# du sous-domaine classification pour des constantes génériques).
+__all__ = [
+    "IMAGE_SIZE",
+    "AUGMENTATION_PRESET_IDS",
+    "DEFAULT_AUGMENTATION_PRESET",
+    "augmentation_transforms",
+    "recommend_augmentation_preset",
+    "ClassificationConfig",
+]
 
 ProgressCallback = Callable[[str, int], None]
 
-IMAGE_SIZE = 224
 IMAGENET_MEAN = [0.485, 0.456, 0.406]
 IMAGENET_STD = [0.229, 0.224, 0.225]
 
@@ -61,57 +80,7 @@ IMAGENET_STD = [0.229, 0.224, 0.225]
 MIN_IMAGES_PER_CLASS_FOR_TRAINING = 6
 MAX_EXAMPLES_PER_KIND = 12  # exemples corrects/erronés conservés pour l'UI
 
-# Lot 6A (correctif I9, AUDIT_DATALAB_2026-08-16.md §I9) — jusqu'ici une
-# seule augmentation FIGÉE (flip + rotation 10° + jitter léger),
-# l'utilisateur ne contrôlait rien. 4 presets, du plus faible au plus fort
-# — jamais de valeurs choisies au hasard : chaque niveau ajoute une
-# transformation à celles du niveau précédent, jamais une combinaison
-# disjointe (progression cohérente, prévisible pour l'utilisateur).
-AUGMENTATION_PRESET_IDS = ("aucune", "legere", "standard", "forte")
 DEFAULT_AUGMENTATION_PRESET = "standard"  # comportement historique, inchangé par défaut
-
-
-def augmentation_transforms(preset: str) -> list:
-    if preset == "aucune":
-        return []
-    if preset == "legere":
-        return [transforms.RandomHorizontalFlip()]
-    if preset == "standard":
-        return [
-            transforms.RandomHorizontalFlip(),
-            transforms.RandomRotation(10),
-            transforms.ColorJitter(brightness=0.2, contrast=0.2),
-        ]
-    if preset == "forte":
-        return [
-            transforms.RandomHorizontalFlip(),
-            transforms.RandomRotation(20),
-            transforms.ColorJitter(brightness=0.4, contrast=0.4, saturation=0.3),
-            transforms.RandomAffine(degrees=0, translate=(0.1, 0.1), scale=(0.9, 1.1)),
-        ]
-    raise ValueError(f"Preset d'augmentation inconnu : {preset!r} (attendu parmi {AUGMENTATION_PRESET_IDS})")
-
-
-# Seuils empiriques (pas une science exacte) fondés sur la taille de la
-# classe la plus PETITE — le goulot d'étranglement réel pour le risque de
-# sur-apprentissage, jamais le total d'images (masquerait un déséquilibre
-# sévère : 1000 images dont une classe à 5 reste une classe à 5). Peu
-# d'images par classe → sur-apprentissage plus probable → augmentation
-# plus forte pour diversifier artificiellement le peu de données
-# disponibles ; beaucoup d'images → la variété réelle suffit déjà, une
-# augmentation trop forte distordrait inutilement la distribution et
-# ralentirait la convergence sans bénéfice.
-_RECOMMENDATION_THRESHOLDS = ((20, "forte"), (50, "standard"), (150, "legere"))
-
-
-def recommend_augmentation_preset(min_class_size: int) -> str:
-    """Recommandation fondée sur la taille du dataset (I9) — indicative,
-    jamais appliquée automatiquement : l'utilisateur choisit toujours
-    explicitement le preset final (voir ClassificationConfig.augmentation_preset)."""
-    for threshold, preset in _RECOMMENDATION_THRESHOLDS:
-        if min_class_size < threshold:
-            return preset
-    return "aucune"
 
 
 @dataclass

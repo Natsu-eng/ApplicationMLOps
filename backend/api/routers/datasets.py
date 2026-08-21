@@ -228,7 +228,7 @@ class DatasetUsageResponse(BaseModel):
     total: int
 
 
-def _to_summary(dataset: Dataset) -> DatasetSummary:
+def to_summary(dataset: Dataset) -> DatasetSummary:
     # Construction explicite plutôt que model_validate(dataset, from_attributes=True) :
     # le champ Pydantic `uploaded_by` (str) entre en collision de nom avec la relation
     # SQLAlchemy `Dataset.uploaded_by` (objet User) — from_attributes essaierait de
@@ -249,7 +249,7 @@ def _to_summary(dataset: Dataset) -> DatasetSummary:
 def _to_detail(dataset: Dataset) -> DatasetDetail:
     columns = [ColumnSchema(**c) for c in json.loads(dataset.columns_json)] if dataset.columns_json else []
     return DatasetDetail(
-        **_to_summary(dataset).model_dump(),
+        **to_summary(dataset).model_dump(),
         columns=columns,
         content_hash=dataset.content_hash,
         duplicate_of_dataset_id=dataset.duplicate_of_dataset_id,
@@ -365,7 +365,7 @@ def list_datasets(
     db: Session = Depends(get_db),
 ):
     # joinedload (Lot 4, correctif I3, même motif que les 6 listes de jobs
-    # — training.py::list_training_jobs) : _to_summary accède à
+    # — training.py::list_training_jobs) : to_summary accède à
     # dataset.uploaded_by, sans quoi 1 requête SQL par dataset (N+1).
     query = (
         db.query(Dataset)
@@ -375,7 +375,7 @@ def list_datasets(
         .order_by(Dataset.id.desc())
     )
     datasets = paginate_by_id(query, Dataset.id, response, cursor, limit)
-    return [_to_summary(d) for d in datasets]
+    return [to_summary(d) for d in datasets]
 
 
 @router.get("/{dataset_id}", response_model=DatasetDetail)

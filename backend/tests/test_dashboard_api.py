@@ -88,7 +88,7 @@ def test_summary_isolated_between_organizations(client):
 
 def test_summary_recent_supervised_matches_list_training_jobs_shape(client):
     """Même schéma que GET /training/jobs (dataset_name, headline_metric,
-    etc.) — réutilise `_to_summary`, jamais une forme dupliquée."""
+    etc.) — réutilise `to_summary`, jamais une forme dupliquée."""
     headers = _register(client)
     dataset = _upload_dataset(client, headers)
     with patch("api.routers.training.training_queue") as mock_queue:

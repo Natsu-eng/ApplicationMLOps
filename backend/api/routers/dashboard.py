@@ -4,10 +4,13 @@ endpoints de liste COMPLETS à chaque montage (membres, datasets, et les 6
 listes de jobs) pour n'en tirer que des compteurs et les 6 activités les
 plus récentes — remplacé par UN seul aller-retour.
 
-Réutilise les fonctions `_to_summary` et schémas `XJobSummary` déjà
+Réutilise les fonctions `to_summary` et schémas `XJobSummary` déjà
 définis dans chaque router de job plutôt que de dupliquer leur forme —
 un seul endroit fait foi sur "à quoi ressemble un résumé de job
-supervisé/clustering/...". Réutilise aussi `count_active_jobs`/
+supervisé/clustering/...". `to_summary` est délibérément publique dans
+chaque router de job (Lot 8, §Phase 0 — corrige une fuite d'encapsulation :
+ce module importait jusqu'ici les fonctions PRIVÉES `_to_summary` de 6
+autres routers). Réutilise aussi `count_active_jobs`/
 `ALL_JOB_MODELS` (`services/job_quota.py`), déjà le point de vérité sur
 "tous les types de job confondus" pour le quota — même liste, même
 raisonnement, pas une seconde définition qui pourrait diverger."""
@@ -30,14 +33,14 @@ from api.core.models import (
     VisionAnomalyJob,
     VisionClassificationJob,
 )
-from api.routers.anomalies import AnomalyJobSummary, _to_summary as _anomaly_summary
+from api.routers.anomalies import AnomalyJobSummary, to_summary as _anomaly_summary
 from api.routers.auth import get_current_user
-from api.routers.clustering import ClusteringJobSummary, _to_summary as _clustering_summary
-from api.routers.datasets import DatasetSummary, _to_summary as _dataset_summary
-from api.routers.dimensionality import DimensionalityJobSummary, _to_summary as _dimensionality_summary
-from api.routers.training import TrainingJobSummary, _to_summary as _training_summary
-from api.routers.vision_anomalies import VisionAnomalyJobSummary, _to_summary as _vision_anomaly_summary
-from api.routers.vision_classification import VisionClassificationJobSummary, _to_summary as _vision_classification_summary
+from api.routers.clustering import ClusteringJobSummary, to_summary as _clustering_summary
+from api.routers.datasets import DatasetSummary, to_summary as _dataset_summary
+from api.routers.dimensionality import DimensionalityJobSummary, to_summary as _dimensionality_summary
+from api.routers.training import TrainingJobSummary, to_summary as _training_summary
+from api.routers.vision_anomalies import VisionAnomalyJobSummary, to_summary as _vision_anomaly_summary
+from api.routers.vision_classification import VisionClassificationJobSummary, to_summary as _vision_classification_summary
 from services.job_quota import ALL_JOB_MODELS, count_active_jobs
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
