@@ -1270,6 +1270,7 @@ export const api = {
         body: JSON.stringify({ data }),
       }),
     cancel: (id: number) => request<TrainingJobSummary>(`/training/jobs/${id}/cancel`, { method: "POST" }),
+    rerun: (id: number) => request<TrainingJobSummary>(`/training/jobs/${id}/rerun`, { method: "POST" }),
     remove: (id: number) => request<void>(`/training/jobs/${id}`, { method: "DELETE" }),
     // Lot 9 — registre de modèles versionné.
     promoteModel: (jobId: number, stageValue: Exclude<ModelStage, null> | "none") =>
@@ -1320,6 +1321,7 @@ export const api = {
         body: JSON.stringify({ data }),
       }),
     cancel: (id: number) => request<ClusteringJobSummary>(`/clustering/jobs/${id}/cancel`, { method: "POST" }),
+    rerun: (id: number) => request<ClusteringJobSummary>(`/clustering/jobs/${id}/rerun`, { method: "POST" }),
     remove: (id: number) => request<void>(`/clustering/jobs/${id}`, { method: "DELETE" }),
   },
 
@@ -1337,6 +1339,7 @@ export const api = {
     getColorBy: (id: number, column: string) =>
       request<DimensionalityColorByResponse>(`/dimensionality/jobs/${id}/color-by?column=${encodeURIComponent(column)}`),
     cancel: (id: number) => request<DimensionalityJobSummary>(`/dimensionality/jobs/${id}/cancel`, { method: "POST" }),
+    rerun: (id: number) => request<DimensionalityJobSummary>(`/dimensionality/jobs/${id}/rerun`, { method: "POST" }),
     remove: (id: number) => request<void>(`/dimensionality/jobs/${id}`, { method: "DELETE" }),
   },
 
@@ -1351,6 +1354,7 @@ export const api = {
     getResult: (id: number) => request<AnomalyResult>(`/anomalies/jobs/${id}/result`),
     getObservations: (id: number) => request<AnomalyObservation[]>(`/anomalies/jobs/${id}/observations`),
     cancel: (id: number) => request<AnomalyJobSummary>(`/anomalies/jobs/${id}/cancel`, { method: "POST" }),
+    rerun: (id: number) => request<AnomalyJobSummary>(`/anomalies/jobs/${id}/rerun`, { method: "POST" }),
     remove: (id: number) => request<void>(`/anomalies/jobs/${id}`, { method: "DELETE" }),
   },
 
@@ -1390,6 +1394,8 @@ export const api = {
       ),
     cancel: (id: number) =>
       request<VisionClassificationJobSummary>(`/vision/classification/jobs/${id}/cancel`, { method: "POST" }),
+    rerun: (id: number) =>
+      request<VisionClassificationJobSummary>(`/vision/classification/jobs/${id}/rerun`, { method: "POST" }),
     remove: (id: number) => request<void>(`/vision/classification/jobs/${id}`, { method: "DELETE" }),
   },
 
@@ -1405,6 +1411,7 @@ export const api = {
     getResult: (id: number) => request<VisionAnomalyResult>(`/vision/anomalies/jobs/${id}/result`),
     getExamples: (id: number) => request<VisionAnomalyExample[]>(`/vision/anomalies/jobs/${id}/examples`),
     cancel: (id: number) => request<VisionAnomalyJobSummary>(`/vision/anomalies/jobs/${id}/cancel`, { method: "POST" }),
+    rerun: (id: number) => request<VisionAnomalyJobSummary>(`/vision/anomalies/jobs/${id}/rerun`, { method: "POST" }),
     remove: (id: number) => request<void>(`/vision/anomalies/jobs/${id}`, { method: "DELETE" }),
   },
 };

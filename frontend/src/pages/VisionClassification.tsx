@@ -8,6 +8,7 @@ import {
   ChevronRight,
   Loader2,
   PlayCircle,
+  RotateCcw,
   Sparkles,
   Target,
   Trash2,
@@ -160,6 +161,21 @@ export default function VisionClassification() {
     }
   }
 
+  const [rerunning, setRerunning] = useState(false);
+  const [rerunError, setRerunError] = useState<string | null>(null);
+  async function handleRerunActiveJob() {
+    if (!activeJob) return;
+    setRerunning(true);
+    setRerunError(null);
+    try {
+      openJob(await api.visionClassification.rerun(activeJob.id));
+    } catch (err) {
+      setRerunError(err instanceof ApiError ? err.message : "Impossible de relancer cet entraînement");
+    } finally {
+      setRerunning(false);
+    }
+  }
+
   const titles: Record<Phase, string> = {
     configure: "Classifier des images",
     progress: "Entraînement en cours",
@@ -184,20 +200,26 @@ export default function VisionClassification() {
           phase !== "configure" ? (
             <div className="flex items-center gap-2">
               {(phase === "results" || phase === "failed" || phase === "cancelled") && (
-                <button
-                  type="button"
-                  onClick={() => confirmDelete.trigger(true, handleDeleteActiveJob)}
-                  onMouseLeave={confirmDelete.reset}
-                  aria-label={confirmDelete.isPending(true) ? "Confirmer la suppression" : "Supprimer cet entraînement"}
-                  title={confirmDelete.isPending(true) ? "Cliquer à nouveau pour confirmer" : "Supprimer cet entraînement"}
-                  className={`p-2 rounded-lg transition-colors ${
-                    confirmDelete.isPending(true)
-                      ? "text-destructive bg-destructive/15"
-                      : "text-muted-foreground hover:text-destructive hover:bg-destructive/10"
-                  }`}
-                >
-                  <Trash2 size={16} />
-                </button>
+                <>
+                  <button
+                    type="button"
+                    onClick={() => confirmDelete.trigger(true, handleDeleteActiveJob)}
+                    onMouseLeave={confirmDelete.reset}
+                    aria-label={confirmDelete.isPending(true) ? "Confirmer la suppression" : "Supprimer cet entraînement"}
+                    title={confirmDelete.isPending(true) ? "Cliquer à nouveau pour confirmer" : "Supprimer cet entraînement"}
+                    className={`p-2 rounded-lg transition-colors ${
+                      confirmDelete.isPending(true)
+                        ? "text-destructive bg-destructive/15"
+                        : "text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+                    }`}
+                  >
+                    <Trash2 size={16} />
+                  </button>
+                  <Button variant="secondary" size="sm" onClick={handleRerunActiveJob} disabled={rerunning}>
+                    <RotateCcw size={14} />
+                    {rerunning ? "Relance…" : "Relancer"}
+                  </Button>
+                </>
               )}
               <Button variant="secondary" size="sm" onClick={resetToConfigure}>
                 <PlayCircle size={14} />
@@ -207,6 +229,11 @@ export default function VisionClassification() {
           ) : undefined
         }
       />
+      {rerunError && (
+        <p className="text-sm text-destructive bg-destructive/10 border border-destructive/20 rounded-lg px-3 py-2 max-w-2xl mx-auto mb-4">
+          {rerunError}
+        </p>
+      )}
 
       {restoringJob ? (
         <div className="flex items-center justify-center py-16 text-sm text-muted-foreground gap-2">
