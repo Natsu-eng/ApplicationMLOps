@@ -14,7 +14,7 @@ from services.vision_classification_training import (
     AUGMENTATION_PRESET_IDS,
     MIN_IMAGES_PER_CLASS_FOR_TRAINING,
     ClassificationConfig,
-    _augmentation_transforms,
+    augmentation_transforms,
     _class_weights,
     _should_stop_early,
     recommend_augmentation_preset,
@@ -221,7 +221,7 @@ def test_model_card_reports_are_internally_consistent(tmp_path):
 
 @pytest.mark.parametrize("preset", AUGMENTATION_PRESET_IDS)
 def test_every_preset_id_is_a_valid_transform_list(preset):
-    transforms_list = _augmentation_transforms(preset)
+    transforms_list = augmentation_transforms(preset)
     assert isinstance(transforms_list, list)
 
 
@@ -229,14 +229,14 @@ def test_augmentation_presets_form_a_strict_progression():
     """Chaque niveau ajoute une transformation à celles du niveau
     précédent — jamais une combinaison disjointe (progression cohérente,
     prévisible pour l'utilisateur)."""
-    counts = [len(_augmentation_transforms(p)) for p in AUGMENTATION_PRESET_IDS]
+    counts = [len(augmentation_transforms(p)) for p in AUGMENTATION_PRESET_IDS]
     assert counts == sorted(counts)
     assert counts[0] == 0  # "aucune" : pas d'augmentation du tout
 
 
 def test_unknown_augmentation_preset_raises():
     with pytest.raises(ValueError):
-        _augmentation_transforms("extreme")
+        augmentation_transforms("extreme")
 
 
 def test_training_rejects_unknown_augmentation_preset(tmp_path):
@@ -264,3 +264,41 @@ def test_recommend_augmentation_preset_thresholds():
     assert recommend_augmentation_preset(149) == "legere"
     assert recommend_augmentation_preset(150) == "aucune"
     assert recommend_augmentation_preset(10_000) == "aucune"
+
+
+# ── Répartition personnalisée (Lot 6A) ──────────────────────────────────────
+
+
+def test_custom_split_ratios_are_respected(tmp_path):
+    # 40 images/classe (80 total), val_ratio=0.2/test_ratio=0.1 — comptes
+    # vérifiés directement contre le comportement réel de train_test_split
+    # en cascade (arrondi sklearn au ceil à chaque étage, jamais supposé).
+    _write_classification_dataset(tmp_path, {"classe_a": 40, "classe_b": 40})
+    config = ClassificationConfig(num_epochs=1, batch_size=4, val_ratio=0.2, test_ratio=0.1)
+
+    result = train_and_evaluate_classification(tmp_path, config, _noop_progress)
+
+    assert result.n_train + result.n_val + result.n_test == 80
+    assert result.n_val == 16
+    assert result.n_test == 9
+    assert result.n_train == 55
+    assert result.model_card["val_ratio"] == 0.2
+    assert result.model_card["test_ratio"] == 0.1
+
+
+def test_default_split_ratios_reproduce_historical_70_15_15(tmp_path):
+    _write_classification_dataset(tmp_path, {"classe_a": 40, "classe_b": 40})
+    config = ClassificationConfig(num_epochs=1, batch_size=4)  # val_ratio/test_ratio par défaut
+
+    result = train_and_evaluate_classification(tmp_path, config, _noop_progress)
+
+    assert result.n_val == 12
+    assert result.n_test == 12
+    assert result.n_train == 56
+
+
+def test_training_rejects_split_leaving_less_than_10_percent_for_train(tmp_path):
+    _write_classification_dataset(tmp_path, {"classe_a": 40, "classe_b": 40})
+    config = ClassificationConfig(num_epochs=1, batch_size=4, val_ratio=0.5, test_ratio=0.45)
+    with pytest.raises(TrainingAbortedError):
+        train_and_evaluate_classification(tmp_path, config, _noop_progress)

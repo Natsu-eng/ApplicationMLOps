@@ -68,6 +68,12 @@ class VisionClassificationJobCreate(BaseModel):
     use_lr_scheduler: bool = True
     # Lot 6A (correctif I9) — voir AUGMENTATION_PRESET_IDS.
     augmentation_preset: str = DEFAULT_AUGMENTATION_PRESET
+    # Répartition personnalisée (Lot 6A, étape "Répartition") — voir
+    # services/vision_classification_training.py::ClassificationConfig pour
+    # la validation complète (>=10 % train, bornes ici juste pour rejeter
+    # une valeur absurde avant même d'enfiler le job).
+    val_ratio: float = Field(default=0.15, gt=0, lt=0.9)
+    test_ratio: float = Field(default=0.15, gt=0, lt=0.9)
 
 
 class BackboneOut(BaseModel):
@@ -197,6 +203,14 @@ def create_vision_classification_job(
                 "message": f"Preset d'augmentation inconnu : {body.augmentation_preset!r}",
             },
         )
+    if body.val_ratio + body.test_ratio >= 0.9:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "code": "REPARTITION_INVALIDE",
+                "message": "Validation et test doivent laisser au moins 10 % des images pour l'entraînement",
+            },
+        )
 
     reconcile_stale_jobs(
         db, current_user.organization_id, _settings.stale_job_timeout_minutes, model=VisionClassificationJob
@@ -240,6 +254,8 @@ def create_vision_classification_job(
         "early_stopping_patience": body.early_stopping_patience,
         "use_lr_scheduler": body.use_lr_scheduler,
         "augmentation_preset": body.augmentation_preset,
+        "val_ratio": body.val_ratio,
+        "test_ratio": body.test_ratio,
     }
 
     job = VisionClassificationJob(

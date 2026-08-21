@@ -37,12 +37,13 @@ import torch.nn as nn
 from PIL import Image
 from sklearn.metrics import confusion_matrix, f1_score, precision_score, recall_score, roc_auc_score, roc_curve
 from sklearn.model_selection import train_test_split
-from torch.utils.data import DataLoader, Dataset, random_split
+from torch.utils.data import DataLoader, Dataset, Subset
 from torchvision import transforms
 from torchvision.datasets import ImageFolder
 
 from services.ml_preprocessing import TrainingAbortedError
 from services.vision_anomaly_registry import IMAGE_SIZE, get_anomaly_model_spec
+from services.vision_classification_training import AUGMENTATION_PRESET_IDS, augmentation_transforms
 from services.vision_localization import (
     DEFAULT_MASK_PERCENTILE,
     encode_mask_png,
@@ -82,6 +83,18 @@ class AnomalyVisionConfig:
     seed: int = 42
     max_training_seconds: int = 1500
     mask_percentile: float = DEFAULT_MASK_PERCENTILE
+    # Même système de presets que la classification (voir
+    # vision_classification_training.py::AUGMENTATION_PRESET_IDS) —
+    # appliqué UNIQUEMENT à train/good/, jamais à test/ (même règle que la
+    # classification : l'évaluation doit toujours voir les images réelles).
+    # "aucune" par défaut (comportement historique, inchangé) : contrairement
+    # à la classification, l'augmentation ici est nouvelle, pas déjà en
+    # usage — un défaut inchangé n'a de sens que pour un réglage préexistant.
+    augmentation_preset: str = "aucune"
+    # Part de train/good/ réservée à la validation (arrêt sur la meilleure
+    # époque) — 0.15 reproduit exactement le comportement historique (valeur
+    # fixe avant ce correctif).
+    val_ratio: float = 0.15
 
 
 @dataclass
@@ -128,12 +141,19 @@ class AnomalyVisionResult:
     model_artifact: dict[str, Any] = field(repr=False)
 
 
-def _build_transform() -> transforms.Compose:
+def _build_transform(augmentation_preset: str = "aucune") -> transforms.Compose:
     # Pas de normalisation ImageNet : la reconstruction est comparée
     # directement en espace [0,1] (sortie Sigmoid du décodeur) — mélanger un
     # espace normalisé et l'espace [0,1] est précisément le bug #11 déjà
     # documenté, évité ici en n'introduisant jamais de normalisation.
-    return transforms.Compose([transforms.Resize((IMAGE_SIZE, IMAGE_SIZE)), transforms.ToTensor()])
+    # `augmentation_preset` réutilise services.vision_classification_training
+    # (même presets, mêmes noms) — n'a de sens que sur train/good/, jamais
+    # sur test/ (voir appels ci-dessous).
+    return transforms.Compose([
+        transforms.Resize((IMAGE_SIZE, IMAGE_SIZE)),
+        *augmentation_transforms(augmentation_preset),
+        transforms.ToTensor(),
+    ])
 
 
 def _split_calibration_evaluation(
@@ -175,17 +195,18 @@ def _split_calibration_evaluation(
 
 
 class _UnlabeledImageDataset(Dataset):
-    """Wrapper léger autour d'un `ImageFolder` mono-classe (train/good/) —
-    ignore le label (inutile, reconstruction pure), retourne juste l'image."""
+    """Wrapper léger autour d'un `ImageFolder`/`Subset` mono-classe
+    (train/good/) — ignore le label (inutile, reconstruction pure), retourne
+    juste l'image."""
 
-    def __init__(self, image_folder: ImageFolder):
-        self._image_folder = image_folder
+    def __init__(self, image_dataset: ImageFolder | Subset):
+        self._image_dataset = image_dataset
 
     def __len__(self) -> int:
-        return len(self._image_folder)
+        return len(self._image_dataset)
 
     def __getitem__(self, idx: int) -> torch.Tensor:
-        image, _ = self._image_folder[idx]
+        image, _ = self._image_dataset[idx]
         return image
 
 
@@ -197,35 +218,58 @@ def train_and_evaluate_anomaly_vision(
     """Point d'entrée principal. `dataset_dir` doit être un `VisionDataset`
     de structure "mvtec_ad" (train/good + test/good + test/<defaut> —
     structure garantie par le sous-lot A, revérifiée par le worker)."""
+    if config.augmentation_preset not in AUGMENTATION_PRESET_IDS:
+        raise TrainingAbortedError(
+            f"Preset d'augmentation inconnu : {config.augmentation_preset!r} "
+            f"(attendu parmi {', '.join(AUGMENTATION_PRESET_IDS)})"
+        )
+    if not 0.05 <= config.val_ratio <= 0.5:
+        raise TrainingAbortedError("La part de validation doit être comprise entre 5 % et 50 % de train/good/")
+
     torch.manual_seed(config.seed)
     progress_cb("Préparation des données", 3)
 
     spec = get_anomaly_model_spec(config.model_id)
-    transform = _build_transform()
+    train_transform = _build_transform(config.augmentation_preset)
+    eval_transform = _build_transform("aucune")
 
-    train_folder = ImageFolder(str(dataset_dir / "train"), transform=transform)
-    if len(train_folder) < MIN_TRAIN_GOOD_FOR_TRAINING:
+    probe = ImageFolder(str(dataset_dir / "train"), transform=eval_transform)
+    if len(probe) < MIN_TRAIN_GOOD_FOR_TRAINING:
         raise TrainingAbortedError(
-            f"train/good ne contient que {len(train_folder)} image(s) exploitable(s) — "
+            f"train/good ne contient que {len(probe)} image(s) exploitable(s) — "
             f"au moins {MIN_TRAIN_GOOD_FOR_TRAINING} sont nécessaires pour un entraînement fiable"
         )
 
-    train_dataset = _UnlabeledImageDataset(train_folder)
-    n_val = max(1, int(0.15 * len(train_dataset)))
-    n_train = len(train_dataset) - n_val
-    generator = torch.Generator().manual_seed(config.seed)
-    train_split, val_split = random_split(train_dataset, [n_train, n_val], generator=generator)
+    # Deux instances ImageFolder distinctes sur le MÊME dossier (transforms
+    # différents) plutôt qu'un seul dataset partagé — l'augmentation ne doit
+    # jamais s'appliquer à la validation (même règle que la classification,
+    # voir vision_classification_training.py). Indices calculés UNE fois sur
+    # `probe`, réutilisés pour les deux `Subset` : mêmes images des deux
+    # côtés, seule la transformation diffère.
+    indices = list(range(len(probe)))
+    train_idx, val_idx = train_test_split(indices, test_size=config.val_ratio, random_state=config.seed)
+    n_train, n_val = len(train_idx), len(val_idx)
 
-    train_loader = DataLoader(train_split, batch_size=config.batch_size, shuffle=True)
-    val_loader = DataLoader(val_split, batch_size=config.batch_size, shuffle=False)
+    train_folder_aug = ImageFolder(str(dataset_dir / "train"), transform=train_transform)
+    val_folder_eval = ImageFolder(str(dataset_dir / "train"), transform=eval_transform)
+    train_dataset = _UnlabeledImageDataset(Subset(train_folder_aug, train_idx))
+    val_dataset = _UnlabeledImageDataset(Subset(val_folder_eval, val_idx))
 
-    test_folder = ImageFolder(str(dataset_dir / "test"), transform=transform)
+    train_loader = DataLoader(train_dataset, batch_size=config.batch_size, shuffle=True)
+    val_loader = DataLoader(val_dataset, batch_size=config.batch_size, shuffle=False)
+
+    test_folder = ImageFolder(str(dataset_dir / "test"), transform=eval_transform)
     good_class_idx = test_folder.class_to_idx["good"]  # garanti présent — structure validée au sous-lot A
     test_loader = DataLoader(test_folder, batch_size=config.batch_size, shuffle=False)
 
     progress_cb("Construction du modèle", 8)
     model: nn.Module = spec.build_model()
     criterion = nn.MSELoss()
+    # VAE (voir vision_anomaly_registry.py::ConvVAE) : la reconstruction
+    # seule ne suffit pas à entraîner mu/logvar, `model.compute_loss` ajoute
+    # le terme KL. Les autres architectures (dont le débruiteur, qui ne
+    # change QUE le forward, pas la loss) restent sur MSELoss standard.
+    use_custom_loss = spec.loss_kind == "vae"
     optimizer = torch.optim.Adam(model.parameters(), lr=config.learning_rate)
 
     history: list[EpochMetrics] = []
@@ -241,7 +285,7 @@ def train_and_evaluate_anomaly_vision(
         for images in train_loader:
             optimizer.zero_grad()
             reconstructed = model(images)
-            loss = criterion(reconstructed, images)
+            loss = model.compute_loss(images, reconstructed) if use_custom_loss else criterion(reconstructed, images)
             loss.backward()
             optimizer.step()
             train_loss_total += loss.item() * images.size(0)
@@ -253,6 +297,10 @@ def train_and_evaluate_anomaly_vision(
         with torch.no_grad():
             for images in val_loader:
                 reconstructed = model(images)
+                # Éval toujours en MSE pur, même pour le VAE : `val_loss`
+                # sert à choisir la meilleure époque par fidélité de
+                # reconstruction, jamais par le terme KL (régularisation,
+                # pas un signal de qualité de reconstruction).
                 loss = criterion(reconstructed, images)
                 val_loss_total += loss.item() * images.size(0)
                 val_n += images.size(0)
@@ -370,6 +418,8 @@ def train_and_evaluate_anomaly_vision(
         "time_capped": time_capped,
         "seed": config.seed,
         "mask_percentile": config.mask_percentile,
+        "augmentation_preset": config.augmentation_preset,
+        "val_ratio": config.val_ratio,
         "n_defect_categories": len(class_names) - 1,  # toutes sauf "good"
         "defect_categories": sorted(name for name in class_names.values() if name != "good"),
         # Correctif C2 — motif dégradation honnête déjà en usage ailleurs

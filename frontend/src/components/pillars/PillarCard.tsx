@@ -21,7 +21,7 @@ export function PillarCard({ pillar }: { pillar: Pillar }) {
       <Card interactive={isActive} className={`p-6 h-full flex flex-col ${isActive ? "" : "opacity-70"}`}>
         <div
           className={`h-11 w-11 rounded-xl flex items-center justify-center mb-4 ${
-            isActive ? "bg-brand-gradient text-white" : "bg-muted text-muted-foreground"
+            isActive ? "bg-brand-gradient text-primary-foreground" : "bg-muted text-muted-foreground"
           }`}
         >
           <Icon size={20} strokeWidth={2} />

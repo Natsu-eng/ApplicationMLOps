@@ -17,6 +17,7 @@ from typing import List, Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from fastapi.responses import FileResponse
+from PIL import Image
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -27,7 +28,13 @@ from api.core.rate_limit import rate_limit_dependency
 from api.core.storage import delete_vision_dataset_dir, vision_dataset_dir
 from api.routers.auth import get_current_user
 from services.audit import log_action
-from services.vision_classification_training import recommend_augmentation_preset
+from services.vision_anomaly_registry import IMAGE_SIZE as ANOMALY_IMAGE_SIZE
+from services.vision_classification_training import (
+    AUGMENTATION_PRESET_IDS,
+    IMAGE_SIZE as CLASSIFICATION_IMAGE_SIZE,
+    augmentation_transforms,
+    recommend_augmentation_preset,
+)
 from services.vision_datasets import (
     UnsupportedFileType,
     VisionDatasetError,
@@ -35,6 +42,7 @@ from services.vision_datasets import (
     analyze_and_extract_vision_folder,
     validate_archive_extension,
 )
+from services.vision_localization import encode_image_png
 
 logger = logging.getLogger("datalab.vision_datasets")
 router = APIRouter(prefix="/vision/datasets", tags=["vision"])
@@ -81,6 +89,16 @@ class VisionDatasetImageList(BaseModel):
     # `total` reste le compte réel pour que le frontend puisse afficher
     # "60 sur 340 images affichées" plutôt qu'un compte tronqué silencieux.
     paths: List[str]
+
+
+class AugmentationPreviewPair(BaseModel):
+    original_png: str
+    augmented_png: str
+
+
+class AugmentationPreviewOut(BaseModel):
+    preset: str
+    pairs: List[AugmentationPreviewPair]
 
 
 def _to_summary(dataset: VisionDataset) -> VisionDatasetSummary:
@@ -324,6 +342,75 @@ def list_vision_dataset_images(
     files = sorted(p for p in bucket_dir.iterdir() if p.is_file())
     paths = [p.relative_to(base_dir).as_posix() for p in files[:MAX_GALLERY_IMAGES_PER_CLASS]]
     return VisionDatasetImageList(class_name=class_name, total=len(files), paths=paths)
+
+
+_PREVIEW_SAMPLE_COUNT = 3
+
+
+@router.get("/{dataset_id}/augmentation-preview", response_model=AugmentationPreviewOut)
+def get_augmentation_preview(
+    dataset_id: int,
+    preset: str = Query(...),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Aperçu réel avant/après (Lot 6A) — applique le MÊME
+    `augmentation_transforms(preset)` que l'entraînement (jamais une
+    approximation côté frontend) à quelques images du dataset, pour que
+    l'utilisateur voie concrètement l'effet d'un preset avant de lancer un
+    entraînement. Utilisé par les deux wizards Vision (classification ET
+    anomalies, même endpoint — le dossier échantillonné dépend uniquement
+    de `structure_type`)."""
+    if preset not in AUGMENTATION_PRESET_IDS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": "AUGMENTATION_PRESET_INCONNU", "message": f"Preset d'augmentation inconnu : {preset!r}"},
+        )
+    dataset = _get_org_dataset(dataset_id, current_user, db)
+    if dataset.status != "ready":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"code": "VISION_DATASET_NON_PRET", "message": "Ce dataset n'a pas pu être validé"},
+        )
+
+    base_dir = Path(dataset.storage_dir).resolve()
+    if dataset.structure_type == "mvtec_ad":
+        # Seul train/good/ est augmenté à l'entraînement (voir
+        # vision_anomaly_training.py) — l'aperçu doit montrer EXACTEMENT
+        # les images qui seront transformées, jamais test/.
+        sample_dir = base_dir / "train" / "good"
+        image_size = ANOMALY_IMAGE_SIZE
+    else:
+        # Classification — première classe trouvée (ordre alphabétique,
+        # déterministe) : suffisant pour juger l'effet visuel d'un preset,
+        # pas besoin de couvrir toutes les classes.
+        first_class_dir = next((p for p in sorted(base_dir.iterdir()) if p.is_dir()), None)
+        sample_dir = first_class_dir if first_class_dir else base_dir
+        image_size = CLASSIFICATION_IMAGE_SIZE
+
+    sample_paths = sorted(p for p in sample_dir.iterdir() if p.is_file())[:_PREVIEW_SAMPLE_COUNT] if sample_dir.is_dir() else []
+    if not sample_paths:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "AUCUNE_IMAGE_POUR_APERCU", "message": "Aucune image disponible pour générer un aperçu"},
+        )
+
+    resize = Image.Resampling.BILINEAR
+    transform_pipeline = augmentation_transforms(preset)
+    pairs: list[AugmentationPreviewPair] = []
+    for path in sample_paths:
+        with Image.open(path) as raw:
+            original = raw.convert("RGB").resize((image_size, image_size), resample=resize)
+        augmented = original
+        for t in transform_pipeline:
+            augmented = t(augmented)
+        pairs.append(
+            AugmentationPreviewPair(
+                original_png=encode_image_png(original),
+                augmented_png=encode_image_png(augmented),
+            )
+        )
+    return AugmentationPreviewOut(preset=preset, pairs=pairs)
 
 
 @router.delete("/{dataset_id}", status_code=status.HTTP_204_NO_CONTENT)

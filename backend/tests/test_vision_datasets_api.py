@@ -317,3 +317,82 @@ def test_list_images_isolated_between_organizations(client):
         f"/api/vision/datasets/{dataset_a['id']}/images", headers=headers_b, params={"class_name": "classe_0"}
     )
     assert resp.status_code == 404
+
+
+# ── Aperçu d'augmentation (Lot 6A) ──────────────────────────────────────────
+
+
+def _mvtec_zip_bytes(n_train_good=6, n_test_good=3, n_test_defect=3) -> bytes:
+    files = {}
+    for i in range(n_train_good):
+        files[f"train/good/{i}.png"] = _png_bytes((120, 120, 120), variant=i + 1)
+    for i in range(n_test_good):
+        files[f"test/good/{i}.png"] = _png_bytes((120, 120, 120), variant=i + 100)
+    for i in range(n_test_defect):
+        files[f"test/scratch/{i}.png"] = _png_bytes((200, 0, 0), variant=i + 200)
+    return _build_zip(files)
+
+
+def test_augmentation_preview_returns_pairs_for_classification_dataset(client):
+    headers = _register(client)
+    dataset = _upload_vision_dataset(client, headers, _classification_zip_bytes(n_per_class=4)).json()
+
+    resp = client.get(
+        f"/api/vision/datasets/{dataset['id']}/augmentation-preview", headers=headers, params={"preset": "standard"}
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["preset"] == "standard"
+    assert 1 <= len(body["pairs"]) <= 3
+    for pair in body["pairs"]:
+        assert pair["original_png"].startswith("data:image/png;base64,")
+        assert pair["augmented_png"].startswith("data:image/png;base64,")
+
+
+def test_augmentation_preview_samples_train_good_for_mvtec_dataset(client):
+    headers = _register(client)
+    dataset = client.post(
+        "/api/vision/datasets", headers=headers, files={"files": ("d.zip", io.BytesIO(_mvtec_zip_bytes()), "application/zip")}
+    ).json()
+
+    resp = client.get(
+        f"/api/vision/datasets/{dataset['id']}/augmentation-preview", headers=headers, params={"preset": "legere"}
+    )
+    assert resp.status_code == 200
+    assert len(resp.json()["pairs"]) > 0
+
+
+def test_augmentation_preview_none_preset_still_returns_pairs(client):
+    """preset="aucune" ne transforme rien - l'apercu doit quand meme
+    renvoyer les images (original == augmented pixel pour pixel n'est pas
+    verifie ici, juste que l'endpoint ne casse pas sur ce cas limite)."""
+    headers = _register(client)
+    dataset = _upload_vision_dataset(client, headers, _classification_zip_bytes(n_per_class=4)).json()
+
+    resp = client.get(
+        f"/api/vision/datasets/{dataset['id']}/augmentation-preview", headers=headers, params={"preset": "aucune"}
+    )
+    assert resp.status_code == 200
+    assert len(resp.json()["pairs"]) > 0
+
+
+def test_augmentation_preview_rejects_unknown_preset(client):
+    headers = _register(client)
+    dataset = _upload_vision_dataset(client, headers, _classification_zip_bytes()).json()
+
+    resp = client.get(
+        f"/api/vision/datasets/{dataset['id']}/augmentation-preview", headers=headers, params={"preset": "extreme"}
+    )
+    assert resp.status_code == 400
+    assert resp.json()["detail"]["code"] == "AUGMENTATION_PRESET_INCONNU"
+
+
+def test_augmentation_preview_404_for_other_organization(client):
+    headers_a = _register(client, "a@bureau-a.fr", "Bureau A")
+    dataset_a = _upload_vision_dataset(client, headers_a, _classification_zip_bytes()).json()
+
+    headers_b = _register(client, "b@bureau-b.fr", "Bureau B")
+    resp = client.get(
+        f"/api/vision/datasets/{dataset_a['id']}/augmentation-preview", headers=headers_b, params={"preset": "standard"}
+    )
+    assert resp.status_code == 404

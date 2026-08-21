@@ -1,9 +1,8 @@
-import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import {
   AlertCircle,
   Boxes,
-  Check,
   ChevronLeft,
   ChevronRight,
   Loader2,
@@ -38,6 +37,16 @@ import { Select } from "../components/ui/Select";
 import { Switch } from "../components/ui/Switch";
 import { VisionDatasetPicker } from "../components/vision/VisionDatasetPicker";
 import { VisionImage } from "../components/vision/VisionImage";
+import {
+  AUGMENTATION_PRESET_INFO,
+  AugmentationPresetPicker,
+  AugmentationPreviewGallery,
+  ClassImbalanceBanner,
+  Fact,
+  SplitRatioControl,
+  StepContent,
+  StepperNav,
+} from "../components/vision/VisionWizard";
 import { useConfirmAction } from "../hooks/useConfirmAction";
 import { CHART_GRID_STROKE, CHART_SERIES_COLORS, CHART_TICK_STYLE_SM, CHART_TOOLTIP_STYLE } from "../theme/charts";
 
@@ -52,13 +61,6 @@ const STEP_LABELS = [
   { number: 3, label: "Mode expert" },
   { number: 4, label: "Lancement" },
 ];
-
-const AUGMENTATION_PRESET_INFO: Record<AugmentationPreset, { label: string; description: string }> = {
-  aucune: { label: "Aucune", description: "Images utilisées telles quelles, sans transformation." },
-  legere: { label: "Légère", description: "Retournement horizontal seulement." },
-  standard: { label: "Standard", description: "Retournement + légère rotation + variation de luminosité/contraste." },
-  forte: { label: "Forte", description: "Standard, en plus marqué, + décalage et mise à l'échelle aléatoires." },
-};
 
 const ACTIVE_STATUSES = new Set(["queued", "running"]);
 const POLL_INTERVAL_MS = 3000;
@@ -252,6 +254,10 @@ function ClassificationForm({ onJobCreated }: { onJobCreated: (job: VisionClassi
   // à la recommandation (I9) de s'appliquer automatiquement au choix du
   // dataset SANS écraser un choix déjà fait explicitement.
   const [augmentationTouched, setAugmentationTouched] = useState(false);
+  // Répartition personnalisée (Lot 6A) — 15/15 reproduit le 70/15/15
+  // historique (défaut inchangé pour qui ne touche jamais ces curseurs).
+  const [valRatio, setValRatio] = useState(0.15);
+  const [testRatio, setTestRatio] = useState(0.15);
 
   // Mode expert (même esprit que Training.tsx/ExpertModePanel) — replié
   // par défaut, chaque manette démarre à la même valeur que le mode
@@ -317,6 +323,8 @@ function ClassificationForm({ onJobCreated }: { onJobCreated: (job: VisionClassi
         early_stopping_patience: earlyStoppingPatience === "" ? null : earlyStoppingPatience,
         use_lr_scheduler: useLrScheduler,
         augmentation_preset: augmentationPreset,
+        val_ratio: valRatio,
+        test_ratio: testRatio,
       });
       onJobCreated(job);
     } catch (err) {
@@ -344,6 +352,8 @@ function ClassificationForm({ onJobCreated }: { onJobCreated: (job: VisionClassi
               <VisionDatasetPicker structureType="classification" value={datasetId} onChange={handleDatasetChange} />
             </div>
 
+            <ClassImbalanceBanner classDistribution={datasetDetail?.class_distribution} />
+
             {backbones.length > 0 && (
               <div>
                 <label htmlFor="vc-backbone" className="block text-sm text-muted-foreground mb-1">
@@ -363,6 +373,19 @@ function ClassificationForm({ onJobCreated }: { onJobCreated: (job: VisionClassi
                 </p>
               </div>
             )}
+
+            {datasetDetail && (
+              <div>
+                <label className="block text-sm text-muted-foreground mb-1.5">Répartition des données</label>
+                <SplitRatioControl
+                  totalImages={datasetDetail.n_images}
+                  splits={[
+                    { key: "val", label: "Validation", ratio: valRatio, onChange: setValRatio, min: 0.05, max: 0.4 },
+                    { key: "test", label: "Test", ratio: testRatio, onChange: setTestRatio, min: 0.05, max: 0.4 },
+                  ]}
+                />
+              </div>
+            )}
           </StepContent>
         )}
 
@@ -371,30 +394,13 @@ function ClassificationForm({ onJobCreated }: { onJobCreated: (job: VisionClassi
             title="Augmentation des données"
             description="Diversifie artificiellement vos images d'entraînement (retournements, rotations légères...) pour réduire le sur-apprentissage. La recommandation est déjà sélectionnée — changez-la si besoin."
           >
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              {(Object.keys(AUGMENTATION_PRESET_INFO) as AugmentationPreset[]).map((preset) => {
-                const info = AUGMENTATION_PRESET_INFO[preset];
-                const isSelected = augmentationPreset === preset;
-                const isRecommended = datasetDetail?.recommended_augmentation_preset === preset;
-                return (
-                  <button
-                    key={preset}
-                    type="button"
-                    onClick={() => handleAugmentationChange(preset)}
-                    aria-pressed={isSelected}
-                    className={`text-left rounded-xl border p-3 transition-colors ${
-                      isSelected ? "border-primary/50 bg-primary/5" : "border-border hover:bg-muted"
-                    }`}
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <p className="text-sm font-medium text-foreground">{info.label}</p>
-                      {isRecommended && <Badge variant="primary">Recommandé</Badge>}
-                    </div>
-                    <p className="text-xs text-muted-foreground mt-1">{info.description}</p>
-                  </button>
-                );
-              })}
-            </div>
+            <AugmentationPresetPicker
+              value={augmentationPreset}
+              onChange={handleAugmentationChange}
+              recommendedPreset={datasetDetail?.recommended_augmentation_preset}
+            />
+
+            <AugmentationPreviewGallery datasetId={datasetId} preset={augmentationPreset} />
           </StepContent>
         )}
 
@@ -559,6 +565,10 @@ function ClassificationForm({ onJobCreated }: { onJobCreated: (job: VisionClassi
                 <Fact label="Modèle" value={selectedBackboneLabel} />
                 <Fact label="Époques" value={String(numEpochs)} />
                 <Fact label="Augmentation" value={AUGMENTATION_PRESET_INFO[augmentationPreset].label} />
+                <Fact
+                  label="Répartition"
+                  value={`${Math.round((1 - valRatio - testRatio) * 100)} / ${Math.round(valRatio * 100)} / ${Math.round(testRatio * 100)} %`}
+                />
                 <Fact label="Pondération de classes" value={classWeighting ? "Activée" : "Désactivée"} />
                 <Fact label="Arrêt anticipé" value={earlyStoppingPatience === "" ? "Désactivé" : `${earlyStoppingPatience} époques`} />
               </dl>
@@ -596,107 +606,6 @@ function ClassificationForm({ onJobCreated }: { onJobCreated: (job: VisionClassi
         </div>
       </Card>
     </form>
-  );
-}
-
-/** Wizard horizontal (Lot 6A, correctif I10) — pastilles numérotées reliées
- * par des chevrons, navigables (une étape déjà atteinte reste cliquable,
- * jamais celles pas encore vues). `flex-wrap` plutôt qu'un défilement
- * horizontal + flèches : jamais de contenu tronqué/caché sur petit écran,
- * les pastilles passent simplement à la ligne suivante. */
-function StepperNav({
-  steps,
-  activeStep,
-  maxReachedStep,
-  onSelect,
-}: {
-  steps: { number: number; label: string }[];
-  activeStep: number;
-  maxReachedStep: number;
-  onSelect: (step: number) => void;
-}) {
-  return (
-    <nav aria-label="Étapes de l'entraînement" className="flex flex-wrap items-center gap-2">
-      {steps.map((step, i) => (
-        <div key={step.number} className="flex items-center gap-2">
-          <StepPill
-            number={step.number}
-            label={step.label}
-            state={step.number < activeStep ? "done" : step.number === activeStep ? "current" : "pending"}
-            current={step.number === activeStep}
-            disabled={step.number > maxReachedStep}
-            onClick={() => onSelect(step.number)}
-          />
-          {i < steps.length - 1 && <ChevronRight size={14} className="text-muted-foreground/50 flex-shrink-0" aria-hidden="true" />}
-        </div>
-      ))}
-    </nav>
-  );
-}
-
-function StepPill({
-  number,
-  label,
-  state,
-  current,
-  disabled,
-  onClick,
-}: {
-  number: number;
-  label: string;
-  state: "done" | "current" | "pending";
-  current: boolean;
-  disabled: boolean;
-  onClick: () => void;
-}) {
-  const pillStyle = {
-    done: "border-success/30 bg-success/10 text-success",
-    current: "border-primary/30 bg-primary/10 text-primary",
-    pending: "border-border text-muted-foreground",
-  }[state];
-  const circleStyle = {
-    done: "bg-success text-primary-foreground",
-    current: "bg-primary text-primary-foreground",
-    pending: "bg-card border border-input text-muted-foreground",
-  }[state];
-
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      aria-current={current ? "step" : undefined}
-      aria-label={label}
-      className={`flex items-center gap-2 rounded-full border pl-1.5 pr-3 py-1.5 text-sm font-medium whitespace-nowrap transition-colors disabled:cursor-not-allowed ${pillStyle}`}
-    >
-      <span className={`h-5 w-5 rounded-full flex items-center justify-center text-xs font-semibold flex-shrink-0 ${circleStyle}`}>
-        {state === "done" ? <Check size={12} strokeWidth={3} /> : number}
-      </span>
-      <span className={current ? "" : "hidden sm:inline"}>{label}</span>
-    </button>
-  );
-}
-
-/** Contenu d'une étape du wizard — titre + description en langage clair,
- * puis les champs propres à l'étape. */
-function StepContent({ title, description, children }: { title: string; description?: string; children: ReactNode }) {
-  return (
-    <div className="space-y-4">
-      <div>
-        <h3 className="text-sm font-medium text-foreground">{title}</h3>
-        {description && <p className="text-xs text-muted-foreground mt-0.5">{description}</p>}
-      </div>
-      {children}
-    </div>
-  );
-}
-
-function Fact({ label, value }: { label: string; value: string }) {
-  return (
-    <div>
-      <dt className="text-xs text-muted-foreground">{label}</dt>
-      <dd className="text-sm text-foreground">{value}</dd>
-    </div>
   );
 }
 

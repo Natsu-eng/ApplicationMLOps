@@ -90,7 +90,7 @@ export function ExpertModePanel({
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between gap-3 rounded-lg border border-border bg-white px-3 py-2.5">
+      <div className="flex items-center justify-between gap-3 rounded-lg border border-border bg-card px-3 py-2.5">
         <div>
           <p className="text-sm font-medium text-foreground">Mode expert</p>
           <p className="text-xs text-muted-foreground">
@@ -218,7 +218,7 @@ export function ExpertModePanel({
                             className={`flex items-center gap-2 text-xs rounded-lg border px-2.5 py-2 cursor-pointer transition-colors ${
                               checked
                                 ? "border-primary/40 bg-primary/10 text-primary"
-                                : "border-border bg-white text-foreground/90 hover:border-input"
+                                : "border-border bg-card text-foreground/90 hover:border-input"
                             }`}
                           >
                           <input

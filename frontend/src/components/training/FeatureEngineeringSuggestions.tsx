@@ -207,7 +207,7 @@ export function FeatureEngineeringSuggestions({
                       placeholder="Valeur"
                       value={fillValues[index] ?? ""}
                       onChange={(e) => setFillValues((prev) => ({ ...prev, [index]: e.target.value }))}
-                      className="w-24 rounded-md border border-input bg-white px-2 py-1 text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
+                      className="w-24 rounded-md border border-input bg-card px-2 py-1 text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
                     />
                   )}
                 </div>

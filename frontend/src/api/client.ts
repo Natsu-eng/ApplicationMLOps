@@ -672,6 +672,23 @@ export interface VisionClassificationJobCreatePayload {
   use_lr_scheduler?: boolean;
   // Lot 6A (correctif I9).
   augmentation_preset?: AugmentationPreset;
+  // Répartition personnalisée (Lot 6A, étape "Répartition").
+  val_ratio?: number;
+  test_ratio?: number;
+}
+
+// Lot 6A — aperçu avant/après d'un preset d'augmentation, généré côté
+// backend (voir GET /vision/datasets/{id}/augmentation-preview) : jamais
+// une approximation CSS côté client, la même transformation que
+// l'entraînement réel.
+export interface AugmentationPreviewPair {
+  original_png: string;
+  augmented_png: string;
+}
+
+export interface AugmentationPreviewResult {
+  preset: AugmentationPreset;
+  pairs: AugmentationPreviewPair[];
 }
 
 export interface VisionClassificationJobSummary {
@@ -742,6 +759,10 @@ export interface VisionAnomalyJobCreatePayload {
   learning_rate?: number;
   mask_percentile?: number;
   seed?: number;
+  // Lot 6A — parité avec la classification (même presets, voir
+  // AugmentationPreset), appliqué uniquement à train/good/.
+  augmentation_preset?: AugmentationPreset;
+  val_ratio?: number;
 }
 
 export interface VisionAnomalyJobSummary {
@@ -1281,6 +1302,11 @@ export const api = {
     get: (id: number) => request<VisionDatasetDetail>(`/vision/datasets/${id}`),
     listImages: (id: number, className: string) =>
       request<VisionDatasetImageList>(`/vision/datasets/${id}/images?class_name=${encodeURIComponent(className)}`),
+    // Lot 6A — aperçu réel avant/après (même transformation que l'entraînement,
+    // voir services/vision_classification_training.py::augmentation_transforms),
+    // partagé par les deux wizards Vision (classification ET anomalies).
+    augmentationPreview: (id: number, preset: AugmentationPreset) =>
+      request<AugmentationPreviewResult>(`/vision/datasets/${id}/augmentation-preview?preset=${preset}`),
     remove: (id: number) => request<void>(`/vision/datasets/${id}`, { method: "DELETE" }),
   },
 

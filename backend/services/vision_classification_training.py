@@ -61,7 +61,7 @@ AUGMENTATION_PRESET_IDS = ("aucune", "legere", "standard", "forte")
 DEFAULT_AUGMENTATION_PRESET = "standard"  # comportement historique, inchangé par défaut
 
 
-def _augmentation_transforms(preset: str) -> list:
+def augmentation_transforms(preset: str) -> list:
     if preset == "aucune":
         return []
     if preset == "legere":
@@ -144,6 +144,12 @@ class ClassificationConfig:
     # option avant ce lot) — défaut inchangé, comportement identique pour
     # quiconque ne choisit pas explicitement un autre preset.
     augmentation_preset: str = DEFAULT_AUGMENTATION_PRESET
+    # Répartition personnalisée train/validation/test — 0.15/0.15
+    # reproduisent exactement le 70/15/15 historique (seules valeurs
+    # possibles avant ce correctif). Validé par `_stratified_split` (doivent
+    # rester dans (0, 1) et laisser au moins 10 % pour l'entraînement).
+    val_ratio: float = 0.15
+    test_ratio: float = 0.15
 
 
 @dataclass
@@ -197,7 +203,7 @@ def build_eval_transform() -> transforms.Compose:
 def _build_transforms(augmentation_preset: str) -> tuple[transforms.Compose, transforms.Compose]:
     train_transform = transforms.Compose([
         transforms.Resize((IMAGE_SIZE, IMAGE_SIZE)),
-        *_augmentation_transforms(augmentation_preset),
+        *augmentation_transforms(augmentation_preset),
         transforms.ToTensor(),
         transforms.Normalize(IMAGENET_MEAN, IMAGENET_STD),
     ])
@@ -226,11 +232,25 @@ def _class_weights(targets: list[int], train_idx: list[int], n_classes: int) -> 
     return torch.tensor(weights, dtype=torch.float32)
 
 
-def _stratified_split(targets: list[int], seed: int) -> tuple[list[int], list[int], list[int]]:
+def _stratified_split(
+    targets: list[int], seed: int, val_ratio: float = 0.15, test_ratio: float = 0.15
+) -> tuple[list[int], list[int], list[int]]:
+    """Découpage stratifié train/val/test — `val_ratio`/`test_ratio`
+    personnalisables (répartition, Lot 6A) : 0.15/0.15 reproduit exactement
+    le 70/15/15 historique (seules valeurs possibles avant ce correctif).
+    Toujours 2 appels `train_test_split` en cascade (train d'abord, puis
+    val/test au sein du reste) — jamais 3 découpages indépendants, qui ne
+    garantiraient pas des ensembles disjoints."""
+    holdout_ratio = val_ratio + test_ratio
     indices = list(range(len(targets)))
-    train_idx, temp_idx = train_test_split(indices, test_size=0.3, stratify=targets, random_state=seed)
+    train_idx, temp_idx = train_test_split(indices, test_size=holdout_ratio, stratify=targets, random_state=seed)
     temp_targets = [targets[i] for i in temp_idx]
-    val_idx, test_idx = train_test_split(temp_idx, test_size=0.5, stratify=temp_targets, random_state=seed)
+    # Part de test/ AU SEIN du reste (temp_idx) — ex. val=0.15/test=0.15 sur
+    # le total donne holdout=0.30, dont la moitié (0.15/0.30=0.5) va aux
+    # deux, exactement le repli historique 50/50 dans temp_idx.
+    val_idx, test_idx = train_test_split(
+        temp_idx, test_size=test_ratio / holdout_ratio, stratify=temp_targets, random_state=seed
+    )
     return train_idx, val_idx, test_idx
 
 
@@ -271,6 +291,15 @@ def train_and_evaluate_classification(
             f"Preset d'augmentation inconnu : {config.augmentation_preset!r} "
             f"(attendu parmi {', '.join(AUGMENTATION_PRESET_IDS)})"
         )
+    # Répartition (Lot 6A) — validée ici, jamais au niveau API seul : ce
+    # module reste directement testable/appelable sans passer par FastAPI.
+    # >= 10 % pour train : en dessous, le modèle n'a plus assez d'exemples
+    # pour apprendre quoi que ce soit d'utile, quel que soit le dataset.
+    if config.val_ratio <= 0 or config.test_ratio <= 0 or config.val_ratio + config.test_ratio >= 0.9:
+        raise TrainingAbortedError(
+            "Répartition invalide : validation et test doivent être > 0 % chacun, et laisser au moins "
+            "10 % des images pour l'entraînement"
+        )
     torch.manual_seed(config.seed)
     progress_cb("Préparation des données", 3)
 
@@ -292,7 +321,9 @@ def train_and_evaluate_classification(
             f"split train/validation/test fiable) : {', '.join(under_min)}"
         )
 
-    train_idx, val_idx, test_idx = _stratified_split(probe.targets, config.seed)
+    train_idx, val_idx, test_idx = _stratified_split(
+        probe.targets, config.seed, val_ratio=config.val_ratio, test_ratio=config.test_ratio
+    )
 
     train_dataset = Subset(ImageFolder(str(dataset_dir), transform=train_transform), train_idx)
     eval_base = ImageFolder(str(dataset_dir), transform=eval_transform)
@@ -439,6 +470,8 @@ def train_and_evaluate_classification(
         "class_weighting_applied": config.class_weighting,
         "lr_scheduler_used": config.use_lr_scheduler,
         "augmentation_preset": config.augmentation_preset,
+        "val_ratio": config.val_ratio,
+        "test_ratio": config.test_ratio,
         "freeze_backbone": config.freeze_backbone,
         "unfreeze_after_epoch": config.unfreeze_after_epoch,
         "seed": config.seed,

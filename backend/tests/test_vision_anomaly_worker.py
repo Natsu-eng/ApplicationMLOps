@@ -111,6 +111,60 @@ def test_worker_persists_result_and_examples_on_success(db_session, tmp_path):
     assert all(e.heatmap_png.startswith("data:image/png;base64,") for e in examples)
 
 
+def test_worker_trains_with_denoising_model(db_session, tmp_path):
+    job = _make_job(db_session, tmp_path, model_id="denoising_autoencoder")
+    run_vision_anomaly_job(job.id)
+
+    db_session.expire_all()
+    refreshed = db_session.query(VisionAnomalyJob).filter(VisionAnomalyJob.id == job.id).first()
+    assert refreshed.status == "completed"
+    result = db_session.query(VisionAnomalyModel).filter(VisionAnomalyModel.vision_anomaly_job_id == job.id).first()
+    assert result.model_id == "denoising_autoencoder"
+
+
+def test_worker_trains_with_vae_model(db_session, tmp_path):
+    # Bout en bout sur le modèle dont la loss est branchée différemment
+    # (compute_loss avec terme KL, voir vision_anomaly_training.py) —
+    # vérifie que le branchement loss_kind=="vae" ne casse rien de bout en
+    # bout, pas seulement au niveau du modèle isolé (test_vision_anomaly_registry.py).
+    job = _make_job(db_session, tmp_path, model_id="conv_vae")
+    run_vision_anomaly_job(job.id)
+
+    db_session.expire_all()
+    refreshed = db_session.query(VisionAnomalyJob).filter(VisionAnomalyJob.id == job.id).first()
+    assert refreshed.status == "completed"
+    result = db_session.query(VisionAnomalyModel).filter(VisionAnomalyModel.vision_anomaly_job_id == job.id).first()
+    assert result.model_id == "conv_vae"
+
+
+def test_worker_applies_custom_augmentation_and_val_ratio(db_session, tmp_path):
+    # Répartition custom (val_ratio=0.3 au lieu du défaut 0.15) + preset
+    # d'augmentation non trivial — vérifie que les deux nouveaux réglages
+    # (Lot 6A, parité avec la classification) sont bien pris en compte de
+    # bout en bout, pas seulement acceptés silencieusement.
+    job = _make_job(db_session, tmp_path, augmentation_preset="standard", val_ratio=0.3)
+    run_vision_anomaly_job(job.id)
+
+    db_session.expire_all()
+    refreshed = db_session.query(VisionAnomalyJob).filter(VisionAnomalyJob.id == job.id).first()
+    assert refreshed.status == "completed"
+    result = db_session.query(VisionAnomalyModel).filter(VisionAnomalyModel.vision_anomaly_job_id == job.id).first()
+    # train/good/ compte 14 images (voir _write_mvtec_dataset) : sklearn
+    # arrondit test_size au ceil (14*0.3=4.2 -> 5 en validation, 9 en train).
+    assert result.n_val == 5
+    assert result.n_train == 9
+
+
+def test_worker_rejects_unknown_augmentation_preset(db_session, tmp_path):
+    job = _make_job(db_session, tmp_path, augmentation_preset="extreme")
+    run_vision_anomaly_job(job.id)
+
+    db_session.expire_all()
+    refreshed = db_session.query(VisionAnomalyJob).filter(VisionAnomalyJob.id == job.id).first()
+    assert refreshed.status == "failed"
+    assert "Preset d'augmentation inconnu" in refreshed.error_message
+
+
 def test_worker_marks_job_failed_on_missing_dataset(db_session, tmp_path):
     job = _make_job(db_session, tmp_path)
     dataset = db_session.query(VisionDataset).filter(VisionDataset.id == job.vision_dataset_id).first()

@@ -45,7 +45,7 @@ interface Props {
  * à gauche au-delà — jamais complètement masqué. */
 export function AuthBrandPanel({ kicker, heading, tagline }: Props) {
   return (
-    <section className="relative overflow-hidden bg-brand-gradient text-white flex flex-col h-36 sm:h-44 lg:h-auto lg:min-h-screen lg:w-[42%] xl:w-[40%] shrink-0 px-6 py-5 lg:p-12">
+    <section className="relative overflow-hidden bg-brand-gradient text-primary-foreground flex flex-col h-36 sm:h-44 lg:h-auto lg:min-h-screen lg:w-[42%] xl:w-[40%] shrink-0 px-6 py-5 lg:p-12">
       <div className="absolute top-0 right-0 w-64 h-64 bg-white/5 rounded-full -translate-y-28 translate-x-28 pointer-events-none" />
       <div className="absolute bottom-0 left-0 w-44 h-44 bg-white/5 rounded-full translate-y-20 -translate-x-20 pointer-events-none hidden lg:block" />
 
