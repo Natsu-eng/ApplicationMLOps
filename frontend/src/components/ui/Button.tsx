@@ -20,7 +20,7 @@ const VARIANT_CLASSES: Record<Variant, string> = {
   // l'auth (.bg-brand-gradient) : cohérence visuelle bout en bout sur le
   // bouton d'action principal, qu'il s'agisse de se connecter ou de lancer
   // un entraînement.
-  primary: "bg-brand-gradient hover:brightness-110 text-white shadow-control shadow-primary/25 transition-[filter]",
+  primary: "bg-brand-gradient hover:brightness-110 text-primary-foreground shadow-control shadow-primary/25 transition-[filter]",
   secondary: "bg-secondary hover:bg-muted text-secondary-foreground border border-border",
   ghost: "bg-transparent hover:bg-muted text-muted-foreground border border-transparent",
   danger: "bg-destructive/10 hover:bg-destructive/15 text-destructive border border-destructive/20",

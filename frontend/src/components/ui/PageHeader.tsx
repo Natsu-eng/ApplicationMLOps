@@ -31,7 +31,7 @@ export function PageHeader({
       <div className="p-6 sm:p-7 flex items-start justify-between gap-4 flex-wrap">
         <div className="flex items-start gap-4 min-w-0">
           <div className="h-12 w-12 rounded-2xl bg-brand-gradient flex items-center justify-center flex-shrink-0 shadow-sm shadow-primary/20">
-            <Icon size={22} className="text-white" strokeWidth={2} />
+            <Icon size={22} className="text-primary-foreground" strokeWidth={2} />
           </div>
           <div className="min-w-0">
             <p className="text-xs uppercase tracking-widest text-primary font-semibold mb-1.5">{eyebrow}</p>

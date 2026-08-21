@@ -22,7 +22,7 @@ const LEVEL_CONFIG: Record<
   { badge: "danger" | "warning" | "accent"; icon: typeof ShieldAlert; border: string; iconColor: string }
 > = {
   critique: { badge: "danger", icon: ShieldAlert, border: "border-destructive/20", iconColor: "text-destructive" },
-  attention: { badge: "warning", icon: AlertTriangle, border: "border-amber-200", iconColor: "text-amber-600" },
+  attention: { badge: "warning", icon: AlertTriangle, border: "border-warning/20", iconColor: "text-warning" },
   info: { badge: "accent", icon: Info, border: "border-primary/20", iconColor: "text-primary" },
 };
 

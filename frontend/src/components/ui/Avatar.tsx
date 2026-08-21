@@ -15,7 +15,7 @@ export function Avatar({ name, size = "md" }: { name: string; size?: keyof typeo
 
   return (
     <div
-      className={`flex-shrink-0 flex items-center justify-center rounded-full bg-brand-gradient text-white font-semibold ${SIZE_CLASSES[size]}`}
+      className={`flex-shrink-0 flex items-center justify-center rounded-full bg-brand-gradient text-primary-foreground font-semibold ${SIZE_CLASSES[size]}`}
     >
       {initials || "?"}
     </div>

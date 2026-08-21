@@ -15,7 +15,7 @@ const LEVEL_CONFIG: Record<
   { badge: "danger" | "warning" | "accent"; icon: typeof ShieldAlert; border: string; iconColor: string }
 > = {
   critique: { badge: "danger", icon: ShieldAlert, border: "border-destructive/20", iconColor: "text-destructive" },
-  attention: { badge: "warning", icon: AlertTriangle, border: "border-amber-200", iconColor: "text-amber-600" },
+  attention: { badge: "warning", icon: AlertTriangle, border: "border-warning/20", iconColor: "text-warning" },
   info: { badge: "accent", icon: Info, border: "border-primary/20", iconColor: "text-primary" },
 };
 
@@ -173,7 +173,7 @@ export function DataQualityWarnings({
                         key={col}
                         type="button"
                         onClick={() => onExcludeColumns?.([col])}
-                        className="inline-flex items-center gap-1 rounded-full border border-destructive/20 bg-white px-2.5 py-1 text-xs font-medium text-destructive hover:bg-destructive/10 transition-colors"
+                        className="inline-flex items-center gap-1 rounded-full border border-destructive/20 bg-card px-2.5 py-1 text-xs font-medium text-destructive hover:bg-destructive/10 transition-colors"
                       >
                         <XCircle size={12} />
                         Exclure « {col} »
