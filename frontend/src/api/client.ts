@@ -263,6 +263,14 @@ export interface DatasetDetail extends DatasetSummary {
   columns: ColumnSchema[];
 }
 
+export interface DatasetUsage {
+  training_jobs: number;
+  clustering_jobs: number;
+  dimensionality_jobs: number;
+  anomaly_jobs: number;
+  total: number;
+}
+
 export interface PreviewResponse {
   columns: string[];
   rows: Record<string, unknown>[];
@@ -888,6 +896,13 @@ export interface ModelCatalogEntry {
   slow: boolean;
 }
 
+export interface DurationEstimate {
+  status: "estimated" | "degraded";
+  estimated_seconds: number | null;
+  based_on_n_jobs: number;
+  message: string | null;
+}
+
 export interface HeadlineMetric {
   name: string;
   value: number | null;
@@ -1199,6 +1214,7 @@ export const api = {
     preview: (id: number, limit = 50) =>
       request<PreviewResponse>(`/datasets/${id}/preview?limit=${limit}`),
     remove: (id: number) => request<void>(`/datasets/${id}`, { method: "DELETE" }),
+    usage: (id: number) => request<DatasetUsage>(`/datasets/${id}/usage`),
     eda: (id: number, targetColumn?: string) =>
       request<EdaResponse>(
         `/datasets/${id}/eda${targetColumn ? `?target_column=${encodeURIComponent(targetColumn)}` : ""}`,
@@ -1236,6 +1252,10 @@ export const api = {
         body: JSON.stringify(data),
       }),
     modelsCatalog: () => request<{ models: ModelCatalogEntry[] }>("/training/models-catalog"),
+    estimateDuration: (datasetId: number, nModels: number, optunaTrials: number, cvFolds: number) =>
+      request<DurationEstimate>(
+        `/training/estimate-duration?dataset_id=${datasetId}&n_models=${nModels}&optuna_trials=${optunaTrials}&cv_folds=${cvFolds}`,
+      ),
     listJobs: () => request<TrainingJobSummary[]>("/training/jobs"),
     getJob: (id: number) => request<TrainingJobSummary>(`/training/jobs/${id}`),
     getModel: (id: number) => request<MLModelDetail>(`/training/jobs/${id}/model`),

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type DragEvent } from "react";
 import { useSearchParams } from "react-router-dom";
 import { AlertCircle, ChartColumn, Database, Eye, FileSpreadsheet, Trash2, UploadCloud } from "lucide-react";
-import { ApiError, api, type DatasetSummary, type PreviewResponse } from "../api/client";
+import { ApiError, api, type DatasetSummary, type DatasetUsage, type PreviewResponse } from "../api/client";
 import AppShell from "../components/AppShell";
 import { pillarColor } from "../config/pillars";
 import EdaModal from "../components/datasets/EdaModal";
@@ -234,6 +234,22 @@ function DatasetCard({
   const color = accentColorForId(dataset.id);
   const confirmDelete = useConfirmAction<number>();
   const pending = confirmDelete.isPending(dataset.id);
+  const [usage, setUsage] = useState<DatasetUsage | null>(null);
+
+  // Avertissement de suppression en cascade (Lot 7, §J.3) — chargé
+  // seulement à l'armement de la confirmation (pas au montage de chaque
+  // carte : coûterait une requête par dataset affiché, pour une info
+  // consultée seulement en cas de suppression réelle).
+  function handleDeleteClick() {
+    if (!pending) {
+      api.datasets
+        .usage(dataset.id)
+        .then(setUsage)
+        .catch(() => setUsage(null));
+    }
+    confirmDelete.trigger(dataset.id, onDelete);
+  }
+
   return (
     <Card interactive className="group overflow-hidden flex flex-col">
       <div className="p-5 flex flex-col flex-1">
@@ -290,7 +306,7 @@ function DatasetCard({
           <Button
             variant="danger"
             size="sm"
-            onClick={() => confirmDelete.trigger(dataset.id, onDelete)}
+            onClick={handleDeleteClick}
             onMouseLeave={confirmDelete.reset}
             aria-label={pending ? "Confirmer la suppression" : "Supprimer"}
             title={pending ? "Cliquer à nouveau pour confirmer" : "Supprimer"}
@@ -300,6 +316,21 @@ function DatasetCard({
             {pending && <span className="text-xs">Confirmer ?</span>}
           </Button>
         </div>
+
+        {pending && usage && usage.total > 0 && (
+          <p className="text-xs text-destructive mt-2">
+            Supprimera aussi {usage.total} analyse{usage.total > 1 ? "s" : ""} associée
+            {usage.total > 1 ? "s" : ""}
+            {" "}({[
+              usage.training_jobs > 0 ? `${usage.training_jobs} entraînement${usage.training_jobs > 1 ? "s" : ""}` : null,
+              usage.clustering_jobs > 0 ? `${usage.clustering_jobs} clustering${usage.clustering_jobs > 1 ? "s" : ""}` : null,
+              usage.dimensionality_jobs > 0 ? `${usage.dimensionality_jobs} réduction${usage.dimensionality_jobs > 1 ? "s" : ""} de dimension` : null,
+              usage.anomaly_jobs > 0 ? `${usage.anomaly_jobs} détection${usage.anomaly_jobs > 1 ? "s" : ""} d'anomalies` : null,
+            ]
+              .filter(Boolean)
+              .join(", ")}).
+          </p>
+        )}
       </div>
     </Card>
   );
