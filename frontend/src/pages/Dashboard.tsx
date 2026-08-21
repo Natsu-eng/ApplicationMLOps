@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import {
   Activity,
   AlertTriangle,
   BrainCircuit,
   Boxes,
+  ChevronDown,
   Database,
   FileSpreadsheet,
   LayoutDashboard,
@@ -246,14 +247,7 @@ export default function Dashboard() {
         description={`${user.organization_name} — l'activité récente de votre équipe, tous piliers confondus.`}
         icon={LayoutDashboard}
         color="blue"
-        action={
-          <Link to="/training">
-            <Button>
-              <BrainCircuit size={15} />
-              Nouvel entraînement
-            </Button>
-          </Link>
-        }
+        action={<NewAnalysisMenu />}
       />
 
       {/* Couleurs (Lot 2A correctif 3) : une tuile qui agrège plusieurs
@@ -454,5 +448,97 @@ export default function Dashboard() {
 
       {viewingJob && <ModelResultModal job={viewingJob} onClose={closeJob} />}
     </AppShell>
+  );
+}
+
+/** Point d'entrée "Nouvelle analyse" (retour utilisateur) — remplace un
+ * bouton câblé en dur sur /training, qui n'atteignait que le pilier
+ * supervisé et doublait des liens déjà présents plus bas dans la page.
+ * Les 6 analyses réellement lançables (une par module actif, jamais "Mes
+ * données"/"Historique" — ce menu lance une analyse, pas de la navigation
+ * générale), groupées par pilier. Même coût en clics pour le supervisé
+ * qu'avant (Nouvelle analyse → Entraînement) ; les 5 autres deviennent
+ * enfin accessibles depuis le tableau de bord. */
+const NEW_ANALYSIS_GROUPS: {
+  pillar: string;
+  color: AccentColor;
+  items: { to: string; label: string; icon: LucideIcon }[];
+}[] = [
+  { pillar: "Supervisé", color: "violet", items: [{ to: "/training", label: "Entraînement", icon: BrainCircuit }] },
+  {
+    pillar: "Non supervisé",
+    color: "rose",
+    items: [
+      { to: "/clustering", label: "Clustering", icon: Shapes },
+      { to: "/reduction-dimension", label: "Réduction de dimension", icon: ScatterChart },
+      { to: "/anomalies", label: "Détection d'anomalies", icon: AlertTriangle },
+    ],
+  },
+  {
+    pillar: "Vision",
+    color: "teal",
+    items: [
+      { to: "/vision/classification", label: "Classification d'images", icon: Boxes },
+      { to: "/vision/anomalies", label: "Anomalies visuelles", icon: Sparkles },
+    ],
+  },
+];
+
+function NewAnalysisMenu() {
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function onPointerDown(e: MouseEvent) {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) setOpen(false);
+    }
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") setOpen(false);
+    }
+    document.addEventListener("mousedown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [open]);
+
+  return (
+    <div className="relative" ref={containerRef}>
+      <Button onClick={() => setOpen((o) => !o)} aria-haspopup="menu" aria-expanded={open}>
+        <BrainCircuit size={15} />
+        Nouvelle analyse
+        <ChevronDown size={14} className={`transition-transform ${open ? "rotate-180" : ""}`} />
+      </Button>
+
+      {open && (
+        <div
+          role="menu"
+          className="absolute right-0 top-full mt-2 w-64 rounded-xl border border-border bg-card shadow-lg py-2 z-20"
+        >
+          {NEW_ANALYSIS_GROUPS.map((group, i) => (
+            <div key={group.pillar} className={i > 0 ? "mt-1 pt-1 border-t border-border" : ""}>
+              <p className="px-3 py-1 text-overline text-muted-foreground">{group.pillar}</p>
+              {group.items.map((item) => {
+                const Icon = item.icon;
+                return (
+                  <Link
+                    key={item.to}
+                    to={item.to}
+                    role="menuitem"
+                    onClick={() => setOpen(false)}
+                    className="flex items-center gap-2.5 px-3 py-2 text-sm text-foreground hover:bg-muted transition-colors"
+                  >
+                    <ColorIconBadge icon={Icon} color={group.color} size="sm" />
+                    {item.label}
+                  </Link>
+                );
+              })}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
