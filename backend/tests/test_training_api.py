@@ -466,3 +466,30 @@ def test_candidates_endpoint_isolated_between_organizations(mock_queue, client, 
 
     assert client.get(f"/api/training/jobs/{job['id']}/candidates", headers=headers_b).status_code == 404
     assert client.get(f"/api/training/jobs/{job['id']}/candidates", headers=headers_a).status_code == 200
+
+
+# ── Lot 7, §J.1 — estimation de durée avant lancement ───────────────────────
+
+
+def test_estimate_duration_degrades_honestly_without_history(client):
+    headers = _register(client)
+    dataset = _upload_dataset(client, headers)
+    resp = client.get(f"/api/training/estimate-duration?dataset_id={dataset['id']}", headers=headers)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "degraded"
+    assert body["estimated_seconds"] is None
+
+
+def test_estimate_duration_404_for_missing_dataset(client):
+    headers = _register(client)
+    resp = client.get("/api/training/estimate-duration?dataset_id=999999", headers=headers)
+    assert resp.status_code == 404
+
+
+def test_estimate_duration_isolated_between_organizations(client):
+    headers_a = _register(client, "a@bureau-a.fr", "Bureau A")
+    dataset_a = _upload_dataset(client, headers_a)
+    headers_b = _register(client, "b@bureau-b.fr", "Bureau B")
+    resp = client.get(f"/api/training/estimate-duration?dataset_id={dataset_a['id']}", headers=headers_b)
+    assert resp.status_code == 404

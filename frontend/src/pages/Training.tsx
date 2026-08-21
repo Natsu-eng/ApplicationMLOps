@@ -6,6 +6,7 @@ import {
   api,
   type ColumnSchema,
   type DatasetSummary,
+  type DurationEstimate,
   type FeatureEngineeringSpec,
   type TrainingJobSummary,
 } from "../api/client";
@@ -26,7 +27,7 @@ import { Card } from "../components/ui/Card";
 import { PageHeader } from "../components/ui/PageHeader";
 import { Select } from "../components/ui/Select";
 import { useConfirmAction } from "../hooks/useConfirmAction";
-import { formatDateTime } from "../utils/format";
+import { formatDateTime, formatDuration } from "../utils/format";
 import { buildTrainingJobPayload } from "../utils/trainingPayload";
 
 const DEFAULT_OPTUNA_TRIALS = 20; // `api.core.config.Settings.optuna_trials_default`
@@ -304,6 +305,23 @@ function TrainingForm({
   const [seed, setSeed] = useState(DEFAULT_SEED);
   const [cqrAlpha, setCqrAlpha] = useState(DEFAULT_CQR_ALPHA);
   const [selectedModelIds, setSelectedModelIds] = useState<Set<string>>(new Set());
+  const [durationEstimate, setDurationEstimate] = useState<DurationEstimate | null>(null);
+
+  // Estimation de durée avant lancement (Lot 7, §J.1) — dérivée de
+  // l'historique réel de l'organisation (services/duration_estimate.py),
+  // jamais une constante inventée. Recalculée à chaque changement pertinent,
+  // affichée seulement à l'étape récapitulative (voir plus bas).
+  useEffect(() => {
+    if (!datasetId) {
+      setDurationEstimate(null);
+      return;
+    }
+    const nModels = expertMode ? Math.max(1, selectedModelIds.size) : 4;
+    api.training
+      .estimateDuration(datasetId, nModels, optunaTrials, cvFolds)
+      .then(setDurationEstimate)
+      .catch(() => setDurationEstimate(null));
+  }, [datasetId, expertMode, selectedModelIds.size, optunaTrials, cvFolds]);
 
   // Wizard horizontal (refonte UI) — une étape visible à la fois, navigable
   // par les pastilles ou Précédent/Continuer. `maxReachedStep` autorise à
@@ -629,7 +647,29 @@ function TrainingForm({
                 <Fact label="Rééquilibrage des classes" value={classRebalancing ? "Activé" : "Désactivé"} />
                 <Fact label="Ingénierie de variables" value={featureEngineering ? "Activée" : "Non appliquée"} />
                 <Fact label="Variables utilisées" value={String(selectedFeatures.size)} />
+                <Fact
+                  label="Durée estimée"
+                  value={
+                    durationEstimate?.status === "estimated" && durationEstimate.estimated_seconds !== null
+                      ? formatDuration(durationEstimate.estimated_seconds)
+                      : "Indisponible"
+                  }
+                />
               </dl>
+              {durationEstimate?.status === "degraded" && (
+                <p className="text-xs text-muted-foreground mt-3 pt-3 border-t border-border/60">
+                  {durationEstimate.message ?? "Estimation indisponible."} L'estimation se construit à partir de vos
+                  entraînements terminés.
+                </p>
+              )}
+              {durationEstimate?.status === "estimated" && (
+                <p className="text-xs text-muted-foreground mt-3 pt-3 border-t border-border/60">
+                  Estimation fondée sur {durationEstimate.based_on_n_jobs} entraînement
+                  {durationEstimate.based_on_n_jobs > 1 ? "s" : ""} précédent
+                  {durationEstimate.based_on_n_jobs > 1 ? "s" : ""} de votre organisation — repère indicatif, pas une
+                  garantie.
+                </p>
+              )}
             </div>
 
             {error && (

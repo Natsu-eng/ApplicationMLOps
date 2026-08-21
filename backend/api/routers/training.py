@@ -32,6 +32,7 @@ from services.job_watchdog import reconcile_stale_jobs
 from services.ml_inference import InferenceError, load_bundle, predict_one
 from services.prediction_retention import purge_old_predictions
 from services.ml_registry import MODEL_REGISTRY
+from services.duration_estimate import estimate_training_duration
 from services.ml_task import detect_task_type
 from services.ml_training import selection_metric_label
 from services.model_verdict import compute_verdict
@@ -470,6 +471,46 @@ def get_models_catalog(current_user: User = Depends(get_current_user)):
             )
         )
     return ModelCatalogResponse(models=entries)
+
+
+class DurationEstimateOut(BaseModel):
+    status: str  # "estimated" | "degraded"
+    estimated_seconds: Optional[float] = None
+    based_on_n_jobs: int
+    message: Optional[str] = None
+
+
+@router.get("/estimate-duration", response_model=DurationEstimateOut)
+def get_duration_estimate(
+    dataset_id: int,
+    n_models: int = Query(4, ge=1, le=9),
+    optuna_trials: int = Query(20, ge=3, le=100),
+    cv_folds: int = Query(4, ge=2, le=10),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Estimation de la durée AVANT lancement (Lot 7, §J.1) — dérivée des
+    entraînements RÉELLEMENT terminés par cette organisation, jamais d'une
+    constante inventée. Voir `services/duration_estimate.py`."""
+    dataset = (
+        db.query(Dataset)
+        .filter(Dataset.id == dataset_id, Dataset.organization_id == current_user.organization_id)
+        .first()
+    )
+    if dataset is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "DATASET_INTROUVABLE", "message": "Dataset introuvable"},
+        )
+    estimate = estimate_training_duration(
+        db, current_user.organization_id, dataset.row_count or 0, n_models, optuna_trials, cv_folds
+    )
+    return DurationEstimateOut(
+        status=estimate.status,
+        estimated_seconds=estimate.estimated_seconds,
+        based_on_n_jobs=estimate.based_on_n_jobs,
+        message=estimate.message,
+    )
 
 
 @router.post("/jobs", response_model=TrainingJobSummary, status_code=status.HTTP_201_CREATED)

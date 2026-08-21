@@ -11,6 +11,19 @@ export function formatFileSize(bytes: number): string {
   return `${value.toFixed(value < 10 ? 1 : 0)} ${units[unitIndex]}`;
 }
 
+/** Durée lisible à partir de secondes — utilisé pour l'estimation de durée
+ * avant lancement (Lot 7, §J.1). Volontairement approximatif ("≈ 2 min") :
+ * l'estimation elle-même est une projection, pas une promesse à la
+ * seconde près. */
+export function formatDuration(seconds: number): string {
+  if (seconds < 60) return `≈ ${Math.max(1, Math.round(seconds))} s`;
+  const minutes = seconds / 60;
+  if (minutes < 60) return `≈ ${Math.round(minutes)} min`;
+  const hours = Math.floor(minutes / 60);
+  const remainingMinutes = Math.round(minutes % 60);
+  return remainingMinutes > 0 ? `≈ ${hours} h ${remainingMinutes} min` : `≈ ${hours} h`;
+}
+
 export function formatDate(iso: string): string {
   return new Date(iso).toLocaleDateString("fr-FR", {
     day: "2-digit",
