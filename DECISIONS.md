@@ -2019,3 +2019,69 @@ elle-même (métriques non comparables entre piliers).
 **Vérifié** : tests unitaires dédiés pour chaque nouvelle fonction
 d'évaluation (`assessStabilityQuality`, `assessTrustworthinessQuality`,
 `assessConsensusQuality`), suite Vitest complète verte (53/53).
+
+## Lot 7 — Produit et parcours (§J.1, §J.2, §J.3, P5-P9, I11/I12/I14)
+
+### D7.1 — Avertissement de suppression en cascade : décompte chiffré, pas un texte générique
+
+**Constat** : les 4 tables de job (`TrainingJob`/`ClusterModel` via
+`ClusteringJob`/`DimensionalityJob`/`AnomalyJob`) référencent déjà
+`datasets.id` en `ON DELETE CASCADE` — la suppression était déjà SÛRE côté
+base, seul l'utilisateur n'était jamais informé de son ampleur avant de
+confirmer (confirmation générique à deux clics, `useConfirmAction`).
+**Retenu** : nouvel endpoint `GET /datasets/{id}/usage` (décompte par type
+de job, lecture seule) — appelé côté frontend UNIQUEMENT à l'armement de la
+confirmation (premier clic sur "Supprimer"), pas au montage de chaque carte
+(éviterait une requête par dataset affiché pour une info consultée
+seulement en cas de suppression réelle). Le message n'apparaît que si
+`total > 0`.
+**Vérifié** : décompte exact multi-types testé (entraînement + clustering
+sur le même dataset), isolation multi-tenant testée, dataset neuf → décompte
+nul.
+
+### D7.2 — Estimation de durée avant lancement : dérivée de l'historique réel, jamais une constante inventée
+
+**Question** : comment estimer une durée d'entraînement sans donnée de
+calibration existante, sachant que le principe du produit interdit tout
+chiffre inventé (skill senior-ai-saas-engineer, data-science.md) ?
+**Écarté** : une formule à coefficients fixes (ex. "X secondes par ligne")
+— ce serait exactement le genre de statistique inventée que le reste du
+produit refuse systématiquement (SHAP, profils de clusters...).
+**Retenu** : `services/duration_estimate.py` calcule un taux
+(durée / (lignes × modèles × essais Optuna × folds)) sur les
+entraînements RÉELLEMENT terminés de l'organisation (`TrainingJob.started_at`/
+`finished_at`, 50 plus récents), médiane des taux (pas la moyenne — un seul
+entraînement anormalement long ne doit pas décaler l'estimation), appliqué
+aux paramètres du nouveau job. Dégradation honnête (`status: "degraded"`)
+en dessous de `MIN_COMPLETED_JOBS_FOR_ESTIMATE = 3` — pas d'organisation
+"type" pour combler l'absence d'historique. Affiché uniquement à l'étape
+récapitulative de `Training.tsx`, jamais comme une garantie ("repère
+indicatif").
+**Vérifié** : dégradation honnête sans historique et sous le seuil minimal ;
+proportionnalité vérifiée explicitement (doubler `n_models` double
+l'estimation, sur le même taux historique) ; un job sans `row_count` connu
+ne fausse jamais le taux (ignoré, pas une division par zéro).
+
+### D7.3 — Mémoire du dernier pilier : un raccourci "Reprendre", jamais une redirection automatique
+
+**Question** : "revenir sur `/` force aujourd'hui à rechoisir" — fallait-il
+rediriger automatiquement vers le dernier pilier utilisé ?
+**Écarté** : redirection automatique — l'écran d'orientation (`Orientation.tsx`)
+a pour fonction explicite de faire choisir un OBJECTIF à chaque visite
+(voir son propre commentaire de tête) ; une redirection systématique
+retirerait ce choix plutôt que de l'assister, et surprendrait un
+utilisateur qui revient volontairement sur `/` pour changer d'objectif.
+**Retenu** : `frontend/src/utils/lastPillar.ts` (localStorage, dégrade
+silencieusement si indisponible) — `AppShell` enregistre le pilier courant
+à chaque page qui en a un ; `Orientation.tsx` affiche un lien "Reprendre « nom du pilier »" au-dessus
+de la grille des 3 cartes, TOUJOURS visibles, jamais masquées.
+
+### D7.4 — `n_models` par défaut de l'estimation de durée fixé à 4, vérifié dans le registre (pas une supposition)
+
+**Constat** : `services/ml_registry.py::MODEL_REGISTRY` a exactement 4
+entrées `is_default=True` ("stratégie produit B — boosters + RandomForest",
+commentaire déjà présent dans le registre). La valeur par défaut du
+paramètre `n_models` de `GET /training/estimate-duration` (et l'appel
+frontend en mode guidé) est donc `4`, vérifiée par lecture directe du
+registre — pas une estimation approximative du nombre de modèles comparés
+par défaut.
