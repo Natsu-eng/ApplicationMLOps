@@ -96,6 +96,9 @@ def run_vision_classification_job(job_id: int) -> None:
                 confusion_matrix_json=json.dumps(result.confusion_matrix),
                 examples_json=json.dumps([vars(e) for e in result.examples]),
                 model_card_json=json.dumps(result.model_card),
+                roc_curves_json=json.dumps(result.roc_curves) if result.roc_curves else None,
+                pr_curves_json=json.dumps(result.pr_curves) if result.pr_curves else None,
+                test_roc_auc=result.test_roc_auc,
                 file_path=str(artifact_path),
             )
             db.add(vision_model)

@@ -264,6 +264,12 @@ async def upload_vision_dataset(
             "n_undersized": report.n_undersized,
             "undersized_files": report.undersized_files,
             "warnings": report.warnings,
+            # Lot 6A (§G.3/§G.4/§G.5) — distribution résolutions/formats/modes
+            # colorimétriques (voir _compute_image_eda) ; absent (clé
+            # manquante, jamais un dict vide trompeur) sur les datasets
+            # uploadés avant ce correctif — le frontend traite déjà
+            # `validation_report` comme un objet à champs optionnels.
+            "image_eda": report.image_eda,
         })
         dataset.status = "ready"
     except VisionDatasetError as exc:

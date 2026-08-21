@@ -528,3 +528,80 @@ def test_folder_upload_rejects_path_traversal(tmp_path):
         analyze_and_extract_vision_folder(
             [("../../evil.png", _png_bytes())], tmp_path, max_images=1000, max_uncompressed_bytes=10_000_000
         )
+
+
+# ── EDA d'images (Lot 6A, §G.3/§G.4/§G.5) ──────────────────────────────────
+
+
+def test_image_eda_reports_resolution_format_and_color_mode(tmp_path):
+    files = {}
+    # Deux tailles distinctes, deux formats distincts, un mode RGBA.
+    for i in range(3):
+        img = Image.new("RGB", (32, 32), (255, 0, 0))
+        if i:
+            img.putpixel((0, 0), (i % 256, (i * 7) % 256, 0))
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        files[f"classe_0/small_{i}.png"] = buf.getvalue()
+    for i in range(2):
+        img = Image.new("RGB", (300, 300), (0, 255, 0))
+        img.putpixel((0, 0), (i + 1, 0, 0))
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG")
+        files[f"classe_0/large_{i}.jpg"] = buf.getvalue()
+    rgba_img = Image.new("RGBA", (64, 64), (0, 0, 255, 128))
+    buf = io.BytesIO()
+    rgba_img.save(buf, format="PNG")
+    files["classe_1/rgba.png"] = buf.getvalue()
+    files["classe_1/other.png"] = _png_bytes((10, 10, 10), size=(64, 64), variant=99)
+
+    content = _build_zip(files)
+    report = analyze_and_extract_vision_archive(content, tmp_path, max_images=1000, max_uncompressed_bytes=10_000_000)
+
+    eda = report.image_eda
+    assert eda["width"]["min"] == 32
+    assert eda["width"]["max"] == 300
+    assert eda["height"]["min"] == 32
+    assert eda["height"]["max"] == 300
+    assert sum(eda["resolution_buckets"].values()) == report.n_images
+    assert eda["format_distribution"].get("PNG", 0) >= 4  # small_* (3) + rgba + other
+    assert eda["format_distribution"].get("JPEG", 0) == 2
+    assert eda["color_mode_distribution"].get("RGB", 0) >= 5
+    assert eda["color_mode_distribution"].get("RGBA", 0) == 1
+
+
+def test_image_eda_excludes_deduplicated_images():
+    """L'EDA ne doit compter QUE les images réellement conservées après
+    déduplication — sinon l'histogramme affiché à l'utilisateur ne
+    correspond pas à ce qui sera vraiment utilisé à l'entraînement."""
+    from services.vision_datasets import _ValidImage, _compute_image_eda
+    from pathlib import PurePosixPath
+
+    kept = [
+        _ValidImage(
+            rel_path=PurePosixPath("classe_0/a.png"), content=b"x", bucket_name="classe_0",
+            digest="d1", width=100, height=100, format="PNG", mode="RGB",
+        ),
+    ]
+    eda = _compute_image_eda(kept)
+    assert sum(eda["resolution_buckets"].values()) == 1
+    assert eda["format_distribution"] == {"PNG": 1}
+
+
+def test_image_eda_empty_dataset_degrades_honestly():
+    from services.vision_datasets import _compute_image_eda
+
+    eda = _compute_image_eda([])
+    assert eda["resolution_buckets"] == {}
+    assert eda["width"]["min"] is None
+    assert eda["format_distribution"] == {}
+
+
+def test_resolution_bucket_labels_are_contiguous():
+    from services.vision_datasets import _resolution_bucket_label
+
+    assert _resolution_bucket_label(50) == "< 128px"
+    assert _resolution_bucket_label(128) == "128-224px"
+    assert _resolution_bucket_label(223) == "128-224px"
+    assert _resolution_bucket_label(224) == "224-512px"
+    assert _resolution_bucket_label(2000) == ">= 1024px"

@@ -29,7 +29,7 @@ import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
 import { accentSurfaceClass, accentValueTextClass, type AccentColor } from "../components/ui/ColorIconBadge";
-import { Heatmap } from "../components/ui/Heatmap";
+import EvaluationCharts from "../components/training/EvaluationCharts";
 import { Input } from "../components/ui/Input";
 import { PageHeader } from "../components/ui/PageHeader";
 import { SectionHeader } from "../components/ui/SectionHeader";
@@ -657,6 +657,9 @@ function ClassificationResultView({ jobId, datasetId }: { jobId: number; dataset
           <MetricTile label="Précision" value={`${(result.test_precision_macro * 100).toFixed(1)} %`} color="blue" />
           <MetricTile label="Rappel" value={`${(result.test_recall_macro * 100).toFixed(1)} %`} color="teal" />
           <MetricTile label="F1" value={`${(result.test_f1_macro * 100).toFixed(1)} %`} color="amber" />
+          {result.test_roc_auc != null && (
+            <MetricTile label="ROC-AUC" value={result.test_roc_auc.toFixed(3)} color="rose" />
+          )}
         </div>
         <p className="text-xs text-muted-foreground mt-3">
           {result.n_train} images d'entraînement · {result.n_val} de validation · {result.n_test} de test —{" "}
@@ -679,10 +682,22 @@ function ClassificationResultView({ jobId, datasetId }: { jobId: number; dataset
         </ResponsiveContainer>
       </Card>
 
-      <Card className="p-5">
-        <SectionHeader icon={Boxes} color="teal" label="Matrice de confusion" help="Lignes = classe réelle, colonnes = classe prédite." />
-        <Heatmap xLabels={result.class_names} yLabels={result.class_names} matrix={result.confusion_matrix} variant="sequential" />
-      </Card>
+      {/* Réutilise EvaluationCharts.tsx tel quel (matrice de confusion +
+          ROC + PR) — même composant que le tabulaire, jamais un second
+          composant de graphique à maintenir en parallèle (Lot 6A,
+          correctif 16G). roc_curves/pr_curves absents (undefined) sur les
+          modèles entraînés avant ce correctif : les deux Card ROC/PR ne
+          s'affichent simplement pas (EvaluationCharts gère déjà ce cas
+          pour le tabulaire). */}
+      <EvaluationCharts
+        taskType="classification"
+        evaluation={{
+          confusion_matrix: result.confusion_matrix,
+          class_names: result.class_names,
+          roc_curves: result.roc_curves,
+          pr_curves: result.pr_curves,
+        }}
+      />
 
       {incorrectExamples.length > 0 && (
         <div>

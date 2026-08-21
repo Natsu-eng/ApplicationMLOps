@@ -1769,3 +1769,97 @@ un gate automatisé.
 identifiée à ce jour) ajoutent elles aussi un appel `fetch()` direct —
 relire systématiquement `client.ts` en ENTIER après toute fusion future,
 pas seulement les sections marquées en conflit par Git.
+
+### D6A.9 — 16G : ROC/PR binaire ET multiclasse, jamais de branche `task_type` — réutilisation complète d'`EvaluationCharts.tsx`
+
+**Constat** : le pilier tabulaire (`ml_training.py`) calcule déjà
+ROC/PR (binaire et multiclasse OvR via `label_binarize`) et les
+affiche via `EvaluationCharts.tsx`, qui consomme un objet
+`{confusion_matrix, class_names, roc_curves, pr_curves}` typé
+`ClassificationEvaluation`. Plutôt que d'écrire un second calcul ou un
+second composant pour Vision, la forme de sortie de
+`_compute_roc_pr_curves()` (nouveau, dans
+`vision_classification_training.py`) a été calquée EXACTEMENT sur
+celle du pilier tabulaire (mêmes clés, mêmes types :
+`Record<string, RocCurve | PrCurve>`), avec le même
+`_downsample_curve()` (max 100 points) recopié tel quel — pas
+factorisé dans un module partagé, car les deux pipelines
+(tabulaire vs vision) n'ont aucune autre dépendance croisée
+aujourd'hui et une factorisation prématurée créerait un couplage non
+demandé.
+**Retenu** : binaire → une seule courbe (`class_names[1]`, la classe
+positive), `all_proba[:, 1]`. Multiclasse → une courbe par classe
+(One-vs-Rest) via `label_binarize`. `test_roc_auc` global :
+`roc_auc_score(..., multi_class="ovr", average="weighted")` en
+multiclasse, capturé dans un `try/except ValueError` (dégradation
+honnête → `None`, jamais de crash si une classe est absente du jeu de
+test) ; produit direct de `roc_auc_score` en binaire.
+**Retenu aussi** : `VisionClassification.tsx` remplace son ancien
+`<Heatmap>` de matrice de confusion par `<EvaluationCharts
+taskType="classification" evaluation={{...}} />` — récupère
+gratuitement les courbes ROC/PR en plus de la matrice, aucun nouveau
+code de graphique écrit côté Vision.
+**Vérifié** : nouvelle migration Alembic (`77a16b5c0e66`, 3 colonnes
+nullables sur `vision_classification_models`) testée
+upgrade→downgrade→upgrade sur la base de dev réelle. Tests ciblés :
+binaire (1 courbe), multiclasse (1 courbe par classe) — tous verts.
+Pas de lancement de la suite complète (682 tests) pendant ce lot, sur
+consigne explicite de l'utilisateur — seuls les fichiers
+concernés ont tourné.
+
+### D6A.10 — EDA d'images : métadonnées capturées gratuitement pendant la validation existante, jamais un second passage disque
+
+**Constat** : le legacy chargeait les pixels une seconde fois pour
+calculer des statistiques d'image. `_validate_and_copy_images` ouvre
+déjà chaque image avec PIL (`Image.open()` + `.load()`) pour la
+validation d'intégrité — largeur/hauteur/format/mode sont disponibles
+sur cet objet déjà ouvert, sans coût I/O supplémentaire.
+**Retenu** : `_ValidImage` étendu avec `width/height/format/mode`,
+capturés au même endroit que la validation. `_compute_image_eda()`
+calcule ensuite `resolution_buckets` (bornes 128/224/512/1024, choisies
+pour englober les tailles d'entrée réelles des backbones enregistrés —
+p.ex. 224 = ResNet/MobileNet standard), `width/height {min,max,mean}`,
+`format_distribution`, `color_mode_distribution` — uniquement sur les
+images CONSERVÉES après dédoublonnage (`kept_images`), jamais sur les
+doublons exclus, pour que la distribution affichée corresponde
+exactement au dataset qui sera réellement entraîné.
+**Retenu aussi** : exposé via le `validation_report_json` déjà
+existant (clé `image_eda` ajoutée), pas de nouvel endpoint — le
+frontend (`VisionDatasetExplorer.tsx`) l'affiche via un nouveau
+`ImageEdaSummary` + `DistributionBars` (histogramme CSS pur, sans
+Recharts, cohérent avec le fait qu'il s'agit de distributions
+catégorielles simples et non de séries continues).
+**Vérifié** : dataset vide → dégradation honnête (dict vide, jamais de
+division par zéro) ; dédoublonnage → images exclues absentes de l'EDA ;
+labels de buckets contigus. Tests service + test API bout-en-bout
+(upload réel → `image_eda` présent dans la réponse) tous verts.
+
+### D6A.11 — Sélection d'exemples représentatifs : round-robin par groupe, remplace le slicing naïf `[:12]`
+
+**Problème du slicing naïf** : `incorrect_examples[:12]` favorise
+systématiquement les classes qui apparaissent en premier dans l'ordre
+d'itération du DataLoader — sur un dataset déséquilibré, les 12
+exemples affichés pouvaient tous provenir d'une seule paire
+(vrai, prédit), rendant la revue d'erreurs inutile pour les autres
+classes.
+**Retenu** : `_representative_sample(items, group_key, limit)` — regroupe
+par clé (paire `(vrai, prédit)` pour les erreurs, `vrai` seul pour les
+exemples corrects), puis prend l'index 0 de chaque groupe, puis l'index
+1, etc. (round-robin), jusqu'à `limit`. Généralisable à n'importe quel
+nombre de groupes, dégrade proprement si un groupe s'épuise avant les
+autres (passe simplement au suivant, jamais d'erreur).
+**Vérifié** : tests dédiés — répartition round-robin confirmée sur
+groupes de tailles inégales, épuisement gracieux d'un petit groupe.
+
+### D6A.12 — P11 (registre de modèles Vision) explicitement reporté, hors périmètre de cette session
+
+**Décision utilisateur explicite** : "P11 ... registre peut attendre."
+Une première ébauche de code de registre avait été commencée par
+erreur plus tôt dans le chantier 6A (avant clarification du périmètre
+exact 6A/6B), puis retirée proprement (migration vide supprimée, aucun
+code orphelin laissé dans l'arbre). P11 reste donc entièrement à faire
+et appartient à la clôture réelle du Lot 6A, pas à ce lot ni au Lot 6B
+(ML non supervisé) qui suit.
+**Remise en cause si** : une prochaine session Vision doit traiter le
+stage/version/promotion/export de modèles — repartir de zéro sur ce
+point, aucun code partiel n'existe à réutiliser.

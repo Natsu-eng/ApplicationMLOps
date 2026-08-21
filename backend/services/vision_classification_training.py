@@ -22,9 +22,19 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Optional
 
+import numpy as np
 import torch
 import torch.nn as nn
-from sklearn.metrics import confusion_matrix, f1_score, precision_score, recall_score
+from sklearn.metrics import (
+    confusion_matrix,
+    f1_score,
+    precision_recall_curve,
+    precision_score,
+    recall_score,
+    roc_auc_score,
+    roc_curve,
+)
+from sklearn.preprocessing import label_binarize
 from sklearn.model_selection import train_test_split
 from torch.utils.data import DataLoader, Subset
 from torchvision import transforms
@@ -186,6 +196,18 @@ class ClassificationResult:
     examples: list[PredictionExample]
     model_card: dict[str, Any]
     model_artifact: dict[str, Any] = field(repr=False)  # à torch.save tel quel
+    # Lot 6A (correctif 16G, AUDIT_DATALAB_2026-08-16.md §16G) — absents
+    # jusqu'ici (seules les métriques macro existaient), contrairement au
+    # tabulaire. Même forme EXACTE que `ClassificationEvaluation` côté
+    # frontend (`api/client.ts`) — un par classe, one-vs-rest au-delà de 2
+    # classes (même fonction `_compute_classification_evaluation`, portée
+    # depuis `ml_training.py` sans modification de la logique sklearn) :
+    # permet de réutiliser tel quel le composant `EvaluationCharts.tsx` déjà
+    # validé côté tabulaire, jamais un second composant de graphique ROC/PR
+    # à maintenir en parallèle.
+    roc_curves: dict[str, dict[str, list[float]]] = field(default_factory=dict)
+    pr_curves: dict[str, dict[str, list[float]]] = field(default_factory=dict)
+    test_roc_auc: Optional[float] = None
 
 
 def build_eval_transform() -> transforms.Compose:
@@ -218,6 +240,31 @@ def _should_stop_early(epochs_without_improvement: int, patience: Optional[int])
     return patience is not None and epochs_without_improvement >= patience
 
 
+def _representative_sample(items: list, group_key, limit: int) -> list:
+    """Échantillon représentatif (Lot 6A, AUDIT_DATALAB_2026-08-16.md §G.4)
+    — round-robin sur les groupes (une classe pour les exemples corrects,
+    une paire (vraie classe, classe prédite) pour les erreurs) plutôt que
+    les `limit` premiers éléments dans l'ordre du test set : sur un
+    dataset à 20 classes, "les 12 premiers" peut ne couvrir que 2-3
+    classes si les erreurs s'y concentrent. L'ordre RELATIF au sein d'un
+    groupe est préservé (déterministe, pas un tri par confiance qui
+    changerait la sémantique existante)."""
+    groups: dict[Any, list] = {}
+    for item in items:
+        groups.setdefault(group_key(item), []).append(item)
+    group_lists = list(groups.values())
+    result: list = []
+    round_idx = 0
+    while len(result) < limit and any(round_idx < len(g) for g in group_lists):
+        for g in group_lists:
+            if round_idx < len(g):
+                result.append(g[round_idx])
+                if len(result) >= limit:
+                    break
+        round_idx += 1
+    return result
+
+
 def _class_weights(targets: list[int], train_idx: list[int], n_classes: int) -> torch.Tensor:
     """Poids par fréquence inverse (`total / (n_classes * n_c)`), calculés
     UNIQUEMENT sur le split d'entraînement — jamais validation/test, qui ne
@@ -230,6 +277,63 @@ def _class_weights(targets: list[int], train_idx: list[int], n_classes: int) -> 
     total = len(train_targets)
     weights = [total / (n_classes * counts.get(c, 1)) for c in range(n_classes)]
     return torch.tensor(weights, dtype=torch.float32)
+
+
+def _downsample_curve(x, y, max_points: int = 100) -> tuple[list[float], list[float]]:
+    """Même fonction que `ml_training.py::_downsample_curve` (dupliquée
+    plutôt qu'importée — modules d'entraînement volontairement sans
+    dépendance croisée, voir docstring du module) : la courbe ROC/PR de
+    sklearn a autant de points que d'échantillons de test, inutile d'en
+    envoyer des milliers pour un graphe qui en affiche une centaine."""
+    if len(x) <= max_points:
+        return [float(v) for v in x], [float(v) for v in y]
+    idx = np.linspace(0, len(x) - 1, max_points).astype(int)
+    return [float(x[i]) for i in idx], [float(y[i]) for i in idx]
+
+
+def _compute_roc_pr_curves(
+    all_true: list[int], all_proba: np.ndarray, class_names: list[str]
+) -> tuple[dict[str, dict[str, list[float]]], dict[str, dict[str, list[float]]], Optional[float]]:
+    """ROC/AUC (Lot 6A, correctif 16G, AUDIT_DATALAB_2026-08-16.md §16G) —
+    portée depuis `ml_training.py::_compute_classification_evaluation`
+    (même fonctions sklearn, même sous-échantillonnage, même forme de
+    sortie), jamais réinventée : binaire = une seule courbe (classe
+    positive, index 1) ; au-delà = one-vs-rest, une courbe par classe,
+    exactement le motif déjà validé côté tabulaire."""
+    y_test = np.asarray(all_true)
+    roc_curves: dict[str, dict[str, list[float]]] = {}
+    pr_curves: dict[str, dict[str, list[float]]] = {}
+
+    if len(class_names) == 2:
+        fpr, tpr, _ = roc_curve(y_test, all_proba[:, 1])
+        precision, recall, _ = precision_recall_curve(y_test, all_proba[:, 1])
+        fpr_s, tpr_s = _downsample_curve(fpr, tpr)
+        prec_s, rec_s = _downsample_curve(precision, recall)
+        roc_curves[class_names[1]] = {"fpr": fpr_s, "tpr": tpr_s}
+        pr_curves[class_names[1]] = {"precision": prec_s, "recall": rec_s}
+    else:
+        labels = list(range(len(class_names)))
+        y_bin = label_binarize(y_test, classes=labels)
+        for i, name in enumerate(class_names):
+            fpr, tpr, _ = roc_curve(y_bin[:, i], all_proba[:, i])
+            precision, recall, _ = precision_recall_curve(y_bin[:, i], all_proba[:, i])
+            fpr_s, tpr_s = _downsample_curve(fpr, tpr)
+            prec_s, rec_s = _downsample_curve(precision, recall)
+            roc_curves[name] = {"fpr": fpr_s, "tpr": tpr_s}
+            pr_curves[name] = {"precision": prec_s, "recall": rec_s}
+
+    try:
+        if all_proba.shape[1] == 2:
+            test_roc_auc = float(roc_auc_score(y_test, all_proba[:, 1]))
+        else:
+            test_roc_auc = float(roc_auc_score(y_test, all_proba, multi_class="ovr", average="weighted"))
+    except ValueError:
+        # Dégradation honnête (même motif que roc_auc_score côté tabulaire)
+        # — ex. une classe totalement absente du jeu de test, sklearn lève
+        # plutôt que de renvoyer un chiffre trompeur.
+        test_roc_auc = None
+
+    return roc_curves, pr_curves, test_roc_auc
 
 
 def _stratified_split(
@@ -412,6 +516,7 @@ def train_and_evaluate_classification(
     all_true: list[int] = []
     all_pred: list[int] = []
     all_confidence: list[float] = []
+    all_proba_batches: list[np.ndarray] = []
     with torch.no_grad():
         for images, labels in test_loader:
             outputs = model(images)
@@ -420,12 +525,16 @@ def train_and_evaluate_classification(
             all_true.extend(labels.tolist())
             all_pred.extend(preds.tolist())
             all_confidence.extend(confidences.tolist())
+            all_proba_batches.append(probs.numpy())
 
     test_accuracy = sum(1 for t, p in zip(all_true, all_pred) if t == p) / len(all_true)
     test_precision = precision_score(all_true, all_pred, average="macro", zero_division=0)
     test_recall = recall_score(all_true, all_pred, average="macro", zero_division=0)
     test_f1 = f1_score(all_true, all_pred, average="macro", zero_division=0)
     conf_matrix = confusion_matrix(all_true, all_pred, labels=list(range(len(class_names))))
+    roc_curves, pr_curves, test_roc_auc = _compute_roc_pr_curves(
+        all_true, np.concatenate(all_proba_batches, axis=0), class_names
+    )
 
     progress_cb("Sélection des exemples", 95)
     examples: list[PredictionExample] = []
@@ -451,7 +560,17 @@ def train_and_evaluate_classification(
     # Priorité aux erreurs (skill : "erreurs de classification, pas
     # seulement les succès") — toujours représentées si elles existent,
     # jamais noyées dans les succès par un échantillonnage aveugle.
-    examples = incorrect_examples[:MAX_EXAMPLES_PER_KIND] + correct_examples[:MAX_EXAMPLES_PER_KIND]
+    # Sélection REPRÉSENTATIVE (Lot 6A, correctif §G.4) — round-robin par
+    # type d'erreur (true→predicted) pour les incorrects, par classe pour
+    # les corrects, jamais "les 12 premiers" (biaisé vers les classes qui
+    # apparaissent tôt dans l'ordre du test set).
+    representative_incorrect = _representative_sample(
+        incorrect_examples, lambda e: (e.true_label, e.predicted_label), MAX_EXAMPLES_PER_KIND
+    )
+    representative_correct = _representative_sample(
+        correct_examples, lambda e: e.true_label, MAX_EXAMPLES_PER_KIND
+    )
+    examples = representative_incorrect + representative_correct
 
     progress_cb("Terminé", 100)
 
@@ -478,6 +597,7 @@ def train_and_evaluate_classification(
         "n_classes": len(class_names),
         "n_incorrect_examples": len(incorrect_examples),
         "n_correct_examples": len(correct_examples),
+        "test_roc_auc": test_roc_auc,
     }
 
     return ClassificationResult(
@@ -500,4 +620,7 @@ def train_and_evaluate_classification(
             "dropout_rate": config.dropout_rate,
             "state_dict": model.state_dict(),
         },
+        roc_curves=roc_curves,
+        pr_curves=pr_curves,
+        test_roc_auc=test_roc_auc,
     )

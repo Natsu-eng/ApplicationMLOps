@@ -94,6 +94,10 @@ class VisionDatasetReport:
     n_undersized: int
     undersized_files: list[str]
     warnings: list[str] = field(default_factory=list)
+    # Lot 6A (AUDIT_DATALAB_2026-08-16.md §G.3/§G.4/§G.5) — distribution des
+    # résolutions/formats/modes colorimétriques des images RÉELLEMENT
+    # conservées (voir _compute_image_eda).
+    image_eda: dict = field(default_factory=dict)
 
 
 def _safe_member_path(name: str) -> PurePosixPath | None:
@@ -419,6 +423,13 @@ class _ValidImage:
     content: bytes
     bucket_name: str
     digest: str
+    # Capturés gratuitement pendant l'ouverture déjà nécessaire à la
+    # validation d'intégrité ci-dessous (Lot 6A, EDA d'images, §G.3/G.4) —
+    # jamais une seconde passe de lecture disque dédiée.
+    width: int
+    height: int
+    format: str | None
+    mode: str
 
 
 @dataclass
@@ -435,6 +446,7 @@ class _ValidationOutcome:
     n_duplicates_removed: int
     duplicate_removed_files: list[str]
     label_conflicts: list[dict[str, list[str]]]
+    image_eda: dict
 
 
 def _bucket_category(bucket_name: str, structure_type: str) -> str:
@@ -519,7 +531,16 @@ def _validate_and_copy_images(
 
             digest = hashlib.sha256(raw).hexdigest()
             valid_images.append(
-                _ValidImage(rel_path=member.rel_path, content=raw, bucket_name=bucket_name, digest=digest)
+                _ValidImage(
+                    rel_path=member.rel_path,
+                    content=raw,
+                    bucket_name=bucket_name,
+                    digest=digest,
+                    width=width,
+                    height=height,
+                    format=img.format,
+                    mode=img.mode,
+                )
             )
 
     by_digest: dict[str, list[_ValidImage]] = {}
@@ -579,6 +600,8 @@ def _validate_and_copy_images(
         dest.write_bytes(vi.content)
         n_valid += 1
 
+    kept_images = [vi for vi in valid_images if str(vi.rel_path) not in all_excluded]
+
     return _ValidationOutcome(
         n_valid=n_valid,
         corrupted_files=corrupted_files,
@@ -588,7 +611,73 @@ def _validate_and_copy_images(
         n_duplicates_removed=len(excluded_as_duplicate),
         duplicate_removed_files=sorted(excluded_as_duplicate),
         label_conflicts=label_conflicts,
+        image_eda=_compute_image_eda(kept_images),
     )
+
+
+# Bornes en pixels (dimension la plus grande de l'image) — mêmes seuils que
+# les tailles d'entrée réelles des deux pipelines d'entraînement (128 pour
+# l'autoencodeur d'anomalies, 224 pour la classification, voir IMAGE_SIZE
+# dans vision_anomaly_registry.py/vision_classification_training.py) : les
+# bornes intermédiaires (128/224/512) parlent directement à la question que
+# l'utilisateur se pose ("mes images sont-elles assez grandes pour ce que
+# le modèle va en faire, ou juste agrandies pour rien ?"), pas des paliers
+# arbitraires.
+_RESOLUTION_BUCKET_BOUNDS = (128, 224, 512, 1024)
+
+
+def _resolution_bucket_label(max_dimension: int) -> str:
+    if max_dimension < _RESOLUTION_BUCKET_BOUNDS[0]:
+        return f"< {_RESOLUTION_BUCKET_BOUNDS[0]}px"
+    for lo, hi in zip(_RESOLUTION_BUCKET_BOUNDS, _RESOLUTION_BUCKET_BOUNDS[1:]):
+        if max_dimension < hi:
+            return f"{lo}-{hi}px"
+    return f">= {_RESOLUTION_BUCKET_BOUNDS[-1]}px"
+
+
+def _compute_image_eda(kept_images: list[_ValidImage]) -> dict:
+    """EDA d'images (Lot 6A, AUDIT_DATALAB_2026-08-16.md §G.3/§G.4/§G.5) —
+    distribution des résolutions/formats/modes colorimétriques, jusqu'ici
+    totalement absente (seul un minimum de `MIN_IMAGE_DIMENSION_PX` était
+    vérifié, jamais montré). Calculée sur les images RÉELLEMENT conservées
+    (après exclusion doublons/conflits) — un histogramme qui inclurait des
+    images finalement exclues du dataset induirait l'utilisateur en erreur
+    sur ce qui sera vraiment utilisé à l'entraînement. `s'appuie sur
+    width/height/format/mode déjà capturés dans `_ValidImage`, jamais une
+    seconde lecture disque des images."""
+    if not kept_images:
+        return {
+            "resolution_buckets": {},
+            "width": {"min": None, "max": None, "mean": None},
+            "height": {"min": None, "max": None, "mean": None},
+            "format_distribution": {},
+            "color_mode_distribution": {},
+        }
+
+    widths = [vi.width for vi in kept_images]
+    heights = [vi.height for vi in kept_images]
+
+    resolution_buckets: dict[str, int] = {}
+    for vi in kept_images:
+        label = _resolution_bucket_label(max(vi.width, vi.height))
+        resolution_buckets[label] = resolution_buckets.get(label, 0) + 1
+
+    format_distribution: dict[str, int] = {}
+    for vi in kept_images:
+        fmt = vi.format or "inconnu"
+        format_distribution[fmt] = format_distribution.get(fmt, 0) + 1
+
+    color_mode_distribution: dict[str, int] = {}
+    for vi in kept_images:
+        color_mode_distribution[vi.mode] = color_mode_distribution.get(vi.mode, 0) + 1
+
+    return {
+        "resolution_buckets": resolution_buckets,
+        "width": {"min": min(widths), "max": max(widths), "mean": round(sum(widths) / len(widths), 1)},
+        "height": {"min": min(heights), "max": max(heights), "mean": round(sum(heights) / len(heights), 1)},
+        "format_distribution": format_distribution,
+        "color_mode_distribution": color_mode_distribution,
+    }
 
 
 def analyze_and_extract_vision_archive(
@@ -711,4 +800,5 @@ def _analyze_and_extract(members: list[_ExtractedMember], target_dir: Path) -> V
         n_undersized=len(outcome.undersized_files),
         undersized_files=outcome.undersized_files,
         warnings=warnings,
+        image_eda=outcome.image_eda,
     )

@@ -302,3 +302,61 @@ def test_training_rejects_split_leaving_less_than_10_percent_for_train(tmp_path)
     config = ClassificationConfig(num_epochs=1, batch_size=4, val_ratio=0.5, test_ratio=0.45)
     with pytest.raises(TrainingAbortedError):
         train_and_evaluate_classification(tmp_path, config, _noop_progress)
+
+
+# ── ROC/AUC binaire et multiclasse (Lot 6A, correctif 16G) ──────────────────
+
+
+def test_binary_classification_produces_a_single_roc_curve(tmp_path):
+    _write_classification_dataset(tmp_path, {"classe_a": 20, "classe_b": 20})
+    config = ClassificationConfig(backbone_id="mobilenet_v3_small", num_epochs=1, batch_size=4)
+
+    result = train_and_evaluate_classification(tmp_path, config, _noop_progress)
+
+    assert set(result.roc_curves.keys()) == {"classe_b"}  # classe positive = index 1
+    assert set(result.pr_curves.keys()) == {"classe_b"}
+    curve = result.roc_curves["classe_b"]
+    assert len(curve["fpr"]) == len(curve["tpr"])
+    assert result.test_roc_auc is not None
+    assert 0.0 <= result.test_roc_auc <= 1.0
+    assert result.model_card["test_roc_auc"] == result.test_roc_auc
+
+
+def test_multiclass_classification_produces_one_roc_curve_per_class(tmp_path):
+    _write_classification_dataset(tmp_path, {"classe_a": 15, "classe_b": 15, "classe_c": 15})
+    config = ClassificationConfig(backbone_id="mobilenet_v3_small", num_epochs=1, batch_size=4)
+
+    result = train_and_evaluate_classification(tmp_path, config, _noop_progress)
+
+    assert set(result.roc_curves.keys()) == {"classe_a", "classe_b", "classe_c"}
+    assert set(result.pr_curves.keys()) == {"classe_a", "classe_b", "classe_c"}
+    assert result.test_roc_auc is not None
+    assert 0.0 <= result.test_roc_auc <= 1.0
+
+
+# ── Sélection représentative des exemples (Lot 6A, correctif §G.4) ─────────
+
+
+def test_representative_sample_round_robins_across_groups():
+    from services.vision_classification_training import _representative_sample
+
+    items = ["a1", "a2", "a3", "a4", "b1", "c1", "c2"]
+    groups = {"a1": "a", "a2": "a", "a3": "a", "a4": "a", "b1": "b", "c1": "c", "c2": "c"}
+
+    sample = _representative_sample(items, lambda x: groups[x], limit=3)
+
+    # Round-robin : un de chaque groupe d'abord (a1, b1, c1), jamais les 3
+    # premiers de la liste (qui seraient tous du groupe "a").
+    assert sample == ["a1", "b1", "c1"]
+
+
+def test_representative_sample_exhausts_small_groups_gracefully():
+    from services.vision_classification_training import _representative_sample
+
+    items = ["a1", "a2", "a3", "a4", "a5", "b1"]
+    groups = {"a1": "a", "a2": "a", "a3": "a", "a4": "a", "a5": "a", "b1": "b"}
+
+    sample = _representative_sample(items, lambda x: groups[x], limit=4)
+
+    assert len(sample) == 4
+    assert "b1" in sample  # le seul élément du petit groupe doit apparaître
