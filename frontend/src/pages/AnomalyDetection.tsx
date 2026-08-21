@@ -27,11 +27,11 @@ import { Table, type TableColumn } from "../components/ui/Table";
 import { useConfirmAction } from "../hooks/useConfirmAction";
 import { CHART_COLOR_PRIMARY, CHART_GRID_STROKE, CHART_TICK_STYLE_SM, CHART_TOOLTIP_STYLE } from "../theme/charts";
 import { DataQualityWarnings } from "../components/training/DataQualityWarnings";
+import { useJobEvents } from "../hooks/useJobEvents";
 import { assessConsensusQuality } from "../utils/anomalyQuality";
 import { QUALITY_TONE_ACCENT } from "../utils/qualityAssessment";
 
 const ACTIVE_STATUSES = new Set(["queued", "running"]);
-const POLL_INTERVAL_MS = 3000;
 const ACTIVE_JOB_STORAGE_KEY = "datalab_active_anomaly_job_id";
 const DEFAULT_TOP_N = 50;
 const MAX_TOP_N = 200;
@@ -127,17 +127,11 @@ export default function AnomalyDetection() {
 
   const phase = phaseOf(activeJob);
 
-  useEffect(() => {
-    if (phase !== "progress" || !activeJob) return;
-    const interval = setInterval(async () => {
-      try {
-        setActiveJob(await api.anomalies.getJob(activeJob.id));
-      } catch {
-        // silencieux — nouvelle tentative au prochain tick
-      }
-    }, POLL_INTERVAL_MS);
-    return () => clearInterval(interval);
-  }, [phase, activeJob]);
+  // Notifications SSE (Lot 7, §J.2) — remplace le polling setInterval.
+  useJobEvents(
+    phase === "progress" && activeJob ? `/anomalies/jobs/${activeJob.id}/events` : null,
+    (snapshot) => setActiveJob((prev) => (prev ? { ...prev, ...snapshot } : prev)),
+  );
 
   function resetToConfigure() {
     setActiveJob(null);

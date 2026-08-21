@@ -24,6 +24,7 @@ import { PageHeader } from "../components/ui/PageHeader";
 import { SectionHeader } from "../components/ui/SectionHeader";
 import { Select } from "../components/ui/Select";
 import { VisionDatasetPicker } from "../components/vision/VisionDatasetPicker";
+import { useJobEvents } from "../hooks/useJobEvents";
 import { VisionImage } from "../components/vision/VisionImage";
 import {
   AUGMENTATION_PRESET_INFO,
@@ -57,7 +58,6 @@ const MODEL_HINTS: Record<string, string> = {
 };
 
 const ACTIVE_STATUSES = new Set(["queued", "running"]);
-const POLL_INTERVAL_MS = 3000;
 const ACTIVE_JOB_STORAGE_KEY = "datalab_active_vision_anomaly_job_id";
 
 type Phase = "configure" | "progress" | "results" | "failed" | "cancelled";
@@ -112,17 +112,11 @@ export default function VisionAnomalies() {
 
   const phase = phaseOf(activeJob);
 
-  useEffect(() => {
-    if (phase !== "progress" || !activeJob) return;
-    const interval = setInterval(async () => {
-      try {
-        setActiveJob(await api.visionAnomalies.getJob(activeJob.id));
-      } catch {
-        // silencieux — nouvelle tentative au prochain tick
-      }
-    }, POLL_INTERVAL_MS);
-    return () => clearInterval(interval);
-  }, [phase, activeJob]);
+  // Notifications SSE (Lot 7, §J.2) — remplace le polling setInterval.
+  useJobEvents(
+    phase === "progress" && activeJob ? `/vision/anomalies/jobs/${activeJob.id}/events` : null,
+    (snapshot) => setActiveJob((prev) => (prev ? { ...prev, ...snapshot } : prev)),
+  );
 
   function resetToConfigure() {
     setActiveJob(null);

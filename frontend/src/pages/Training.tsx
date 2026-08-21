@@ -29,12 +29,12 @@ import { PageHeader } from "../components/ui/PageHeader";
 import { Select } from "../components/ui/Select";
 import { useConfirmAction } from "../hooks/useConfirmAction";
 import { formatDateTime, formatDuration } from "../utils/format";
+import { useJobEvents } from "../hooks/useJobEvents";
 import { buildTrainingJobPayload } from "../utils/trainingPayload";
 
 const DEFAULT_OPTUNA_TRIALS = 20; // `api.core.config.Settings.optuna_trials_default`
 
 const ACTIVE_STATUSES = new Set(["queued", "running"]);
-const POLL_INTERVAL_MS = 3000;
 const ACTIVE_JOB_STORAGE_KEY = "datalab_active_training_job_id";
 
 /** Étapes du wizard horizontal (refonte UI) — même contenu/ordre que le
@@ -119,19 +119,13 @@ export default function Training() {
 
   const phase = phaseOf(activeJob);
 
-  // Poll le job actif tant qu'il est en file/en cours — la page bascule
-  // d'elle-même vers la vue résultat (ou échec) dès que le statut change.
-  useEffect(() => {
-    if (phase !== "progress" || !activeJob) return;
-    const interval = setInterval(async () => {
-      try {
-        setActiveJob(await api.training.getJob(activeJob.id));
-      } catch {
-        // silencieux — nouvelle tentative au prochain tick
-      }
-    }, POLL_INTERVAL_MS);
-    return () => clearInterval(interval);
-  }, [phase, activeJob]);
+  // Notifications SSE (Lot 7, §J.2) — remplace le polling setInterval : la
+  // page bascule d'elle-même vers la vue résultat (ou échec) dès que le
+  // flux serveur pousse un changement de statut.
+  useJobEvents(
+    phase === "progress" && activeJob ? `/training/jobs/${activeJob.id}/events` : null,
+    (snapshot) => setActiveJob((prev) => (prev ? { ...prev, ...snapshot } : prev)),
+  );
 
   function resetToConfigure() {
     setActiveJob(null);
