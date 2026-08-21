@@ -137,3 +137,12 @@ def encode_mask_png(mask: np.ndarray) -> str:
     Image.fromarray(black_white, mode="L").save(buf, format="PNG")
     encoded = base64.b64encode(buf.getvalue()).decode("ascii")
     return f"data:image/png;base64,{encoded}"
+
+
+def encode_image_png(image: Image.Image) -> str:
+    """Encode une image PIL RGB en PNG, data URI base64 — même format que
+    les autres encodeurs de ce module (aperçu d'augmentation, Lot 6A)."""
+    buf = io.BytesIO()
+    image.convert("RGB").save(buf, format="PNG")
+    encoded = base64.b64encode(buf.getvalue()).decode("ascii")
+    return f"data:image/png;base64,{encoded}"

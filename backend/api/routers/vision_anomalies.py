@@ -27,6 +27,7 @@ from services.audit import log_action
 from services.job_quota import ALL_JOB_MODELS, raise_if_quota_exceeded
 from services.job_watchdog import reconcile_stale_jobs
 from services.vision_anomaly_registry import ANOMALY_MODEL_REGISTRY, DEFAULT_ANOMALY_MODEL_ID
+from services.vision_classification_training import AUGMENTATION_PRESET_IDS
 from services.vision_localization import DEFAULT_MASK_PERCENTILE
 
 router = APIRouter(prefix="/vision/anomalies", tags=["vision"])
@@ -46,6 +47,11 @@ class VisionAnomalyJobCreate(BaseModel):
     learning_rate: float = Field(default=1e-3, gt=0, le=1)
     mask_percentile: float = Field(default=DEFAULT_MASK_PERCENTILE, gt=0, lt=1)
     seed: Optional[int] = None
+    # Même système de presets que la classification (Lot 6A, parité des
+    # étapes) — voir services/vision_anomaly_training.py::AnomalyVisionConfig.
+    augmentation_preset: str = "aucune"
+    # Part de train/good/ réservée à la validation (répartition, Lot 6A).
+    val_ratio: float = Field(default=0.15, ge=0.05, le=0.5)
 
 
 class AnomalyModelOut(BaseModel):
@@ -161,6 +167,14 @@ def create_vision_anomaly_job(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={"code": "MODELE_INCONNU", "message": f"Modèle inconnu : {body.model_id}"},
         )
+    if body.augmentation_preset not in AUGMENTATION_PRESET_IDS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "code": "AUGMENTATION_PRESET_INCONNU",
+                "message": f"Preset d'augmentation inconnu : {body.augmentation_preset!r}",
+            },
+        )
 
     reconcile_stale_jobs(
         db, current_user.organization_id, _settings.stale_job_timeout_minutes, model=VisionAnomalyJob
@@ -198,6 +212,8 @@ def create_vision_anomaly_job(
         "learning_rate": body.learning_rate,
         "mask_percentile": body.mask_percentile,
         "seed": body.seed if body.seed is not None else _settings.model_seed,
+        "augmentation_preset": body.augmentation_preset,
+        "val_ratio": body.val_ratio,
     }
 
     job = VisionAnomalyJob(

@@ -1,14 +1,16 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { AlertCircle, AlertTriangle, Loader2, PlayCircle, Sparkles, Target, Trash2 } from "lucide-react";
+import { AlertCircle, AlertTriangle, ChevronLeft, ChevronRight, Loader2, PlayCircle, Sparkles, Target, Trash2 } from "lucide-react";
 import { Line, LineChart, CartesianGrid, ResponsiveContainer, Tooltip as RechartsTooltip, XAxis, YAxis } from "recharts";
 import {
   ApiError,
   api,
+  type AugmentationPreset,
   type VisionAnomalyExample,
   type VisionAnomalyJobSummary,
   type VisionAnomalyModelOption,
   type VisionAnomalyResult,
+  type VisionDatasetDetail,
 } from "../api/client";
 import AppShell from "../components/AppShell";
 import { pillarColor } from "../config/pillars";
@@ -23,8 +25,36 @@ import { SectionHeader } from "../components/ui/SectionHeader";
 import { Select } from "../components/ui/Select";
 import { VisionDatasetPicker } from "../components/vision/VisionDatasetPicker";
 import { VisionImage } from "../components/vision/VisionImage";
+import {
+  AUGMENTATION_PRESET_INFO,
+  AugmentationPresetPicker,
+  AugmentationPreviewGallery,
+  Fact,
+  SplitRatioControl,
+  StepContent,
+  StepperNav,
+} from "../components/vision/VisionWizard";
 import { useConfirmAction } from "../hooks/useConfirmAction";
 import { CHART_GRID_STROKE, CHART_SERIES_COLORS, CHART_TICK_STYLE_SM, CHART_TOOLTIP_STYLE } from "../theme/charts";
+
+/** Étapes du wizard (Lot 6A) — parité avec VisionClassification.tsx : même
+ * structure à 4 étapes, mêmes composants partagés (VisionWizard.tsx).
+ * "Mode expert" ici n'a pas de case à cocher pour l'activer/désactiver
+ * (contrairement à la classification) — les réglages d'anomalies sont déjà
+ * peu nombreux, les regrouper sous une étape dédiée suffit à la clarté
+ * sans ajouter un interrupteur qui masquerait/démasquerait 4 champs. */
+const STEP_LABELS = [
+  { number: 1, label: "Données & modèle" },
+  { number: 2, label: "Augmentation" },
+  { number: 3, label: "Mode expert" },
+  { number: 4, label: "Lancement" },
+];
+
+const MODEL_HINTS: Record<string, string> = {
+  conv_autoencoder: "Le plus rapide — bon point de départ pour la plupart des datasets.",
+  denoising_autoencoder: "Ajoute du bruit pendant l'entraînement pour apprendre des traits plus robustes — utile si vos photos varient en netteté/éclairage.",
+  conv_vae: "Régularise l'espace latent (variationnel) — peut mieux généraliser sur un petit jeu de données \"normales\", au prix d'un entraînement légèrement plus lent.",
+};
 
 const ACTIVE_STATUSES = new Set(["queued", "running"]);
 const POLL_INTERVAL_MS = 3000;
@@ -162,7 +192,7 @@ export default function VisionAnomalies() {
           Reprise de votre session…
         </div>
       ) : phase === "configure" ? (
-        <div className="max-w-2xl mx-auto">
+        <div className="max-w-3xl mx-auto">
           <AnomalyVisionForm onJobCreated={openJob} />
         </div>
       ) : phase === "progress" && activeJob ? (
@@ -201,11 +231,37 @@ export default function VisionAnomalies() {
 
 function AnomalyVisionForm({ onJobCreated }: { onJobCreated: (job: VisionAnomalyJobSummary) => void }) {
   const [datasetId, setDatasetId] = useState<number | "">("");
+  const [datasetDetail, setDatasetDetail] = useState<VisionDatasetDetail | null>(null);
   const [models, setModels] = useState<VisionAnomalyModelOption[]>([]);
   const [modelId, setModelId] = useState("");
   const [numEpochs, setNumEpochs] = useState(15);
+  const [batchSize, setBatchSize] = useState(16);
+  const [learningRate, setLearningRate] = useState(1e-3);
+  const [maskPercentile, setMaskPercentile] = useState(0.97);
+  const [augmentationPreset, setAugmentationPreset] = useState<AugmentationPreset>("aucune");
+  // Part de train/good/ réservée à la validation (répartition, Lot 6A) —
+  // pas de "test" : contrairement à la classification, test/ est un
+  // dossier séparé du dataset (structure normal/défaut), jamais un split.
+  const [valRatio, setValRatio] = useState(0.15);
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const [activeStep, setActiveStep] = useState(1);
+  const [maxReachedStep, setMaxReachedStep] = useState(1);
+
+  function goToStep(step: number) {
+    if (step <= maxReachedStep) setActiveStep(step);
+  }
+  function goNext() {
+    setActiveStep((s) => {
+      const next = Math.min(s + 1, STEP_LABELS.length);
+      setMaxReachedStep((m) => Math.max(m, next));
+      return next;
+    });
+  }
+  function goPrev() {
+    setActiveStep((s) => Math.max(s - 1, 1));
+  }
 
   useEffect(() => {
     api.visionAnomalies.models().then((list) => {
@@ -213,6 +269,11 @@ function AnomalyVisionForm({ onJobCreated }: { onJobCreated: (job: VisionAnomaly
       if (list.length > 0) setModelId(list[0].id);
     });
   }, []);
+
+  function handleDatasetChange(id: number | "", detail: VisionDatasetDetail | null) {
+    setDatasetId(id);
+    setDatasetDetail(detail);
+  }
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
@@ -224,6 +285,11 @@ function AnomalyVisionForm({ onJobCreated }: { onJobCreated: (job: VisionAnomaly
         vision_dataset_id: datasetId,
         model_id: modelId,
         num_epochs: numEpochs,
+        batch_size: batchSize,
+        learning_rate: learningRate,
+        mask_percentile: maskPercentile,
+        augmentation_preset: augmentationPreset,
+        val_ratio: valRatio,
       });
       onJobCreated(job);
     } catch (err) {
@@ -233,55 +299,178 @@ function AnomalyVisionForm({ onJobCreated }: { onJobCreated: (job: VisionAnomaly
     }
   }
 
+  const selectedModelLabel = models.find((m) => m.id === modelId)?.label ?? "—";
+  const step1Valid = Boolean(datasetId && modelId);
+
   return (
-    <Card className="p-5">
-      <form onSubmit={handleSubmit} className="space-y-4">
-        <div>
-          <label className="block text-sm text-muted-foreground mb-1.5">Dataset d'images (structure normal/défaut)</label>
-          <VisionDatasetPicker structureType="mvtec_ad" value={datasetId} onChange={(id) => setDatasetId(id)} />
-        </div>
+    <form onSubmit={handleSubmit}>
+      <StepperNav steps={STEP_LABELS} activeStep={activeStep} maxReachedStep={maxReachedStep} onSelect={goToStep} />
 
-        {models.length > 0 && (
-          <div>
-            <label htmlFor="va-model" className="block text-sm text-muted-foreground mb-1">
-              Modèle
-            </label>
-            <Select id="va-model" value={modelId} onChange={(e) => setModelId(e.target.value)}>
-              {models.map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.label}
-                </option>
-              ))}
-            </Select>
-          </div>
+      <Card className="p-5 mt-4">
+        {activeStep === 1 && (
+          <StepContent
+            title="Choisissez vos données et le modèle"
+            description="Sélectionnez un dataset structuré normal/défaut (train/good + test/good + test/<défaut>), puis le modèle de reconstruction à entraîner."
+          >
+            <div>
+              <label className="block text-sm text-muted-foreground mb-1.5">Dataset d'images (structure normal/défaut)</label>
+              <VisionDatasetPicker structureType="mvtec_ad" value={datasetId} onChange={handleDatasetChange} />
+            </div>
+
+            {models.length > 0 && (
+              <div>
+                <label htmlFor="va-model" className="block text-sm text-muted-foreground mb-1">
+                  Modèle
+                </label>
+                <Select id="va-model" value={modelId} onChange={(e) => setModelId(e.target.value)}>
+                  {models.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.label}
+                    </option>
+                  ))}
+                </Select>
+                {MODEL_HINTS[modelId] && <p className="text-xs text-muted-foreground mt-1">{MODEL_HINTS[modelId]}</p>}
+              </div>
+            )}
+
+            {datasetDetail && (
+              <div>
+                <label className="block text-sm text-muted-foreground mb-1.5">Répartition de train/good/</label>
+                <SplitRatioControl
+                  totalImages={datasetDetail.n_images}
+                  splits={[{ key: "val", label: "Validation", ratio: valRatio, onChange: setValRatio, min: 0.05, max: 0.4 }]}
+                />
+              </div>
+            )}
+          </StepContent>
         )}
 
-        <div>
-          <label htmlFor="va-epochs" className="block text-sm text-muted-foreground mb-1">
-            Nombre d'époques
-          </label>
-          <Input
-            id="va-epochs"
-            type="number"
-            min={1}
-            max={50}
-            value={numEpochs}
-            onChange={(e) => setNumEpochs(Math.min(50, Math.max(1, Number(e.target.value) || 1)))}
-          />
-        </div>
-
-        {error && (
-          <div className="flex items-center gap-2 text-sm text-destructive bg-destructive/10 border border-destructive/20 rounded-lg px-3 py-2">
-            <AlertCircle size={15} className="flex-shrink-0" />
-            {error}
-          </div>
+        {activeStep === 2 && (
+          <StepContent
+            title="Augmentation des données"
+            description="Diversifie artificiellement vos images normales d'entraînement (retournements, rotations légères...) — appliquée uniquement à train/good/, jamais à test/."
+          >
+            <AugmentationPresetPicker value={augmentationPreset} onChange={setAugmentationPreset} />
+            <AugmentationPreviewGallery datasetId={datasetId} preset={augmentationPreset} />
+          </StepContent>
         )}
 
-        <Button type="submit" disabled={!datasetId || isSubmitting} className="w-full">
-          {isSubmitting ? "Lancement…" : "Lancer l'entraînement"}
-        </Button>
-      </form>
-    </Card>
+        {activeStep === 3 && (
+          <StepContent
+            title="Mode expert"
+            description="Réglages fins de l'entraînement — les valeurs par défaut conviennent à la plupart des datasets."
+          >
+            <div>
+              <label htmlFor="va-epochs" className="block text-sm text-muted-foreground mb-1">
+                Nombre d'époques
+              </label>
+              <Input
+                id="va-epochs"
+                type="number"
+                min={1}
+                max={50}
+                value={numEpochs}
+                onChange={(e) => setNumEpochs(Math.min(50, Math.max(1, Number(e.target.value) || 1)))}
+              />
+            </div>
+
+            <div>
+              <label htmlFor="va-batch-size" className="block text-sm text-muted-foreground mb-1">
+                Taille de lot (batch size)
+              </label>
+              <Input
+                id="va-batch-size"
+                type="number"
+                min={1}
+                max={128}
+                value={batchSize}
+                onChange={(e) => setBatchSize(Math.min(128, Math.max(1, Number(e.target.value) || 1)))}
+              />
+            </div>
+
+            <div>
+              <label htmlFor="va-learning-rate" className="block text-sm text-muted-foreground mb-1">
+                Taux d'apprentissage — {learningRate}
+              </label>
+              <input
+                id="va-learning-rate"
+                type="range"
+                min={0.0001}
+                max={0.01}
+                step={0.0001}
+                value={learningRate}
+                onChange={(e) => setLearningRate(Number(e.target.value))}
+                className="w-full accent-primary"
+              />
+            </div>
+
+            <div>
+              <label htmlFor="va-mask-percentile" className="block text-sm text-muted-foreground mb-1">
+                Sensibilité de la carte de défaut — percentile {Math.round(maskPercentile * 100)}
+              </label>
+              <input
+                id="va-mask-percentile"
+                type="range"
+                min={0.9}
+                max={0.995}
+                step={0.005}
+                value={maskPercentile}
+                onChange={(e) => setMaskPercentile(Number(e.target.value))}
+                className="w-full accent-primary"
+              />
+              <p className="text-xs text-muted-foreground mt-1">
+                Plus haut = seules les zones les plus atypiques sont marquées comme défaut sur la carte de
+                chaleur (moins de zones surlignées, plus précises).
+              </p>
+            </div>
+          </StepContent>
+        )}
+
+        {activeStep === 4 && (
+          <StepContent title="Prêt à lancer" description="Vérifiez le récapitulatif, puis lancez l'entraînement.">
+            <div className="rounded-xl border border-border bg-muted p-4">
+              <p className="text-xs uppercase tracking-wide text-muted-foreground mb-3">Récapitulatif</p>
+              <dl className="grid grid-cols-2 gap-y-2.5 text-sm">
+                <Fact label="Dataset" value={datasetDetail ? `${datasetDetail.n_images} images` : "—"} />
+                <Fact label="Modèle" value={selectedModelLabel} />
+                <Fact label="Époques" value={String(numEpochs)} />
+                <Fact label="Augmentation" value={AUGMENTATION_PRESET_INFO[augmentationPreset].label} />
+                <Fact label="Validation" value={`${Math.round(valRatio * 100)} % de train/good/`} />
+              </dl>
+            </div>
+
+            {error && (
+              <div className="flex items-center gap-2 text-sm text-destructive bg-destructive/10 border border-destructive/20 rounded-lg px-3 py-2">
+                <AlertCircle size={15} className="flex-shrink-0" />
+                {error}
+              </div>
+            )}
+
+            <Button type="submit" disabled={!step1Valid || isSubmitting} className="w-full" size="md">
+              <PlayCircle size={16} />
+              {isSubmitting ? "Lancement…" : "Lancer l'entraînement"}
+            </Button>
+          </StepContent>
+        )}
+
+        <div className="flex items-center justify-between pt-5 mt-5 border-t border-border">
+          {activeStep > 1 ? (
+            <Button type="button" variant="secondary" size="sm" onClick={goPrev}>
+              <ChevronLeft size={14} />
+              Précédent
+            </Button>
+          ) : (
+            <span />
+          )}
+          {activeStep < STEP_LABELS.length && (
+            <Button type="button" size="sm" onClick={goNext} disabled={activeStep === 1 && !step1Valid}>
+              Continuer
+              <ChevronRight size={14} />
+            </Button>
+          )}
+        </div>
+      </Card>
+    </form>
   );
 }
 
