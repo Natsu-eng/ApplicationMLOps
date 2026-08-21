@@ -2119,3 +2119,48 @@ laisse une trace consultable, donc moins destructif).
 historique, rejet 409 sur job déjà terminé, isolation multi-tenant) sur
 les 6 routers ; `tsc -b`/`eslint`/vitest (58/58)/`vite build` verts côté
 frontend.
+
+### D7.6 — Relance depuis une configuration existante : reconstruction du corps de création + appel direct de la fonction existante, jamais une copie de sa validation
+
+**Question** : "le geste le plus fréquent en pratique, impossible aujourd'hui — l'utilisateur ressaisit tout." Comment l'implémenter sans dupliquer (et risquer de faire diverger) la validation déjà écrite dans chaque `POST /jobs` ?
+**Retenu** : `POST /jobs/{id}/rerun` sur les 6 routers — lit `config_json`
+(+ les colonnes dédiées : `feature_columns_json`, `target_column`,
+`group_column`, `task_type`, `feature_engineering_json` pour le
+supervisé), reconstruit le Pydantic `*JobCreate` d'origine, puis appelle
+DIRECTEMENT la fonction Python `create_*_job(body, current_user, db)` —
+jamais une requête HTTP interne, jamais une réécriture partielle de sa
+validation (dataset toujours prêt, colonnes toujours présentes, quota
+non dépassé...). Un job relancé traverse exactement le même chemin
+qu'un job créé à la main, donc ne peut jamais diverger avec le temps.
+**Deux stratégies de reconstruction selon la forme du `config_json`
+existant** :
+- Vision (classification/anomalies) : `config_json` reprend déjà TOUS
+  les champs de son `*JobCreate` à l'identique (vérifié champ par champ
+  contre le schéma avant de choisir cette voie) → dépaquetage direct
+  (`VisionClassificationJobCreate(vision_dataset_id=job.vision_dataset_id, **config)`),
+  aucune reconstruction manuelle.
+- Supervisé/clustering/réduction de dimension/anomalies : `config_json`
+  ne contient qu'un SOUS-ENSEMBLE des champs (le reste vit dans des
+  colonnes dédiées, ex. `feature_columns_json`) → reconstruction
+  explicite champ par champ, jamais un dépaquetage aveugle qui
+  échouerait silencieusement ou lèverait une erreur Pydantic peu claire
+  sur un champ inconnu.
+**Cas particulier anomalies** : `config_json["contamination"]` vaut soit
+`"auto"` (chaîne) soit une fraction (nombre) — reconstruit vers `None`
+(réglage automatique) dans le premier cas, jamais passé tel quel à
+`AnomalyJobCreate.contamination: Optional[float]` qui rejetterait une
+chaîne.
+**Piège rencontré en testant** : les tests `_create_job()` de chaque
+fichier utilisent `with patch(".../analysis_queue") as mock_queue:` en
+gestionnaire de contexte scopé au SEUL appel de création initiale — le
+job relancé, créé par un DEUXIÈME appel HTTP hors de ce `with`, tentait
+donc un vrai `enqueue()` contre Redis (absent en test), échec en
+`ConnectionError`. Corrigé en enveloppant aussi l'appel `/rerun` dans le
+même mock, dans chacun des 5 fichiers concernés (le test training,
+utilisant un `@patch` en décorateur couvrant toute la fonction de test,
+n'a pas eu besoin de ce correctif). Pas un bug de production — Redis/RQ
+tournent réellement en dehors des tests — mais un piège à connaître pour
+tout futur test qui enchaîne deux appels de création dans le même test.
+**Vérifié** : nouvelle configuration identique au job d'origine (dataset,
+colonnes, hyperparamètres) sur les 6 routers, isolation multi-tenant
+testée.
