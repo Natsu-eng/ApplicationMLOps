@@ -14,8 +14,8 @@ import {
 } from "recharts";
 import type { PermutationImportanceFeature, ShapBeeswarm, ShapBeeswarmPoint } from "../../api/client";
 import {
-  CHART_BEESWARM_HIGH,
-  CHART_BEESWARM_LOW,
+  CHART_BEESWARM_HIGH_VAR,
+  CHART_BEESWARM_LOW_VAR,
   CHART_COLOR_PRIMARY,
   CHART_GRID_STROKE,
   CHART_REFERENCE_STROKE,
@@ -160,7 +160,7 @@ export function ShapBeeswarmChart({ beeswarm }: { beeswarm: ShapBeeswarm }) {
         <span>Valeur de la variable :</span>
         <span
           className="inline-block w-16 h-2 rounded-full"
-          style={{ background: `linear-gradient(to right, ${CHART_BEESWARM_LOW}, ${CHART_BEESWARM_HIGH})` }}
+          style={{ background: `linear-gradient(to right, var(${CHART_BEESWARM_LOW_VAR}), var(${CHART_BEESWARM_HIGH_VAR}))` }}
         />
         <span>basse → haute</span>
       </div>

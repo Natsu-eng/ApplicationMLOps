@@ -31,6 +31,20 @@ import { IsolatableLegend, useSeriesIsolation } from "../components/ui/ChartLege
 import { CHART_GRID_STROKE, CHART_HEIGHT_SM, CHART_SERIES_COLORS, CHART_TICK_STYLE, CHART_TOOLTIP_STYLE } from "../theme/charts";
 import type { Density } from "../theme/density";
 import { DENSITY_LABELS } from "../theme/density";
+import {
+  CalibrationCurve,
+  ConfusionMatrix,
+  CorrelationHeatmap,
+  DensityOverlap,
+  EmbeddingScatter,
+  Gauge,
+  LearningCurve,
+  RocPr,
+  ScatterPredVsReal,
+  ShapBars,
+  Sparkline,
+  WaterfallLocal,
+} from "../components/charts";
 import { Skeleton, SkeletonGroup } from "../components/ui/Skeleton";
 import { ProgressBar, IndeterminateProgressBar } from "../components/ui/ProgressBar";
 import { Segmented } from "../components/ui/Segmented";
@@ -77,6 +91,7 @@ export default function DesignSystem() {
         <StepperSection />
         <PopoverBreadcrumbSection />
         <ToastDrawerCommandSection />
+        <ChartsGallerySection />
       </div>
     </AppShell>
   );
@@ -819,6 +834,123 @@ function ToastDrawerCommandSection() {
           </p>
         </Drawer>
       )}
+    </Section>
+  );
+}
+
+// ── Graphiques enveloppés (Lot 3) ──────────────────────────────────────────
+
+const DEMO_SCATTER_POINTS = Array.from({ length: 30 }, (_, i) => {
+  const actual = 20 + i * 2 + (Math.sin(i) * 4);
+  return { actual, predicted: actual + (Math.cos(i * 1.7) * 6), intervalHalfWidth: 3 };
+});
+
+const DEMO_SHAP: { feature: string; contribution: number }[] = [
+  { feature: "epaisseur_mm", contribution: 0.42 },
+  { feature: "temperature_cuisson", contribution: -0.28 },
+  { feature: "densite", contribution: 0.19 },
+  { feature: "duree_sechage", contribution: -0.11 },
+  { feature: "humidite", contribution: 0.06 },
+];
+
+const DEMO_LEARNING_CURVE = [200, 400, 800, 1600, 3200].map((size, i) => ({
+  size,
+  train: 0.96 - i * 0.01,
+  validation: 0.78 + i * 0.03,
+}));
+
+const DEMO_CONFUSION = {
+  classNames: ["Conforme", "Défaut mineur", "Défaut majeur"],
+  matrix: [
+    [142, 6, 1],
+    [8, 51, 4],
+    [0, 3, 22],
+  ],
+};
+
+const DEMO_ROC_PR = [
+  {
+    name: "Conforme",
+    roc: Array.from({ length: 11 }, (_, i) => ({ fpr: i / 10, tpr: Math.min(1, (i / 10) ** 0.4) })),
+    pr: Array.from({ length: 11 }, (_, i) => ({ recall: i / 10, precision: 1 - (i / 10) * 0.3 })),
+  },
+];
+
+const DEMO_DENSITY = Array.from({ length: 21 }, (_, i) => {
+  const x = i / 4;
+  const gauss = (mu: number, sigma: number) => Math.exp(-((x - mu) ** 2) / (2 * sigma * sigma));
+  return { x, normal: gauss(1.5, 1), anomaly: gauss(4, 1.2) };
+});
+
+const DEMO_EMBEDDING = Array.from({ length: 60 }, (_, i) => {
+  const group = i % 3 === 0 ? "Groupe A" : i % 3 === 1 ? "Groupe B" : "Groupe C";
+  const cx = i % 3 === 0 ? -3 : i % 3 === 1 ? 0 : 3;
+  return { x: cx + Math.sin(i) * 1.5, y: Math.cos(i * 1.3) * 1.5, group };
+});
+
+const DEMO_CORRELATION = {
+  variables: ["epaisseur", "densite", "resistance", "cout"],
+  matrix: [
+    [1, 0.62, 0.81, -0.2],
+    [0.62, 1, 0.45, -0.1],
+    [0.81, 0.45, 1, -0.35],
+    [-0.2, -0.1, -0.35, 1],
+  ],
+};
+
+function ChartsGallerySection() {
+  return (
+    <Section
+      title="Graphiques"
+      description="Composants Recharts enveloppés, branchés sur --s1…--s6 — un titre en une phrase, une légende qui dit comment lire (pas seulement ce qui est montré), une alternative textuelle et un tableau de repli pour chacun."
+    >
+      <div className="grid lg:grid-cols-2 gap-4">
+        <Card>
+          <ScatterPredVsReal points={DEMO_SCATTER_POINTS} unit="MPa" />
+        </Card>
+        <Card>
+          <ShapBars data={DEMO_SHAP} />
+        </Card>
+        <Card>
+          <WaterfallLocal
+            baseValue={32.4}
+            steps={DEMO_SHAP.map((d) => ({ label: d.feature, value: d.contribution }))}
+            finalLabel="Prédiction"
+          />
+        </Card>
+        <Card>
+          <CalibrationCurve series={[{ name: "Défaut majeur", points: [{ predicted: 0.1, observed: 0.08 }, { predicted: 0.3, observed: 0.35 }, { predicted: 0.5, observed: 0.52 }, { predicted: 0.7, observed: 0.61 }, { predicted: 0.9, observed: 0.88 }] }]} />
+        </Card>
+        <Card>
+          <LearningCurve points={DEMO_LEARNING_CURVE} metricLabel="R²" />
+        </Card>
+        <Card>
+          <ConfusionMatrix classNames={DEMO_CONFUSION.classNames} matrix={DEMO_CONFUSION.matrix} />
+        </Card>
+        <Card>
+          <RocPr series={DEMO_ROC_PR} />
+        </Card>
+        <Card>
+          <DensityOverlap points={DEMO_DENSITY} threshold={2.6} />
+        </Card>
+        <Card>
+          <EmbeddingScatter points={DEMO_EMBEDDING} groups={["Groupe A", "Groupe B", "Groupe C"]} />
+        </Card>
+        <Card>
+          <CorrelationHeatmap variables={DEMO_CORRELATION.variables} matrix={DEMO_CORRELATION.matrix} />
+        </Card>
+        <Card>
+          <p className="text-overline uppercase text-muted-foreground mb-3">Sparkline & Gauge (usage compact)</p>
+          <div className="flex items-center gap-8">
+            <div className="flex items-center gap-2">
+              <Sparkline values={[12, 14, 13, 16, 15, 18, 20]} trendLabel="Tendance en hausse, de 12 à 20 sur 7 mesures" />
+              <span className="text-caption text-muted-foreground">7 dernières mesures</span>
+            </div>
+            <Gauge value={82} label="Score de qualité" />
+            <Gauge value={38} label="Couverture" />
+          </div>
+        </Card>
+      </div>
     </Section>
   );
 }

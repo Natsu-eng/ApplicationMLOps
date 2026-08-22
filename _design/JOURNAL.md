@@ -423,3 +423,162 @@ complexes du lot :
 
 Branche `ui/2-composants` → `main`, porte de qualité au vert sur les 5
 points. Serveurs de test toujours actifs pour le Lot 3.
+
+---
+
+## Lot 3 — Graphiques
+
+### Recoloration de `theme/charts.ts` (le chantier différé depuis le Lot 1)
+
+`theme/charts.ts` gardait volontairement ses hex figés au Lot 1 (décision 1)
+— fait maintenant : chrome (grille/tick/tooltip) sur `--border`/
+`--text-muted`/`--popover`, palette de séries sur `--s1…--s6`, sémantiques
+sur `var(--s1)`/`var(--s2)`/`var(--s5)`/`var(--s3)`.
+
+23. **`beeswarmColor` a besoin d'un vrai navigateur (résout `--info`/
+    `--danger` via le DOM) — extraction de `lerpRgb`, pure, pour rester
+    testable.** Ce projet n'a pas jsdom configuré (`environment: "node"` par
+    défaut de Vitest) : une fonction qui touche `document`/`canvas` ne peut
+    pas être exercée telle quelle dans `charts.test.ts`. Plutôt que
+    d'ajouter jsdom + le paquet `canvas` (dépendance supplémentaire pour
+    un seul test), la seule logique réellement testable — l'interpolation
+    RGB — a été extraite en fonction pure (`lerpRgb`), et le test réécrit
+    pour l'exercer directement avec des couleurs arbitraires. `beeswarmColor`
+    reste la version navigateur, non testée unitairement (elle n'a plus
+    de logique propre au-delà de la résolution DOM + l'appel à `lerpRgb`).
+24. **Résolution de couleur en 2 étapes (DOM puis `<canvas>`).** `var(--info)`
+    et les rampes `color-mix(in oklch, ...)` ne peuvent être normalisées en
+    RGB numérique qu'en repassant par un élément réel (`getComputedStyle`
+    résout les custom properties selon la cascade, un `<canvas>` ne le peut
+    pas) PUIS un contexte 2D (dont `fillStyle` normalise vers des octets RGB
+    quel que soit l'espace colorimétrique d'entrée, contrairement au format
+    de sérialisation de `getComputedStyle` qui varie selon le moteur pour
+    les espaces récents — confirmé empiriquement : Chromium sérialise
+    `color-mix(in oklch, ...)` en `oklch(...)`, pas en `rgb(...)`).
+25. **Légendes Grad-CAM (`VisionAnomalies.tsx`, `VisionClassification.tsx`)
+    non recolorées — décision délibérée, pas un oubli.** Le dégradé
+    bleu→vert→rouge de ces 2 légendes décrit la colormap RÉELLE de
+    l'image de heatmap Grad-CAM produite côté serveur (une convention
+    externe fixe, indépendante du thème de l'app) — la rethèmer la ferait
+    mentir sur ce que l'image montre réellement. Laissé pour le Lot 8
+    (Vision), qui retravaille de toute façon la présentation de Grad-CAM en
+    profondeur (mission : « Grad-CAM... présenté comme un contrôle »).
+26. **`theme/charts.ts`/`charts.test.ts` restent dans le grep de la chasse
+    aux couleurs — faux positifs légitimes.** Le motif `rgba?\(` capture la
+    construction littérale `rgb(${r}, ${g}, ${b})` de `lerpRgb` (et les
+    assertions de test qui vérifient ce format) : une construction de
+    couleur RUNTIME à partir de canaux numériques calculés, pas une couleur
+    choisie à l'œil. Contrairement aux faux positifs de commentaires du
+    Lot 1 (reformulés pour éviter le motif), ici c'est le mécanisme même de
+    la fonction — rien à corriger, juste à documenter.
+
+### Bibliothèque de graphiques (`frontend/src/components/charts/`)
+
+12 composants construits : `ScatterPredVsReal`, `ShapBars`, `WaterfallLocal`,
+`CalibrationCurve`, `LearningCurve`, `ConfusionMatrix` (enveloppe `Heatmap`),
+`RocPr` (bascule ROC/précision-rappel, pas 2 graphes séparés), `DensityOverlap`,
+`EmbeddingScatter`, `CorrelationHeatmap` (enveloppe `Heatmap`), `Sparkline`,
+`Gauge`. Coquille commune `ChartFrame` : titre en une phrase, légende de
+lecture, `aria-label` de tendance, tableau de repli en divulgation.
+
+27. **Pas de migration des pages existantes (`EvaluationCharts.tsx`,
+    `ReliabilityDiagnostics.tsx`, `LocalExplanation.tsx`,
+    `DimensionalityReduction.tsx`) vers les nouveaux composants.** Même
+    principe que la décision 15 (Stepper, Lot 2) : ces 4 fichiers contiennent
+    déjà des implémentations Recharts fonctionnelles, en production. Le
+    Lot 3, tel que cadré par la mission, construit la BIBLIOTHÈQUE
+    (« composants Recharts enveloppés... branchés sur --s1…--s6 ») — son
+    adoption réelle dans les écrans produits (Verdict, Leaderboard,
+    Clustering, Projection, Anomalies, VisionAnomalies, cités par la
+    mission comme RÉFÉRENCE VISUELLE, pas comme livrables de ce lot) revient
+    aux lots qui construisent ces écrans (6, 7, 8) — migrer ces 4 fichiers
+    maintenant serait un risque de régression sans bénéfice, sur des pages
+    qui fonctionnent déjà.
+28. **`ChartFrame` : `children` = décoratif (`aria-hidden`), `controls` =
+    interactif (visible).** Distinction ajoutée après un bug trouvé par
+    l'outillage (voir bugs 29-30 ci-dessous) — nécessaire dès qu'un
+    graphique a un contrôle réel à côté de lui (`RocPr`, bascule ROC/PR).
+29. **`Sparkline`/`Gauge` n'utilisent pas `ChartFrame`.** Pensés pour un
+    usage compact (tuile, carte de verdict) — le titre/légende de lecture
+    complets seraient disproportionnés. Alternative textuelle plus légère :
+    `role="img"` + `aria-label` (Sparkline), le chiffre `.num` déjà affiché
+    au centre (Gauge, jamais caché — seul l'arc SVG est décoratif).
+
+### Bugs réels trouvés et corrigés pendant la vérification
+
+30. **`aria-hidden-focus` sur TOUS les graphiques (11 nœuds, 5 thèmes) —
+    Recharts 3.x active par défaut sa propre « couche d'accessibilité »**
+    (`accessibilityLayer`, `true` par défaut), qui pose un vrai `tabIndex`
+    sur la racine SVG de CHAQUE graphique — rendant focusable un élément
+    que `ChartFrame` marque `aria-hidden="true"` (alternative textuelle
+    délibérée, voir le commentaire du composant). Un élément focusable sous
+    un ancêtre `aria-hidden` est une violation directe (piégeable au
+    clavier mais invisible pour un lecteur d'écran). Première hypothèse
+    fausse : un contrôle `Segmented` (bascule ROC/PR de `RocPr`) rendu par
+    erreur À L'INTÉRIEUR du conteneur `aria-hidden` — corrigée (nouveau
+    prop `controls` sur `ChartFrame`, décision 28), mais le compte de
+    violations n'a PAS bougé après ce correctif (toujours 11/11), signe
+    qu'il fallait chercher ailleurs plutôt que de considérer le problème
+    réglé. Cause réelle confirmée avec `scripts/debug-axe.mjs` (nouveau,
+    liste les nœuds exacts d'une règle axe donnée) : les 11 nœuds étaient
+    littéralement les 11 conteneurs `aria-hidden` de `ChartFrame`/`Gauge`/
+    `Sparkline` eux-mêmes, chacun contenant un `<svg>` Recharts focusable.
+    Corrigé en désactivant explicitement `accessibilityLayer={false}` sur
+    la racine de chaque graphique (`LineChart`/`BarChart`/`AreaChart`/
+    `ScatterChart`/`RadialBarChart`) — cohérent avec le choix assumé de
+    `ChartFrame` (alternative textuelle + tableau de repli plutôt qu'une
+    navigation SVG point par point à moitié fonctionnelle).
+31. **`color-contrast` sur les heatmaps (Matrice de confusion, Corrélations)
+    — texte blanc sur un fond `color-mix(in oklch, var(--info), ...)`
+    encore trop clair.** `heatmapTextColor` (décision de la recoloration,
+    voir ci-dessus) choisissait noir/blanc par un SEUIL de luminance
+    approximatif (`> 0,45 → noir, sinon blanc`) — un premier diagnostic
+    détaillé (`scripts/debug-heatmap-color.mjs`, nouveau : résout un
+    `color-mix()` en RGB réel dans le navigateur et calcule sa luminance)
+    a montré des luminances de 0,20 à 0,40 pour les paliers en échec, TOUTES
+    sous le seuil de 0,45 → "blanc" choisi par le code... mais le calcul du
+    contraste RÉEL (formule WCAG (Lclaire+0,05)/(Lsombre+0,05)) donne
+    2,3:1 en blanc contre 9:1 en noir à une luminance de fond de 0,398 : la
+    luminance relative WCAG n'est PAS perceptuellement linéaire, un seuil
+    fixe ne peut pas la remplacer correctement. Corrigé en calculant les
+    DEUX contrastes réels (noir et blanc contre le fond résolu) et en
+    choisissant le meilleur, plutôt qu'un seuil deviné — plus robuste et
+    correct par construction, pas seulement recalibré au pixel près.
+
+### Porte de qualité — résultat réel
+
+**1. Build & tsc** — code de sortie 0 sur les deux, aucune erreur. Bundle :
+1 051,52 → 1 106,56 Ko JS (+55 Ko pour 12 nouveaux composants de graphiques
++ leurs types — aucune nouvelle dépendance npm, Recharts était déjà utilisé
+partout ailleurs). Avertissement de chunk >500 Ko toujours préexistant.
+
+**2. Lint** — `✖ 18 problems (0 errors, 18 warnings)` — identique au Lot 2,
+aucun nouvel avertissement introduit par les fichiers de graphiques.
+
+**3. Chasse aux couleurs en dur** — 5 fichiers restants (`theme/charts.ts`,
+`theme/charts.test.ts` : faux positifs légitimes, décision 26 ;
+`styles/themes.css` : exempté ; `VisionAnomalies.tsx`/`VisionClassification.tsx` :
+légendes Grad-CAM différées au Lot 8, décision 25). Le périmètre déféré du
+Lot 1 (6 fichiers) est donc refermé à 2 exceptions documentées près.
+
+**4. Rendu des 5 thèmes** — `visual-check.mjs` sur `/dev/components`
+(nouvelle section "Graphiques" avec les 12 composants et données de
+démonstration). Premier passage : 5/5 thèmes en échec (`aria-hidden-focus` +
+`color-contrast`, bugs 30-31). **Résultat final après correction : 5
+captures, 0 échec.**
+
+**5. Accessibilité** — 0 violation sérieuse/critique après correction.
+Test clavier dédié (`scripts/keyboard-check-lot3.mjs`) :
+- `RocPr` : la bascule ROC/précision-rappel change réellement le titre et
+  le contenu affichés (`rocPrSwitchesToPR: true`) ;
+- Le bouton "Voir les données en tableau" de `ChartFrame` est atteignable
+  au clavier (`tableToggleFocusable: true`) et s'active à `Enter`
+  (`tableToggleOpensOnEnter: true`).
+
+Tests unitaires : `vitest run src/theme/charts.test.ts` → 3 passed (la
+logique d'interpolation `lerpRgb`, décision 23).
+
+### Merge
+
+Branche `ui/3-graphiques` → `main`, porte de qualité au vert sur les 5
+points. Serveurs de test toujours actifs pour le Lot 4.

@@ -30,16 +30,16 @@ interface HeatmapProps {
 }
 
 function cellStyle(value: number | null, variant: "diverging" | "sequential", max: number): { background: string; color: string } {
-  if (value === null) return { background: HEATMAP_MISSING_FILL, color: "#94a3b8" };
+  if (value === null) return { background: HEATMAP_MISSING_FILL, color: "var(--text-muted)" };
   if (variant === "diverging") {
-    if (Math.abs(value) < 0.02) return { background: HEATMAP_NEUTRAL_STEP, color: "#0f172a" };
+    if (Math.abs(value) < 0.02) return { background: HEATMAP_NEUTRAL_STEP, color: "var(--text)" };
     const steps = value >= 0 ? HEATMAP_DIVERGING_POSITIVE_STEPS : HEATMAP_DIVERGING_NEGATIVE_STEPS;
     const idx = heatmapStepIndex(Math.abs(value), steps.length);
-    return { background: steps[idx], color: heatmapTextColor(idx) };
+    return { background: steps[idx], color: heatmapTextColor(steps[idx]) };
   }
   const intensity = max > 0 ? value / max : 0;
   const idx = heatmapStepIndex(intensity, HEATMAP_SEQUENTIAL_STEPS.length);
-  return { background: HEATMAP_SEQUENTIAL_STEPS[idx], color: heatmapTextColor(idx) };
+  return { background: HEATMAP_SEQUENTIAL_STEPS[idx], color: heatmapTextColor(HEATMAP_SEQUENTIAL_STEPS[idx]) };
 }
 
 export function Heatmap({ xLabels, yLabels, matrix, variant = "sequential", formatValue }: HeatmapProps) {

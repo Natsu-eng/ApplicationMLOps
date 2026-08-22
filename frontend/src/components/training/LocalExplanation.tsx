@@ -1,6 +1,9 @@
 import type { LocalExplanation as LocalExplanationData } from "../../api/client";
 import { LabelWithHelp } from "../ui/Tooltip";
-import { CHART_BEESWARM_HIGH, CHART_BEESWARM_LOW } from "../../theme/charts";
+import { CHART_BEESWARM_HIGH_VAR, CHART_BEESWARM_LOW_VAR } from "../../theme/charts";
+
+const CHART_BEESWARM_HIGH = `var(${CHART_BEESWARM_HIGH_VAR})`;
+const CHART_BEESWARM_LOW = `var(${CHART_BEESWARM_LOW_VAR})`;
 
 /** Explicabilité LOCALE (Lot Explicabilité locale) — pourquoi CETTE
  * prédiction précise, contribution par variable, complémentaire à

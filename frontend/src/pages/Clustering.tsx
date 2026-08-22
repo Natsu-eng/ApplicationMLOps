@@ -526,7 +526,7 @@ const CANDIDATE_COLUMNS: TableColumn<ClusterCandidate>[] = [
 // Palette validée (theme/charts.ts) — jamais une teinte hex ad hoc pour une
 // série de données, même dans une barre empilée custom hors Recharts.
 const DISTRIBUTION_BAR_COLORS = CHART_SERIES_COLORS;
-const DISTRIBUTION_NOISE_COLOR = "#94a3b8"; // slate-400 — neutre, jamais confondu avec un vrai segment
+const DISTRIBUTION_NOISE_COLOR = "var(--text-muted)"; // neutre, jamais confondu avec un vrai segment
 
 function ClusteringResultView({ job }: { job: ClusteringJobSummary }) {
   const jobId = job.id;
