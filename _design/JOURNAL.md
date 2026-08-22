@@ -1220,3 +1220,89 @@ délibérément : les écrans étaient déjà substantiellement conformes aux
 maquettes, forcer des ajouts aurait été contraire au principe directeur
 de cette refonte (jamais de fonctionnalité fabriquée pour ressembler à
 une maquette). Serveurs de test toujours actifs pour le Lot 9.
+
+---
+
+## Lot 9 — Exploiter et tracer (Prédire · Registre · Traçabilité)
+
+### État des lieux avant de coder
+
+Aucune des 3 maquettes ne correspond à un écran dédié existant : « Prédire »
+vit comme un onglet de `ModelResultModal.tsx` (`PredictionForm.tsx`, déjà
+réel : formulaire + intervalle CQR + explication SHAP locale via
+`LocalExplanation.tsx`) ; « Registre » et « Traçabilité » n'ont NI l'un ni
+l'autre de route dédiée (`App.tsx` ne liste aucun `/models`/`/registry`) —
+seul un encart compact de promotion/démotion existe dans l'onglet
+« Détails ». Recherche ciblée : `services/engine.py` construit déjà un
+`model_card["environment"]` (versions de librairies ML au moment de
+l'entraînement) commenté explicitement **« Lot 9/10 — traçabilité de
+l'environnement d'entraînement »** dans le code backend lui-même — jamais
+consommé côté frontend. Exactement le patron des Lots 6/7 : donnée réelle,
+déjà calculée, jamais affichée.
+
+### Décisions et raisons
+
+55. **Carte « Environnement d'entraînement » ajoutée à l'onglet Détails,
+    100 % réel.** `model_card.environment` (dict librairie → version :
+    scikit-learn, lightgbm, xgboost, catboost, shap, optuna, pandas,
+    numpy — `_ENVIRONMENT_LIBRARIES`) est maintenant affiché tel quel.
+    La « Fiche modèle » existante a aussi été enrichie de champs déjà
+    calculés mais jamais montrés : jeu de données, cible, graine aléatoire,
+    découpe anti-fuite par groupe (oui/non), rééquilibrage des classes
+    (appliqué/non) — tous déjà dans `model_card`/`MLModelDetail`, zéro
+    nouveau calcul, zéro appel réseau supplémentaire.
+56. **Écran « Registre » complet (historique multi-versions, delta de
+    score, alerte de dérive, journal de décisions en langage libre) — hors
+    périmètre, nouvelle fonctionnalité réelle, pas un reskin.** Vérifié :
+    `TrainingHistory.tsx` (l'écran "Historique" existant) est une liste
+    plate de jobs, sans regroupement par dataset+cible ni notion de
+    version ; aucune alerte de dérive n'existe nulle part dans le backend
+    (nécessiterait un monitoring planifié comparant les prédictions en
+    production aux données d'entraînement) ; aucun journal de décisions
+    avec commentaires humains n'existe (nécessiterait une table dédiée +
+    des routes CRUD). Ce sont trois chantiers produit distincts, chacun
+    plus gros que l'ensemble de ce lot — au-delà de ce qu'une refonte
+    visuelle peut raisonnablement ajouter sans validation produit
+    préalable (l'un des 3 déclencheurs d'escalade explicites de la
+    mission : une fonctionnalité de cette ampleur mérite un vrai
+    arbitrage, pas une décision unilatérale au milieu d'un lot visuel).
+57. **`Predire.html` : indices « vu de X à Y » par variable et alerte
+    d'extrapolation — hors périmètre, aucune donnée backend correspon-
+    dante.** Vérifié `FeatureSchemaEntry` (`{name, dtype}` uniquement,
+    aucun min/max) : le schéma de formulaire de prédiction ne porte
+    aucune borne observée à l'entraînement. Le reste de l'écran (formu-
+    laire, intervalle CQR, explication SHAP locale par contribution) est
+    déjà réel et fonctionnel, aucune modification nécessaire.
+
+### Porte de qualité — résultat réel
+
+**1. Build & tsc** — `npx tsc --noEmit` : aucune sortie, code 0. `npm run
+build` : code 0, bundle stable (`1 125,92 Ko` JS / `78,65 Ko` CSS, +1,1 Ko
+pour la nouvelle carte).
+
+**2. Lint** — `✖ 18 problems (0 errors, 18 warnings)`, identique aux lots
+précédents.
+
+**3. Chasse aux couleurs en dur** — identique à la ligne de base (2
+occurrences Vision, exception documentée au Lot 8, + 4 dans un fichier de
+test).
+
+**4. Rendu des 5 thèmes** — `scripts/lot9-verify.mjs` contre un job réel
+terminé (job #45) × 5 thèmes, onglet Détails, avec le PATCH de préférence
+serveur et vérification `renderedTheme === theme` : 5 captures, 0 anomalie.
+
+**5. Accessibilité** — `scripts/lot9-axe.mjs`, tags `wcag2a`/`wcag2aa`/
+`wcag21aa`, onglet Détails × 5 thèmes : **0 violation sérieuse/critique sur
+les 5 thèmes** (la nouvelle carte n'utilise que `text-foreground`/
+`text-muted-foreground` via le composant `Fact` existant, jamais les
+jetons `accent-2`/`accent-3` du bug 48).
+
+**6. Clavier** — aucun nouvel élément interactif ajouté (contenu purement
+statique, `dl`/`dt`/`dd`) — l'accès par onglet était déjà vérifié au Lot 6.
+
+**7. Tests backend** — aucun fichier backend modifié par ce lot.
+
+### Merge
+
+Branche `ui/9-exploiter-tracer` → `main`. Serveurs de test toujours actifs
+pour le Lot 10.

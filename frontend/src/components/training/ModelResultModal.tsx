@@ -1,5 +1,5 @@
 import { type ReactNode, useEffect, useState } from "react";
-import { Activity, AlertTriangle, Award, Calculator, ClipboardList, Download, Gauge, Scale, ShieldCheck, Sparkles, Trophy, Wand2 } from "lucide-react";
+import { Activity, AlertTriangle, Award, Calculator, ClipboardList, Download, Gauge, History, Scale, ShieldCheck, Sparkles, Trophy, Wand2 } from "lucide-react";
 import {
   ApiError,
   api,
@@ -501,6 +501,35 @@ function ModelRegistryControls({
   );
 }
 
+/** Traçabilité (Lot 9, Traçabilité.html) — versions des librairies ML au
+ * moment de l'entraînement, déjà calculées et persistées côté serveur
+ * (`services/engine.py::_training_environment_versions`, commenté "Lot
+ * 9/10 — traçabilité de l'environnement") mais jusqu'ici jamais affichées
+ * nulle part côté frontend. Utile pour l'audit d'un modèle promu en
+ * production : reproduire exactement l'environnement qui l'a entraîné.
+ * Absent sur un modèle entraîné avant ce champ — carte simplement omise,
+ * jamais une erreur. */
+function TraceabilityCard({ environment }: { environment: unknown }) {
+  if (!environment || typeof environment !== "object") return null;
+  const entries = Object.entries(environment as Record<string, string>);
+  if (entries.length === 0) return null;
+  return (
+    <Card className={`p-5 ${accentSurfaceClass("violet")}`}>
+      <SectionHeader
+        icon={History}
+        color="violet"
+        label="Environnement d'entraînement"
+        help="Versions des librairies ML au moment de l'entraînement — une librairie mise à jour peut changer le résultat d'un même code sur les mêmes données ; ces versions font partie de ce qui définit ce modèle, au même titre que la graine aléatoire."
+      />
+      <dl className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-2 text-xs">
+        {entries.map(([lib, version]) => (
+          <Fact key={lib} label={lib} value={String(version)} />
+        ))}
+      </dl>
+    </Card>
+  );
+}
+
 /** Contenu du résultat d'un entraînement — sans chrome de modale, pour être
  * réutilisable tel quel dans deux contextes (Lot E1-ter) : la modale
  * (`ModelResultModal`, ouverte depuis le tableau de bord) et la page
@@ -756,14 +785,27 @@ export function ModelResultView({ job }: { job: TrainingJobSummary }) {
               <Card className={`p-5 ${accentSurfaceClass("blue")}`}>
                 <SectionHeader icon={ClipboardList} color="blue" label="Fiche modèle" />
                 <dl className="grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-2 text-xs">
+                  <Fact label="Jeu de données" value={job.dataset_name ?? "—"} />
+                  <Fact label="Cible" value={model.target_column} />
                   <Fact label="Échantillons train" value={String(model.model_card.n_train ?? "—")} />
                   <Fact label="Échantillons test" value={String(model.model_card.n_test ?? "—")} />
                   <Fact label="Doublons retirés" value={String(model.model_card.duplicates_removed ?? "—")} />
                   <Fact label="Essais Optuna" value={String(model.model_card.optuna_trials ?? "—")} />
                   <Fact label="Folds de CV" value={String(model.model_card.cv_folds ?? "—")} />
                   <Fact label="Variables" value={String(model.feature_columns.length)} />
+                  <Fact label="Graine aléatoire" value={String(model.model_card.seed ?? "—")} />
+                  <Fact
+                    label="Découpe anti-fuite par groupe"
+                    value={model.model_card.anti_leak_grouping ? "Oui" : "Non"}
+                  />
+                  <Fact
+                    label="Rééquilibrage des classes"
+                    value={model.model_card.class_rebalancing_applied ? "Appliqué" : "Non appliqué"}
+                  />
                 </dl>
               </Card>
+
+              <TraceabilityCard environment={model.model_card.environment} />
             </div>
           )}
         </div>
