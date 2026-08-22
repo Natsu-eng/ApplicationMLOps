@@ -1,201 +1,41 @@
 [
   {
-    "screen": "Login",
+    "screen": "Datasets",
     "theme": "graphite",
     "renderedTheme": "graphite",
-    "file": "login-graphite.png",
+    "file": "datasets-graphite.png",
     "axeViolationsSerious": [],
     "axeViolationsOther": 0
   },
   {
-    "screen": "Login",
+    "screen": "Datasets",
     "theme": "ivoire",
     "renderedTheme": "ivoire",
-    "file": "login-ivoire.png",
+    "file": "datasets-ivoire.png",
     "axeViolationsSerious": [],
     "axeViolationsOther": 0
   },
   {
-    "screen": "Login",
+    "screen": "Datasets",
     "theme": "minuit",
     "renderedTheme": "minuit",
-    "file": "login-minuit.png",
+    "file": "datasets-minuit.png",
     "axeViolationsSerious": [],
     "axeViolationsOther": 0
   },
   {
-    "screen": "Login",
+    "screen": "Datasets",
     "theme": "ardoise",
     "renderedTheme": "ardoise",
-    "file": "login-ardoise.png",
+    "file": "datasets-ardoise.png",
     "axeViolationsSerious": [],
     "axeViolationsOther": 0
   },
   {
-    "screen": "Login",
+    "screen": "Datasets",
     "theme": "porcelaine",
     "renderedTheme": "porcelaine",
-    "file": "login-porcelaine.png",
-    "axeViolationsSerious": [],
-    "axeViolationsOther": 0
-  },
-  {
-    "screen": "Register",
-    "theme": "graphite",
-    "renderedTheme": "graphite",
-    "file": "register-graphite.png",
-    "axeViolationsSerious": [],
-    "axeViolationsOther": 0
-  },
-  {
-    "screen": "Register",
-    "theme": "ivoire",
-    "renderedTheme": "ivoire",
-    "file": "register-ivoire.png",
-    "axeViolationsSerious": [],
-    "axeViolationsOther": 0
-  },
-  {
-    "screen": "Register",
-    "theme": "minuit",
-    "renderedTheme": "minuit",
-    "file": "register-minuit.png",
-    "axeViolationsSerious": [],
-    "axeViolationsOther": 0
-  },
-  {
-    "screen": "Register",
-    "theme": "ardoise",
-    "renderedTheme": "ardoise",
-    "file": "register-ardoise.png",
-    "axeViolationsSerious": [],
-    "axeViolationsOther": 0
-  },
-  {
-    "screen": "Register",
-    "theme": "porcelaine",
-    "renderedTheme": "porcelaine",
-    "file": "register-porcelaine.png",
-    "axeViolationsSerious": [],
-    "axeViolationsOther": 0
-  },
-  {
-    "screen": "Onboarding",
-    "theme": "graphite",
-    "renderedTheme": "graphite",
-    "file": "onboarding-graphite.png",
-    "axeViolationsSerious": [],
-    "axeViolationsOther": 0
-  },
-  {
-    "screen": "Onboarding",
-    "theme": "ivoire",
-    "renderedTheme": "ivoire",
-    "file": "onboarding-ivoire.png",
-    "axeViolationsSerious": [],
-    "axeViolationsOther": 0
-  },
-  {
-    "screen": "Onboarding",
-    "theme": "minuit",
-    "renderedTheme": "minuit",
-    "file": "onboarding-minuit.png",
-    "axeViolationsSerious": [],
-    "axeViolationsOther": 0
-  },
-  {
-    "screen": "Onboarding",
-    "theme": "ardoise",
-    "renderedTheme": "ardoise",
-    "file": "onboarding-ardoise.png",
-    "axeViolationsSerious": [],
-    "axeViolationsOther": 0
-  },
-  {
-    "screen": "Onboarding",
-    "theme": "porcelaine",
-    "renderedTheme": "porcelaine",
-    "file": "onboarding-porcelaine.png",
-    "axeViolationsSerious": [],
-    "axeViolationsOther": 0
-  },
-  {
-    "screen": "Orientation",
-    "theme": "graphite",
-    "renderedTheme": "graphite",
-    "file": "orientation-graphite.png",
-    "axeViolationsSerious": [],
-    "axeViolationsOther": 0
-  },
-  {
-    "screen": "Orientation",
-    "theme": "ivoire",
-    "renderedTheme": "ivoire",
-    "file": "orientation-ivoire.png",
-    "axeViolationsSerious": [],
-    "axeViolationsOther": 0
-  },
-  {
-    "screen": "Orientation",
-    "theme": "minuit",
-    "renderedTheme": "minuit",
-    "file": "orientation-minuit.png",
-    "axeViolationsSerious": [],
-    "axeViolationsOther": 0
-  },
-  {
-    "screen": "Orientation",
-    "theme": "ardoise",
-    "renderedTheme": "ardoise",
-    "file": "orientation-ardoise.png",
-    "axeViolationsSerious": [],
-    "axeViolationsOther": 0
-  },
-  {
-    "screen": "Orientation",
-    "theme": "porcelaine",
-    "renderedTheme": "porcelaine",
-    "file": "orientation-porcelaine.png",
-    "axeViolationsSerious": [],
-    "axeViolationsOther": 0
-  },
-  {
-    "screen": "Dashboard",
-    "theme": "graphite",
-    "renderedTheme": "graphite",
-    "file": "dashboard-graphite.png",
-    "axeViolationsSerious": [],
-    "axeViolationsOther": 0
-  },
-  {
-    "screen": "Dashboard",
-    "theme": "ivoire",
-    "renderedTheme": "ivoire",
-    "file": "dashboard-ivoire.png",
-    "axeViolationsSerious": [],
-    "axeViolationsOther": 0
-  },
-  {
-    "screen": "Dashboard",
-    "theme": "minuit",
-    "renderedTheme": "minuit",
-    "file": "dashboard-minuit.png",
-    "axeViolationsSerious": [],
-    "axeViolationsOther": 0
-  },
-  {
-    "screen": "Dashboard",
-    "theme": "ardoise",
-    "renderedTheme": "ardoise",
-    "file": "dashboard-ardoise.png",
-    "axeViolationsSerious": [],
-    "axeViolationsOther": 0
-  },
-  {
-    "screen": "Dashboard",
-    "theme": "porcelaine",
-    "renderedTheme": "porcelaine",
-    "file": "dashboard-porcelaine.png",
+    "file": "datasets-porcelaine.png",
     "axeViolationsSerious": [],
     "axeViolationsOther": 0
   }

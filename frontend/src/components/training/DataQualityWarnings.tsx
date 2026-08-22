@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { AlertTriangle, ChevronDown, Info, ShieldAlert, ShieldCheck, XCircle } from "lucide-react";
+import { AlertTriangle, Check, ChevronDown, Info, ShieldAlert, ShieldCheck, XCircle } from "lucide-react";
 import { ApiError, api, type DataWarning } from "../../api/client";
 import { Badge } from "../ui/Badge";
 import { Button } from "../ui/Button";
@@ -72,6 +72,13 @@ export function DataQualityWarnings({
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
+  // "Garder tel quel" (SPEC-UI.md §7, règle n°3 : toute alerte propose au
+  // moins 2 actions, dont ne rien changer) — acquittement local, jamais
+  // persisté côté serveur : ce n'est pas une correction de données, juste
+  // "vu et assumé", redemandé à la prochaine analyse (nouveau dataset,
+  // nouvelle cible). Rien n'est masqué : la ligne reste visible, seule son
+  // état visuel change.
+  const [kept, setKept] = useState<Set<number>>(new Set());
 
   useEffect(() => {
     setLoading(true);
@@ -160,36 +167,57 @@ export function DataQualityWarnings({
 
               {isOpen && <p className="text-xs text-muted-foreground mt-2 pl-6">{warning.explanation}</p>}
 
+              <p className="text-xs mt-2 pl-6 bg-background/40 rounded-md px-2.5 py-1.5 border border-border/60">
+                <span className="font-semibold text-foreground">La question à se poser : </span>
+                <span className="text-muted-foreground">{warning.question}</span>
+              </p>
+
               <p className="text-xs text-muted-foreground mt-2 pl-6">
                 <span className="text-muted-foreground">Action recommandée : </span>
                 {warning.action}
               </p>
 
-              {excludable.length > 0 && (
-                <div className="flex flex-wrap items-center gap-2 mt-2 pl-6">
-                  {excludable.map((col) =>
-                    selectedFeatures?.has(col) ? (
-                      <button
-                        key={col}
-                        type="button"
-                        onClick={() => onExcludeColumns?.([col])}
-                        className="inline-flex items-center gap-1 rounded-full border border-destructive/20 bg-card px-2.5 py-1 text-xs font-medium text-destructive hover:bg-destructive/10 transition-colors"
-                      >
-                        <XCircle size={12} />
-                        Exclure « {col} »
-                      </button>
-                    ) : (
-                      <span
-                        key={col}
-                        className="inline-flex items-center gap-1 rounded-full border border-success/20 bg-success/10 px-2.5 py-1 text-xs font-medium text-success"
-                      >
-                        <ShieldCheck size={12} />
-                        « {col} » exclue
-                      </span>
-                    ),
-                  )}
-                </div>
-              )}
+              <div className="flex flex-wrap items-center gap-2 mt-2 pl-6">
+                {excludable.map((col) =>
+                  selectedFeatures?.has(col) ? (
+                    <button
+                      key={col}
+                      type="button"
+                      onClick={() => onExcludeColumns?.([col])}
+                      className="inline-flex items-center gap-1 rounded-full border border-destructive/20 bg-card px-2.5 py-1 text-xs font-medium text-destructive hover:bg-destructive/10 transition-colors"
+                    >
+                      <XCircle size={12} />
+                      Exclure « {col} »
+                    </button>
+                  ) : (
+                    <span
+                      key={col}
+                      className="inline-flex items-center gap-1 rounded-full border border-success/20 bg-success/10 px-2.5 py-1 text-xs font-medium text-success"
+                    >
+                      <ShieldCheck size={12} />
+                      « {col} » exclue
+                    </span>
+                  ),
+                )}
+
+                {/* "Garder tel quel" — toujours proposée, quel que soit le
+                    contrôle (SPEC-UI.md §7 règle n°3) : la seule action qui
+                    ne dépend d'aucune capacité d'exclusion. */}
+                {kept.has(index) ? (
+                  <span className="inline-flex items-center gap-1 rounded-full border border-border bg-muted px-2.5 py-1 text-xs font-medium text-muted-foreground">
+                    <Check size={12} />
+                    Conservée telle quelle
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setKept((prev) => new Set(prev).add(index))}
+                    className="inline-flex items-center gap-1 rounded-full border border-border px-2.5 py-1 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+                  >
+                    Garder tel quel
+                  </button>
+                )}
+              </div>
             </div>
           );
         })}

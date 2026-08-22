@@ -691,3 +691,123 @@ Test clavier dédié (`scripts/keyboard-check-lot4.mjs`) :
 
 Branche `ui/4-entrer-produit` → `main`, porte de qualité au vert sur les 5
 points. Serveurs de test toujours actifs pour le Lot 5.
+
+---
+
+## Lot 5 — Données et qualité
+
+### Décisions et raisons
+
+37. **Champ `question` ajouté aux 11 avertissements de qualité, plutôt que de
+    reformuler `explanation`.** `Qualite.html` distingue visuellement, pour
+    chaque type d'alerte, un texte diagnostic ("ce qui a été détecté") d'une
+    question orientant la décision de l'utilisateur ("dois-je garder/exclure
+    cette colonne ?"). Réutiliser `explanation` pour ça aurait mélangé deux
+    intentions dans un seul champ déjà consommé ailleurs (export, logs).
+    Ajout d'un champ dédié, texte rédigé pour chacun des 11 contrôles
+    (`_warning()` dans `backend/domains/shared/data_quality.py`,
+    `DataWarning.question` dans `router.py` et `frontend/src/api/client.ts`),
+    affiché comme un encart dédié dans `DataQualityWarnings.tsx`.
+38. **Bouton universel « Garder tel quel ».** La maquette montre, à côté du
+    bouton d'exclusion existant, un accusé de lecture pour l'utilisateur qui
+    juge l'avertissement non pertinent — actuellement l'UI ne proposait que
+    « Exclure », aucune façon d'acquitter une alerte sans agir dessus.
+    Ajouté comme état **local, non persisté côté serveur** (pas de colonne
+    ni d'endpoint dédié à créer : une refonte visuelle n'a pas à inventer une
+    capacité backend « alertes acquittées » qui n'existe pas) — le bouton est
+    toujours affiché, y compris quand `canExclude` est faux (contexte
+    `EdaModal`, qui n'a pas de `selectedFeatures`/`onExcludeColumns` — voir
+    décision 40).
+39. **Détections « valeurs aberrantes à 3σ » et « comparaison R² par groupe »
+    de `Qualite.html` — hors périmètre, non implémentées.** Ce sont deux
+    NOUVEAUX contrôles statistiques qui n'existent pas dans le système actuel
+    (10 contrôles définis dans `data_quality.py`) : les construire est un
+    travail de science des données (choix de seuils, tests statistiques),
+    pas une tâche de refonte visuelle. Consigné ici pour rester honnête sur
+    l'écart entre la maquette et le résultat livré (repris dans le futur
+    `RAPPORT-FINAL.md`).
+40. **`canExclude` reste conditionnel selon le contexte d'affichage —
+    inchangé.** `EdaModal` (exploration en lecture seule) n'expose jamais de
+    bouton "Exclure «...»" puisqu'il n'a pas de callback `onExcludeColumns` ;
+    seul le flux d'entraînement (`Training.tsx`, où l'exclusion a un effet
+    réel sur les features du modèle) le propose. Comportement déjà correct
+    avant ce lot — vérifié, pas modifié.
+
+### Bug réel trouvé et corrigé (hors périmètre `data_quality`, mais bloquant pour la vérification clavier de ce lot)
+
+41. **Toute modale de l'application (`components/ui/Modal.tsx`) avait sa
+    bande gauche (~274px, largeur de la barre latérale flottante introduite
+    au Lot 4) non cliquable et non focusable au clavier, sur écran ≥1024px.**
+    Cause racine : `AppShell.tsx` place la barre latérale fixe (`aside`,
+    `z-20`) en dehors du conteneur `<main>` qui, lui, porte
+    `relative z-10` — ce conteneur crée sa PROPRE pile d'empilement CSS. Le
+    `z-50` de `Modal.tsx` (monté en enfant de ce conteneur, sans portail) ne
+    se compare donc qu'À L'INTÉRIEUR de cette pile ; face à l'`aside`, pile
+    séparée à `z-20`, il perd systématiquement pour toute zone qui se
+    superpose visuellement aux deux — la modale reste correctement dimmée/
+    visible, mais un clic ou un focus clavier sur cette bande gauche est
+    intercepté par la barre latérale. Détecté en écrivant
+    `scripts/keyboard-check-lot5.mjs` : le clic Playwright sur l'onglet
+    « Qualité des données » d'`EdaModal` échouait avec `<nav>... intercepts
+    pointer events`, alors que le locator résolvait bien le bon bouton.
+    Un test manuel au clavier (Tab depuis l'ouverture de la modale)
+    confirmait le même piège de focus. **Correction à la racine** : `Modal`
+    utilise maintenant `createPortal(..., document.body)` — la modale n'est
+    plus imbriquée dans la pile du conteneur principal, son `z-50` se
+    compare directement à celui de l'`aside` (z-20) au niveau racine et
+    gagne, comme visuellement prévu depuis le Lot 4. Ce correctif profite à
+    TOUTES les modales déjà en production (`ModelResultModal`, etc.), pas
+    seulement `EdaModal` — probablement un défaut d'accessibilité clavier
+    latent depuis la fusion du Lot 4, non détecté à l'époque car son test
+    clavier ne testait pas de modale ouverte sur la page `Dashboard`.
+
+### Porte de qualité — résultat réel
+
+**1. Build & tsc** — `npx tsc --noEmit` : aucune sortie, code 0. `npm run
+build` : code 0, bundle `1 115,63 Ko` JS / `77,34 Ko` CSS (stable, aucune
+nouvelle dépendance — `createPortal` vient de `react-dom`, déjà présent).
+
+**2. Lint** — `✖ 18 problems (0 errors, 18 warnings)`, identique aux lots
+précédents, aucun nouvel avertissement.
+
+**3. Chasse aux couleurs en dur** — 2 occurrences réelles (dégradés inline
+`VisionAnomalies.tsx`/`VisionClassification.tsx`, hors périmètre — Lot 8) +
+4 dans `theme/charts.test.ts` (assertions de test, pas du style) : identique
+à la ligne de base des lots précédents, aucune régression.
+
+**4. Rendu des 5 thèmes** — `visual-check.mjs` sur `/datasets` × 5 thèmes.
+Résultat : **5 captures, 0 échec** (avant ET après le correctif du bug 41 —
+le portail ne change rien au rendu visuel, seulement l'emplacement dans le
+DOM et la pile d'empilement).
+
+**5. Clavier & accessibilité** — `scripts/keyboard-check-lot5.mjs` contre le
+backend réel (organisation de test dédiée, dataset `test_quality.csv` avec
+colonne constante + colonne dupliquée pour déclencher de vrais
+avertissements). Premier passage : échec de clic (bug 41, cause racine
+identifiée et corrigée ci-dessus). Après correction :
+```
+{
+  "qualityTabOpened": true,
+  "keepButtonVisible": true,
+  "keepButtonFocusable": true,
+  "keepButtonActivatesOnEnter": true,
+  "excludeButtonVisible": false
+}
+```
+`excludeButtonVisible: false` est le résultat ATTENDU (décision 40 —
+`EdaModal` ne propose pas d'exclusion) et non un échec.
+
+**6. Tests backend** — `pytest tests/test_data_quality.py -q` :
+```
+......................................                                   [100%]
+38 passed, 4 warnings in 228.88s (0:03:48)
+```
+Les 4 avertissements sont préexistants (dépréciations `httpx`/`shap`, sans
+rapport avec ce lot). Aucune régression sur les 11 contrôles malgré l'ajout
+du champ `question` obligatoire à `_warning()`.
+
+### Merge
+
+Branche `ui/5-donnees-qualite` → `main`, porte de qualité au vert sur les 6
+points (les 5 habituels + les tests backend ciblés). Serveurs de test
+toujours actifs pour le Lot 6.
