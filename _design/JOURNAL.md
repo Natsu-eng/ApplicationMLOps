@@ -1131,3 +1131,92 @@ est 100 % frontend : un seul fichier touché, `AnomalyDetection.tsx`).
 Branche `ui/7-non-supervise` → `main`, porte de qualité au vert sur les 6
 points applicables (bug 48 confirmé systémique, toujours différé). Serveurs
 de test toujours actifs pour le Lot 8.
+
+---
+
+## Lot 8 — Vision (VisionWizard · VisionResultat · VisionAnomalies)
+
+### État des lieux avant de coder
+
+Ce pilier avait déjà fait l'objet d'un chantier dédié antérieur (docu-
+menté dans la mémoire du projet sous « Lot 15 ») : lu en détail,
+`VisionWizard.tsx`/`VisionClassification.tsx`/`VisionAnomalies.tsx` se
+sont révélés déjà substantiellement alignés avec les 3 maquettes, parfois
+au-delà — aperçu d'augmentation utilisant les VRAIES transformations
+torchvision sur de vraies images du dataset (pas une approximation CSS
+comme la maquette), détection de déséquilibre de classes avec ratio réel
+et action concrète (pondération), sélection d'architecture avec compromis
+CPU réalistes (le garde-fou "CPU-only" déjà en place, contrairement à la
+maquette qui suppose un GPU T4), matrice de confusion + précision/rappel
+par classe réutilisant `EvaluationCharts.tsx`, Grad-CAM avec une vraie
+carte de chaleur calculée serveur (pas un dégradé décoratif), et pour les
+anomalies visuelles : seuil calibré par l'indice de Youden sur un
+sous-ensemble de calibration DISTINCT de celui d'évaluation (plus rigoureux
+que la maquette, qui ne mentionne pas cette séparation), avec un triptyque
+par exemple (image / carte d'erreur superposée / masque binaire) au lieu
+du duo photo/reconstruction de la maquette — un choix différent mais tout
+aussi défendable (le masque calibré est plus directement actionnable que
+la reconstruction brute).
+
+### Décisions et raisons
+
+53. **Légende de couleur fixe du Grad-CAM/des cartes d'erreur — vérifiée
+    et documentée, PAS corrigée.** Le grep de couleurs en dur du Lot 1
+    avait déjà repéré ces 2 occurrences (`VisionClassification.tsx`,
+    `VisionAnomalies.tsx` : `linear-gradient(to right, #0000cc, #00cc66,
+    #cc0000)`) et les avait explicitement classées « hors périmètre, Lot
+    8 » sans les investiguer plus loin. Vérifié maintenant dans
+    `backend/domains/vision/localization.py::_apply_colormap` : le PNG de
+    carte de chaleur affiché AU-DESSUS de cette légende est colorié
+    côté serveur avec une palette "jet" FIXE (bleu = faible, rouge = fort),
+    indépendante du thème choisi par l'utilisateur — remplacer ces
+    couleurs par des jetons de thème rendrait la légende FAUSSE par
+    rapport à l'image réellement affichée juste au-dessus. Ce n'est donc
+    pas une violation à corriger mais une exception délibérée et
+    nécessaire : un commentaire explicite a été ajouté aux deux endroits
+    pour qu'un futur grep (ou une future revue) n'ait pas à refaire cette
+    investigation. Boucle ouverte depuis le Lot 1, refermée ici.
+54. **Aucune autre modification apportée à `VisionWizard.tsx`/
+    `VisionClassification.tsx`/`VisionAnomalies.tsx`.** Après vérification
+    détaillée des 3 écrans contre les 3 maquettes, aucun écart n'a été
+    trouvé qui corresponde au patron des lots précédents (donnée déjà
+    calculée par le backend, jamais affichée) — contrairement aux Lots 6
+    et 7, où de telles données dormantes existaient. Forcer un ajout ici
+    (ex. reproduire le tableau de compromis de seuils à 3 lignes de la
+    maquette VisionAnomalies, ou un graphe de chevauchement des deux
+    distributions) aurait exigé soit de nouvelles données non calculées
+    par le backend (courbe ROC point par point, densités par classe),
+    soit une réinvention approximative risquant de diverger du calcul réel
+    de calibration — density Youden déjà correctement implémenté et
+    expliqué en langage clair. Documenté plutôt qu'ajouté à la hâte.
+
+### Porte de qualité — résultat réel
+
+**1. Build & tsc** — `npx tsc --noEmit` : aucune sortie, code 0. `npm run
+build` : code 0, bundle STRICTEMENT IDENTIQUE (`1 124,81 Ko` JS) — les
+deux seuls changements de ce lot sont des commentaires, aucun impact sur
+le bundle.
+
+**2. Lint** — `✖ 18 problems (0 errors, 18 warnings)`, identique aux lots
+précédents.
+
+**3. Chasse aux couleurs en dur** — les 2 occurrences Vision restent
+présentes dans le grep (attendu — elles ne sont pas supprimées, seulement
+documentées comme exception délibérée, voir décision 53) ; aucune
+nouvelle occurrence.
+
+**4-6. Rendu des 5 thèmes / accessibilité / clavier** — sans objet : ce
+lot n'a modifié que des commentaires de code, aucun changement de rendu,
+de structure DOM ou d'interaction. Pas de nouvelle capture ni de nouveau
+scan nécessaire — les écrans Vision n'ont subi aucune modification
+visuelle ou fonctionnelle.
+
+**7. Tests backend** — aucun fichier backend modifié par ce lot.
+
+### Merge
+
+Branche `ui/8-vision` → `main`. Lot le plus court de la mission jusqu'ici,
+délibérément : les écrans étaient déjà substantiellement conformes aux
+maquettes, forcer des ajouts aurait été contraire au principe directeur
+de cette refonte (jamais de fonctionnalité fabriquée pour ressembler à
+une maquette). Serveurs de test toujours actifs pour le Lot 9.
