@@ -582,3 +582,112 @@ logique d'interpolation `lerpRgb`, décision 23).
 
 Branche `ui/3-graphiques` → `main`, porte de qualité au vert sur les 5
 points. Serveurs de test toujours actifs pour le Lot 4.
+
+---
+
+## Lot 4 — Entrer dans le produit
+
+### Décisions
+
+32. **Rail flottant en verre, PAS l'anatomie 60px-icônes-seules de la
+    maquette.** `_design/SPEC-UI.md` §5 et `Main.html` montrent un rail
+    étroit (60px) à 5 icônes fixes + aide + avatar. Cette app a une
+    navigation plus profonde qu'un rail à 5 entrées fixes ne peut porter :
+    chaque pilier a une liste de sous-modules de longueur VARIABLE
+    (supervisé : 3 ; non supervisé : 4 ; vision : 4), affichée aujourd'hui
+    en texte dans la sidebar. Réduire à des icônes nues aurait exigé de
+    déplacer cette sous-navigation ailleurs (dans la page elle-même ? une
+    palette de commandes systématique ?) — une vraie décision d'architecture
+    de l'information, pas un simple reskin visuel, et hors de ce que je
+    peux trancher seul sans revenir en arrière sur un choix qui touche
+    TOUTES les pages de l'app. Décision : adopter le MATÉRIAU de la maquette
+    (verre, flottant, coins arrondis `--radius-3`, halos radiaux derrière)
+    sur la sidebar texte EXISTANTE, largeur inchangée (256px) — la
+    navigation complète reste lisible et fonctionnelle, seule l'esthétique
+    change. Barre haute : même traitement (flottante, verre, coins
+    arrondis), en flux normal (sticky) plutôt qu'en position absolue globale
+    comme la maquette — évite de devoir recalculer une compensation de
+    marge sur toutes les pages existantes pour un gain esthétique
+    équivalent. Si une vraie refonte de navigation (rail 60px) est voulue
+    plus tard, elle mérite son propre lot avec un vrai arbitrage produit sur
+    où va la sous-navigation — pas une décision tranchée seule ici.
+33. **Performance du dashboard (7-9s signalés) — déjà corrigée par un lot
+    antérieur, mesure de confirmation seulement.** Le code de
+    `Dashboard.tsx` porte déjà un commentaire daté documentant le correctif
+    (8 appels de liste → 1 seul `GET /dashboard/summary`). Mesuré avec
+    Playwright (`scripts/measure-dashboard-perf.mjs`) plutôt que supposé
+    correct sur la seule lecture du commentaire : **contenu réel visible en
+    1 207 ms**, réseau totalement inactif à 1 887 ms — largement sous les
+    7-9s d'origine. Le correctif tient, documenté avec une vraie mesure
+    plutôt qu'une confiance aveugle dans un commentaire de code.
+34. **Onboarding : une seule carte pleinement fonctionnelle, pas les 3
+    étapes de la maquette de référence.** `Onboarding.html` montre un
+    assistant à 3 étapes avec, à l'étape 1, un choix entre "mon propre
+    fichier" et "un jeu de données de démonstration" pré-chargé côté
+    serveur. Cette 2ᵉ capacité (jeux de démonstration prêts à l'emploi)
+    N'EXISTE PAS dans l'API actuelle (`GET /datasets` liste seulement ce
+    que l'utilisateur a réellement importé) — la construire aurait exigé un
+    vrai travail backend (données de démo, endpoint de seed), hors
+    périmètre d'un lot de refonte VISUELLE, et surtout en contradiction
+    directe avec un principe déjà écrit dans ce code (`AppShell.tsx`,
+    commentaire existant : « une UI qui a l'air fonctionnelle sans l'être
+    casse la confiance »). Remplacé par un second choix réellement
+    fonctionnel : "Explorer d'abord" (navigue vers `/`, l'écran
+    d'orientation existant) — la première carte ("J'ai mon propre fichier")
+    est en revanche branchée pour de vrai sur `POST /datasets`
+    (`api.datasets.upload`), pas une maquette statique. `Register.tsx`
+    redirige maintenant vers `/onboarding` (au lieu de `/`) après
+    inscription.
+35. **Contenu de `Register.tsx` repris d'`Inscription.html`** — les 3
+    promesses concrètes ("Un verdict, pas un rapport" / "Les pièges
+    détectés avant vous" / "Chaque chiffre est traçable") ajoutées au
+    panneau de marque existant (`AuthBrandPanel`, nouveau prop optionnel
+    `features`, rétrocompatible — `Login.tsx` n'en passe pas et garde son
+    rendu inchangé).
+
+### Bug réel trouvé et corrigé (referme la décision 13 du Lot 1)
+
+36. **`link-in-text-block` sur `Dashboard.tsx` — signalé au Lot 1 comme
+    « préexistant, sans rapport avec ce lot », maintenant corrigé puisque
+    Dashboard EST une cible explicite du Lot 4** (`Main.html`). 4 liens
+    (`Entraînement`, `ML non supervisé`, `Vision`, `Mes données`) posés en
+    ligne dans un paragraphe de texte, distingués UNIQUEMENT par la couleur
+    (`text-primary`, sans soulignement) — violation WCAG 1.4.1 confirmée
+    par `scripts/debug-axe.mjs`. Corrigé en ajoutant `underline
+    underline-offset-2` aux 4 liens concernés (uniquement ceux réellement
+    posés dans un bloc de texte — les liens de navigation autonomes
+    "Historique supervisé"/"Voir tout" etc. ne sont pas concernés par cette
+    règle et restent inchangés).
+
+### Porte de qualité — résultat réel
+
+**1. Build & tsc** — code de sortie 0, aucune erreur. Bundle : 1 106,56 →
+1 114,67 Ko JS (+8 Ko : `Onboarding.tsx` + extension `AuthBrandPanel`).
+
+**2. Lint** — `✖ 18 problems (0 errors, 18 warnings)`, identique aux lots
+précédents, aucun nouvel avertissement.
+
+**3. Chasse aux couleurs en dur** — 5 fichiers, identique au Lot 3 (aucune
+régression).
+
+**4. Rendu des 5 thèmes** — `visual-check.mjs` sur 5 écrans (`Login`,
+`Register`, `Onboarding`, `Orientation`, `Dashboard`) × 5 thèmes = 25
+combinaisons. Premier passage : 5 échecs (`link-in-text-block` sur
+`Dashboard`, bug 36, identique sur les 5 thèmes). **Résultat final après
+correction : 25 captures, 0 échec.**
+
+**5. Accessibilité** — 0 violation sérieuse/critique après correction.
+Test clavier dédié (`scripts/keyboard-check-lot4.mjs`) :
+- le menu de thème du rail flottant s'ouvre à `Enter` et se ferme à
+  `Échap` depuis le nouveau rail en verre (`themeMenuOpensFromRail`/
+  `themeMenuClosesOnEscape: true`) — la restructuration de `AppShell.tsx`
+  n'a pas cassé cette interaction ;
+- la dropzone de fichier d'`Onboarding` est atteignable au clavier
+  (`dropzoneInputFocusable: true`) ;
+- le lien "Passer cette étape" est présent et visible
+  (`skipLinkPresent: true`).
+
+### Merge
+
+Branche `ui/4-entrer-produit` → `main`, porte de qualité au vert sur les 5
+points. Serveurs de test toujours actifs pour le Lot 5.

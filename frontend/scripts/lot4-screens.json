@@ -1,0 +1,7 @@
+[
+  { "name": "Login", "path": "/login", "auth": false },
+  { "name": "Register", "path": "/register", "auth": false },
+  { "name": "Onboarding", "path": "/onboarding", "auth": true },
+  { "name": "Orientation", "path": "/", "auth": true },
+  { "name": "Dashboard", "path": "/dashboard", "auth": true }
+]

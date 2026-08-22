@@ -298,15 +298,15 @@ export default function Dashboard() {
           ) : activity.length === 0 ? (
             <p className="text-sm text-muted-foreground">
               Aucune analyse pour l'instant — lancez-en une depuis{" "}
-              <Link to="/training" className="text-primary hover:text-primary/80">
+              <Link to="/training" className="text-primary underline underline-offset-2 hover:text-primary/80">
                 Entraînement
               </Link>
               , un module de{" "}
-              <Link to="/clustering" className="text-primary hover:text-primary/80">
+              <Link to="/clustering" className="text-primary underline underline-offset-2 hover:text-primary/80">
                 ML non supervisé
               </Link>
               , ou{" "}
-              <Link to="/vision/classification" className="text-primary hover:text-primary/80">
+              <Link to="/vision/classification" className="text-primary underline underline-offset-2 hover:text-primary/80">
                 Vision
               </Link>
               .
@@ -420,7 +420,7 @@ export default function Dashboard() {
           ) : recentDatasets.length === 0 ? (
             <p className="text-sm text-muted-foreground">
               Aucun dataset pour l'instant — importez-en un depuis{" "}
-              <Link to="/datasets" className="text-primary hover:text-primary/80">
+              <Link to="/datasets" className="text-primary underline underline-offset-2 hover:text-primary/80">
                 Mes données
               </Link>
               .

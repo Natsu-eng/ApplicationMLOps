@@ -1,12 +1,36 @@
 import { useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
+import { Check, ShieldCheck, Waypoints } from "lucide-react";
 import { ApiError } from "../api/client";
-import { AuthBrandPanel } from "../components/auth/AuthBrandPanel";
+import { AuthBrandPanel, type AuthBrandFeature } from "../components/auth/AuthBrandPanel";
 import { PasswordStrengthMeter } from "../components/auth/PasswordStrengthMeter";
 import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
 import { Input } from "../components/ui/Input";
 import { useAuth } from "../contexts/AuthContext";
+
+// Contenu repris tel quel de _design/apercu/Inscription.html — les 3
+// promesses concrètes de la plateforme, pas du texte de remplissage.
+const REGISTER_FEATURES: AuthBrandFeature[] = [
+  {
+    icon: Check,
+    title: "Un verdict, pas un rapport",
+    description:
+      "« Utilisable en production, avec une réserve au-delà de 70 MPa » — et l'explication en dessous.",
+  },
+  {
+    icon: ShieldCheck,
+    title: "Les pièges détectés avant vous",
+    description:
+      "Fuites de données, découpes trompeuses, colonnes trop parfaites. C'est ce qui fait échouer neuf projets sur dix.",
+  },
+  {
+    icon: Waypoints,
+    title: "Chaque chiffre est traçable",
+    description:
+      "Empreinte des données, graine, versions de bibliothèques. Six mois plus tard, vous saurez d'où vient une prédiction.",
+  },
+];
 
 export default function Register() {
   const { register } = useAuth();
@@ -25,7 +49,7 @@ export default function Register() {
     setIsSubmitting(true);
     try {
       await register({ organization_name: organizationName, nom, email, password });
-      navigate("/");
+      navigate("/onboarding");
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Inscription impossible");
     } finally {
@@ -36,9 +60,10 @@ export default function Register() {
   return (
     <div className="min-h-screen flex flex-col lg:flex-row">
       <AuthBrandPanel
-        kicker="Explore · Analyse · Prédit"
-        heading="Créez votre bureau d'études"
-        tagline="Vous devenez propriétaire de l'organisation — vous pourrez ensuite y inviter votre équipe."
+        kicker="Essai gratuit · 14 jours"
+        heading="Vos données savent des choses. Faites-les parler — sans écrire une ligne de code."
+        tagline="Chargez un fichier, dites ce que vous cherchez, laissez la plateforme entraîner et comparer les modèles. Vous recevez un verdict en français, pas un tableau de métriques."
+        features={REGISTER_FEATURES}
       />
 
       <div className="flex-1 flex items-center justify-center p-6 sm:p-10 bg-muted">

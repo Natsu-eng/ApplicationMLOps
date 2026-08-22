@@ -12,6 +12,7 @@ import Datasets from "./pages/Datasets";
 import DesignSystem from "./pages/DesignSystem";
 import DimensionalityReduction from "./pages/DimensionalityReduction";
 import Login from "./pages/Login";
+import Onboarding from "./pages/Onboarding";
 import Orientation from "./pages/Orientation";
 import Profile from "./pages/Profile";
 import Register from "./pages/Register";
@@ -48,6 +49,14 @@ export default function App() {
               element={
                 <ProtectedRoute>
                   <Orientation />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/onboarding"
+              element={
+                <ProtectedRoute>
+                  <Onboarding />
                 </ProtectedRoute>
               }
             />
