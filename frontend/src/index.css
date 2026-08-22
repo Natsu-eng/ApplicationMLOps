@@ -208,6 +208,46 @@ body {
   color: var(--text-muted);
 }
 
+/* Entrée du panneau latéral (Drawer.tsx) — glisse depuis le bord concerné,
+   200ms, figée sous prefers-reduced-motion. */
+@keyframes drawer-slide-in-right {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}
+@keyframes drawer-slide-in-left {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(0); }
+}
+.drawer-enter-right { animation: drawer-slide-in-right 0.2s ease-out; }
+.drawer-enter-left { animation: drawer-slide-in-left 0.2s ease-out; }
+@media (prefers-reduced-motion: reduce) {
+  .drawer-enter-right, .drawer-enter-left { animation: none; }
+}
+
+/* Entrée d'un toast (Toast.tsx) — 200ms, plafond des animations d'entrée
+   (SPEC-UI.md §4). Même convention que .stat-tile-enter (StatTile.tsx) :
+   keyframe dédiée + garde prefers-reduced-motion, pas un plugin utilitaire
+   non installé dans ce projet. */
+@keyframes toast-fade-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.toast-enter { animation: toast-fade-in 0.2s ease-out backwards; }
+@media (prefers-reduced-motion: reduce) {
+  .toast-enter { animation: none; }
+}
+
+/* Barre de progression indéterminée (ProgressBar.tsx) — bande qui glisse de
+   gauche à droite, seule animation d'entrée du Lot 2 dépassant les 200ms
+   tolérées par SPEC-UI.md §4 (justifiée : elle dure tant que l'opération
+   dure, ce n'est pas une transition d'apparition). Figée sous
+   prefers-reduced-motion (classe motion-reduce:animate-none posée par le
+   composant), remplacée par une bande fixe semi-opaque. */
+@keyframes indeterminate-progress {
+  0% { left: -33%; }
+  100% { left: 100%; }
+}
+
 /* Verre (.glass) — réservé aux éléments flottant au-dessus du contenu (rail,
    barre haute, panneau d'estimation) : SPEC-UI.md §4, « sans halo, pas de
    verre ». Halos posés par les écrans qui en ont besoin, pas ici. */

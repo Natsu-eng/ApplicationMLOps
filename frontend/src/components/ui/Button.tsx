@@ -53,7 +53,7 @@ export function Button({
     <button
       disabled={disabled || loading}
       aria-busy={loading || undefined}
-      className={`font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center justify-center gap-1.5 ${VARIANT_CLASSES[variant]} ${sizeClass} ${className}`}
+      className={`font-medium transition-colors disabled:opacity-[.42] disabled:cursor-not-allowed inline-flex items-center justify-center gap-1.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-[var(--accent)] ${VARIANT_CLASSES[variant]} ${sizeClass} ${className}`}
       {...rest}
     >
       {loading && <Loader2 size={14} className="animate-spin" aria-hidden="true" />}

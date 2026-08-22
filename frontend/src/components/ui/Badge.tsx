@@ -2,13 +2,22 @@ import type { ReactNode } from "react";
 
 type Variant = "neutral" | "accent" | "success" | "warning" | "danger" | "primary";
 
+// Opacité de fond volontairement faible (/4, pas /10) : --success/--warning/
+// --destructive/--primary ne sont garantis ≥4,5:1 QUE sur les 3 fonds neutres
+// du thème (canvas/surface/raised, voir themes.css) — un lavis de ces teintes
+// composite un 4ᵉ fond légèrement différent, sous le seuil en ivoire/
+// porcelaine (les 2 thèmes au minimum de contraste le plus serré, 4.52/
+// 4.55:1) quand le badge est en plus posé sur une ligne de tableau
+// elle-même teintée (double lavis composé) — /6 puis /5 encore
+// insuffisants (4.47:1 mesuré), /4 revérifié par axe-core dans ce cas
+// précis, voir _design/JOURNAL.md Lot 2.
 const VARIANT_CLASSES: Record<Variant, string> = {
   neutral: "bg-muted text-muted-foreground border border-border",
   accent: "bg-accent text-accent-foreground border border-accent",
-  primary: "bg-primary/10 text-primary border border-primary/20",
-  success: "bg-success/10 text-success border border-success/20",
-  warning: "bg-warning/10 text-warning border border-warning/20",
-  danger: "bg-destructive/10 text-destructive border border-destructive/20",
+  primary: "bg-primary/4 text-primary border border-primary/20",
+  success: "bg-success/4 text-success border border-success/20",
+  warning: "bg-warning/4 text-warning border border-warning/20",
+  danger: "bg-destructive/4 text-destructive border border-destructive/20",
 };
 
 const DOT_CLASSES: Record<Variant, string> = {
