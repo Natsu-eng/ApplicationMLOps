@@ -1,9 +1,9 @@
-import { useState } from "react";
-import { AlertTriangle, ChevronDown, Info, Lightbulb, ShieldAlert } from "lucide-react";
+import { AlertTriangle, Info, Lightbulb, ShieldAlert } from "lucide-react";
 import type { ModelVerdictData, VerdictLevel } from "../../api/client";
 import { Badge } from "../ui/Badge";
 import { Card } from "../ui/Card";
 import { SectionHeader } from "../ui/SectionHeader";
+import { formatMetricValue, formatPercent } from "../../utils/format";
 
 /** Verdict post-entraînement (Lot 3, correctif I1, AUDIT_DATALAB_2026-08-16.md
  * §E.3) — jusqu'ici, un modèle affichait des graphiques et des nombres bruts
@@ -32,18 +32,54 @@ const LEVEL_LABEL: Record<VerdictLevel, string> = {
   info: "Info",
 };
 
+// Libellés courts des clés de `claim.details` (services/verdict.py) — le
+// backend envoie déjà les nombres qui fondent chaque affirmation, jusqu'ici
+// ignorés côté frontend. Purement un dictionnaire d'affichage : aucune
+// valeur n'est recalculée ici, seulement mise en forme (Lot 6, Verdict.html
+// — ligne de preuve monospace sous chaque affirmation).
+const DETAIL_LABELS: Record<string, string> = {
+  delta: "écart",
+  train: "train",
+  test: "test",
+  ci_low: "IC bas",
+  ci_high: "IC haut",
+  width: "largeur",
+  majority_class: "classe majoritaire",
+  majority_fraction: "part",
+  winner: "gagnant",
+  runner_up: "2e",
+  gap: "écart",
+  fold_std: "écart-type plis",
+  mean_deviation: "écart moyen",
+  last_gain: "dernier gain",
+  total_range: "amplitude",
+  target_coverage: "couverture visée",
+  empirical_coverage: "couverture observée",
+};
+
+const PERCENT_DETAIL_KEYS = new Set(["majority_fraction", "target_coverage", "empirical_coverage"]);
+
+function formatDetailValue(key: string, value: unknown): string {
+  if (typeof value === "number") return PERCENT_DETAIL_KEYS.has(key) ? formatPercent(value) : formatMetricValue(value);
+  return String(value);
+}
+
+function EvidenceLine({ details }: { details: Record<string, unknown> }) {
+  const entries = Object.entries(details);
+  if (entries.length === 0) return null;
+  return (
+    <p className="num text-caption text-muted-foreground mt-1.5 pl-6">
+      {entries.map(([key, value], i) => (
+        <span key={key}>
+          {i > 0 && " · "}
+          {DETAIL_LABELS[key] ?? key} {formatDetailValue(key, value)}
+        </span>
+      ))}
+    </p>
+  );
+}
+
 export function ModelVerdict({ verdict }: { verdict: ModelVerdictData }) {
-  const [expanded, setExpanded] = useState<Set<number>>(new Set());
-
-  function toggle(index: number) {
-    setExpanded((prev) => {
-      const next = new Set(prev);
-      if (next.has(index)) next.delete(index);
-      else next.add(index);
-      return next;
-    });
-  }
-
   return (
     <Card className="p-5">
       <SectionHeader icon={Lightbulb} color="amber" label="Verdict" />
@@ -54,26 +90,22 @@ export function ModelVerdict({ verdict }: { verdict: ModelVerdictData }) {
       </div>
 
       <div className="space-y-2">
-        {verdict.claims.map((claim, index) => {
+        {verdict.claims.map((claim) => {
           const config = LEVEL_CONFIG[claim.level];
           const Icon = config.icon;
-          const isOpen = expanded.has(index);
           return (
             <div key={claim.code} className={`rounded-lg border ${config.border} bg-muted px-3 py-2.5`}>
-              <button type="button" onClick={() => toggle(index)} className="w-full flex items-start gap-2 text-left">
+              <div className="flex items-start gap-2">
                 <Icon size={15} className={`flex-shrink-0 mt-0.5 ${config.iconColor}`} />
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2 flex-wrap">
                     <Badge variant={config.badge}>{LEVEL_LABEL[claim.level]}</Badge>
                     <p className="text-sm text-foreground font-medium">{claim.title}</p>
                   </div>
+                  <p className="text-xs text-muted-foreground mt-1.5">{claim.explanation}</p>
                 </div>
-                <ChevronDown
-                  size={14}
-                  className={`flex-shrink-0 text-muted-foreground transition-transform mt-1 ${isOpen ? "rotate-180" : ""}`}
-                />
-              </button>
-              {isOpen && <p className="text-xs text-muted-foreground mt-2 pl-6">{claim.explanation}</p>}
+              </div>
+              <EvidenceLine details={claim.details} />
             </div>
           );
         })}

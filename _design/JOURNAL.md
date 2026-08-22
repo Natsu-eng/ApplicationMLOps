@@ -811,3 +811,210 @@ du champ `question` obligatoire à `_warning()`.
 Branche `ui/5-donnees-qualite` → `main`, porte de qualité au vert sur les 6
 points (les 5 habituels + les tests backend ciblés). Serveurs de test
 toujours actifs pour le Lot 6.
+
+---
+
+## Lot 6 — Supervisé (Entrainement · Progression · Verdict · Leaderboard)
+
+### État des lieux avant de coder
+
+Contrairement aux lots précédents, ce pilier était déjà substantiellement
+construit avant ce lot : `Training.tsx` porte déjà un assistant horizontal
+à 5 étapes (Lot E1-ter), `ModelVerdict.tsx` calcule déjà server-side les
+« six questions » de `Verdict.html` (`services/verdict.py`,
+`compute_verdict`), et `ModelResultModal.tsx` a déjà un `Leaderboard`
+compact. Décision : ne PAS re-construire ces écrans depuis zéro pour
+coller pixel à pixel aux 4 maquettes, mais chercher, pour chacune, l'écart
+réel entre ce qui est déjà là et ce que la maquette montre — puis combler
+seulement les écarts qui reposent sur des données déjà calculées par le
+backend, jamais en fabriquant des nombres pour ressembler à la maquette
+(principe déjà écrit dans ce code, `AppShell.tsx` : « une UI qui a l'air
+fonctionnelle sans l'être casse la confiance »).
+
+### Décisions et raisons
+
+42. **Verdict : ligne de preuve (`evidence`) ajoutée sous chaque
+    affirmation, claims non repliables.** `Verdict.html` affiche, sous
+    chaque question, une ligne monospace compacte avec les chiffres bruts
+    (ex. `R² train 0,934 · test 0,912 · écart 0,022`). `services/verdict.py`
+    calcule déjà ces chiffres dans `claim.details` (dict) depuis le Lot 3 —
+    mais `ModelVerdict.tsx` ne les affichait NULLE PART, et repliait
+    l'explication derrière un clic. Ajouté : un dictionnaire de libellés
+    (`DETAIL_LABELS`) + un formateur (`formatDetailValue`, réutilise
+    `formatPercent`/`formatMetricValue` existants) pour rendre `details` en
+    ligne de preuve, et suppression du repli/dépli (les explications sont
+    de toute façon des phrases courtes — les cacher n'apportait rien).
+    Aucun nouveau calcul : uniquement l'affichage de données déjà envoyées
+    par le serveur et jusqu'ici ignorées côté frontend.
+43. **Comparaison : nouvel onglet dédié dans `ModelResultModal.tsx`,
+    reprend `Leaderboard.html`.** La maquette montre une vue pleine page
+    (bannière du gagnant, tableau complet avec jauges + graphe de
+    stabilité par pli, encart « ce que le classement ne dit pas »). Bâti à
+    partir de données déjà persistées par `ModelCandidate`
+    (`selection_score`, `secondary_metric`, `fold_scores`, `rank`) —
+    aucune n'était affichée en dehors de la carte compacte existante (gardée
+    telle quelle dans l'onglet Performance, elle reste un résumé rapide
+    utile). Le panneau « ce que le classement ne dit pas » RÉUTILISE le
+    même verdict que la carte Verdict (`claims.find(c =>
+    c.code.startsWith("ecart_gagnant"))`) plutôt que de recalculer une
+    seconde comparaison gagnant/2e — pour ne jamais risquer d'afficher deux
+    conclusions différentes sur le même écart.
+44. **Colonnes « Durée » / « Prédiction » et graphe « coût de la
+    précision » de `Leaderboard.html` — omis, pas inventés.** Aucune donnée
+    de durée d'entraînement ni de temps d'inférence PAR CANDIDAT n'existe
+    côté backend (seule la durée totale du job est connue, jamais répartie
+    par modèle) — l'ajouter exigerait d'instrumenter le moteur
+    d'entraînement ET une migration de schéma (nouvelle colonne sur
+    `ModelCandidate`) : un vrai chantier fonctionnel, hors périmètre d'une
+    refonte visuelle.
+45. **Progression : ETA + journal en direct construits à partir de
+    données 100 % réelles, pas de télémétrie inventée.** `Progression.html`
+    montre un tableau détaillé par modèle avec score en direct, un graphe
+    de convergence Optuna par essai, des jauges CPU/mémoire/file d'attente,
+    et un journal téléchargeable. Vérifié dans `backend/domains/training/
+    worker.py` et `services/engine.py` : le backend n'expose qu'UNE seule
+    chaîne de progression globale (`job.progress_step`, ex. « Optimisation
+    XGBoost — essai 23/40 ») et un seul pourcentage global — jamais de
+    score par modèle avant la fin du job, jamais d'historique des essais
+    Optuna, aucune télémétrie CPU/mémoire/file. Construire le tableau par
+    modèle ou le graphe de convergence aurait exigé d'inventer des
+    nombres : NON FAIT. À la place, deux ajouts réels :
+    - **Journal de session** : chaque transition distincte de
+      `progress_step` reçue via le flux SSE déjà existant (`useJobEvents`)
+      est accumulée côté client, horodatée — un historique réel des
+      évènements déjà reçus par CETTE page, pas un stockage serveur (un
+      rafraîchissement repart avec un journal vide, seul l'état courant du
+      job est repersisté par le mécanisme `sessionStorage` déjà existant).
+    - **Temps restant estimé** : l'estimation calculée AVANT lancement
+      (étape 5 du formulaire, `api.training.estimateDuration`, déjà réelle
+      et déjà affichée seulement à cette étape) est maintenant persistée
+      (`sessionStorage`, clé dédiée) et reste affichée pendant la
+      progression, décomptée en direct depuis `job.started_at`. Une seule
+      estimation figée au lancement, jamais recalculée en cours de route —
+      pas une fausse mise à jour « en direct » qu'on ne sait pas produire.
+      N'apparaît que pour un job lancé depuis le formulaire (l'estimation
+      n'existe pas pour un job créé autrement, ex. `POST /training/jobs`
+      direct — comportement attendu, pas un bug).
+46. **`ExpertModePanel.tsx` (sélection de modèles, recherche
+    d'hyperparamètres) — laissé quasiment inchangé.** Déjà construit avec
+    des cartes de modèles à cocher, regroupées par famille, et des
+    curseurs pour les essais Optuna/plis de CV — l'esprit d'`Entrainement.
+    html` (cartes de choix, recherche d'hyperparamètres) y est déjà. Un
+    reskin pixel-parfait de ce composant n'apportait rien de fonctionnel
+    de plus ; l'effort de ce lot est allé aux véritables écarts fonction-
+    nels (Verdict, Comparaison, Progression) plutôt qu'à un polissage
+    cosmétique d'un composant déjà correct.
+
+### Bug réel trouvé et corrigé (introduit par ce lot)
+
+47. **Contraste insuffisant de la nouvelle ligne de preuve en thèmes
+    clairs.** Premier passage d'`axe-core` sur la vue Résultats : violation
+    `color-contrast` sérieuse sur `EvidenceLine` (16 nœuds) — la classe
+    `text-muted-foreground/80` (opacité arbitraire à 80 %, jamais validée
+    par le système de jetons de couleur) tombait à 3,57:1 en `ivoire`/
+    `porcelaine`, sous le seuil AA de 4,5:1. Corrigé en retirant l'opacité
+    arbitraire : `text-muted-foreground` (jeton plein, déjà calibré ≥4,5:1
+    sur les 3 fonds de chaque thème). Rescanné sur les 5 thèmes après
+    correction : 0 violation sur cette ligne.
+
+### Bug pré-existant trouvé, hors périmètre de ce lot (documenté, non corrigé)
+
+48. **Valeurs de `MetricCard` (RMSE/MAE, teintes teal/amber) sous le seuil
+    AA en `ivoire`/`porcelaine`.** Même scan axe : 2 nœuds restants,
+    `text-accent-3` (4,21:1) et `text-accent-2` (3,63:1), sous 4,5:1 requis
+    — uniquement dans les 2 thèmes les plus clairs, jamais en
+    graphite/ardoise/minuit. Cause probable : le commentaire de
+    `ColorIconBadge.tsx` affirme que chaque couleur d'accent (`--s1…--s4`)
+    est calculée ≥4,5:1 « en texte sur les 3 fonds du thème » — mais ce
+    texte est ici affiché EN PLEINE TEINTE sur un fond DÉJÀ TEINTÉ de la
+    MÊME couleur (`accentSurfaceClass`, lavage à 4 % d'opacité, lui-même
+    déjà réduit depuis /8 lors d'un correctif du Lot 1 pour une raison
+    proche) — une combinaison texte-sur-fond-teinté jamais revalidée par
+    le script `_design/tune.py`, qui ne teste vraisemblablement que
+    texte-sur-fond-neutre. Ce composant (`MetricCard`, `ModelResultModal.
+    tsx`) n'a pas été créé ni modifié par ce lot — retoucher les jetons de
+    couleur eux-mêmes exigerait de rejouer `tune.py` avec un fond de
+    validation supplémentaire (texte sur surface teintée) et de revérifier
+    tous les usages de `accentValueTextClass` dans l'app, un chantier de
+    calibration du système de couleurs, pas une correction ponctuelle sûre
+    dans le temps d'un lot. Documenté ici pour rester honnête plutôt que
+    silencieusement ignoré ou corrigé à la hâte avec un risque de
+    régression ailleurs — repris dans le futur `RAPPORT-FINAL.md`.
+
+### Porte de qualité — résultat réel
+
+**1. Build & tsc** — `npx tsc --noEmit` : aucune sortie, code 0. `npm run
+build` : code 0, bundle stable (`1 122,13 Ko` JS / `78,65 Ko` CSS).
+
+**2. Lint** — `✖ 18 problems (0 errors, 18 warnings)`, identique aux lots
+précédents.
+
+**3. Chasse aux couleurs en dur** — identique à la ligne de base (2
+occurrences Vision hors périmètre + 4 dans un fichier de test).
+
+**4. Rendu des 5 thèmes** — captures réelles contre un job réel
+(`lot6_regression.csv`, 300 lignes synthétiques, régression) : Progression
+(en cours, job #49) et Verdict + Comparaison (terminé, job #45) × 5
+thèmes. Piège méthodologique rencontré et corrigé en cours de route :
+`ui_theme` a un `server_default="graphite"` NON NUL pour tout utilisateur,
+et le serveur gagne sur `localStorage` (`ThemeContext.tsx`) — sans appeler
+`PATCH /users/me/preferences` avant chaque capture (comme le fait déjà
+`visual-check.mjs`), toutes les itérations se rendaient silencieusement en
+graphite quel que soit le thème demandé. Une fois corrigé (et vérifié par
+une comparaison `renderedTheme === theme` après chaque navigation) :
+captures correctes dans les 5 thèmes, 0 anomalie visuelle. Un second piège
+d'outillage rencontré : une capture `fullPage: true` sur une page qui
+dépasse la hauteur du viewport duplique la barre latérale/topbar
+`position:fixed` d'AppShell (segments recollés par Playwright) — corrigé
+en repassant en `fullPage: false` avec un viewport plus haut, comme le
+fait déjà `visual-check.mjs` (jamais un bug de rendu réel, un artefact de
+capture).
+
+**5. Accessibilité** — `scripts/lot6-axe.mjs`, tags `wcag2a`/`wcag2aa`/
+`wcag21aa`, onglets Performance + Comparaison × 5 thèmes. Premier passage :
+1 violation sérieuse par thème clair (bug 47, ligne de preuve — corrigé,
+voir ci-dessus) + 2 violations pré-existantes non liées à ce lot (bug 48,
+documenté, non corrigé). Après correctif du bug 47 : **0 violation sur
+l'onglet Comparaison sur les 5 thèmes ; 2 violations pré-existantes
+restantes sur Performance en ivoire/porcelaine uniquement (bug 48)**.
+
+**6. Clavier** — `scripts/keyboard-check-lot6.mjs` :
+```
+{
+  "comparisonTabFocusable": true,
+  "comparisonTabActivatesOnEnter": true,
+  "comparisonContentVisible": true
+}
+```
+
+**7. Tests backend** — aucun fichier backend modifié par ce lot (Lot 6 est
+100 % frontend : `Training.tsx`, `ModelVerdict.tsx`, `ModelResultModal.
+tsx`) — pas de nouvelle exécution de suite ciblée, la suite complète du
+Lot 5 (`test_data_quality.py`, 38 passed) reste la dernière exécution
+pertinente sans régression backend possible ici.
+
+### Incident d'environnement (hors périmètre du lot, documenté pour mémoire)
+
+Le serveur de test (backend + worker RQ) s'est arrêté entre le Lot 5 et le
+Lot 6 (redémarré manuellement par l'utilisateur, puis à nouveau interrompu).
+Plusieurs redémarrages ont été nécessaires pour retrouver un état stable :
+un worker lancé avec `rq worker training_queue vision_queue` (mauvais noms
+de file — les vraies files s'appellent `training`/`vision`/`analysis`,
+voir `api/core/job_queue.py`, et `rq worker` nu n'est de toute façon pas le
+bon point d'entrée sous Windows, qui exige `SimpleWorker` — voir
+`backend/workers/run_worker.py`) est resté sans effet ; la machine (8 Go
+de RAM) est passée sous forte pression mémoire (< 5 % libre) avec plusieurs
+process ML (torch/lightgbm/xgboost/catboost/shap/optuna) empilés
+simultanément, provoquant des blocages/silences difficiles à diagnostiquer.
+Résolu en tuant tous les processus Python et navigateurs Chrome orphelins
+puis en relançant un unique `uvicorn` + un unique `python -m
+workers.run_worker`. Signalé explicitement à l'utilisateur en cours de
+route (le `taskkill /IM chrome.exe` étant susceptible d'avoir fermé un
+navigateur personnel, pas seulement les instances Playwright). Sans
+rapport avec le code applicatif du Lot 6.
+
+### Merge
+
+Branche `ui/6-supervise` → `main`, porte de qualité au vert sur les 6
+points (bug 47 corrigé ; bug 48 documenté et explicitement différé, hors
+périmètre). Serveurs de test toujours actifs pour le Lot 7.

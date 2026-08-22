@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { AlertCircle, Ban, BrainCircuit, Check, ChevronLeft, ChevronRight, Loader2, PlayCircle, RotateCcw, Target, Trash2 } from "lucide-react";
 import {
@@ -36,6 +36,13 @@ const DEFAULT_OPTUNA_TRIALS = 20; // `api.core.config.Settings.optuna_trials_def
 
 const ACTIVE_STATUSES = new Set(["queued", "running"]);
 const ACTIVE_JOB_STORAGE_KEY = "datalab_active_training_job_id";
+// Estimation de durée calculée AVANT le lancement (étape 5 du wizard,
+// `api.training.estimateDuration`) — persistée à travers le job pour rester
+// affichable pendant la progression (Lot 6, Progression.html : "Fin
+// estimée"). Jamais recalculée pendant l'exécution : une seule estimation,
+// dérivée de l'historique réel de l'organisation, pas une fausse mise à
+// jour en direct qu'on ne sait pas produire.
+const ACTIVE_JOB_ETA_STORAGE_KEY = "datalab_active_training_job_eta_seconds";
 
 /** Étapes du wizard horizontal (refonte UI) — même contenu/ordre que le
  * pipeline guidé existant (Lot E1-ter), rebaptisées pour tenir dans une
@@ -66,6 +73,7 @@ export default function Training() {
   const [datasets, setDatasets] = useState<DatasetSummary[]>([]);
   const [datasetsError, setDatasetsError] = useState<string | null>(null);
   const [activeJob, setActiveJob] = useState<TrainingJobSummary | null>(null);
+  const [etaSeconds, setEtaSeconds] = useState<number | null>(null);
   const [restoringJob, setRestoringJob] = useState(true);
   const confirmDelete = useConfirmAction<true>();
 
@@ -93,9 +101,14 @@ export default function Training() {
     }
     api.training
       .getJob(Number(storedId))
-      .then(setActiveJob)
+      .then((job) => {
+        setActiveJob(job);
+        const storedEta = sessionStorage.getItem(ACTIVE_JOB_ETA_STORAGE_KEY);
+        setEtaSeconds(storedEta ? Number(storedEta) : null);
+      })
       .catch(() => {
         sessionStorage.removeItem(ACTIVE_JOB_STORAGE_KEY);
+        sessionStorage.removeItem(ACTIVE_JOB_ETA_STORAGE_KEY);
         setSearchParams({}, { replace: true });
       })
       .finally(() => setRestoringJob(false));
@@ -110,8 +123,14 @@ export default function Training() {
     }
   }, [activeJob]);
 
-  function openJob(job: TrainingJobSummary) {
+  function openJob(job: TrainingJobSummary, estimatedSeconds: number | null = null) {
     setActiveJob(job);
+    setEtaSeconds(estimatedSeconds);
+    if (estimatedSeconds !== null) {
+      sessionStorage.setItem(ACTIVE_JOB_ETA_STORAGE_KEY, String(estimatedSeconds));
+    } else {
+      sessionStorage.removeItem(ACTIVE_JOB_ETA_STORAGE_KEY);
+    }
     setSearchParams({ job: String(job.id) }, { replace: false });
   }
 
@@ -144,6 +163,8 @@ export default function Training() {
 
   function resetToConfigure() {
     setActiveJob(null);
+    setEtaSeconds(null);
+    sessionStorage.removeItem(ACTIVE_JOB_ETA_STORAGE_KEY);
     setSearchParams({}, { replace: false });
   }
 
@@ -256,7 +277,9 @@ export default function Training() {
         </div>
       )}
 
-      {phase === "progress" && activeJob && <TrainingProgress job={activeJob} onCancel={handleCancelActiveJob} />}
+      {phase === "progress" && activeJob && (
+        <TrainingProgress job={activeJob} etaSeconds={etaSeconds} onCancel={handleCancelActiveJob} />
+      )}
 
       {(phase === "failed" || phase === "cancelled") && activeJob && <TrainingFailed job={activeJob} />}
 
@@ -269,10 +292,64 @@ export default function Training() {
   );
 }
 
-function TrainingProgress({ job, onCancel }: { job: TrainingJobSummary; onCancel: () => void }) {
+interface ProgressJournalEntry {
+  time: string;
+  step: string;
+  percent: number;
+}
+
+/** Journal de progression (Lot 6, Progression.html) — reconstruit CÔTÉ
+ * CLIENT à partir des vrais évènements SSE déjà reçus (`job.progress_step`/
+ * `progress_percent`, voir `useJobEvents` et
+ * `backend/domains/training/worker.py::_make_progress_callback`) : chaque
+ * transition distincte de `progress_step` devient une ligne horodatée. Pas
+ * de nouvel endpoint ni de stockage serveur — uniquement l'historique des
+ * évènements que cette page a déjà reçus pendant qu'elle était ouverte
+ * (rouvrir la page après un rafraîchissement repart avec un journal vide,
+ * seul l'état COURANT du job est repersisté). Le tableau détaillé par
+ * modèle, le graphe de convergence Optuna et les jauges CPU/mémoire de la
+ * maquette n'existent PAS ici : le backend ne renvoie qu'une seule chaîne de
+ * progression globale (pas de score par modèle avant la fin du job, pas de
+ * télémétrie ressources) — les fabriquer aurait affiché des nombres inventés,
+ * contraire au principe déjà établi de ce code (jamais une UI qui a l'air
+ * fonctionnelle sans l'être).
+ */
+function TrainingProgress({
+  job,
+  etaSeconds,
+  onCancel,
+}: {
+  job: TrainingJobSummary;
+  etaSeconds: number | null;
+  onCancel: () => void;
+}) {
   const [cancelling, setCancelling] = useState(false);
+  const [now, setNow] = useState(() => Date.now());
+  const [journal, setJournal] = useState<ProgressJournalEntry[]>([]);
+  const lastStepRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  useEffect(() => {
+    if (!job.progress_step || job.progress_step === lastStepRef.current) return;
+    lastStepRef.current = job.progress_step;
+    setJournal((prev) => [
+      ...prev,
+      { time: new Date().toLocaleTimeString("fr-FR"), step: job.progress_step as string, percent: job.progress_percent },
+    ]);
+  }, [job.progress_step, job.progress_percent]);
+
+  const startedAt = job.started_at ?? job.created_at;
+  const remainingSeconds =
+    etaSeconds !== null
+      ? Math.max(0, etaSeconds - Math.floor((now - new Date(startedAt).getTime()) / 1000))
+      : null;
+
   return (
-    <Card className="max-w-xl mx-auto p-8 text-center">
+    <Card className="max-w-2xl mx-auto p-8 text-center">
       <div className="mx-auto mb-4 h-14 w-14 rounded-2xl bg-primary/10 border border-primary/20 flex items-center justify-center">
         <Loader2 className="text-primary animate-spin" size={26} />
       </div>
@@ -288,7 +365,17 @@ function TrainingProgress({ job, onCancel }: { job: TrainingJobSummary; onCancel
           style={{ width: `${Math.max(job.progress_percent, 4)}%` }}
         />
       </div>
-      <p className="text-xs text-muted-foreground tabular-nums mb-3">{job.progress_percent}%</p>
+      <div className="flex items-center justify-center gap-3 mb-3">
+        <p className="num text-xs text-muted-foreground">{job.progress_percent}%</p>
+        {remainingSeconds !== null && (
+          <>
+            <span className="text-muted-foreground/40">·</span>
+            <p className="num text-xs text-muted-foreground">
+              reste ≈ {formatDuration(remainingSeconds)}
+            </p>
+          </>
+        )}
+      </div>
       <p className="text-sm text-muted-foreground">
         {job.progress_step ?? "En attente d'un worker disponible…"}
       </p>
@@ -296,6 +383,20 @@ function TrainingProgress({ job, onCancel }: { job: TrainingJobSummary; onCancel
         La durée dépend de la taille du dataset et du nombre d'essais — cette page se met à jour
         automatiquement, vous pouvez aussi la quitter et revenir plus tard.
       </p>
+
+      {journal.length > 0 && (
+        <div className="text-left rounded-lg border border-border bg-muted p-3 max-h-40 overflow-y-auto mb-4">
+          <p className="text-overline text-muted-foreground mb-2">Journal de cette session</p>
+          <ul className="space-y-1">
+            {journal.map((entry, i) => (
+              <li key={i} className="num text-caption text-muted-foreground">
+                <span className="text-muted-foreground/70">{entry.time}</span> — {entry.step}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       <Button
         variant="ghost"
         size="sm"
@@ -355,7 +456,7 @@ function TrainingForm({
 }: {
   datasets: DatasetSummary[];
   datasetsError: string | null;
-  onJobCreated: (job: TrainingJobSummary) => void;
+  onJobCreated: (job: TrainingJobSummary, estimatedSeconds?: number | null) => void;
 }) {
   const [datasetId, setDatasetId] = useState<number | "">("");
   const [columns, setColumns] = useState<ColumnSchema[]>([]);
@@ -470,7 +571,10 @@ function TrainingForm({
           selectedModelIds,
         }),
       );
-      onJobCreated(job);
+      onJobCreated(
+        job,
+        durationEstimate?.status === "estimated" ? durationEstimate.estimated_seconds : null,
+      );
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Impossible de lancer l'entraînement");
     } finally {
