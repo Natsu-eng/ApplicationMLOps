@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { AlertCircle, AlertTriangle, Ban, BarChart3, CheckCircle2, Loader2, PlayCircle, RotateCcw, Search, Trash2 } from "lucide-react";
+import { AlertCircle, AlertTriangle, Ban, BarChart3, CheckCircle2, Loader2, PlayCircle, RotateCcw, Search, SlidersHorizontal, Trash2 } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip as RechartsTooltip, XAxis, YAxis } from "recharts";
 import {
   ApiError,
@@ -529,6 +529,78 @@ function AnomalyForm({
   );
 }
 
+/** Compte, à partir de l'histogramme RÉEL déjà chargé (`score_histogram`),
+ * combien d'observations ont un score de consensus au moins égal à
+ * `threshold` — approximation par bin entier (un bin n'est compté que si sa
+ * borne basse atteint le seuil), jamais une fausse précision décimale que
+ * les données binned ne permettent pas. Purement exploratoire : le vrai
+ * seuil de décision (`agreement`/`is_anomaly_*`) résulte d'un ET entre deux
+ * modèles distincts (Isolation Forest, LOF), pas d'une simple coupure sur ce
+ * score continu — ce curseur aide à explorer LA DISTRIBUTION, il ne
+ * recalcule jamais la décision réelle des deux modèles. */
+function countAtOrAboveThreshold(histogram: AnomalyResult["score_histogram"], threshold: number): number {
+  let count = 0;
+  for (let i = 0; i < histogram.counts.length; i++) {
+    if (histogram.bin_edges[i] >= threshold) count += histogram.counts[i];
+  }
+  return count;
+}
+
+/** "Où placer le curseur" (Lot 7, Anomalies.html) — construit uniquement à
+ * partir de `score_histogram`, déjà chargé pour le graphe ci-dessus mais
+ * jusqu'ici jamais exploité au-delà d'un histogramme statique. Aucun appel
+ * réseau supplémentaire : tout se recalcule en direct côté client au
+ * déplacement du curseur. */
+function ThresholdExplorer({ result }: { result: AnomalyResult }) {
+  const { bin_edges } = result.score_histogram;
+  const min = bin_edges[0] ?? 0;
+  const max = bin_edges[bin_edges.length - 1] ?? 1;
+  const [threshold, setThreshold] = useState(min);
+
+  const count = useMemo(
+    () => countAtOrAboveThreshold(result.score_histogram, threshold),
+    [result.score_histogram, threshold],
+  );
+  const pct = result.n_samples_used > 0 ? (count / result.n_samples_used) * 100 : 0;
+
+  return (
+    <Card className="p-5">
+      <SectionHeader
+        icon={SlidersHorizontal}
+        color="blue"
+        label="Où placer le curseur"
+        help="Déplace un seuil exploratoire sur la distribution réelle des scores de consensus déjà calculée — pas le seuil de décision effectif du modèle (qui résulte d'un accord entre Isolation Forest ET LOF, pas d'une simple coupure sur ce score), un outil pour comprendre la distribution avant de régler la proportion attendue d'anomalies à l'étape suivante."
+      />
+      <input
+        type="range"
+        min={min}
+        max={max}
+        step={(max - min) / 100 || 0.01}
+        value={threshold}
+        onChange={(e) => setThreshold(Number(e.target.value))}
+        className="w-full accent-primary"
+        aria-label="Seuil exploratoire de score de consensus"
+      />
+      <div className="flex items-center justify-between mt-2">
+        <span className="text-xs text-muted-foreground">
+          Seuil : <span className="tabular-nums text-foreground">{threshold.toFixed(2)}</span>
+        </span>
+        <span className="text-xs text-muted-foreground">
+          <span className="tabular-nums font-medium text-foreground">{count}</span> ligne{count > 1 ? "s" : ""} au-dessus
+          {" · "}
+          <span className="tabular-nums">{pct.toFixed(1)} %</span>
+        </span>
+      </div>
+      <p className="text-xs text-muted-foreground mt-3 pt-3 border-t border-border/60">
+        À titre de repère : la décision retenue (accord Isolation Forest + LOF) signale actuellement{" "}
+        <span className="tabular-nums text-foreground">{result.n_anomalies_consensus}</span> ligne
+        {result.n_anomalies_consensus > 1 ? "s" : ""} (
+        <span className="tabular-nums">{(result.anomaly_rate_consensus * 100).toFixed(1)} %</span>).
+      </p>
+    </Card>
+  );
+}
+
 function topDeviation(obs: AnomalyObservation): string | null {
   const entries = Object.entries(obs.numeric_deviations);
   if (entries.length === 0) return null;
@@ -663,6 +735,8 @@ function AnomalyResultView({ jobId }: { jobId: number }) {
           </BarChart>
         </ResponsiveContainer>
       </Card>
+
+      <ThresholdExplorer result={result} />
 
       <div>
         <SectionHeader
