@@ -1018,3 +1018,116 @@ rapport avec le code applicatif du Lot 6.
 Branche `ui/6-supervise` → `main`, porte de qualité au vert sur les 6
 points (bug 47 corrigé ; bug 48 documenté et explicitement différé, hors
 périmètre). Serveurs de test toujours actifs pour le Lot 7.
+
+---
+
+## Lot 7 — Non supervisé (Clustering · Anomalies · Projection)
+
+### État des lieux avant de coder
+
+Les trois écrans existants (`Clustering.tsx`, `AnomalyDetection.tsx`,
+`DimensionalityReduction.tsx`) se sont révélés, à la lecture, déjà très
+proches de l'esprit des 3 maquettes : profils de segments avec z-scores
+et variables différenciantes, classement de configurations comparées,
+prédiction sur un nouveau client déjà branchée (`api.clustering.predict`),
+histogramme de scores d'anomalies avec explication par ligne (variable la
+plus explicative, déjà avec z-score), et projection 2D avec colorer-par,
+variance expliquée, fidélité (trustworthiness réel, `sklearn.manifold.
+trustworthiness`) et tableau de contributions PCA. Décision : plutôt que
+de rejouer chaque pixel des maquettes, chercher pour chacune les données
+déjà calculées par le backend mais jamais affichées — même méthode qu'au
+Lot 6.
+
+### Décisions et raisons
+
+49. **Anomalies : panneau « Où placer le curseur » ajouté, 100 % réel.**
+    `Anomalies.html` montre une courbe de densité + un curseur pour
+    explorer le compromis détection/faux positifs. `AnomalyResult.
+    score_histogram` (bin_edges + counts) était déjà chargé pour le
+    graphe en barres existant, mais rien n'exploitait la distribution de
+    façon interactive. Ajouté : un curseur (`<input type="range">`) dont
+    le décompte de lignes « au-dessus » est recalculé en direct côté
+    client à partir de CET histogramme réel (`countAtOrAboveThreshold`),
+    zéro appel réseau supplémentaire. Explicitement présenté comme
+    EXPLORATOIRE dans le texte d'aide : la vraie décision (`agreement`)
+    résulte d'un ACCORD entre Isolation Forest ET LOF — deux modèles
+    distincts, pas une simple coupure sur ce score continu — jamais
+    présenté comme recalculant le seuil réel du modèle, pour ne pas
+    induire en erreur sur ce que le curseur montre vraiment.
+50. **Clustering : carte 2D des groupes, export étiqueté, renommage —
+    hors périmètre, confirmés non disponibles côté backend.**
+    Vérifié dans `ClusteringResult`/`ClusterProfile` (aucune coordonnée
+    2D par observation) et `domains/clustering/router.py` (aucune route
+    d'export) : la « carte des groupes » de `Clustering.html` correspond
+    en réalité à une capacité SÉPARÉE (réduction de dimension, Lot dédié
+    « Projection »), jamais calculée par le job de clustering lui-même.
+    Construire ces 3 éléments exigerait un nouveau calcul d'embedding
+    lié au job de clustering, une route d'export CSV, et un champ de
+    renommage persisté (migration) — trois chantiers fonctionnels
+    distincts, pas un reskin. Le reste de l'écran (profils, classement de
+    configurations, prédiction) étant déjà solide, aucune autre
+    modification n'a été faite sur `Clustering.tsx` ce lot.
+51. **Projection : répartition PC1/PC2 et contributions par variable
+    (`loadings`) déjà affichées — vérifié, pas dupliqué.** Lecture de
+    `services/engine.py` : la PCA de référence ne calcule que 2
+    composantes (`n_components=2`, jamais 4+ comme le montre `Projection.
+    html` avec ses axes 1 à 4 et « 38 autres ») — le tableau détaillé par
+    axe de la maquette n'est donc pas reproductible avec des données
+    réelles ici (seul `total_variance_explained`, la somme des 2 axes,
+    existe et est déjà affiché). Le tableau de contributions (`loadings`,
+    jusqu'à 15 variables, poids sur PC1/PC2) est lui aussi déjà affiché,
+    conditionné à `algorithm_id === "pca"`. Détection de capteurs
+    redondants et cerclage des points isolés (maquette) : aucune donnée
+    de corrélation inter-capteurs ni de score d'isolement par point
+    n'existe côté backend — hors périmètre, pas de nouvelle fonctionnalité
+    inventée. Aucune modification faite sur `DimensionalityReduction.tsx`
+    ce lot.
+52. **« Exporter l'image »/« Regrouper à partir d'ici » (Projection) et
+    « Exporter 187 lignes »/« Analyser un nouveau lot » (Anomalies) —
+    hors périmètre.** Aucune route d'export ni de ré-analyse en chaîne
+    n'existe côté backend pour ces deux écrans — même raisonnement que la
+    décision 50.
+
+### Porte de qualité — résultat réel
+
+**1. Build & tsc** — `npx tsc --noEmit` : aucune sortie, code 0. `npm run
+build` : code 0, bundle stable (`1 124,81 Ko` JS / `78,65 Ko` CSS).
+
+**2. Lint** — `✖ 18 problems (0 errors, 18 warnings)`, identique aux lots
+précédents.
+
+**3. Chasse aux couleurs en dur** — identique à la ligne de base (2
+occurrences Vision hors périmètre + 4 dans un fichier de test).
+
+**4. Rendu des 5 thèmes** — `scripts/lot7-verify.mjs` contre un job réel
+(`AnomalyDetection`, dataset `lot6_regression.csv`) × 5 thèmes, avec le
+PATCH de préférence serveur (piège identifié au Lot 6, appliqué dès le
+départ ici) et vérification `renderedTheme === theme` après chaque
+navigation : 5 captures, aucune anomalie de thème.
+
+**5. Accessibilité** — `scripts/lot7-axe.mjs`, tags `wcag2a`/`wcag2aa`/
+`wcag21aa`, page Anomalies × 5 thèmes. 0 violation en graphite/ardoise/
+minuit. **2 violations en ivoire/porcelaine — même signature que le bug 48
+du Lot 6** (`text-accent-3`/`text-accent-2` sur `MetricTile`/badge de
+qualité, ex. `<p class="... text-accent-3">0.0 %</p>`) : confirme qu'il
+s'agit bien d'un défaut SYSTÉMIQUE du système de jetons de couleur (déjà
+documenté, pas une régression de ce lot, aucun nœud ne provient du nouveau
+panneau `ThresholdExplorer`, qui n'utilise que `text-foreground`/
+`text-muted-foreground`). Toujours hors périmètre pour la même raison
+qu'au Lot 6 — un chantier de calibration `tune.py`, pas une correction
+ponctuelle sûre dans le temps d'un lot.
+
+**6. Clavier** — curseur du panneau « Où placer le curseur » vérifié
+focusable et réactif au clavier (`Home`/`End`/flèches, comportement natif
+d'un `<input type="range">`) via `scripts/lot7-verify.mjs` :
+`sliderFocusable: true`, `sliderChangesCount: true` (le décompte affiché
+change bien après une pression clavier sur le curseur).
+
+**7. Tests backend** — aucun fichier backend modifié par ce lot (Lot 7
+est 100 % frontend : un seul fichier touché, `AnomalyDetection.tsx`).
+
+### Merge
+
+Branche `ui/7-non-supervise` → `main`, porte de qualité au vert sur les 6
+points applicables (bug 48 confirmé systémique, toujours différé). Serveurs
+de test toujours actifs pour le Lot 8.
