@@ -850,6 +850,13 @@ function GradCamPanel({ jobId }: { jobId: number }) {
               className="w-full aspect-square object-cover rounded-lg border border-border"
             />
             <div className="flex items-center gap-2 mt-2">
+              {/* Couleurs fixes volontaires (Lot 8, revue du grep de couleurs
+                  en dur porté depuis le Lot 1) : reproduit exactement la
+                  palette "jet" appliquée côté serveur au PNG ci-dessus
+                  (backend/domains/vision/localization.py::_apply_colormap,
+                  bleu=faible/rouge=fort) — jamais les jetons de thème, qui
+                  rendraient cette légende fausse par rapport à l'image
+                  réellement affichée au-dessus. */}
               <span
                 className="inline-block h-2 w-16 rounded-full flex-shrink-0"
                 style={{ background: "linear-gradient(to right, #0000cc, #00cc66, #cc0000)" }}
