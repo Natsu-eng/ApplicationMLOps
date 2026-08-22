@@ -1,4 +1,4 @@
-"""Tests de services/clustering_inference.py (Lot 6B, §F.2 — assignation
+"""Tests de domains/clustering/services/inference.py (Lot 6B, §F.2 — assignation
 d'une nouvelle observation à un clustering déjà entraîné)."""
 from __future__ import annotations
 
@@ -6,8 +6,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from services.clustering_inference import ClusterInferenceError, assign_cluster
-from services.clustering_training import ClusteringConfig, train_and_evaluate_clustering
+from domains.clustering.services.inference import ClusterInferenceError, assign_cluster
+from domains.clustering.services.engine import ClusteringConfig, train_and_evaluate_clustering
 
 _NOOP = lambda step, pct: None  # noqa: E731
 

@@ -5,7 +5,7 @@ convention que test_data_quality.py::analyze_data_quality). Données
 synthétiques uniquement : ce module ne touche ni base ni entraînement réel."""
 from __future__ import annotations
 
-from services.model_verdict import compute_verdict
+from domains.training.services.verdict import compute_verdict
 
 
 def _codes(claims: list[dict]) -> set[str]:

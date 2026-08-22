@@ -1,19 +1,19 @@
-"""Tests de services/clustering_training.py (Lot 11 — ML non supervisé)."""
+"""Tests de domains/clustering/services/engine.py (Lot 11 — ML non supervisé)."""
 from __future__ import annotations
 
 import numpy as np
 import pandas as pd
 import pytest
 
-from services import clustering_training
-from services.clustering_registry import CLUSTER_REGISTRY
-from services.clustering_training import (
+from domains.clustering.services import engine as clustering_training
+from domains.clustering.services.registry import CLUSTER_REGISTRY
+from domains.clustering.services.engine import (
     ClusteringConfig,
     MAX_SELECTABLE_NOISE_RATIO,
     _rank_candidates_with_noise_budget,
     train_and_evaluate_clustering,
 )
-from services.ml_preprocessing import TrainingAbortedError
+from domains.shared.ml_preprocessing import TrainingAbortedError
 
 _NOOP = lambda step, pct: None  # noqa: E731
 
@@ -202,7 +202,7 @@ def test_pipeline_bundle_contains_fitted_preprocessor_and_model():
 
 
 def test_only_default_subset_evaluated_when_algorithm_ids_is_none():
-    from services.clustering_registry import DEFAULT_ALGORITHM_IDS
+    from domains.clustering.services.registry import DEFAULT_ALGORITHM_IDS
 
     df = _make_three_blobs_df()
     result = train_and_evaluate_clustering(df, ClusteringConfig(seed=42), _NOOP)

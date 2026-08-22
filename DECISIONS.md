@@ -2311,3 +2311,95 @@ de données déjà exercée en production sur `Dashboard.tsx`.
 **Remise en cause si** : un 7ᵉ type de job apparaît — ajouter son entrée
 dans `KIND_META` (`AllHistory.tsx`) et dans le bloc de normalisation
 `Promise.allSettled`, sur le même modèle que les 6 existants.
+
+### D8.1 — Backend : monolithe modulaire (`domains/`), pas un découpage en microservices
+
+**Question** : passer d'une architecture "monolithique" (routers/services/
+workers à plat) à une architecture plus modulaire — jusqu'où aller ? Un
+vrai découpage en microservices (déploiement séparé par domaine, bases
+de données distinctes) était sur la table.
+
+**Retenu** : un monolithe MODULAIRE — regroupement du code existant en
+paquets Python par domaine (`backend/domains/<nom>/{router.py, worker.py,
+services/}`), avec des frontières d'import vérifiées automatiquement
+(`tests/test_architecture_boundaries.py`), **sans aucun changement de
+déploiement** : un seul process FastAPI, une seule base Postgres, un seul
+transaction boundary, `docker-compose.yml` inchangé. Choix confirmé
+explicitement par l'utilisateur après présentation de 3 options (monolithe
+modulaire / extraction d'un service pilote / découpage complet immédiat).
+**Écarté — découpage complet immédiat** : casserait des mécanismes qui
+fonctionnent bien aujourd'hui pour un produit de cette taille — isolation
+multi-tenant par `organization_id` en une seule requête, dashboard agrégé
+(`GET /dashboard/summary`, une requête pour 6 types de job), transactions
+inter-tables. Chantier de plusieurs semaines à fort risque (auth
+inter-services, cohérence des données, transactions distribuées) pour un
+besoin de scale différencié par domaine qui n'existe pas aujourd'hui — le
+worker RQ (`docker-compose.yml`, files `training`/`vision`/`analysis`
+séparées depuis le correctif I6) apporte déjà l'isolation de charge qui
+compte réellement à cette échelle.
+**Écarté — extraction d'un service pilote** : aurait posé les mêmes
+questions difficiles (auth partagée, isolation multi-tenant inter-services)
+sur un périmètre réduit, sans les résoudre pour le reste — un premier pas
+qui n'aurait pas simplifié le pas suivant.
+
+**Domaines retenus** : `auth`, `dashboard` (agrégateur cross-pilier),
+`datasets` (tabulaire), `training`, `clustering`, `dimensionality`,
+`anomalies`, et `vision` (avec 3 sous-domaines `vision.datasets`/
+`vision.classification`/`vision.anomalies`, plus `vision/shared.py` et
+`vision/localization.py` pour ce qu'ils partagent réellement).
+`backend/api/core/` (config, database, modèles ORM, job_queue,
+observability, pagination, rate_limit, security, storage) reste
+INCHANGÉ — c'est le socle partagé légitime (une seule base de données
+est précisément la raison de NE PAS faire de microservices ici).
+
+**Socle partagé (`domains/shared/`)** : `audit.py`, `job_lifecycle.py`,
+`job_events.py`, `job_quota.py`, `job_watchdog.py`, `ml_preprocessing.py`,
+`stats_utils.py`, `model_bundle.py` (nouveau, voir Phase 0 ci-dessous),
+et — découverte pendant l'exécution, pas anticipée dans le plan initial —
+`feature_engineering.py`, `ml_task.py`, `data_quality.py`, `dataset_eda.py`.
+**Pourquoi ces 4 derniers, alors que le plan initial les rattachait au
+domaine `datasets`** : `feature_engineering.py` importait `data_quality.py`
+qui importait `dataset_eda.py` et `ml_task.py` — les placer sous
+`domains/datasets/services/` aurait fait dépendre le domaine `training`
+(qui a besoin de `feature_engineering`/`ml_task`) des internes du domaine
+`datasets`, recréant exactement le couplage que ce lot devait éliminer.
+Une vérification des imports réels (pas une supposition) a montré que ces
+4 modules forment un ensemble connexe consommé par AU MOINS deux domaines
+(`datasets` et `training`) — la définition même d'un socle partagé.
+`target_suggestion.py` reste lui domaine-local (`domains/datasets/
+services/`) : un seul consommateur vérifié (`datasets` router), pas de
+raison de le promouvoir par anticipation (YAGNI).
+
+**Phase 0 — corrections de frontières avant tout déplacement physique** :
+trois fuites d'encapsulation déjà réelles, corrigées indépendamment du
+découpage en dossiers (voir aussi le commit dédié) : `load_bundle`/
+`InferenceError` extraits vers `model_bundle.py` (clustering dépendait
+d'un module training pour un chargement joblib générique) ; constantes
+d'augmentation vision extraites vers `vision/shared.py` (vision_anomalies
+et vision_datasets dépendaient du sous-domaine classification pour des
+constantes génériques) ; `dashboard.py` (aujourd'hui `domains/dashboard/
+router.py`) important désormais `to_summary()` PUBLIC de chaque router de
+job plutôt que les fonctions privées `_to_summary`.
+
+**`auth`** : router déplacé TEL QUEL (`/auth/*` ET `/auth/team/*` restent
+dans le même fichier) — fichier sensible (authentification), churn
+minimal délibéré ; scinder identité et gestion d'équipe est une question
+de découpage de domaine légitime mais indépendante de ce lot, reportée.
+
+**Vérifié** : `pytest --collect-only` propre (778 tests, zéro erreur
+d'import) après chaque domaine déplacé, un domaine à la fois, du moins
+couplé (`dimensionality`) au plus couplé (`auth`/`dashboard` en dernier).
+Suite complète (`pytest`) exécutée une fois en fin de lot — exception
+délibérée à la consigne "tests scopés seulement", un renommage de chemins
+d'import touchant tout le codebase étant précisément le cas qu'un
+sous-ensemble de tests ne peut pas couvrir. Nouveau garde-fou permanent
+`test_architecture_boundaries.py` (AST, zéro nouvelle dépendance) :
+vérifie qu'aucun domaine n'importe les internes d'un autre, et qu'aucun
+fichier ne référence plus les anciens chemins plats (`services.*`,
+`api.routers.*`) — protège contre une régression future, pas seulement
+l'état à la fin de ce lot.
+**Remise en cause si** : un besoin réel de scale différencié par domaine
+apparaît (ex. Vision consomme disproportionnellement plus de CPU que les
+autres piliers et doit scaler indépendamment) — les frontières déjà
+propres de ce lot rendent alors un futur découpage physique mécanique
+plutôt qu'une réécriture.

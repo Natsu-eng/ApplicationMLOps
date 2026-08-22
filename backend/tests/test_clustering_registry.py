@@ -1,10 +1,10 @@
-"""Tests de services/clustering_registry.py (Lot 11 — ML non supervisé)."""
+"""Tests de domains/clustering/services/registry.py (Lot 11 — ML non supervisé)."""
 from __future__ import annotations
 
 import numpy as np
 import pytest
 
-from services.clustering_registry import (
+from domains.clustering.services.registry import (
     CLUSTER_REGISTRY,
     DEFAULT_ALGORITHM_IDS,
     resolve_dbscan_eps,
@@ -61,14 +61,14 @@ def test_every_spec_builds_a_fittable_estimator(spec):
 def test_kmeans_candidates_scale_with_n_samples():
     """Un k candidat ne doit jamais dépasser (ni égaler) le nombre
     d'échantillons — sklearn lèverait une erreur sinon."""
-    from services.clustering_registry import _kmeans_candidates
+    from domains.clustering.services.registry import _kmeans_candidates
 
     configs = _kmeans_candidates(n_samples=4, seed=42)
     assert all(c.params["n_clusters"] < 4 for c in configs)
 
 
 def test_dbscan_candidates_empty_below_minimum_samples():
-    from services.clustering_registry import _dbscan_candidates
+    from domains.clustering.services.registry import _dbscan_candidates
 
     assert _dbscan_candidates(n_samples=5, seed=42) == []
 

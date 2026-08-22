@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 import torch
 
-from services.vision_anomaly_registry import (
+from domains.vision.anomalies.services.registry import (
     ANOMALY_MODEL_REGISTRY,
     DEFAULT_ANOMALY_MODEL_ID,
     IMAGE_SIZE,
@@ -50,7 +50,7 @@ def test_only_the_vae_declares_the_vae_loss_kind():
 
 
 def test_denoising_autoencoder_only_perturbs_input_in_training_mode():
-    from services.vision_anomaly_registry import DenoisingConvAutoEncoder
+    from domains.vision.anomalies.services.registry import DenoisingConvAutoEncoder
 
     torch.manual_seed(0)
     model = DenoisingConvAutoEncoder(noise_factor=0.5)
@@ -73,7 +73,7 @@ def test_denoising_autoencoder_only_perturbs_input_in_training_mode():
 
 
 def test_conv_vae_compute_loss_includes_kl_term_after_training_forward():
-    from services.vision_anomaly_registry import ConvVAE
+    from domains.vision.anomalies.services.registry import ConvVAE
 
     torch.manual_seed(0)
     model = ConvVAE()

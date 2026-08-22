@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from services.dataset_eda import (
+from domains.shared.dataset_eda import (
     compute_categorical_correlation_matrix,
     compute_column_stats,
     compute_correlation_matrix,

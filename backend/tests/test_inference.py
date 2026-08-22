@@ -19,12 +19,12 @@ import pandas as pd
 import pytest
 
 from api.core.models import Dataset, MLModel, TrainingJob
-from services.feature_engineering import apply_upstream_feature_engineering
-from services.ml_inference import predict_one
-from services.ml_preprocessing import split_dataset
-from services.ml_training import TrainingConfig, train_and_evaluate
-from services.model_bundle import InferenceError
-from services.model_versioning import next_version
+from domains.shared.feature_engineering import apply_upstream_feature_engineering
+from domains.training.services.inference import predict_one
+from domains.shared.ml_preprocessing import split_dataset
+from domains.training.services.engine import TrainingConfig, train_and_evaluate
+from domains.shared.model_bundle import InferenceError
+from domains.training.services.versioning import next_version
 
 _FAST_CONFIG = TrainingConfig(optuna_trials=3, cv_folds=3)
 

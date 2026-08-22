@@ -73,7 +73,7 @@ def _upload_simple_dataset(client, headers):
     return resp.json()
 
 
-@patch("api.routers.training.training_queue")
+@patch("domains.training.router.training_queue")
 def test_create_job_persists_versioned_feature_engineering_spec(mock_queue, db_session, client):
     mock_queue.enqueue.return_value.id = "fake-rq-id"
     headers = _register(client)
@@ -104,7 +104,7 @@ def test_create_job_persists_versioned_feature_engineering_spec(mock_queue, db_s
     }
 
 
-@patch("api.routers.training.training_queue")
+@patch("domains.training.router.training_queue")
 def test_create_job_rejects_unknown_transformation_type(mock_queue, client):
     headers = _register(client)
     dataset = _upload_simple_dataset(client, headers)
@@ -122,7 +122,7 @@ def test_create_job_rejects_unknown_transformation_type(mock_queue, client):
     assert resp.json()["detail"]["code"] == "TRANSFORMATION_INCONNUE"
 
 
-@patch("api.routers.training.training_queue")
+@patch("domains.training.router.training_queue")
 def test_create_job_rejects_unknown_column_in_feature_engineering(mock_queue, client):
     headers = _register(client)
     dataset = _upload_simple_dataset(client, headers)
@@ -143,7 +143,7 @@ def test_create_job_rejects_unknown_column_in_feature_engineering(mock_queue, cl
     assert resp.json()["detail"]["code"] == "COLONNES_INCONNUES"
 
 
-@patch("api.routers.training.training_queue")
+@patch("domains.training.router.training_queue")
 def test_create_job_without_feature_engineering_stores_null(mock_queue, db_session, client):
     mock_queue.enqueue.return_value.id = "fake-rq-id"
     headers = _register(client)

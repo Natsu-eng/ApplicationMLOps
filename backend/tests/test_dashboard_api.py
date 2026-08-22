@@ -52,11 +52,11 @@ def test_summary_counts_jobs_per_pillar(client):
     headers = _register(client)
     dataset = _upload_dataset(client, headers)
 
-    with patch("api.routers.training.training_queue") as mock_queue:
+    with patch("domains.training.router.training_queue") as mock_queue:
         mock_queue.enqueue.return_value.id = "fake-rq-id"
         client.post("/api/training/jobs", headers=headers, json={"dataset_id": dataset["id"], "target_column": "cible"})
 
-    with patch("api.routers.clustering.analysis_queue") as mock_queue:
+    with patch("domains.clustering.router.analysis_queue") as mock_queue:
         mock_queue.enqueue.return_value.id = "fake-rq-id"
         client.post(
             "/api/clustering/jobs", headers=headers, json={"dataset_id": dataset["id"], "feature_columns": ["x1", "x2"]}
@@ -91,7 +91,7 @@ def test_summary_recent_supervised_matches_list_training_jobs_shape(client):
     etc.) — réutilise `to_summary`, jamais une forme dupliquée."""
     headers = _register(client)
     dataset = _upload_dataset(client, headers)
-    with patch("api.routers.training.training_queue") as mock_queue:
+    with patch("domains.training.router.training_queue") as mock_queue:
         mock_queue.enqueue.return_value.id = "fake-rq-id"
         client.post("/api/training/jobs", headers=headers, json={"dataset_id": dataset["id"], "target_column": "cible"})
 

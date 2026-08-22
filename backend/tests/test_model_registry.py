@@ -12,7 +12,7 @@ from unittest.mock import patch
 import joblib
 
 from api.core.models import MLModel, TrainingJob
-from services.model_versioning import next_version
+from domains.training.services.versioning import next_version
 
 
 def _register(client, email="owner@bureau.fr", org="Bureau"):
@@ -31,7 +31,7 @@ def _upload_dataset(client, headers, name="d.csv"):
 
 
 def _create_job(client, headers, dataset_id, target_column="cible"):
-    with patch("api.routers.training.training_queue") as mock_queue:
+    with patch("domains.training.router.training_queue") as mock_queue:
         mock_queue.enqueue.return_value.id = "fake-rq-id"
         return client.post(
             "/api/training/jobs", headers=headers, json={"dataset_id": dataset_id, "target_column": target_column}

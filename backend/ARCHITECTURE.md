@@ -285,3 +285,49 @@ Ce schéma se complète lot par lot :
   suivi par git.
 - Migrations de schéma idempotentes plutôt qu'Alembic (à réévaluer si le
   schéma grandit significativement en cours de route).
+
+## 11. Domaines (Lot 8 — monolithe modulaire)
+
+Le code métier est regroupé par domaine sous `backend/domains/` — un
+seul process FastAPI et une seule base Postgres restent inchangés
+(voir DECISIONS.md, D8.1, pour l'arbitrage monolithe modulaire vs
+microservices). `backend/api/core/` (config, database, modèles ORM,
+job_queue, observability, pagination, rate_limit, security, storage)
+reste le socle infra partagé, hors de `domains/`.
+
+```text
+backend/domains/
+  shared/           socle métier transversal (audit, cycle de vie des
+                     jobs, notifications SSE, quota, pré-traitement ML,
+                     statistiques, qualité des données, EDA, ingénierie
+                     de variables, détection de tâche, chargement de
+                     bundle modèle) — consommé par ≥ 2 domaines, vérifié
+  auth/             router.py       — /auth/*, /auth/team/*
+  dashboard/        router.py       — agrégateur cross-pilier
+  datasets/         router.py, services/{dataset_io,eda*,target_suggestion}.py
+  training/         router.py, worker.py, services/{registry,engine,
+                     inference,explainability,verdict,versioning,
+                     duration_estimate,prediction_retention}.py
+  clustering/       router.py, worker.py, services/{registry,engine,inference}.py
+  dimensionality/   router.py, worker.py, services/{registry,engine}.py
+  anomalies/        router.py, worker.py, services/{registry,engine}.py
+  vision/
+    shared.py, localization.py     — socle partagé aux 3 sous-domaines Vision
+    datasets/       router.py, service.py
+    classification/ router.py, worker.py, services/{registry,engine,gradcam}.py
+    anomalies/      router.py, worker.py, services/{registry,engine}.py
+```
+
+**Frontières** — un fichier de `domains/<X>/` n'importe que : son propre
+sous-arbre, `domains/shared/`, `domains/auth/router.py` (seul import
+router→router légitime — `get_current_user`, dépendance FastAPI
+universelle), et pour les 3 sous-domaines Vision, `domains/vision/
+shared.py`/`domains/vision/localization.py`. Vérifié automatiquement par
+`backend/tests/test_architecture_boundaries.py` (analyse AST, zéro
+nouvelle dépendance) — échoue si un domaine importe les internes d'un
+autre, ou si un fichier référence encore un ancien chemin plat
+(`services.*`/`api.routers.*`, pré-Lot 8).
+
+`backend/workers/run_worker.py` reste hors de `domains/` : point d'entrée
+RQ générique (sélection de file via `RQ_QUEUES`), aucun import de
+domaine — voir §2 ci-dessus.

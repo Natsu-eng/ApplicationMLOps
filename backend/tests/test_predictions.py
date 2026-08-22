@@ -19,9 +19,9 @@ import numpy as np
 import pandas as pd
 
 from api.core.models import Dataset, MLModel, Prediction, TrainingJob
-from services.ml_preprocessing import split_dataset
-from services.ml_training import TrainingConfig, train_and_evaluate
-from services.model_versioning import next_version
+from domains.shared.ml_preprocessing import split_dataset
+from domains.training.services.engine import TrainingConfig, train_and_evaluate
+from domains.training.services.versioning import next_version
 
 _FAST_CONFIG = TrainingConfig(optuna_trials=3, cv_folds=3)
 

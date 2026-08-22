@@ -24,16 +24,16 @@ from starlette.responses import JSONResponse
 from api.core.config import get_settings
 from api.core.database import check_connection, init_db
 from api.core.observability import PrometheusMiddleware, RequestIdMiddleware, configure_logging, metrics_response
-from api.routers.anomalies import router as anomalies_router
-from api.routers.auth import router as auth_router
-from api.routers.clustering import router as clustering_router
-from api.routers.dashboard import router as dashboard_router
-from api.routers.datasets import router as datasets_router
-from api.routers.dimensionality import router as dimensionality_router
-from api.routers.training import router as training_router
-from api.routers.vision_anomalies import router as vision_anomalies_router
-from api.routers.vision_classification import router as vision_classification_router
-from api.routers.vision_datasets import router as vision_datasets_router
+from domains.anomalies.router import router as anomalies_router
+from domains.auth.router import router as auth_router
+from domains.clustering.router import router as clustering_router
+from domains.dashboard.router import router as dashboard_router
+from domains.datasets.router import router as datasets_router
+from domains.dimensionality.router import router as dimensionality_router
+from domains.training.router import router as training_router
+from domains.vision.anomalies.router import router as vision_anomalies_router
+from domains.vision.classification.router import router as vision_classification_router
+from domains.vision.datasets.router import router as vision_datasets_router
 
 settings = get_settings()
 

@@ -1,4 +1,4 @@
-"""Tests de workers/anomaly_worker.py (Lot 14 — ML non supervisé) — bout en
+"""Tests de domains/anomalies/worker.py (Lot 14 — ML non supervisé) — bout en
 bout réel (pas mocké), même approche que test_clustering_worker.py."""
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ import numpy as np
 import pandas as pd
 
 from api.core.models import AnomalyJob, AnomalyModel, AnomalyObservationRecord, Dataset, Organization
-from workers.anomaly_worker import run_anomaly_job
+from domains.anomalies.worker import run_anomaly_job
 
 
 def _write_temp_csv(df: pd.DataFrame) -> str:
@@ -93,7 +93,7 @@ def test_worker_marks_job_failed_on_missing_dataset(db_session):
 
 
 def test_worker_never_leaks_raw_traceback_on_failure(db_session, monkeypatch):
-    import workers.anomaly_worker as anomaly_worker_module
+    import domains.anomalies.worker as anomaly_worker_module
 
     raw_exc = RuntimeError(
         'File "E:\\mlops\\app-analyse\\backend\\.venv\\Lib\\site-packages\\sklearn\\ensemble\\_iforest.py", line 42'

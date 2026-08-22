@@ -1,7 +1,7 @@
-"""Tests de services/anomaly_registry.py (Lot 14 — ML non supervisé)."""
+"""Tests de domains/anomalies/services/registry.py (Lot 14 — ML non supervisé)."""
 from __future__ import annotations
 
-from services.anomaly_registry import ANOMALY_REGISTRY
+from domains.anomalies.services.registry import ANOMALY_REGISTRY
 
 
 def test_registry_has_both_algorithms():

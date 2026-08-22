@@ -10,7 +10,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from services.datasets import DatasetParsingError, _read_cached, read_dataset_dataframe
+from domains.shared.dataset_io import DatasetParsingError, _read_cached, read_dataset_dataframe
 
 
 @pytest.fixture(autouse=True)

@@ -33,7 +33,7 @@ def _create_jobs(client, db_session, headers, dataset_id, n):
     (3 par défaut, `services/job_quota.py`) bloque toute création au-delà
     de 3 jobs "queued" simultanés, ce qui n'a rien à voir avec ce que ces
     tests de pagination vérifient (le nombre TOTAL de jobs, actifs ou non)."""
-    with patch("api.routers.training.training_queue") as mock_queue:
+    with patch("domains.training.router.training_queue") as mock_queue:
         mock_queue.enqueue.return_value.id = "fake-rq-id"
         for _ in range(n):
             resp = client.post("/api/training/jobs", headers=headers, json={"dataset_id": dataset_id, "target_column": "cible"})

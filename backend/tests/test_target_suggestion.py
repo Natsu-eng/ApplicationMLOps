@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from services.target_suggestion import suggest_target_columns
+from domains.datasets.services.target_suggestion import suggest_target_columns
 
 
 def _make_df(n: int = 100) -> pd.DataFrame:

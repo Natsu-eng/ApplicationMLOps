@@ -7,8 +7,8 @@ import numpy as np
 import pytest
 from PIL import Image
 
-from services.ml_preprocessing import TrainingAbortedError
-from services.vision_anomaly_training import (
+from domains.shared.ml_preprocessing import TrainingAbortedError
+from domains.vision.anomalies.services.engine import (
     MIN_IMAGES_PER_CATEGORY_FOR_CALIBRATION_SPLIT,
     MIN_TRAIN_GOOD_FOR_TRAINING,
     AnomalyVisionConfig,
