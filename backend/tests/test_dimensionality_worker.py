@@ -1,4 +1,4 @@
-"""Tests de workers/dimensionality_worker.py (Lot 13 — ML non supervisé) —
+"""Tests de domains/dimensionality/worker.py (Lot 13 — ML non supervisé) —
 bout en bout réel (pas mocké), même approche que test_clustering_worker.py."""
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ import numpy as np
 import pandas as pd
 
 from api.core.models import Dataset, DimensionalityJob, DimensionalityModel, DimensionalityPoint, Organization
-from workers.dimensionality_worker import run_dimensionality_job
+from domains.dimensionality.worker import run_dimensionality_job
 
 
 def _write_temp_csv(df: pd.DataFrame) -> str:
@@ -99,7 +99,7 @@ def test_worker_marks_job_failed_on_missing_dataset(db_session):
 
 
 def test_worker_never_leaks_raw_traceback_on_failure(db_session, monkeypatch):
-    import workers.dimensionality_worker as dimensionality_worker_module
+    import domains.dimensionality.worker as dimensionality_worker_module
 
     raw_exc = RuntimeError(
         'File "E:\\mlops\\app-analyse\\backend\\.venv\\Lib\\site-packages\\sklearn\\decomposition\\_pca.py", line 42'

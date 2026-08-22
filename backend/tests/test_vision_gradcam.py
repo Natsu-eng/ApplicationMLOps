@@ -10,9 +10,9 @@ import numpy as np
 import pytest
 from PIL import Image
 
-from services.vision_classification_registry import CLASSIFICATION_BACKBONE_REGISTRY
-from services.vision_classification_training import ClassificationConfig, train_and_evaluate_classification
-from services.vision_gradcam import GradCamError, explain_classification_prediction
+from domains.vision.classification.services.registry import CLASSIFICATION_BACKBONE_REGISTRY
+from domains.vision.classification.services.engine import ClassificationConfig, train_and_evaluate_classification
+from domains.vision.classification.services.gradcam import GradCamError, explain_classification_prediction
 
 
 def _write_classification_dataset(root, n_per_class=10, size=(80, 80)):

@@ -1,14 +1,14 @@
-"""Tests de services/dimensionality_training.py (Lot 13 — ML non supervisé)."""
+"""Tests de domains/dimensionality/services/engine.py (Lot 13 — ML non supervisé)."""
 from __future__ import annotations
 
 import numpy as np
 import pandas as pd
 import pytest
 
-import services.dimensionality_training as dimensionality_training
-from services.dimensionality_registry import DIMENSIONALITY_REGISTRY
-from services.dimensionality_training import DimensionalityConfig, train_and_evaluate_dimensionality
-from services.ml_preprocessing import TrainingAbortedError
+import domains.dimensionality.services.engine as dimensionality_training
+from domains.dimensionality.services.registry import DIMENSIONALITY_REGISTRY
+from domains.dimensionality.services.engine import DimensionalityConfig, train_and_evaluate_dimensionality
+from domains.shared.ml_preprocessing import TrainingAbortedError
 
 _NOOP = lambda step, pct: None  # noqa: E731
 _ALGO_IDS = [s.id for s in DIMENSIONALITY_REGISTRY]

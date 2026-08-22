@@ -6,7 +6,7 @@ import json
 from datetime import datetime, timedelta, timezone
 
 from api.core.models import Dataset, Organization, TrainingJob
-from services.duration_estimate import MIN_COMPLETED_JOBS_FOR_ESTIMATE, estimate_training_duration
+from domains.training.services.duration_estimate import MIN_COMPLETED_JOBS_FOR_ESTIMATE, estimate_training_duration
 
 
 def _make_org(db) -> int:

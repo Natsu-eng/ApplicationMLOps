@@ -20,8 +20,8 @@ import pandas as pd
 import pytest
 
 from api.core.models import Dataset, MLModel, ModelCandidate, Organization, TrainingJob
-import workers.training_worker as training_worker_module
-from workers.training_worker import _user_safe_error_message, run_training_job
+import domains.training.worker as training_worker_module
+from domains.training.worker import _user_safe_error_message, run_training_job
 
 
 def _write_temp_csv(df: pd.DataFrame) -> str:
@@ -189,7 +189,7 @@ def test_worker_persists_all_default_catalog_candidates_not_only_winner(db_sessi
     de comparaison réel du moteur restait invisible. Le worker doit
     maintenant persister une ligne `ModelCandidate` par modèle du
     sous-ensemble par défaut, pas seulement celui retenu."""
-    from services.ml_registry import models_for_task
+    from domains.training.services.registry import models_for_task
 
     job = _make_job(db_session, None, feature_columns=["x"])
     run_training_job(job.id)
@@ -243,7 +243,7 @@ def test_worker_respects_model_ids_from_config_json(db_session):
     assert refreshed.status == "completed"
 
     rows = db_session.query(ModelCandidate).filter(ModelCandidate.training_job_id == job.id).all()
-    from services.ml_registry import MODEL_REGISTRY
+    from domains.training.services.registry import MODEL_REGISTRY
 
     assert {r.algorithm for r in rows} == {MODEL_REGISTRY["extra_trees"].label("regression")}
 
@@ -346,7 +346,7 @@ def test_worker_data_leakage_message_unaffected_by_safe_translation(db_session, 
     """`DataLeakageError` porte déjà un message français auto-rédigé, sûr —
     ce chemin d'exception reste inchangé par la traduction générique du
     Volet A (pas de sur-correction d'un cas déjà propre)."""
-    from services.ml_preprocessing import DataLeakageError
+    from domains.shared.ml_preprocessing import DataLeakageError
 
     def _raise(*args, **kwargs):
         raise DataLeakageError("Fuite détectée entre train et test sur 3 groupe(s) de la colonne 'groupe'")
@@ -367,7 +367,7 @@ def test_worker_training_aborted_error_message_surfaced_verbatim(db_session, mon
     introuvable ou non prêt") porte déjà un message rédigé pour
     l'utilisateur — ne doit plus être remplacé par le message générique du
     filet `except Exception`."""
-    from services.ml_preprocessing import TrainingAbortedError
+    from domains.shared.ml_preprocessing import TrainingAbortedError
 
     def _raise(*args, **kwargs):
         raise TrainingAbortedError("Dataset introuvable ou non prêt")
@@ -411,7 +411,7 @@ def test_worker_feature_engineering_spec_error_surfaced_verbatim(db_session, mon
     """H7 (AUDIT_ROADMAP.md) : `FeatureEngineeringSpecError` porte déjà un
     message français sûr (ex. colonne source absente) — ne doit plus être
     absorbé par le message générique."""
-    from services.feature_engineering import FeatureEngineeringSpecError
+    from domains.shared.feature_engineering import FeatureEngineeringSpecError
 
     def _raise(*args, **kwargs):
         raise FeatureEngineeringSpecError("Colonne source 'date' absente du dataset")

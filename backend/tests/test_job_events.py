@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 
-from services.job_events import stream_job_updates
+from domains.shared.job_events import stream_job_updates
 
 
 async def _collect(fetch_snapshot):
@@ -40,7 +40,7 @@ def test_stream_emits_error_event_and_stops_when_job_missing():
 def test_stream_deduplicates_unchanged_snapshots(monkeypatch):
     """Deux ticks identiques de suite ne doivent produire qu'UN seul
     événement — jamais un doublon pour rien."""
-    import services.job_events as job_events_module
+    import domains.shared.job_events as job_events_module
 
     monkeypatch.setattr(job_events_module, "POLL_INTERVAL_SECONDS", 0.01)
 

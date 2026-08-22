@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 from api.core.config import get_settings
 from api.core.models import DimensionalityJob
-from workers.dimensionality_worker import run_dimensionality_job
+from domains.dimensionality.worker import run_dimensionality_job
 
 
 def _register(client, email="owner@bureau.fr", org="Bureau"):
@@ -28,7 +28,7 @@ def _upload_dataset(client, headers, name="d.csv", n=60):
 def _create_job(client, headers, dataset_id, **overrides):
     body = {"dataset_id": dataset_id, "feature_columns": ["x1", "x2"]}
     body.update(overrides)
-    with patch("api.routers.dimensionality.analysis_queue") as mock_queue:
+    with patch("domains.dimensionality.router.analysis_queue") as mock_queue:
         mock_queue.enqueue.return_value.id = "fake-rq-id"
         return client.post("/api/dimensionality/jobs", headers=headers, json=body)
 
@@ -185,7 +185,7 @@ def test_rerun_creates_a_new_job_with_the_same_configuration(client):
     dataset = _upload_dataset(client, headers)
     original = _create_job(client, headers, dataset["id"], algorithm_id="pca", seed=7).json()
 
-    with patch("api.routers.dimensionality.analysis_queue") as mock_queue:
+    with patch("domains.dimensionality.router.analysis_queue") as mock_queue:
         mock_queue.enqueue.return_value.id = "fake-rq-id"
         resp = client.post(f"/api/dimensionality/jobs/{original['id']}/rerun", headers=headers)
     assert resp.status_code == 201
@@ -212,7 +212,7 @@ def test_quota_shared_across_supervised_clustering_and_dimensionality(client):
     dataset = _upload_dataset(client, headers)
     limit = get_settings().max_concurrent_jobs_per_org
 
-    with patch("api.routers.training.training_queue") as mock_queue:
+    with patch("domains.training.router.training_queue") as mock_queue:
         mock_queue.enqueue.return_value.id = "fake-rq-id"
         client.post("/api/training/jobs", headers=headers, json={"dataset_id": dataset["id"], "target_column": "x1"})
 

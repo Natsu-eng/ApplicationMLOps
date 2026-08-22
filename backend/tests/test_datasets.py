@@ -137,8 +137,8 @@ def test_usage_is_zero_for_a_fresh_dataset(client):
     }
 
 
-@patch("api.routers.clustering.analysis_queue")
-@patch("api.routers.training.training_queue")
+@patch("domains.clustering.router.analysis_queue")
+@patch("domains.training.router.training_queue")
 def test_usage_counts_jobs_referencing_this_dataset(mock_training_queue, mock_clustering_queue, client):
     mock_training_queue.enqueue.return_value.id = "fake-rq-id"
     mock_clustering_queue.enqueue.return_value.id = "fake-rq-id"

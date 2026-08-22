@@ -16,7 +16,7 @@ from api.core.models import (
     VisionClassificationModel,
     VisionDataset,
 )
-from workers.vision_classification_worker import run_vision_classification_job
+from domains.vision.classification.worker import run_vision_classification_job
 
 
 def _write_classification_dataset(root, n_per_class=8):
@@ -125,7 +125,7 @@ def test_worker_rejects_mvtec_dataset(db_session, tmp_path):
 
 
 def test_worker_never_leaks_raw_traceback_on_failure(db_session, tmp_path, monkeypatch):
-    import workers.vision_classification_worker as worker_module
+    import domains.vision.classification.worker as worker_module
 
     raw_exc = RuntimeError(
         'File "E:\\mlops\\app-analyse\\backend\\.venv\\Lib\\site-packages\\torch\\nn\\modules.py", line 42'

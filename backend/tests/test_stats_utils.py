@@ -4,7 +4,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from services.stats_utils import correlation_ratio, cramers_v, sample_if_large, univariate_auc
+from domains.shared.stats_utils import correlation_ratio, cramers_v, sample_if_large, univariate_auc
 
 
 def test_cramers_v_independence_is_near_zero():

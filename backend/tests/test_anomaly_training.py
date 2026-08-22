@@ -1,13 +1,13 @@
-"""Tests de services/anomaly_training.py (Lot 14 — ML non supervisé)."""
+"""Tests de domains/anomalies/services/engine.py (Lot 14 — ML non supervisé)."""
 from __future__ import annotations
 
 import numpy as np
 import pandas as pd
 import pytest
 
-import services.anomaly_training as anomaly_training
-from services.anomaly_training import MAX_TOP_N, AnomalyConfig, train_and_evaluate_anomalies
-from services.ml_preprocessing import TrainingAbortedError
+import domains.anomalies.services.engine as anomaly_training
+from domains.anomalies.services.engine import MAX_TOP_N, AnomalyConfig, train_and_evaluate_anomalies
+from domains.shared.ml_preprocessing import TrainingAbortedError
 
 _NOOP = lambda step, pct: None  # noqa: E731
 

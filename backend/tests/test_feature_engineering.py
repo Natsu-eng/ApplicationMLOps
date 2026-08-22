@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from services.feature_engineering import (
+from domains.shared.feature_engineering import (
     CURRENT_SPEC_VERSION,
     FeatureEngineeringSpecError,
     apply_datetime_decomposition,

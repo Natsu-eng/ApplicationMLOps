@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 import torch
 
-from services.vision_classification_registry import (
+from domains.vision.classification.services.registry import (
     CLASSIFICATION_BACKBONE_REGISTRY,
     DEFAULT_BACKBONE_ID,
     freeze_backbone,

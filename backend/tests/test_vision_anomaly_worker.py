@@ -16,7 +16,7 @@ from api.core.models import (
     VisionAnomalyModel,
     VisionDataset,
 )
-from workers.vision_anomaly_worker import run_vision_anomaly_job
+from domains.vision.anomalies.worker import run_vision_anomaly_job
 
 
 def _write_mvtec_dataset(root, n_train_good=14, n_test_good=4, n_test_defect=4):
@@ -193,7 +193,7 @@ def test_worker_rejects_classification_dataset(db_session, tmp_path):
 
 
 def test_worker_never_leaks_raw_traceback_on_failure(db_session, tmp_path, monkeypatch):
-    import workers.vision_anomaly_worker as worker_module
+    import domains.vision.anomalies.worker as worker_module
 
     raw_exc = RuntimeError(
         'File "E:\\mlops\\app-analyse\\backend\\.venv\\Lib\\site-packages\\torch\\nn\\modules.py", line 42'

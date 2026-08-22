@@ -6,7 +6,7 @@ from __future__ import annotations
 import json
 
 from api.core.models import Dataset, MLModel, Organization, TrainingJob
-from services.model_versioning import next_version
+from domains.training.services.versioning import next_version
 
 
 def _make_org_and_dataset(db_session, org_name="Bureau"):

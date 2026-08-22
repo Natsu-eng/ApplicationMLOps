@@ -10,7 +10,7 @@ import numpy as np
 import pytest
 from PIL import Image
 
-from services.vision_localization import (
+from domains.vision.localization import (
     encode_heatmap_png,
     encode_mask_png,
     generate_binary_mask,

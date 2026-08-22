@@ -9,8 +9,8 @@ import numpy as np
 import pytest
 from PIL import Image
 
-from services.ml_preprocessing import TrainingAbortedError
-from services.vision_classification_training import (
+from domains.shared.ml_preprocessing import TrainingAbortedError
+from domains.vision.classification.services.engine import (
     AUGMENTATION_PRESET_IDS,
     MIN_IMAGES_PER_CLASS_FOR_TRAINING,
     ClassificationConfig,
@@ -338,7 +338,7 @@ def test_multiclass_classification_produces_one_roc_curve_per_class(tmp_path):
 
 
 def test_representative_sample_round_robins_across_groups():
-    from services.vision_classification_training import _representative_sample
+    from domains.vision.classification.services.engine import _representative_sample
 
     items = ["a1", "a2", "a3", "a4", "b1", "c1", "c2"]
     groups = {"a1": "a", "a2": "a", "a3": "a", "a4": "a", "b1": "b", "c1": "c", "c2": "c"}
@@ -351,7 +351,7 @@ def test_representative_sample_round_robins_across_groups():
 
 
 def test_representative_sample_exhausts_small_groups_gracefully():
-    from services.vision_classification_training import _representative_sample
+    from domains.vision.classification.services.engine import _representative_sample
 
     items = ["a1", "a2", "a3", "a4", "a5", "b1"]
     groups = {"a1": "a", "a2": "a", "a3": "a", "a4": "a", "a5": "a", "b1": "b"}

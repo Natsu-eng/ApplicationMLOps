@@ -1,4 +1,4 @@
-"""Tests de workers/clustering_worker.py (Lot 11+) — bout en bout réel
+"""Tests de domains/clustering/worker.py (Lot 11+) — bout en bout réel
 (pas mocké), même approche que tests/test_training_worker.py : le worker
 ouvre sa propre session `SessionLocal`, qui pointe vers le même fichier
 SQLite de test que `db_session` (voir conftest.py)."""
@@ -12,7 +12,7 @@ import numpy as np
 import pandas as pd
 
 from api.core.models import ClusterCandidateRecord, ClusterModel, ClusteringJob, Dataset, Organization
-from workers.clustering_worker import run_clustering_job
+from domains.clustering.worker import run_clustering_job
 
 
 def _write_temp_csv(df: pd.DataFrame) -> str:
@@ -138,7 +138,7 @@ def test_worker_marks_job_failed_on_missing_dataset(db_session):
 
 
 def test_worker_never_leaks_raw_traceback_on_clustering_failure(db_session, monkeypatch):
-    import workers.clustering_worker as clustering_worker_module
+    import domains.clustering.worker as clustering_worker_module
 
     raw_exc = RuntimeError(
         'File "E:\\mlops\\app-analyse\\backend\\.venv\\Lib\\site-packages\\sklearn\\cluster\\_kmeans.py", line 42'

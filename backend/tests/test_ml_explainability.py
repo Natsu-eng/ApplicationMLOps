@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from services.ml_explainability import normalize_base_value, select_class_matrix, shap_values_per_class
+from domains.training.services.explainability import normalize_base_value, select_class_matrix, shap_values_per_class
 
 
 # ── shap_values_per_class ────────────────────────────────────────────────

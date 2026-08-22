@@ -10,7 +10,7 @@ import json
 from unittest.mock import patch
 
 from api.core.models import MLModel, TrainingJob
-from services.model_versioning import next_version
+from domains.training.services.versioning import next_version
 
 
 def _register(client, email="owner@bureau.fr", org="Bureau"):
@@ -56,7 +56,7 @@ def _create_job(client, headers, dataset_id, **overrides):
     # d'injection du mock par @patch (ajouté en DERNIER argument positionnel,
     # convention `def test_x(self, mock)`) ne correspond pas à un appel
     # explicite comme celui-ci.
-    with patch("api.routers.training.training_queue") as mock_queue:
+    with patch("domains.training.router.training_queue") as mock_queue:
         mock_queue.enqueue.return_value.id = "fake-rq-id"
         payload = {"dataset_id": dataset_id, "target_column": "cible", **overrides}
         return client.post("/api/training/jobs", headers=headers, json=payload).json()
@@ -82,7 +82,7 @@ def test_compare_returns_entries_in_requested_order(client, db_session):
     assert body["entries"][0]["metrics"]["r2_test"] == 0.85
 
 
-@patch("api.routers.training.training_queue")
+@patch("domains.training.router.training_queue")
 def test_compare_flags_differing_config_and_ignores_equal_fields(mock_queue, client, db_session):
     mock_queue.enqueue.return_value.id = "fake-rq-id"
     headers = _register(client)
@@ -109,7 +109,7 @@ def test_compare_flags_differing_config_and_ignores_equal_fields(mock_queue, cli
     assert "seed" not in body["differing_config_fields"]
 
 
-@patch("api.routers.training.training_queue")
+@patch("domains.training.router.training_queue")
 def test_compare_model_ids_diff_by_set_not_by_order(mock_queue, client, db_session):
     """`model_ids` doit être comparé par ENSEMBLE — le même sous-ensemble de
     modèles choisi dans un ordre différent n'est pas une vraie différence de

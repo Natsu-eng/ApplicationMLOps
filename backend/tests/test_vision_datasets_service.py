@@ -9,7 +9,7 @@ import zipfile
 import pytest
 from PIL import Image
 
-from services.vision_datasets import (
+from domains.vision.datasets.service import (
     MIN_IMAGES_PER_CLASS,
     MIN_TRAIN_GOOD_IMAGES,
     UnsupportedFileType,
@@ -574,7 +574,7 @@ def test_image_eda_excludes_deduplicated_images():
     """L'EDA ne doit compter QUE les images réellement conservées après
     déduplication — sinon l'histogramme affiché à l'utilisateur ne
     correspond pas à ce qui sera vraiment utilisé à l'entraînement."""
-    from services.vision_datasets import _ValidImage, _compute_image_eda
+    from domains.vision.datasets.service import _ValidImage, _compute_image_eda
     from pathlib import PurePosixPath
 
     kept = [
@@ -589,7 +589,7 @@ def test_image_eda_excludes_deduplicated_images():
 
 
 def test_image_eda_empty_dataset_degrades_honestly():
-    from services.vision_datasets import _compute_image_eda
+    from domains.vision.datasets.service import _compute_image_eda
 
     eda = _compute_image_eda([])
     assert eda["resolution_buckets"] == {}
@@ -598,7 +598,7 @@ def test_image_eda_empty_dataset_degrades_honestly():
 
 
 def test_resolution_bucket_labels_are_contiguous():
-    from services.vision_datasets import _resolution_bucket_label
+    from domains.vision.datasets.service import _resolution_bucket_label
 
     assert _resolution_bucket_label(50) == "< 128px"
     assert _resolution_bucket_label(128) == "128-224px"

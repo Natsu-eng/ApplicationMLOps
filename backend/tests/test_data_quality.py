@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from services.data_quality import TARGET_LEAKAGE_CRAMERS_V_THRESHOLD, analyze_data_quality
+from domains.shared.data_quality import TARGET_LEAKAGE_CRAMERS_V_THRESHOLD, analyze_data_quality
 
 
 def _warnings_with_code(warnings, code):

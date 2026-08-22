@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from services.dimensionality_registry import DIMENSIONALITY_REGISTRY, spec_for
+from domains.dimensionality.services.registry import DIMENSIONALITY_REGISTRY, spec_for
 
 
 def test_registry_always_has_pca_and_tsne():

@@ -12,8 +12,8 @@ from unittest.mock import patch
 
 from api.core.config import get_settings
 from api.core.models import MLModel, ModelCandidate, TrainingJob
-from api.routers.training import _headline_metric
-from services.model_versioning import next_version
+from domains.training.router import _headline_metric
+from domains.training.services.versioning import next_version
 
 
 def _register(client, email="owner@bureau.fr", org="Bureau"):
@@ -34,7 +34,7 @@ def _upload_dataset(client, headers):
     return resp.json()
 
 
-@patch("api.routers.training.training_queue")
+@patch("domains.training.router.training_queue")
 def test_create_job_enqueues_and_returns_summary(mock_queue, client):
     mock_queue.enqueue.return_value.id = "fake-rq-id"
     headers = _register(client)
@@ -50,7 +50,7 @@ def test_create_job_enqueues_and_returns_summary(mock_queue, client):
     mock_queue.enqueue.assert_called_once()
 
 
-@patch("api.routers.training.training_queue")
+@patch("domains.training.router.training_queue")
 def test_create_job_rejects_unknown_target_column(mock_queue, client):
     headers = _register(client)
     dataset = _upload_dataset(client, headers)
@@ -64,7 +64,7 @@ def test_create_job_rejects_unknown_target_column(mock_queue, client):
     assert resp.json()["detail"]["code"] == "COLONNE_CIBLE_INTROUVABLE"
 
 
-@patch("api.routers.training.training_queue")
+@patch("domains.training.router.training_queue")
 def test_create_job_rejects_unready_dataset(mock_queue, client):
     headers = _register(client)
     resp = client.post(
@@ -74,7 +74,7 @@ def test_create_job_rejects_unready_dataset(mock_queue, client):
     assert resp.json()["detail"]["code"] == "DATASET_INTROUVABLE"
 
 
-@patch("api.routers.training.training_queue")
+@patch("domains.training.router.training_queue")
 def test_training_job_isolation_between_organizations(mock_queue, client):
     mock_queue.enqueue.return_value.id = "fake-rq-id"
     headers_a = _register(client, "a@bureau-a.fr", "Bureau A")
@@ -89,7 +89,7 @@ def test_training_job_isolation_between_organizations(mock_queue, client):
     assert client.get(f"/api/training/jobs/{job['id']}", headers=headers_b).status_code == 404
 
 
-@patch("api.routers.training.training_queue")
+@patch("domains.training.router.training_queue")
 def test_delete_removes_job_from_history(mock_queue, client):
     mock_queue.enqueue.return_value.id = "fake-rq-id"
     headers = _register(client)
@@ -103,7 +103,7 @@ def test_delete_removes_job_from_history(mock_queue, client):
     assert client.get("/api/training/jobs", headers=headers).json() == []
 
 
-@patch("api.routers.training.training_queue")
+@patch("domains.training.router.training_queue")
 def test_delete_completed_job_with_model(mock_queue, client, db_session):
     """Reproduit un bug réel trouvé en usage (Postgres) : la relation
     `TrainingJob.model` sans `passive_deletes=True` tentait de mettre à NULL
@@ -143,7 +143,7 @@ def test_delete_completed_job_with_model(mock_queue, client, db_session):
     assert client.get(f"/api/training/jobs/{job_id}", headers=headers).status_code == 404
 
 
-@patch("api.routers.training.training_queue")
+@patch("domains.training.router.training_queue")
 def test_delete_rejects_cross_organization(mock_queue, client):
     mock_queue.enqueue.return_value.id = "fake-rq-id"
     headers_a = _register(client, "a@bureau-a.fr", "Bureau A")
@@ -160,7 +160,7 @@ def test_delete_rejects_cross_organization(mock_queue, client):
 # ── Lot 7, §J.2 — annulation (garde une trace, contrairement à la suppression) ─
 
 
-@patch("api.routers.training.training_queue")
+@patch("domains.training.router.training_queue")
 def test_cancel_queued_job_marks_it_cancelled_and_keeps_history(mock_queue, client):
     mock_queue.enqueue.return_value.id = "fake-rq-id"
     headers = _register(client)
@@ -178,7 +178,7 @@ def test_cancel_queued_job_marks_it_cancelled_and_keeps_history(mock_queue, clie
 # ── Lot 7, §J.2 — notifications SSE ──────────────────────────────────────────
 
 
-@patch("api.routers.training.training_queue")
+@patch("domains.training.router.training_queue")
 def test_events_stream_closes_immediately_on_terminal_job(mock_queue, client):
     mock_queue.enqueue.return_value.id = "fake-rq-id"
     headers = _register(client)
@@ -194,7 +194,7 @@ def test_events_stream_closes_immediately_on_terminal_job(mock_queue, client):
     assert '"status": "cancelled"' in resp.text
 
 
-@patch("api.routers.training.training_queue")
+@patch("domains.training.router.training_queue")
 def test_events_stream_404_for_other_organization(mock_queue, client):
     mock_queue.enqueue.return_value.id = "fake-rq-id"
     headers_a = _register(client, "a@bureau-a.fr", "Bureau A")
@@ -208,7 +208,7 @@ def test_events_stream_404_for_other_organization(mock_queue, client):
     assert resp.status_code == 404
 
 
-@patch("api.routers.training.training_queue")
+@patch("domains.training.router.training_queue")
 def test_cancel_rejects_already_completed_job(mock_queue, client, db_session):
     mock_queue.enqueue.return_value.id = "fake-rq-id"
     headers = _register(client)
@@ -226,7 +226,7 @@ def test_cancel_rejects_already_completed_job(mock_queue, client, db_session):
     assert resp.json()["detail"]["code"] == "JOB_NON_ANNULABLE"
 
 
-@patch("api.routers.training.training_queue")
+@patch("domains.training.router.training_queue")
 def test_cancel_404_for_other_organization(mock_queue, client):
     mock_queue.enqueue.return_value.id = "fake-rq-id"
     headers_a = _register(client, "a@bureau-a.fr", "Bureau A")
@@ -245,7 +245,7 @@ def test_cancel_404_for_other_organization(mock_queue, client):
 # ── Lot 7, §J.2 — relance depuis une configuration existante ────────────────
 
 
-@patch("api.routers.training.training_queue")
+@patch("domains.training.router.training_queue")
 def test_rerun_creates_a_new_job_with_the_same_configuration(mock_queue, client):
     mock_queue.enqueue.return_value.id = "fake-rq-id"
     headers = _register(client)
@@ -264,7 +264,7 @@ def test_rerun_creates_a_new_job_with_the_same_configuration(mock_queue, client)
     assert body["status"] == "queued"
 
 
-@patch("api.routers.training.training_queue")
+@patch("domains.training.router.training_queue")
 def test_rerun_404_for_other_organization(mock_queue, client):
     mock_queue.enqueue.return_value.id = "fake-rq-id"
     headers_a = _register(client, "a@bureau-a.fr", "Bureau A")
@@ -281,7 +281,7 @@ def test_rerun_404_for_other_organization(mock_queue, client):
 # ── Lot E2 — mode guidé/expert : catalogue de modèles + manettes ───────────
 
 
-@patch("api.routers.training.training_queue")
+@patch("domains.training.router.training_queue")
 def test_model_endpoint_exposes_global_explainability_fields(mock_queue, client, db_session):
     mock_queue.enqueue.return_value.id = "fake-rq-id"
     """GET /training/jobs/{id}/model (Lot Explicabilité globale) : les 4
@@ -325,7 +325,7 @@ def test_model_endpoint_exposes_global_explainability_fields(mock_queue, client,
     assert body["learning_curve"]["train_sizes"] == [10, 20]
 
 
-@patch("api.routers.training.training_queue")
+@patch("domains.training.router.training_queue")
 def test_model_endpoint_degrades_cleanly_for_pre_lot_jobs(mock_queue, client, db_session):
     mock_queue.enqueue.return_value.id = "fake-rq-id"
     """Rétrocompatibilité : un modèle entraîné avant ce lot n'a aucune de ces
@@ -383,7 +383,7 @@ def test_models_catalog_lists_all_nine_registry_entries(client):
     assert naive_bayes["supported_tasks"] == ["classification"]
 
 
-@patch("api.routers.training.training_queue")
+@patch("domains.training.router.training_queue")
 def test_create_job_without_expert_fields_uses_unchanged_server_defaults(mock_queue, client, db_session):
     """Non-régression (Lot E2) : mode expert OFF (aucun champ expert envoyé)
     doit produire exactement le `config_json` d'avant ce lot — mêmes défauts
@@ -406,7 +406,7 @@ def test_create_job_without_expert_fields_uses_unchanged_server_defaults(mock_qu
     assert config["model_ids"] is None
 
 
-@patch("api.routers.training.training_queue")
+@patch("domains.training.router.training_queue")
 def test_create_job_with_expert_fields_threads_them_into_config(mock_queue, client, db_session):
     mock_queue.enqueue.return_value.id = "fake-rq-id"
     headers = _register(client)
@@ -433,7 +433,7 @@ def test_create_job_with_expert_fields_threads_them_into_config(mock_queue, clie
     assert config["model_ids"] == ["lightgbm", "extra_trees"]
 
 
-@patch("api.routers.training.training_queue")
+@patch("domains.training.router.training_queue")
 def test_create_job_rejects_unknown_model_id(mock_queue, client):
     headers = _register(client)
     dataset = _upload_dataset(client, headers)
@@ -447,7 +447,7 @@ def test_create_job_rejects_unknown_model_id(mock_queue, client):
     assert resp.json()["detail"]["code"] == "MODELES_INCONNUS"
 
 
-@patch("api.routers.training.training_queue")
+@patch("domains.training.router.training_queue")
 def test_create_job_rejects_model_ids_incompatible_with_detected_task(mock_queue, client):
     """Le dataset de `_upload_dataset` est détecté en régression — Naive
     Bayes (classification uniquement, voir `ml_registry.MODEL_REGISTRY`)
@@ -524,7 +524,7 @@ def _complete_job_with_model_and_candidates(db_session, job_id, org_id, add_cand
     return job
 
 
-@patch("api.routers.training.training_queue")
+@patch("domains.training.router.training_queue")
 def test_candidates_endpoint_returns_leaderboard_sorted_by_rank(mock_queue, client, db_session):
     mock_queue.enqueue.return_value.id = "fake-rq-id"
     headers = _register(client)
@@ -547,7 +547,7 @@ def test_candidates_endpoint_returns_leaderboard_sorted_by_rank(mock_queue, clie
     assert body["candidates"][0]["secondary_metric_label"] == "RMSE (validation croisée)"
 
 
-@patch("api.routers.training.training_queue")
+@patch("domains.training.router.training_queue")
 def test_candidates_endpoint_backward_compatible_for_pre_lot_jobs(mock_queue, client, db_session):
     """Rétrocompatibilité (Lot D) : un job terminé avant ce lot n'a aucune
     ligne `ModelCandidate` — l'endpoint doit renvoyer une liste vide, jamais
@@ -570,7 +570,7 @@ def test_candidates_endpoint_backward_compatible_for_pre_lot_jobs(mock_queue, cl
     assert body["selection_metric_label"] == "R² (validation croisée)"
 
 
-@patch("api.routers.training.training_queue")
+@patch("domains.training.router.training_queue")
 def test_candidates_endpoint_isolated_between_organizations(mock_queue, client, db_session):
     mock_queue.enqueue.return_value.id = "fake-rq-id"
     headers_a = _register(client, "a@bureau-a.fr", "Bureau A")

@@ -25,7 +25,7 @@ def _upload_dataset(client, headers, name="d.csv"):
 
 
 def _create_job(client, headers, dataset_id):
-    with patch("api.routers.training.training_queue") as mock_queue:
+    with patch("domains.training.router.training_queue") as mock_queue:
         mock_queue.enqueue.return_value.id = "fake-rq-id"
         return client.post(
             "/api/training/jobs", headers=headers, json={"dataset_id": dataset_id, "target_column": "cible"}
@@ -92,7 +92,7 @@ def _upload_unsupervised_dataset(client, headers, name="d.csv", n=60):
 def test_audit_log_records_clustering_job_deleted(client):
     headers = _register(client)
     dataset = _upload_unsupervised_dataset(client, headers)
-    with patch("api.routers.clustering.analysis_queue") as mock_queue:
+    with patch("domains.clustering.router.analysis_queue") as mock_queue:
         mock_queue.enqueue.return_value.id = "fake-rq-id"
         job = client.post(
             "/api/clustering/jobs", headers=headers, json={"dataset_id": dataset["id"], "feature_columns": ["x1", "x2"]}
@@ -106,7 +106,7 @@ def test_audit_log_records_clustering_job_deleted(client):
 def test_audit_log_records_dimensionality_job_deleted(client):
     headers = _register(client)
     dataset = _upload_unsupervised_dataset(client, headers)
-    with patch("api.routers.dimensionality.analysis_queue") as mock_queue:
+    with patch("domains.dimensionality.router.analysis_queue") as mock_queue:
         mock_queue.enqueue.return_value.id = "fake-rq-id"
         job = client.post(
             "/api/dimensionality/jobs", headers=headers, json={"dataset_id": dataset["id"], "feature_columns": ["x1", "x2"]}
@@ -120,7 +120,7 @@ def test_audit_log_records_dimensionality_job_deleted(client):
 def test_audit_log_records_anomaly_job_deleted(client):
     headers = _register(client)
     dataset = _upload_unsupervised_dataset(client, headers)
-    with patch("api.routers.anomalies.analysis_queue") as mock_queue:
+    with patch("domains.anomalies.router.analysis_queue") as mock_queue:
         mock_queue.enqueue.return_value.id = "fake-rq-id"
         job = client.post(
             "/api/anomalies/jobs", headers=headers, json={"dataset_id": dataset["id"], "feature_columns": ["x1", "x2"]}
@@ -133,7 +133,7 @@ def test_audit_log_records_anomaly_job_deleted(client):
 
 def test_audit_log_records_model_promotion(client, db_session):
     from api.core.models import MLModel, TrainingJob
-    from services.model_versioning import next_version
+    from domains.training.services.versioning import next_version
     import json as _json
 
     headers = _register(client)

@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from services.ml_preprocessing import (
+from domains.shared.ml_preprocessing import (
     RareCategoryFrequencyEncoder,
     build_preprocessor,
     remove_exact_duplicates,

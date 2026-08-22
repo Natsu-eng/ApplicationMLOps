@@ -12,10 +12,10 @@ import pytest
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
 
-import services.ml_training as ml_training_module
-from services.ml_preprocessing import split_dataset
-from services.ml_registry import MODEL_REGISTRY
-from services.ml_training import (
+import domains.training.services.engine as ml_training_module
+from domains.shared.ml_preprocessing import split_dataset
+from domains.training.services.registry import MODEL_REGISTRY
+from domains.training.services.engine import (
     TrainingConfig,
     _classification_selection_score,
     _compute_cqr,
@@ -57,7 +57,7 @@ def test_regression_pipeline_end_to_end():
     boosters) — l'assertion sur `algorithm` reste dynamique plutôt que
     figée sur les 3 noms historiques, qui deviendrait fausse dès qu'un
     autre modèle gagne légitimement (ex. Ridge sur un signal linéaire)."""
-    from services.ml_registry import models_for_task
+    from domains.training.services.registry import models_for_task
 
     df = _make_regression_df()
     split = split_dataset(df, "cible", ["x1", "x2"], "regression", None, 0.2, 42)
@@ -402,7 +402,7 @@ def test_selection_score_comparable_across_registry_families():
     """Chaque modèle du registre, une fois fit, produit un score de
     sélection CALCULABLE (pas d'exception) et dans l'échelle AUC/accuracy
     [0, 1] — condition de comparabilité entre familles hétérogènes."""
-    from services.ml_registry import models_for_task
+    from domains.training.services.registry import models_for_task
 
     df = _make_binary_df(n=150)
     split = split_dataset(df, "cible", ["x1", "x2"], "classification", None, 0.2, 42)
@@ -431,7 +431,7 @@ def test_shap_linear_explainer_matches_coefficients_in_processed_space():
     from sklearn.linear_model import Ridge
     from sklearn.preprocessing import StandardScaler
 
-    from services.ml_training import _build_explainer
+    from domains.training.services.engine import _build_explainer
 
     rng = np.random.default_rng(5)
     n = 80
@@ -457,7 +457,7 @@ def test_shap_kernel_explainer_produces_result_for_small_feature_set():
     variable, une importance numérique, pas seulement 'non vide'."""
     from sklearn.svm import SVC
 
-    from services.ml_training import _compute_shap_summary
+    from domains.training.services.engine import _compute_shap_summary
 
     rng = np.random.default_rng(2)
     n = 60
@@ -478,7 +478,7 @@ def test_explainability_degrades_above_kernel_feature_threshold():
     """Au-delà de _KERNEL_SHAP_MAX_FEATURES variables, l'explicabilité kernel
     est désactivée avec un statut + message explicite plutôt que de lancer un
     calcul trop long — jamais une disparition silencieuse (Lot 5)."""
-    from services.ml_training import _KERNEL_SHAP_MAX_FEATURES, _compute_explainability
+    from domains.training.services.engine import _KERNEL_SHAP_MAX_FEATURES, _compute_explainability
 
     n_features = _KERNEL_SHAP_MAX_FEATURES + 5
     feature_names = [f"f{i}" for i in range(n_features)]
@@ -572,7 +572,7 @@ def test_compute_permutation_importance_degrades_on_failure():
     """Même filet que `_compute_explainability` (Lot 5) : un estimateur
     incompatible ne fait jamais planter l'entraînement, juste dégrader avec
     un message clair."""
-    from services.ml_training import _compute_permutation_importance
+    from domains.training.services.engine import _compute_permutation_importance
 
     summary, status = _compute_permutation_importance(
         object(), np.zeros((10, 2)), np.zeros(10), ["f1", "f2"], seed=0
@@ -597,7 +597,7 @@ def test_compute_permutation_importance_survives_catboost_readonly_side_effect()
     CatBoost) — voir le commentaire dans `_compute_permutation_importance`."""
     from catboost import CatBoostRegressor
 
-    from services.ml_training import _compute_permutation_importance
+    from domains.training.services.engine import _compute_permutation_importance
 
     rng = np.random.default_rng(4)
     n = 100
@@ -620,7 +620,7 @@ def test_compute_calibration_binary_produces_one_curve():
     """Binaire : une seule courbe (classe positive), pas une redondante par
     classe — même convention que le beeswarm SHAP (Lot Explicabilité
     globale) pour la même raison (symétrie des deux sorties)."""
-    from services.ml_training import _compute_calibration
+    from domains.training.services.engine import _compute_calibration
 
     rng = np.random.default_rng(0)
     n = 300
@@ -639,7 +639,7 @@ def test_compute_calibration_binary_produces_one_curve():
 def test_compute_calibration_multiclass_produces_one_curve_per_present_class():
     """Multiclasse : une courbe par classe (un-contre-tous), même motif que
     les courbes ROC/PR multiclasses déjà affichées (Lot E1-ter)."""
-    from services.ml_training import _compute_calibration
+    from domains.training.services.engine import _compute_calibration
 
     rng = np.random.default_rng(1)
     n = 300
@@ -683,7 +683,7 @@ def test_learning_curve_pipeline_is_never_prefit(monkeypatch):
     jamais sur le train complet déjà vu par le modèle final."""
     from sklearn.linear_model import Ridge
 
-    from services.ml_training import _LEARNING_CURVE_TRAIN_SIZES, _compute_learning_curve
+    from domains.training.services.engine import _LEARNING_CURVE_TRAIN_SIZES, _compute_learning_curve
 
     captured: dict = {}
 
@@ -724,7 +724,7 @@ def test_learning_curve_pipeline_is_never_prefit(monkeypatch):
 def test_learning_curve_degrades_on_failure(monkeypatch):
     """Même filet que les autres diagnostics du lot : un échec du fit ne
     doit jamais remonter à l'appelant."""
-    from services.ml_training import _compute_learning_curve
+    from domains.training.services.engine import _compute_learning_curve
 
     def _boom(*args, **kwargs):
         raise RuntimeError("échec simulé")
@@ -756,7 +756,7 @@ def test_every_registry_model_fits_and_predicts_end_to_end():
     chacune de ses tâches supportées, via le Pipeline(préprocesseur, modèle)
     exact utilisé par le moteur — pas un raccourci (Lot 5 : catalogue élargi
     à 9 modèles, 3 familles)."""
-    from services.ml_registry import models_for_task
+    from domains.training.services.registry import models_for_task
 
     reg_df = _make_regression_df(n=120)
     reg_split = split_dataset(reg_df, "cible", ["x1", "x2"], "regression", None, 0.2, 42)
@@ -824,7 +824,7 @@ def test_default_subset_is_boosters_plus_random_forest(monkeypatch):
     (`ModelSpec.is_default`) — pas le catalogue complet à chaque
     entraînement. Le reste du catalogue (ExtraTrees, linéaire, SVM, KNN,
     Naive Bayes) reste disponible dans le registre mais n'est pas lancé."""
-    from services.ml_registry import models_for_task
+    from domains.training.services.registry import models_for_task
 
     called_ids: list[str] = []
     original = ml_training_module._optimize_one_model
@@ -870,7 +870,7 @@ def test_model_ids_empty_after_filtering_falls_back_to_default_subset(monkeypatc
     avec la tâche (ne devrait jamais arriver, l'API filtre déjà — voir
     `routers/training.py`), le moteur retombe sur le sous-ensemble par défaut
     plutôt que de comparer un catalogue vide."""
-    from services.ml_registry import models_for_task
+    from domains.training.services.registry import models_for_task
 
     called_ids: list[str] = []
     original = ml_training_module._optimize_one_model
@@ -1102,7 +1102,7 @@ def test_optimize_one_model_classification_has_no_secondary_metric():
 def test_all_candidates_length_matches_default_catalog_and_exactly_one_winner():
     """TOUS les candidats du sous-ensemble par défaut sont exposés (pas
     seulement le gagnant) — condition de base du leaderboard (Lot D)."""
-    from services.ml_registry import models_for_task
+    from domains.training.services.registry import models_for_task
 
     df = _make_regression_df()
     split = split_dataset(df, "cible", ["x1", "x2"], "regression", None, 0.2, 42)
@@ -1235,8 +1235,8 @@ def test_linear_explainer_still_works_with_sparse_upstream_input():
     """LinearExplainer exige un fond dense (SHAP) — vérifie que le fix (sparse
     conservé en amont, densifié seulement ici, borné) ne casse pas
     l'explicabilité pour la famille linéaire (mode expert futur, Lot E)."""
-    from services.ml_training import _compute_explainability
-    from services.ml_registry import MODEL_REGISTRY
+    from domains.training.services.engine import _compute_explainability
+    from domains.training.services.registry import MODEL_REGISTRY
     from sklearn.linear_model import Ridge
 
     df = _make_high_cardinality_df()
