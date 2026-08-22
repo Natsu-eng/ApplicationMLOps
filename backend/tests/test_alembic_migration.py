@@ -191,6 +191,57 @@ def test_already_stamped_database_with_drifted_schema_is_refused_at_every_startu
         run_migrations(db_url=url)
 
 
+def test_ui_theme_column_applies_on_existing_populated_database(tmp_path):
+    """Lot UI (Fondations) — reproduit exactement le piège déjà rencontré sur
+    ce dépôt (colonne ajoutée au modèle, migration jamais vraiment appliquée
+    sur une base existante → 500 sur GET /vision/anomalies/jobs) : on ne
+    teste PAS `ui_theme` sur une base neuve, mais sur une base déjà migrée
+    jusqu'à la révision PRÉCÉDENTE, contenant déjà de vraies lignes.
+
+    Note : la base de dev réelle (`backend/database/datalab.db`) s'est
+    avérée être un fichier ancien et partiel (organizations/users seulement,
+    la plupart des 22 tables manquantes) — un cas déjà couvert par
+    `test_pre_alembic_database_with_missing_table_is_refused_not_stamped`
+    (refus, jamais de stamp aveugle), pas une régression de cette migration.
+    Ce test construit donc une base fidèle via la VRAIE chaîne Alembic
+    (`command.upgrade` jusqu'à la révision précédente, pas un raccourci),
+    ce qui est plus rigoureux qu'une copie d'un fichier dont l'état exact
+    n'est pas garanti."""
+    url = _sqlite_url(tmp_path, "populated.db")
+    cfg = _alembic_config(url)
+
+    # Construit une base réellement migrée jusqu'à la révision juste avant
+    # celle-ci — exerce la même chaîne de migrations que la production,
+    # pas un schéma recréé à la main.
+    command.upgrade(cfg, "77a16b5c0e66")
+
+    engine = create_engine(url)
+    with engine.begin() as conn:
+        conn.execute(text("INSERT INTO organizations (id, name) VALUES (1, 'Bureau existant')"))
+        conn.execute(
+            text(
+                "INSERT INTO users (id, email, nom, hashed_password, role, organization_id, actif) "
+                "VALUES (1, 'a@b.fr', 'Alice', 'x', 'owner', 1, 1), "
+                "(2, 'c@d.fr', 'Charlie', 'x', 'member', 1, 1)"
+            )
+        )
+    engine.dispose()
+
+    run_migrations(db_url=url)
+
+    engine = create_engine(url)
+    with engine.connect() as conn:
+        version = conn.execute(text("SELECT version_num FROM alembic_version")).scalar()
+        rows = conn.execute(text("SELECT id, ui_theme FROM users ORDER BY id")).fetchall()
+        org_name = conn.execute(text("SELECT name FROM organizations WHERE id = 1")).scalar()
+    engine.dispose()
+
+    assert version == "55bc1e62c303"
+    assert org_name == "Bureau existant"  # donnée préexistante intacte
+    assert [r[0] for r in rows] == [1, 2]  # aucune ligne perdue
+    assert all(r[1] == "graphite" for r in rows)  # server_default appliqué à CHAQUE ligne existante
+
+
 def test_naive_upgrade_on_existing_schema_would_fail_without_stamp(tmp_path):
     """Documente POURQUOI la détection stamp/upgrade est nécessaire : sans
     elle, rejouer la révision initiale sur une base où les tables existent

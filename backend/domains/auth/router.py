@@ -66,6 +66,25 @@ class UserSelfUpdate(BaseModel):
     nom: Optional[str] = Field(None, min_length=2, max_length=100)
 
 
+VALID_UI_THEMES = {"graphite", "ivoire", "minuit", "ardoise", "porcelaine"}
+
+
+class UserPreferences(BaseModel):
+    ui_theme: str
+
+    model_config = {"from_attributes": True}
+
+
+class UserPreferencesUpdate(BaseModel):
+    ui_theme: str = Field(..., description="graphite | ivoire | minuit | ardoise | porcelaine")
+
+    @model_validator(mode="after")
+    def _valid_theme(self) -> "UserPreferencesUpdate":
+        if self.ui_theme not in VALID_UI_THEMES:
+            raise ValueError(f"Thème inconnu : {self.ui_theme!r} (attendu : {', '.join(sorted(VALID_UI_THEMES))})")
+        return self
+
+
 class ChangePasswordRequest(BaseModel):
     current_password: str = Field(..., min_length=1)
     new_password: str = Field(..., min_length=8, max_length=100)
@@ -255,6 +274,32 @@ def change_own_password(
 def logout():
     """JWT est stateless : la déconnexion consiste à supprimer le token côté client."""
     return {"message": "Déconnexion effectuée (supprimer le token côté client)"}
+
+
+# ── Préférences d'interface (Lot UI — refonte visuelle) ─────────────────────
+# Routeur séparé (préfixe /users plutôt que /auth) : le thème n'est pas une
+# information d'identité/authentification, et le chemin est fixé par la
+# mission (GET/PATCH /api/users/me/preferences). Réutilise `get_current_user`
+# et le modèle `User` déjà importés dans ce fichier plutôt que de dupliquer
+# un domaine entier pour deux endpoints.
+users_router = APIRouter(prefix="/users", tags=["préférences"])
+
+
+@users_router.get("/me/preferences", response_model=UserPreferences)
+def get_preferences(current_user: User = Depends(get_current_user)):
+    return current_user
+
+
+@users_router.patch("/me/preferences", response_model=UserPreferences)
+def update_preferences(
+    body: UserPreferencesUpdate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    current_user.ui_theme = body.ui_theme
+    db.commit()
+    db.refresh(current_user)
+    return current_user
 
 
 # ── Endpoints — équipe (organisation) ────────────────────────────────────────

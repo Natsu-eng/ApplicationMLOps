@@ -67,7 +67,7 @@ function Section({ title, description, children }: { title: string; description?
   return (
     <section className="space-y-3">
       <div>
-        <h2 className="text-title text-foreground">{title}</h2>
+        <h2 className="text-h2 text-foreground">{title}</h2>
         {description && <p className="text-body text-muted-foreground mt-1 max-w-2xl">{description}</p>}
       </div>
       {children}
@@ -161,9 +161,9 @@ function ColorSection() {
 // ── Typographie ──────────────────────────────────────────────────────────
 
 const TYPE_ROLES = [
-  { cls: "text-display", name: "display", usage: "Chiffre clé, en-tête de verdict" },
-  { cls: "text-title", name: "title", usage: "Titre de page ou de section" },
-  { cls: "text-subtitle", name: "subtitle", usage: "En-tête de carte, sous-section" },
+  { cls: "text-h1", name: "h1", usage: "Titre de page" },
+  { cls: "text-h2", name: "h2", usage: "Titre de section" },
+  { cls: "text-h3", name: "h3", usage: "En-tête de carte, sous-section" },
   { cls: "text-body", name: "body", usage: "Texte courant" },
   { cls: "text-caption", name: "caption", usage: "Aide, méta-donnée" },
   { cls: "text-overline", name: "overline", usage: "Étiquette majuscule, en-tête de colonne" },
@@ -188,7 +188,7 @@ function TypographySection() {
         ))}
         <div className="pt-3">
           <p className="text-caption text-muted-foreground mb-1">Chiffre de métrique (tabular-nums obligatoire)</p>
-          <p className="text-display text-foreground tabular-nums">1 284,5</p>
+          <p className="text-h1 text-foreground tabular-nums">1 284,5</p>
         </div>
       </Card>
     </Section>
@@ -365,20 +365,20 @@ function CardSection() {
     <Section title="Cartes" description="4 variantes + slots header/footer normalisés.">
       <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <Card variant="elevated">
-          <p className="text-subtitle text-foreground mb-1">elevated</p>
+          <p className="text-h3 text-foreground mb-1">elevated</p>
           <p className="text-caption text-muted-foreground">Défaut — bordure fine + ombre discrète.</p>
         </Card>
         <Card variant="outlined">
-          <p className="text-subtitle text-foreground mb-1">outlined</p>
+          <p className="text-h3 text-foreground mb-1">outlined</p>
           <p className="text-caption text-muted-foreground">Aucune ombre — listes denses.</p>
         </Card>
         <Card variant="interactive">
-          <p className="text-subtitle text-foreground mb-1">interactive</p>
+          <p className="text-h3 text-foreground mb-1">interactive</p>
           <p className="text-caption text-muted-foreground">Survolez — élévation + léger déplacement.</p>
         </Card>
         <Card
           variant="stat"
-          header={<p className="text-subtitle text-foreground">En-tête</p>}
+          header={<p className="text-h3 text-foreground">En-tête</p>}
           footer={
             <Button variant="ghost" size="sm">
               Voir le détail

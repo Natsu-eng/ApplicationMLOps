@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
-import { KeyRound, Monitor, Moon, ScrollText, Sun, User, Users } from "lucide-react";
+import { KeyRound, Palette, ScrollText, User, Users } from "lucide-react";
 import {
   ApiError,
   api,
@@ -7,7 +7,6 @@ import {
   type TeamMember,
 } from "../api/client";
 import { useAuth } from "../contexts/AuthContext";
-import { useTheme, type ThemePreference } from "../contexts/ThemeContext";
 import AppShell from "../components/AppShell";
 import { PasswordStrengthMeter } from "../components/auth/PasswordStrengthMeter";
 import { Avatar } from "../components/ui/Avatar";
@@ -19,6 +18,7 @@ import { Input } from "../components/ui/Input";
 import { PageHeader } from "../components/ui/PageHeader";
 import { SectionHeader } from "../components/ui/SectionHeader";
 import { Tabs, type TabItem } from "../components/ui/Tabs";
+import { ThemePickerGrid } from "../components/ui/ThemePicker";
 import { formatDateTime } from "../utils/format";
 
 const AUDIT_ACTION_LABELS: Record<string, string> = {
@@ -64,7 +64,7 @@ type TabId = "profile" | "organization" | "preferences";
 const TABS: TabItem<TabId>[] = [
   { id: "profile", label: "Profil", icon: User },
   { id: "organization", label: "Organisation & équipe", icon: Users },
-  { id: "preferences", label: "Préférences", icon: Moon },
+  { id: "preferences", label: "Préférences", icon: Palette },
 ];
 
 /** Profil personnel + administration d'organisation — jusqu'ici mélangés au
@@ -278,7 +278,7 @@ function OrganizationTab() {
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-2">
             <Users size={16} className="text-primary" />
-            <h2 className="text-subtitle text-foreground">Équipe — {user.organization_name}</h2>
+            <h2 className="text-h3 text-foreground">Équipe — {user.organization_name}</h2>
           </div>
           {members && (
             <Badge variant="neutral">
@@ -324,42 +324,16 @@ function OrganizationTab() {
   );
 }
 
-const THEME_OPTIONS: { id: ThemePreference; label: string; icon: typeof Sun; description: string }[] = [
-  { id: "light", label: "Clair", icon: Sun, description: "Toujours le thème clair, quel que soit votre système." },
-  { id: "dark", label: "Sombre", icon: Moon, description: "Toujours le thème sombre, quel que soit votre système." },
-  { id: "system", label: "Système", icon: Monitor, description: "Suit le réglage clair/sombre de votre appareil." },
-];
-
-/** Bascule de thème — retour utilisateur direct ("ajoute un mode sombre").
- * `ThemeContext` pose `data-theme` sur `<html>`, `index.css` porte la
- * palette sombre (mêmes teintes de marque, luminosité seule change). */
+/** Sélecteur de thème (Lot UI — refonte visuelle) — 5 directions, chacune
+ * avec son propre aperçu réel, sa phrase de positionnement et son contraste
+ * minimum mesuré (voir ThemePicker.tsx, contenu sourcé depuis
+ * _design/themes.css). S'applique immédiatement (aucun rechargement),
+ * persisté sur le profil serveur ET en localStorage (voir ThemeContext). */
 function PreferencesTab() {
-  const { preference, setPreference } = useTheme();
-
   return (
-    <Card className="p-5 max-w-2xl">
-      <SectionHeader icon={Moon} color="violet" label="Apparence" help="S'applique immédiatement, sur cet appareil." />
-      <div className="grid sm:grid-cols-3 gap-3">
-        {THEME_OPTIONS.map((option) => {
-          const Icon = option.icon;
-          const active = preference === option.id;
-          return (
-            <button
-              key={option.id}
-              type="button"
-              onClick={() => setPreference(option.id)}
-              aria-pressed={active}
-              className={`text-left rounded-xl border p-4 transition-colors ${
-                active ? "border-primary bg-primary/5" : "border-border hover:bg-muted/50"
-              }`}
-            >
-              <Icon size={18} className={active ? "text-primary" : "text-muted-foreground"} />
-              <p className={`text-sm font-medium mt-2 ${active ? "text-primary" : "text-foreground"}`}>{option.label}</p>
-              <p className="text-xs text-muted-foreground mt-1 leading-relaxed">{option.description}</p>
-            </button>
-          );
-        })}
-      </div>
+    <Card className="p-5 max-w-4xl">
+      <SectionHeader icon={Palette} color="violet" label="Apparence" help="S'applique immédiatement, sur tous vos appareils." />
+      <ThemePickerGrid />
     </Card>
   );
 }
@@ -393,7 +367,7 @@ function AddMemberForm({ onMemberAdded }: { onMemberAdded: () => void }) {
 
   return (
     <>
-      <h2 className="text-subtitle text-foreground mb-4">Ajouter un membre à l'équipe</h2>
+      <h2 className="text-h3 text-foreground mb-4">Ajouter un membre à l'équipe</h2>
       <form onSubmit={handleSubmit} className="grid sm:grid-cols-3 gap-3 items-start">
         <Input type="text" placeholder="Nom" required minLength={2} value={nom} onChange={(e) => setNom(e.target.value)} />
         <Input type="email" placeholder="Email" required value={email} onChange={(e) => setEmail(e.target.value)} />

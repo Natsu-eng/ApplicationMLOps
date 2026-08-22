@@ -1,10 +1,11 @@
-import { type ReactNode, useEffect, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
-import { HelpCircle, History, LayoutDashboard, LogOut, Menu, Target, X } from "lucide-react";
+import { HelpCircle, History, LayoutDashboard, LogOut, Menu, Palette, Target, X } from "lucide-react";
 import { useAuth } from "../contexts/AuthContext";
 import { Avatar } from "./ui/Avatar";
 import { Badge } from "./ui/Badge";
 import { HelpModal } from "./HelpModal";
+import { ThemePickerCompact } from "./ui/ThemePicker";
 import { PILLARS, type PillarId } from "../config/pillars";
 import { setLastPillar } from "../utils/lastPillar";
 
@@ -34,6 +35,26 @@ export default function AppShell({ children, pillarId }: { children: ReactNode; 
   const location = useLocation();
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
+  const [themeMenuOpen, setThemeMenuOpen] = useState(false);
+  const themeMenuRef = useRef<HTMLDivElement>(null);
+
+  // Menu de thème de l'avatar — ferme au clic extérieur ou à Échap (même
+  // convention que le menu "Nouvelle analyse" du dashboard).
+  useEffect(() => {
+    if (!themeMenuOpen) return;
+    function onPointerDown(e: MouseEvent) {
+      if (themeMenuRef.current && !themeMenuRef.current.contains(e.target as Node)) setThemeMenuOpen(false);
+    }
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") setThemeMenuOpen(false);
+    }
+    document.addEventListener("mousedown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [themeMenuOpen]);
 
   useEffect(() => {
     if (pillarId) setLastPillar(pillarId);
@@ -152,6 +173,27 @@ export default function AppShell({ children, pillarId }: { children: ReactNode; 
               <span className="truncate text-xs text-sidebar-muted-foreground">{user.organization_name}</span>
             </div>
           </Link>
+          <div className="relative flex-shrink-0" ref={themeMenuRef}>
+            <button
+              onClick={() => setThemeMenuOpen((o) => !o)}
+              aria-label="Changer de thème"
+              title="Changer de thème"
+              aria-haspopup="menu"
+              aria-expanded={themeMenuOpen}
+              className="flex items-center justify-center h-7 w-7 rounded-md text-sidebar-muted-foreground hover:bg-sidebar-accent/50 hover:text-sidebar-foreground transition-colors"
+            >
+              <Palette size={14} />
+            </button>
+            {themeMenuOpen && (
+              <div
+                role="menu"
+                aria-label="Thème d'interface"
+                className="absolute bottom-full left-0 mb-2 w-56 rounded-xl border border-border bg-card shadow-lg p-1.5 z-20"
+              >
+                <ThemePickerCompact />
+              </div>
+            )}
+          </div>
           <button
             onClick={logout}
             aria-label="Déconnexion"

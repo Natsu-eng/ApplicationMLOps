@@ -1,0 +1,306 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   DataLab — systèmes de couleur
+   5 directions, une seule structure de jetons. On change de thème avec
+   document.documentElement.dataset.theme = "graphite" | "ivoire" | …
+
+   TOUTES les valeurs de ce fichier sont calculées, pas choisies à l'œil :
+     · chaque couleur de texte atteint ≥ 4,5:1 sur les TROIS fonds du thème
+       (canvas, surface, raised) — pas seulement sur la carte ;
+     · --border-strong atteint ≥ 3:1 sur surface (contraste des composants,
+       WCAG 1.4.11) : c'est lui qu'il faut sur un champ ou un anneau de focus,
+       jamais --border qui est décoratif ;
+     · les 6 couleurs de série sont séparées par un escalier de clarté
+       délibéré, pas seulement par la teinte — c'est ce qui les rend
+       distinguables en deutéranopie.
+
+   Le script qui a produit ce fichier est dans _design/tune.py.
+   Toute couleur ajoutée à la main DOIT repasser par lui.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+:root { --radius-1: 10px; --radius-2: 16px; --radius-3: 22px; }
+
+/* ── 1. Graphite & Ambre (dark) · contraste texte minimum 5.31:1
+   Chaleur minérale. Ambre sur graphite — la direction qui vous distingue le plus : vos concurrents sont tous bleus. */
+[data-theme="graphite"] {
+  color-scheme: dark;
+
+  /* fonds */
+  --canvas:        oklch(0.145 0.008 60);        /* #0d0907 — fond de page */
+  --surface:       oklch(0.192 0.009 60);       /* #171310 — carte posée sur le fond */
+  --raised:        oklch(0.235 0.010 60);        /* #221d19 — carte survolée / menu */
+
+  /* texte */
+  --text:          oklch(0.960 0.004 80);          /* #f3f1ef */
+  --text-muted:    oklch(0.705 0.013 70);         /* #a59f97 */
+
+  /* traits */
+  --border:        oklch(0.331 0.012 60);        /* #3a3430 — séparateur discret */
+  --border-strong: oklch(0.498 0.014 60);  /* #69615b — champ, focus, contour actionnable (≥3:1) */
+
+  /* accent */
+  --accent:        oklch(0.790 0.150 78);        /* #efad32 */
+  --accent-strong: oklch(0.700 0.150 62);  /* #df8623 — dégradés, états pressés */
+  --on-accent:     oklch(0.16 0.02 65);
+
+  /* sémantique — chacune ≥4,5:1 sur canvas, surface ET raised */
+  --success:       oklch(0.740 0.140 158);            /* #4dc588 */
+  --warning:       oklch(0.810 0.135 92);            /* #e0be4d */
+  --danger:        oklch(0.680 0.190 27);            /* #f75e54 */
+  --info:          oklch(0.750 0.100 222);           /* #5dbcdb */
+
+  /* séries catégorielles — 6 couleurs, ΔE2000 ≥ 23,0 entre paires,
+     ≥ 19,0 en deutéranopie simulée */
+  --s1: #ffb411; --s2: #078ed0; --s3: #07a390;
+  --s4: #dc708a; --s5: #a2dafb; --s6: #fee5e3;
+
+  /* verre */
+  --glass-bg:      oklch(0.99 0.01 70 / .045);
+  --glass-border:  oklch(1 0 0 / .085);
+  --glass-blur:    22px;
+  --highlight:     inset 0 1px 0 oklch(1 0 0 / .07);
+  --shadow-1:      0 2px 8px oklch(0 0 0 / .42);
+  --shadow-2:      0 18px 44px oklch(0 0 0 / .42);
+}
+/* ── 2. Ivoire & Encre (light) · contraste texte minimum 4.52:1
+   Clair, sobre, imprimable. Vert-sarcelle profond sur ivoire — pour les captures d'écran en rapport et les salles éclairées. */
+[data-theme="ivoire"] {
+  color-scheme: light;
+
+  /* fonds */
+  --canvas:        oklch(0.972 0.006 80);        /* #f8f5f1 — fond de page */
+  --surface:       oklch(1.000 0.000 80);       /* #ffffff — carte posée sur le fond */
+  --raised:        oklch(0.988 0.004 80);        /* #fcfbf8 — carte survolée / menu */
+
+  /* texte */
+  --text:          oklch(0.235 0.012 60);          /* #221d18 */
+  --text-muted:    oklch(0.520 0.012 70);         /* #6e6862 */
+
+  /* traits */
+  --border:        oklch(0.863 0.008 75);        /* #d5d1cc — séparateur discret */
+  --border-strong: oklch(0.668 0.010 75);  /* #98948e — champ, focus, contour actionnable (≥3:1) */
+
+  /* accent */
+  --accent:        oklch(0.480 0.089 175);        /* #066e5b */
+  --accent-strong: oklch(0.420 0.084 168);  /* #035b44 — dégradés, états pressés */
+  --on-accent:     oklch(0.99 0 0);
+
+  /* sémantique — chacune ≥4,5:1 sur canvas, surface ET raised */
+  --success:       oklch(0.520 0.120 158);            /* #067d4d */
+  --warning:       oklch(0.548 0.111 92);            /* #886e04 */
+  --danger:        oklch(0.545 0.190 27);            /* #c72e2b */
+  --info:          oklch(0.520 0.096 222);           /* #007590 */
+
+  /* séries catégorielles — 6 couleurs, ΔE2000 ≥ 21,5 entre paires,
+     ≥ 18,6 en deutéranopie simulée */
+  --s1: #1452a6; --s2: #059479; --s3: #a15db6;
+  --s4: #9e4e39; --s5: #643659; --s6: #412f02;
+
+  /* verre */
+  --glass-bg:      oklch(1 0 0 / .62);
+  --glass-border:  oklch(0 0 0 / .06);
+  --glass-blur:    22px;
+  --highlight:     inset 0 1px 0 oklch(1 0 0 / .9);
+  --shadow-1:      0 2px 8px oklch(0 0 0 / .10);
+  --shadow-2:      0 18px 44px oklch(0 0 0 / .10);
+}
+/* ── 3. Minuit & Iris (dark) · contraste texte minimum 5.25:1
+   Nuit froide, accent iris. La plus familière aux profils techniques sans tomber dans le bleu générique. */
+[data-theme="minuit"] {
+  color-scheme: dark;
+
+  /* fonds */
+  --canvas:        oklch(0.135 0.014 285);        /* #08070e — fond de page */
+  --surface:       oklch(0.198 0.018 285);       /* #15151e — carte posée sur le fond */
+  --raised:        oklch(0.240 0.020 285);        /* #1e1e29 — carte survolée / menu */
+
+  /* texte */
+  --text:          oklch(0.955 0.006 285);          /* #eff0f4 */
+  --text-muted:    oklch(0.700 0.014 285);         /* #9d9da7 */
+
+  /* traits */
+  --border:        oklch(0.336 0.018 285);        /* #363640 — séparateur discret */
+  --border-strong: oklch(0.503 0.022 285);  /* #626371 — champ, focus, contour actionnable (≥3:1) */
+
+  /* accent */
+  --accent:        oklch(0.780 0.120 290);        /* #b6aaff */
+  --accent-strong: oklch(0.700 0.150 300);  /* #ad87ed — dégradés, états pressés */
+  --on-accent:     oklch(0.16 0.02 65);
+
+  /* sémantique — chacune ≥4,5:1 sur canvas, surface ET raised */
+  --success:       oklch(0.740 0.140 158);            /* #4dc588 */
+  --warning:       oklch(0.810 0.135 92);            /* #e0be4d */
+  --danger:        oklch(0.680 0.190 27);            /* #f75e54 */
+  --info:          oklch(0.750 0.100 222);           /* #5dbcdb */
+
+  /* séries catégorielles — 6 couleurs, ΔE2000 ≥ 23,0 entre paires,
+     ≥ 19,0 en deutéranopie simulée */
+  --s1: #ffb411; --s2: #078ed0; --s3: #07a390;
+  --s4: #dc708a; --s5: #a2dafb; --s6: #fee5e3;
+
+  /* verre */
+  --glass-bg:      oklch(0.99 0.01 70 / .045);
+  --glass-border:  oklch(1 0 0 / .085);
+  --glass-blur:    22px;
+  --highlight:     inset 0 1px 0 oklch(1 0 0 / .07);
+  --shadow-1:      0 2px 8px oklch(0 0 0 / .42);
+  --shadow-2:      0 18px 44px oklch(0 0 0 / .42);
+}
+/* ── 4. Ardoise & Chaux (dark) · contraste texte minimum 5.35:1
+   Ardoise et vert chaux. La plus contrastée des cinq — un accent qu'on ne rate pas, y compris sur vidéoprojecteur. */
+[data-theme="ardoise"] {
+  color-scheme: dark;
+
+  /* fonds */
+  --canvas:        oklch(0.125 0.008 240);        /* #040709 — fond de page */
+  --surface:       oklch(0.190 0.010 240);       /* #101418 — carte posée sur le fond */
+  --raised:        oklch(0.232 0.011 240);        /* #191e22 — carte survolée / menu */
+
+  /* texte */
+  --text:          oklch(0.955 0.004 240);          /* #eef0f2 */
+  --text-muted:    oklch(0.700 0.012 240);         /* #98a0a5 */
+
+  /* traits */
+  --border:        oklch(0.331 0.011 240);        /* #31363b — séparateur discret */
+  --border-strong: oklch(0.494 0.013 240);  /* #5b6368 — champ, focus, contour actionnable (≥3:1) */
+
+  /* accent */
+  --accent:        oklch(0.880 0.170 124);        /* #c0ea61 */
+  --accent-strong: oklch(0.800 0.160 132);  /* #96d35f — dégradés, états pressés */
+  --on-accent:     oklch(0.16 0.02 65);
+
+  /* sémantique — chacune ≥4,5:1 sur canvas, surface ET raised */
+  --success:       oklch(0.740 0.140 158);            /* #4dc588 */
+  --warning:       oklch(0.810 0.135 92);            /* #e0be4d */
+  --danger:        oklch(0.680 0.190 27);            /* #f75e54 */
+  --info:          oklch(0.750 0.100 222);           /* #5dbcdb */
+
+  /* séries catégorielles — 6 couleurs, ΔE2000 ≥ 23,0 entre paires,
+     ≥ 19,0 en deutéranopie simulée */
+  --s1: #ffb411; --s2: #078ed0; --s3: #07a390;
+  --s4: #dc708a; --s5: #a2dafb; --s6: #fee5e3;
+
+  /* verre */
+  --glass-bg:      oklch(0.99 0.01 70 / .045);
+  --glass-border:  oklch(1 0 0 / .085);
+  --glass-blur:    22px;
+  --highlight:     inset 0 1px 0 oklch(1 0 0 / .07);
+  --shadow-1:      0 2px 8px oklch(0 0 0 / .42);
+  --shadow-2:      0 18px 44px oklch(0 0 0 / .42);
+}
+/* ── 5. Porcelaine & Cobalt (light) · contraste texte minimum 4.55:1
+   Porcelaine et cobalt. La plus institutionnelle — celle qui passe sans discussion dans un grand compte. */
+[data-theme="porcelaine"] {
+  color-scheme: light;
+
+  /* fonds */
+  --canvas:        oklch(0.962 0.005 240);        /* #f0f3f5 — fond de page */
+  --surface:       oklch(1.000 0.000 240);       /* #ffffff — carte posée sur le fond */
+  --raised:        oklch(0.980 0.004 240);        /* #f6f9fb — carte survolée / menu */
+
+  /* texte */
+  --text:          oklch(0.215 0.020 255);          /* #131a23 */
+  --text-muted:    oklch(0.510 0.014 250);         /* #60676e */
+
+  /* traits */
+  --border:        oklch(0.862 0.008 245);        /* #cdd2d7 — séparateur discret */
+  --border-strong: oklch(0.667 0.011 245);  /* #8f959b — champ, focus, contour actionnable (≥3:1) */
+
+  /* accent */
+  --accent:        oklch(0.450 0.190 265);        /* #1f47bc */
+  --accent-strong: oklch(0.390 0.185 270);  /* #2430a6 — dégradés, états pressés */
+  --on-accent:     oklch(0.99 0 0);
+
+  /* sémantique — chacune ≥4,5:1 sur canvas, surface ET raised */
+  --success:       oklch(0.520 0.120 158);            /* #067d4d */
+  --warning:       oklch(0.540 0.109 92);            /* #856c05 */
+  --danger:        oklch(0.545 0.190 27);            /* #c72e2b */
+  --info:          oklch(0.520 0.096 222);           /* #007590 */
+
+  /* séries catégorielles — 6 couleurs, ΔE2000 ≥ 21,5 entre paires,
+     ≥ 18,6 en deutéranopie simulée */
+  --s1: #1452a6; --s2: #059479; --s3: #a15db6;
+  --s4: #9e4e39; --s5: #643659; --s6: #412f02;
+
+  /* verre */
+  --glass-bg:      oklch(1 0 0 / .62);
+  --glass-border:  oklch(0 0 0 / .06);
+  --glass-blur:    22px;
+  --highlight:     inset 0 1px 0 oklch(1 0 0 / .9);
+  --shadow-1:      0 2px 8px oklch(0 0 0 / .10);
+  --shadow-2:      0 18px 44px oklch(0 0 0 / .10);
+}
+
+/* ───────────────────────────────────────────────────────────────────────────
+   Passerelle vers les jetons applicatifs existants.
+   Le reste du code continue d'écrire bg-card, text-muted-foreground, etc. :
+   ces alias font pointer les anciens noms vers le thème actif. Aucune page
+   n'a besoin d'être réécrite pour changer de thème.
+   ─────────────────────────────────────────────────────────────────────────── */
+:root,
+[data-theme] {
+  --background:            var(--canvas);
+  --foreground:            var(--text);
+  --card:                  var(--surface);
+  --card-foreground:       var(--text);
+  --popover:               var(--raised);
+  --popover-foreground:    var(--text);
+  --primary:               var(--accent);
+  --primary-foreground:    var(--on-accent);
+  --secondary:             var(--raised);
+  --secondary-foreground:  var(--text);
+  --muted:                 var(--raised);
+  --muted-foreground:      var(--text-muted);
+  --destructive:           var(--danger);
+  --destructive-foreground:var(--on-accent);
+  --input:                 var(--border-strong);
+  --ring:                  var(--accent);
+  --sidebar:               var(--surface);
+  --sidebar-foreground:    var(--text);
+  --sidebar-border:        var(--border);
+  --sidebar-accent:        var(--raised);
+  --chart-1: var(--s1); --chart-2: var(--s2); --chart-3: var(--s3);
+  --chart-4: var(--s4); --chart-5: var(--s5); --chart-6: var(--s6);
+}
+
+/* Thème par défaut si l'attribut est absent (première visite, SSR, erreur JS).
+   On ne laisse jamais une page sans couleurs. */
+:root:not([data-theme]) {
+  color-scheme: dark;
+
+  /* fonds */
+  --canvas:        oklch(0.145 0.008 60);        /* #0d0907 — fond de page */
+  --surface:       oklch(0.192 0.009 60);       /* #171310 — carte posée sur le fond */
+  --raised:        oklch(0.235 0.010 60);        /* #221d19 — carte survolée / menu */
+
+  /* texte */
+  --text:          oklch(0.960 0.004 80);          /* #f3f1ef */
+  --text-muted:    oklch(0.705 0.013 70);         /* #a59f97 */
+
+  /* traits */
+  --border:        oklch(0.331 0.012 60);        /* #3a3430 — séparateur discret */
+  --border-strong: oklch(0.498 0.014 60);  /* #69615b — champ, focus, contour actionnable (≥3:1) */
+
+  /* accent */
+  --accent:        oklch(0.790 0.150 78);        /* #efad32 */
+  --accent-strong: oklch(0.700 0.150 62);  /* #df8623 — dégradés, états pressés */
+  --on-accent:     oklch(0.16 0.02 65);
+
+  /* sémantique — chacune ≥4,5:1 sur canvas, surface ET raised */
+  --success:       oklch(0.740 0.140 158);            /* #4dc588 */
+  --warning:       oklch(0.810 0.135 92);            /* #e0be4d */
+  --danger:        oklch(0.680 0.190 27);            /* #f75e54 */
+  --info:          oklch(0.750 0.100 222);           /* #5dbcdb */
+
+  /* séries catégorielles — 6 couleurs, ΔE2000 ≥ 23,0 entre paires,
+     ≥ 19,0 en deutéranopie simulée */
+  --s1: #ffb411; --s2: #078ed0; --s3: #07a390;
+  --s4: #dc708a; --s5: #a2dafb; --s6: #fee5e3;
+
+  /* verre */
+  --glass-bg:      oklch(0.99 0.01 70 / .045);
+  --glass-border:  oklch(1 0 0 / .085);
+  --glass-blur:    22px;
+  --highlight:     inset 0 1px 0 oklch(1 0 0 / .07);
+  --shadow-1:      0 2px 8px oklch(0 0 0 / .42);
+  --shadow-2:      0 18px 44px oklch(0 0 0 / .42);
+}

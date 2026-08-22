@@ -1,0 +1,6 @@
+[
+  { "name": "Login", "path": "/login", "auth": false },
+  { "name": "Register", "path": "/register", "auth": false },
+  { "name": "Profile-Preferences", "path": "/profile", "auth": true, "clickText": ["Préférences"] },
+  { "name": "AvatarThemeMenu", "path": "/profile", "auth": true, "clickText": ["Changer de thème"] }
+]

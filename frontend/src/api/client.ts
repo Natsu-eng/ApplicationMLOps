@@ -203,6 +203,14 @@ export interface UserProfile {
   last_login: string | null;
 }
 
+// Lot UI (Fondations) — thème d'interface persisté côté serveur, sur le
+// profil utilisateur (voir ThemeContext.tsx pour l'ordre de résolution).
+export type UiTheme = "graphite" | "ivoire" | "minuit" | "ardoise" | "porcelaine";
+
+export interface UserPreferences {
+  ui_theme: UiTheme;
+}
+
 // Lot 10 — journal d'audit (owner uniquement).
 export interface AuditLogEntry {
   id: number;
@@ -1204,6 +1212,12 @@ export const api = {
     changePassword: (data: ChangePasswordPayload) =>
       request<void>("/auth/me/password", { method: "PATCH", body: JSON.stringify(data) }),
     logout: () => request<{ message: string }>("/auth/logout", { method: "POST" }),
+  },
+
+  users: {
+    preferences: () => request<UserPreferences>("/users/me/preferences"),
+    updatePreferences: (data: UserPreferences) =>
+      request<UserPreferences>("/users/me/preferences", { method: "PATCH", body: JSON.stringify(data) }),
   },
 
   team: {

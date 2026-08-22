@@ -19,7 +19,7 @@ export function SectionHeader({
   label: string;
   help?: string;
 }) {
-  // Hiérarchie (retour utilisateur, Lot 2A correctif 4) — text-subtitle
+  // Hiérarchie (retour utilisateur, Lot 2A correctif 4) — text-h3
   // (16px/600) au lieu de text-sm (14px/medium) : un en-tête de section
   // doit se distinguer NETTEMENT du corps de carte qu'il introduit, pas
   // porter le même poids visuel qu'un titre de sous-niveau. Espacement
@@ -27,7 +27,7 @@ export function SectionHeader({
   return (
     <div className="flex items-center gap-2.5 mb-4">
       <ColorIconBadge icon={icon} color={color} size="sm" />
-      <span className="text-subtitle text-foreground">
+      <span className="text-h3 text-foreground">
         {help ? <LabelWithHelp label={label} help={help} /> : label}
       </span>
     </div>

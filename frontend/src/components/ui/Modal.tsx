@@ -82,7 +82,7 @@ export function Modal({
         className={`relative w-full ${SIZE_CLASSES[size]} max-h-[90vh] overflow-hidden rounded-2xl border border-border bg-card shadow-xl flex flex-col outline-none`}
       >
         <div className="flex items-center justify-between gap-4 px-5 py-4 border-b border-border flex-shrink-0">
-          <h3 id={titleId} className="text-subtitle text-foreground truncate">
+          <h3 id={titleId} className="text-h3 text-foreground truncate">
             {title}
           </h3>
           <div className="flex items-center gap-4 flex-shrink-0">

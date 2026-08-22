@@ -1,0 +1,278 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><script src="./support.js"></script></head><body>
+<x-dc><helmet><style>
+@import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,600;12..96,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+:root{
+ --canvas:oklch(0.145 0.008 60); --surf:oklch(0.192 0.009 60); --raise:oklch(0.235 0.010 60);
+ --bd:oklch(0.315 0.012 60); --tx:oklch(0.960 0.004 80); --mu:oklch(0.705 0.013 70);
+ --ac:oklch(0.790 0.150 78); --acs:oklch(0.700 0.150 62);
+ --ok:oklch(0.740 0.140 158); --wa:oklch(0.810 0.135 92); --da:oklch(0.680 0.190 27); --inf:oklch(0.750 0.100 222);
+ --gl:oklch(0.99 0.01 70 / .045); --gl2:oklch(0.99 0.01 70 / .075);
+ --hl:inset 0 1px 0 oklch(1 0 0 / .07);
+ --r1:10px; --r2:16px; --r3:22px;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--canvas);color:var(--tx);
+ font-family:"IBM Plex Sans",ui-sans-serif,system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+h1,h2,h3,.dsp{font-family:"Bricolage Grotesque","IBM Plex Sans",ui-sans-serif,sans-serif}
+a{color:var(--ac);text-decoration:none} a:hover{color:oklch(0.86 0.14 80)}
+.n{font-family:"IBM Plex Mono",ui-monospace,monospace;font-variant-numeric:tabular-nums;letter-spacing:-0.01em}
+.ov{font-size:10.5px;font-weight:600;letter-spacing:.11em;text-transform:uppercase;color:var(--mu)}
+.cp{font-size:12.5px;color:var(--mu);line-height:1.5}
+/* verre */
+.glass{background:var(--gl);backdrop-filter:blur(22px) saturate(150%);
+ -webkit-backdrop-filter:blur(22px) saturate(150%);border:1px solid oklch(1 0 0 / .085);
+ box-shadow:var(--hl),0 18px 44px oklch(0 0 0 / .42)}
+.pane{background:linear-gradient(180deg,oklch(0.235 0.010 60 / .92),oklch(0.205 0.009 60 / .92));
+ border:1px solid var(--bd);border-radius:var(--r2);box-shadow:var(--hl)}
+.pane.hv{border-color:oklch(0.79 0.15 78 / .38);
+ box-shadow:var(--hl),0 0 0 1px oklch(0.79 0.15 78 / .13),0 16px 38px oklch(0 0 0 / .45);
+ transform:translateY(-2px)}
+.btn{display:inline-flex;align-items:center;gap:8px;height:36px;padding:0 15px;border-radius:var(--r1);
+ font-size:13.5px;font-weight:500;border:1px solid transparent;font-family:inherit}
+.bp{background:var(--ac);color:oklch(0.16 0.02 65);font-weight:600}
+.bs{background:oklch(1 0 0 / .05);color:var(--tx);border-color:var(--bd)}
+.tag{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:500;padding:3px 9px;border-radius:99px}
+:root{--s1:#ffc75a;--s2:#007eb0;--s3:#56c9a2;--s4:#dd5da1;--s5:#f2efb4;--s6:#d8625c}
+.hd{height:56px;border-bottom:1px solid var(--bd);display:flex;align-items:center;padding:0 26px;gap:12px;font-size:12.5px;color:var(--mu)}
+.wrap{padding:26px 30px}
+.pane2{background:linear-gradient(180deg,oklch(0.235 0.010 60 / .92),oklch(0.205 0.009 60 / .92));
+ border:1px solid var(--bd);border-radius:var(--r2);box-shadow:var(--hl)}
+/* --- coquille applicative : rail + barre haute --- */
+.rail{width:60px;display:flex;flex-direction:column;align-items:center;gap:5px;padding:14px 0;
+ border-radius:var(--r3);position:absolute;left:18px;top:18px;bottom:18px;z-index:3}
+.ri{width:38px;height:38px;border-radius:11px;display:flex;align-items:center;justify-content:center;color:var(--mu)}
+.ri.on{background:oklch(0.79 0.15 78 / .15);color:var(--ac);box-shadow:inset 0 0 0 1px oklch(0.79 0.15 78 / .28)}
+.ri.hov{background:oklch(1 0 0 / .06);color:var(--tx)}
+.top{height:56px;border-radius:var(--r2);display:flex;align-items:center;padding:0 8px 0 18px;gap:14px;
+ position:absolute;left:96px;right:22px;top:22px;z-index:2}
+.body{position:absolute;left:96px;right:22px;top:96px;bottom:22px;overflow:hidden}
+/* --- segments, onglets --- */
+.seg{display:flex;background:oklch(0 0 0 / .28);border-radius:9px;padding:3px;gap:2px}
+.sgi{padding:5px 12px;border-radius:7px;font-size:12.5px;color:var(--mu);font-weight:500}
+.sgi.on{background:oklch(1 0 0 / .085);color:var(--tx);box-shadow:var(--hl)}
+.tb{display:flex;gap:24px;border-bottom:1px solid var(--bd)}
+.tbi{padding:10px 1px;font-size:13px;font-weight:500;color:var(--mu);border-bottom:2px solid transparent}
+.tbi.on{color:var(--tx);border-bottom-color:var(--ac)}
+/* --- tableaux --- */
+table{width:100%;border-collapse:collapse}
+th{font-size:10.5px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--mu);
+ text-align:left;padding:0 16px 10px;white-space:nowrap}
+td{padding:13px 16px;font-size:13.5px;border-top:1px solid oklch(1 0 0 / .05);vertical-align:middle}
+tr.hov td{background:oklch(1 0 0 / .035)}
+tr.sel td{background:oklch(0.79 0.15 78 / .07);box-shadow:inset 3px 0 0 var(--ac)}
+/* --- micro-graphiques --- */
+.sp{display:flex;align-items:flex-end;gap:2.5px;height:26px}
+.sp i{width:4px;border-radius:1.5px;background:oklch(0.79 0.15 78 / .32)}
+.sp i.hi{background:var(--ac)}
+.bar{height:7px;border-radius:99px;background:oklch(0 0 0 / .32);overflow:hidden}
+.bar i{display:block;height:100%;border-radius:99px;background:var(--ac)}
+/* --- formulaires --- */
+.fld{height:38px;border:1px solid var(--bd);border-radius:var(--r1);background:oklch(0 0 0 / .22);
+ display:flex;align-items:center;padding:0 12px;font-size:13.5px;color:var(--tx);gap:8px}
+.fld.foc{border-color:var(--ac);box-shadow:0 0 0 3px oklch(0.79 0.15 78 / .16)}
+.fld .ph{color:oklch(0.55 0.012 70)}
+.lb{font-size:12px;font-weight:500;color:var(--mu);display:block;margin-bottom:6px}
+.hint{font-size:11.5px;color:oklch(0.60 0.012 70);margin:6px 0 0;line-height:1.5}
+.sw{width:36px;height:20px;border-radius:99px;background:oklch(0 0 0 / .38);position:relative;flex-shrink:0}
+.sw i{position:absolute;width:15px;height:15px;border-radius:50%;background:var(--mu);top:2.5px;left:2.5px}
+.sw.on{background:var(--ac)}.sw.on i{left:18.5px;background:oklch(0.16 0.02 65)}
+/* --- cartes de choix --- */
+.ch{border:1px solid var(--bd);border-radius:var(--r2);padding:15px 16px;background:oklch(1 0 0 / .018)}
+.ch.on{border-color:var(--ac);background:oklch(0.79 0.15 78 / .08);box-shadow:0 0 0 1px oklch(0.79 0.15 78 / .3)}
+.ch.hv{border-color:oklch(0.79 0.15 78 / .35);background:oklch(1 0 0 / .04);transform:translateY(-2px)}
+/* --- pastilles d'étape --- */
+.stp{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--mu)}
+.stpn{width:22px;height:22px;border-radius:50%;border:1px solid var(--bd);display:flex;align-items:center;
+ justify-content:center;font-size:11px;font-weight:600}
+.stp.done .stpn{background:oklch(0.74 0.14 158 / .18);border-color:transparent;color:var(--ok)}
+.stp.on{color:var(--tx);font-weight:600}
+.stp.on .stpn{background:var(--ac);border-color:transparent;color:oklch(0.16 0.02 65)}
+/* --- divers --- */
+.kpi{font-family:"IBM Plex Mono",monospace;font-variant-numeric:tabular-nums;letter-spacing:-0.03em;font-weight:500}
+.gd{display:grid;gap:16px}
+.sect{font-size:15px;font-weight:600;letter-spacing:-0.015em;margin:0}
+.info{border-left:2px solid var(--inf);background:oklch(0.75 0.10 222 / .07);padding:11px 14px;
+ border-radius:0 var(--r1) var(--r1) 0;font-size:12.5px;line-height:1.55;color:oklch(0.88 0.03 222)}
+.warnb{border-left:2px solid var(--wa);background:oklch(0.81 0.135 92 / .07);padding:11px 14px;
+ border-radius:0 var(--r1) var(--r1) 0;font-size:12.5px;line-height:1.55;color:oklch(0.90 0.05 92)}
+
+.vrow{display:grid;grid-template-columns:96px 1fr 118px 118px 130px 150px 104px;align-items:center;
+ padding:14px 16px;border-top:1px solid oklch(1 0 0 / .05);font-size:13.5px}
+.vrow.hov{background:oklch(1 0 0 / .035)}
+.vrow.prod{background:oklch(0.74 0.14 158 / .055);box-shadow:inset 3px 0 0 var(--ok)}
+.delta{font-family:"IBM Plex Mono",monospace;font-size:11.5px}
+.tl{position:relative;padding-left:22px}
+.tl::before{content:"";position:absolute;left:5px;top:6px;bottom:6px;width:1.5px;background:var(--bd)}
+.tli{position:relative;padding:9px 0}
+.tli::before{content:"";position:absolute;left:-21.5px;top:14px;width:9px;height:9px;border-radius:50%;
+ background:var(--surf);border:2px solid var(--bd)}
+.tli.ac::before{background:var(--ac);border-color:var(--ac)}
+</style></helmet>
+<div style="width:1512px;height:960px;background:var(--canvas);position:relative;overflow:hidden;font-size:14px">
+
+<div style="position:absolute;width:820px;height:820px;left:-160px;top:-320px;border-radius:50%;
+    background:radial-gradient(circle,oklch(0.62 0.12 220 / .13),transparent 66%);filter:blur(30px)"></div>
+  <div style="position:absolute;width:700px;height:700px;right:-180px;bottom:-320px;border-radius:50%;
+    background:radial-gradient(circle,oklch(0.70 0.15 62 / .11),transparent 68%);filter:blur(30px)"></div>
+  <div style="position:absolute;inset:0;opacity:.5;background-image:
+    linear-gradient(oklch(1 0 0 / .014) 1px,transparent 1px),
+    linear-gradient(90deg,oklch(1 0 0 / .014) 1px,transparent 1px);background-size:56px 56px"></div>
+<div class="rail glass">
+    <div style="width:34px;height:34px;border-radius:11px;background:linear-gradient(150deg,var(--ac),oklch(0.62 0.17 40));
+      display:flex;align-items:center;justify-content:center;color:oklch(0.16 0.02 65);font-weight:700;font-size:15px;
+      font-family:'Bricolage Grotesque',sans-serif;margin-bottom:12px">D</div>
+    <div class="ri"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="3" width="7" height="9" rx="2"/><rect x="14" y="3" width="7" height="5" rx="2"/><rect x="14" y="12" width="7" height="9" rx="2"/><rect x="3" y="16" width="7" height="5" rx="2"/></svg></div>
+    <div class="ri"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><ellipse cx="12" cy="6" rx="8" ry="3"/><path d="M4 6v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6"/></svg></div>
+    <div class="ri"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 3a3 3 0 0 0-3 3 3 3 0 0 0-2 5.2A3 3 0 0 0 9 17a3 3 0 0 0 6 0 3 3 0 0 0 2-5.8A3 3 0 0 0 15 6a3 3 0 0 0-3-3z"/></svg></div>
+    <div class="ri"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="m3 15 5-4 4 3 3-2 6 5"/></svg></div>
+    <div class="ri on"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5M12 8v4l3 2"/></svg></div>
+    <div style="margin-top:auto;display:flex;flex-direction:column;align-items:center;gap:5px">
+      <div class="ri"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="9"/><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3M12 17h.01"/></svg></div>
+      <div style="width:32px;height:32px;border-radius:50%;background:oklch(0.42 0.08 60);color:var(--tx);
+        display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600">M</div>
+    </div>
+  </div>
+<div class="top glass">
+    <div style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--mu);min-width:0"><span style="color:var(--tx)">Registre des modèles</span>
+      <span style="opacity:.4">/</span><span class="cp">résistance_28j</span>
+      </div>
+    <div style="margin-left:auto;display:flex;align-items:center;gap:9px"><div class="seg"><span class="sgi on">Ce projet</span><span class="sgi">Tous</span></div>
+      <button class="btn bs" style="height:32px;font-size:12.5px">Comparer 2 versions</button>
+      <button class="btn bp" style="height:32px;font-size:12.5px">Nouvel entraînement</button></div>
+  </div>
+
+<div class="body">
+ <div style="display:flex;align-items:flex-end;justify-content:space-between;margin-bottom:16px">
+  <div>
+   <p class="ov" style="margin:0 0 7px">Registre · 5 versions depuis février</p>
+   <h1 style="margin:0;font-size:26px;font-weight:600;letter-spacing:-0.03em">Historique du modèle « résistance à 28 jours »</h1></div>
+  <p class="cp" style="margin:0;text-align:right;max-width:320px">Une seule version est en production à la fois.
+   Les autres restent disponibles — <span style="color:var(--tx)">revenir en arrière prend 3 secondes</span>.</p>
+ </div>
+
+ <div class="pane2" style="padding:16px 0 6px;margin-bottom:16px">
+  <div style="display:flex;align-items:center;padding:0 16px 12px">
+   <h3 class="sect">Toutes les versions</h3>
+   <p class="cp" style="margin:0 0 0 12px">Δ = écart avec la version précédente</p>
+   <a href="#" style="margin-left:auto;font-size:12px">Exporter le registre (JSON)</a></div>
+  <div class="vrow" style="border-top:none;padding-bottom:9px">
+   <span class="ov">Version</span><span class="ov">Ce qui a changé</span><span class="ov">R² test</span>
+   <span class="ov">Erreur</span><span class="ov">Entraînée le</span><span class="ov">Données</span><span class="ov" style="text-align:right">État</span></div>
+
+  <div class="vrow prod">
+   <div><strong class="kpi" style="font-size:15px">v3</strong>
+    <span class="tag" style="background:oklch(0.74 0.14 158 / .16);color:var(--ok);margin-left:6px;font-size:10px">actif</span></div>
+   <div>LightGBM · découpe par chantier activée · 40 essais
+    <p class="cp" style="margin:3px 0 0">« La découpe aléatoire faisait fuiter le chantier. » — Marie</p></div>
+   <div><span class="kpi">0,894</span> <span class="delta" style="color:var(--da)">−0,041</span></div>
+   <div><span class="kpi">2,81</span> <span class="delta" style="color:var(--ok)">MPa</span></div>
+   <div class="cp">18 août · 15 h 42</div>
+   <div class="cp"><span class="n">beton_c30</span><br>2 010 lignes</div>
+   <div style="text-align:right"><span class="tag" style="background:oklch(0.74 0.14 158 / .15);color:var(--ok)">production</span></div></div>
+
+  <div class="vrow hov">
+   <div><strong class="kpi" style="font-size:15px">v2</strong></div>
+   <div>LightGBM · découpe aléatoire · 40 essais
+    <p class="cp" style="margin:3px 0 0;color:var(--wa)">⚠ Score gonflé : deux gâchées du même chantier des
+     deux côtés de la découpe.</p></div>
+   <div><span class="kpi">0,935</span> <span class="delta" style="color:var(--ok)">+0,063</span></div>
+   <div><span class="kpi">2,19</span> <span class="delta" style="color:var(--mu)">MPa</span></div>
+   <div class="cp">2 août · 09 h 11</div>
+   <div class="cp"><span class="n">beton_c30</span><br>2 010 lignes</div>
+   <div style="text-align:right"><span class="tag" style="background:oklch(0.81 0.135 92 / .14);color:var(--wa)">retirée</span></div></div>
+
+  <div class="vrow">
+   <div><strong class="kpi" style="font-size:15px">v1.2</strong></div>
+   <div>Forêt aléatoire · +212 lignes de juillet</div>
+   <div><span class="kpi">0,872</span> <span class="delta" style="color:var(--ok)">+0,018</span></div>
+   <div><span class="kpi">3,31</span> <span class="delta" style="color:var(--mu)">MPa</span></div>
+   <div class="cp">21 juil. · 16 h 05</div>
+   <div class="cp"><span class="n">beton_c30</span><br>2 010 lignes</div>
+   <div style="text-align:right"><span class="tag" style="background:oklch(1 0 0 / .06);color:var(--mu)">archivée</span></div></div>
+
+  <div class="vrow">
+   <div><strong class="kpi" style="font-size:15px">v1.1</strong></div>
+   <div>Forêt aléatoire · imputation médiane sur <span class="n">ciment_kg</span></div>
+   <div><span class="kpi">0,854</span> <span class="delta" style="color:var(--ok)">+0,102</span></div>
+   <div><span class="kpi">3,58</span> <span class="delta" style="color:var(--mu)">MPa</span></div>
+   <div class="cp">4 juil. · 11 h 30</div>
+   <div class="cp"><span class="n">beton_c30</span><br>1 798 lignes</div>
+   <div style="text-align:right"><span class="tag" style="background:oklch(1 0 0 / .06);color:var(--mu)">archivée</span></div></div>
+
+  <div class="vrow">
+   <div><strong class="kpi" style="font-size:15px">v1</strong></div>
+   <div>Régression Ridge · première tentative</div>
+   <div><span class="kpi">0,752</span> <span class="delta" style="color:var(--mu)">—</span></div>
+   <div><span class="kpi">4,92</span> <span class="delta" style="color:var(--mu)">MPa</span></div>
+   <div class="cp">12 févr. · 14 h 22</div>
+   <div class="cp"><span class="n">beton_c30</span><br>1 640 lignes</div>
+   <div style="text-align:right"><span class="tag" style="background:oklch(1 0 0 / .06);color:var(--mu)">archivée</span></div></div>
+ </div>
+
+ <div style="display:grid;grid-template-columns:1.2fr 1fr 1fr;gap:16px">
+  <div class="pane2" style="padding:18px 20px">
+   <h3 class="sect" style="margin-bottom:4px">La leçon de v2</h3>
+   <p class="cp" style="margin:0 0 14px">C'est le cas d'école qu'il faut garder sous les yeux.</p>
+   <svg width="100%" height="128" viewBox="0 0 400 128">
+    <g stroke="oklch(1 0 0 / .06)"><line x1="34" y1="16" x2="400" y2="16"/><line x1="34" y1="58" x2="400" y2="58"/><line x1="34" y1="100" x2="400" y2="100"/></g>
+    <text x="0" y="20" fill="var(--mu)" font-size="9" font-family="IBM Plex Mono">0,95</text>
+    <text x="0" y="104" fill="var(--mu)" font-size="9" font-family="IBM Plex Mono">0,70</text>
+    <polyline points="70,88 148,72 226,64 304,24 382,50" fill="none" stroke="var(--inf)" stroke-width="2" stroke-dasharray="4 3"/>
+    <polyline points="70,92 148,78 226,68 304,30 382,52" fill="none" stroke="var(--ac)" stroke-width="2.2"/>
+    <circle cx="304" cy="30" r="5" fill="var(--da)" stroke="var(--canvas)" stroke-width="2"/>
+    <g fill="var(--mu)" font-size="9.5" font-family="IBM Plex Mono" text-anchor="middle">
+     <text x="70" y="120">v1</text><text x="148" y="120">v1.1</text><text x="226" y="120">v1.2</text>
+     <text x="304" y="120" fill="var(--da)">v2</text><text x="382" y="120">v3</text></g>
+   </svg>
+   <div style="display:flex;gap:16px;margin-top:8px">
+    <span style="display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--mu)">
+     <span style="width:14px;height:2px;background:var(--ac);display:inline-block"></span>score test</span>
+    <span style="display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--mu)">
+     <span style="width:14px;height:2px;background:var(--inf);display:inline-block"></span>score validation</span></div>
+   <p class="cp" style="margin:11px 0 0;line-height:1.6"><strong style="color:var(--tx)">v2 monte, puis v3
+    redescend — et v3 est la bonne.</strong> Le pic de v2 venait d'une découpe qui laissait le modèle voir
+    des gâchées du même chantier des deux côtés. Sur un chantier neuf, v2 tombait à 0,79 en réel.</p></div>
+
+  <div class="pane2" style="padding:18px 20px">
+   <h3 class="sect" style="margin-bottom:12px">Fiche de la v3</h3>
+   <div style="display:flex;flex-direction:column;gap:0">
+    <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid oklch(1 0 0 / .05);font-size:12.5px">
+     <span class="cp">Empreinte du modèle</span><span class="n" style="font-size:11.5px">sha256:4f8a…c21e</span></div>
+    <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid oklch(1 0 0 / .05);font-size:12.5px">
+     <span class="cp">Empreinte des données</span><span class="n" style="font-size:11.5px">sha256:9b02…7d4a</span></div>
+    <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid oklch(1 0 0 / .05);font-size:12.5px">
+     <span class="cp">Graine aléatoire</span><span class="n" style="font-size:11.5px">42</span></div>
+    <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid oklch(1 0 0 / .05);font-size:12.5px">
+     <span class="cp">Version de la bibliothèque</span><span class="n" style="font-size:11.5px">lightgbm 4.5.0</span></div>
+    <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid oklch(1 0 0 / .05);font-size:12.5px">
+     <span class="cp">Python</span><span class="n" style="font-size:11.5px">3.11.9</span></div>
+    <div style="display:flex;justify-content:space-between;padding:8px 0;font-size:12.5px">
+     <span class="cp">Auteur</span><span>Marie Delcourt</span></div></div>
+   <p class="hint" style="margin-top:12px">Ces six lignes suffisent à refaire exactement le même modèle
+    dans six mois. C'est le sens du mot « reproductible ».</p>
+   <button class="btn bs" style="height:32px;font-size:12.5px;margin-top:11px;width:100%;justify-content:center">Voir la traçabilité complète</button></div>
+
+  <div class="pane2" style="padding:18px 20px">
+   <h3 class="sect" style="margin-bottom:12px">Journal des décisions</h3>
+   <div class="tl">
+    <div class="tli ac"><div style="display:flex;justify-content:space-between;align-items:baseline">
+      <strong style="font-size:13px">v3 mise en production</strong><span class="cp" style="font-size:11px">18 août</span></div>
+     <p class="cp" style="margin:3px 0 0">Marie — « Score plus bas mais honnête. On accepte les 2,8 MPa. »</p></div>
+    <div class="tli"><div style="display:flex;justify-content:space-between;align-items:baseline">
+      <strong style="font-size:13px">v2 retirée</strong><span class="cp" style="font-size:11px">17 août</span></div>
+     <p class="cp" style="margin:3px 0 0">Fuite confirmée sur le chantier Nanterre-Est. Écart réel 0,79 vs 0,935 annoncé.</p></div>
+    <div class="tli"><div style="display:flex;justify-content:space-between;align-items:baseline">
+      <strong style="font-size:13px">Alerte de dérive</strong><span class="cp" style="font-size:11px">14 août</span></div>
+     <p class="cp" style="margin:3px 0 0">Erreur moyenne passée de 2,2 à 4,7 MPa sur les 3 derniers chantiers.</p></div>
+    <div class="tli"><div style="display:flex;justify-content:space-between;align-items:baseline">
+      <strong style="font-size:13px">v2 mise en production</strong><span class="cp" style="font-size:11px">2 août</span></div>
+     <p class="cp" style="margin:3px 0 0">Thomas — « +6 points de R², on y va. »</p></div>
+   </div>
+   <a href="#" style="font-size:12px;display:inline-block;margin-top:8px">Voir les 11 entrées</a></div>
+ </div>
+</div>
+
+</div>
+</x-dc>
+</body></html>

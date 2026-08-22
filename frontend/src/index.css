@@ -1,370 +1,229 @@
 @import "tailwindcss";
 
-/* Tokens de marque — dégradé bleu → cyan dérivé du logo (le "D"). */
+/* Système de jetons de couleur — 5 thèmes, source unique. Voir
+   _design/SPEC-UI.md §1-2 et frontend/src/styles/themes.css (copie exacte
+   de _design/themes.css, généré par _design/tune.py — toute couleur ajoutée
+   à la main doit repasser par ce script, jamais choisie à l'œil ici). */
+@import "./styles/themes.css";
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Polices — chargées en local (public/fonts/), aucun appel réseau externe :
+   la plateforme doit démarrer sur un réseau fermé (SPEC-UI.md §3). Fichiers
+   vendorisés depuis @fontsource (licence SIL OFL, voir public/fonts/LICENSE-*).
+   ───────────────────────────────────────────────────────────────────────── */
+@font-face {
+  font-family: "Bricolage Grotesque";
+  src: url("/fonts/bricolage-grotesque-variable.woff2") format("woff2-variations");
+  font-weight: 200 800;
+  font-display: swap;
+}
+@font-face {
+  font-family: "IBM Plex Sans";
+  src: url("/fonts/ibm-plex-sans-400.woff2") format("woff2");
+  font-weight: 400;
+  font-display: swap;
+}
+@font-face {
+  font-family: "IBM Plex Sans";
+  src: url("/fonts/ibm-plex-sans-500.woff2") format("woff2");
+  font-weight: 500;
+  font-display: swap;
+}
+@font-face {
+  font-family: "IBM Plex Sans";
+  src: url("/fonts/ibm-plex-sans-600.woff2") format("woff2");
+  font-weight: 600;
+  font-display: swap;
+}
+@font-face {
+  font-family: "IBM Plex Mono";
+  src: url("/fonts/ibm-plex-mono-400.woff2") format("woff2");
+  font-weight: 400;
+  font-display: swap;
+}
+@font-face {
+  font-family: "IBM Plex Mono";
+  src: url("/fonts/ibm-plex-mono-500.woff2") format("woff2");
+  font-weight: 500;
+  font-display: swap;
+}
+
 @theme {
-  --color-brand-700: #1d4ed8; /* bleu profond — base du dégradé du logo */
-  --color-brand-400: #22d3ee; /* cyan vif — pointe du dégradé du logo */
-  --color-canvas: #eef2fb; /* fond de page — bleu très pâle dérivé de la marque, plat, sans dégradé (E1-ter, sur demande) */
+  /* ── Familles ────────────────────────────────────────────────────────── */
+  --font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --font-display: "Bricolage Grotesque", var(--font-sans);
+  --font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
 
-  /* Système de tokens sémantiques (Lot refonte UI) — remplace l'usage ad hoc
-     des teintes teal, emerald, amber, rose dispersées composant par composant :
-     une seule source pour primary/success/warning/destructive/accent, en
-     OKLCH pour une teinte perceptuellement cohérente entre les nuances et
-     les variantes d'opacité (ex. bg-primary/10). Calqué sur la maquette
-     v0 (design de référence fourni) — primary passe du teal au bleu de
-     marque, pour une identité visuelle unifiée avec le dégradé du logo/auth
-     plutôt que deux accents concurrents. */
-  --color-primary: oklch(0.48 0.17 258);
-  --color-primary-foreground: oklch(0.99 0.005 260);
-  --color-secondary: oklch(0.968 0.005 260);
-  --color-secondary-foreground: oklch(0.3 0.03 260);
-  --color-muted: oklch(0.968 0.005 260);
-  --color-muted-foreground: oklch(0.53 0.02 260);
-  --color-accent: oklch(0.955 0.015 250);
-  --color-accent-foreground: oklch(0.4 0.09 258);
-  /* destructive/warning (retour utilisateur, Lot 2A) : L ET C ajustés en
-     DEUX temps successifs, tous deux vérifiés par le calcul (OKLCH → sRGB
-     → luminance relative WCAG) —
-     (1) clarté corrigée : la version H15 (0.58/0.56) n'avait été vérifiée
-     que contre --color-card (blanc pur, 4.82:1) — jamais contre
-     --color-background (0.955 0.012 258, légèrement teinté), où elle
-     tombait à 4.18–4.23:1, sous le seuil AA 4.5:1 texte normal ;
-     (2) chroma abaissé (0.21→0.15 destructive, 0.16→0.12 warning) : les
-     aplats à chroma maximale étaient jugés criards. Baisser le chroma
-     seul aurait fait retomber sous 4.5:1 sur background (testé : 4.40 et
-     4.49) — la clarté a donc été réajustée en conséquence (0.545/0.530),
-     jamais laissée dériver sans revérification. Résultat final : ≥4.5:1
-     sur --color-card ET --color-background. Détail du calcul :
-     DECISIONS.md, Lot 2A. `success` : clarté seule ajustée (0.53→0.510,
-     même raisonnement que destructive/warning point 1) — chroma non
-     signalé comme criard, laissé inchangé. */
-  --color-destructive: oklch(0.545 0.15 25);
-  --color-destructive-foreground: oklch(0.99 0.005 260);
-  --color-warning: oklch(0.53 0.12 65);
-  --color-warning-foreground: oklch(0.32 0.09 65);
-  --color-success: oklch(0.51 0.15 155);
-  --color-success-foreground: oklch(0.99 0.005 260);
-  /* "info" (Lot 2A, AUDIT_DATALAB_2026-08-16.md §J.4) — 4ᵉ sémantique
-     demandée par l'audit aux côtés de success/warning/destructive.
-     Hue 230, distincte de --color-primary (258) pour rester lisible côte à
-     côte (ex. deux badges de statut différents) : bleu-cyan plus froid,
-     jamais confondu avec l'accent de marque. Vérifié par le calcul
-     (OKLCH → sRGB → luminance relative WCAG), voir /design : 5.42:1 sur
-     --color-card en clair. */
-  --color-info: oklch(0.5 0.16 230);
-  --color-info-foreground: oklch(0.99 0.005 260);
+  /* ── Couleurs — chaque token pointe vers themes.css, jamais une valeur
+     recalculée ici (SPEC-UI.md §1 : « un composant lit un jeton, point »).
+     themes.css fournit déjà background/foreground/card/popover/primary/
+     secondary/muted/destructive/input/ring/sidebar/chart-1..6 (voir sa
+     passerelle en bas de fichier) — le reste (accent Tailwind générique,
+     success/warning/info, variantes "solid", bordure décorative, séries
+     d'accent des badges) est branché ici. ────────────────────────────── */
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
 
-  /* Variantes "solid" (Lot 2A) — pour un remplissage plein avec texte
-     blanc dessus (ex. Button variant="destructive") : trouvé en vérifiant
-     les contrastes que la même luminosité ne peut PAS satisfaire à la fois
-     "texte de la couleur sur une carte" ET "texte blanc sur un
-     remplissage de cette couleur" en mode sombre (les deux usages
-     demandent des directions opposées) — voir DECISIONS.md. En clair, les
-     deux rôles coïncident (mêmes valeurs) : la divergence n'existe qu'en
-     sombre, redéfinie plus bas. */
-  --color-primary-solid: var(--color-primary);
-  --color-destructive-solid: var(--color-destructive);
-  --color-warning-solid: var(--color-warning);
-  --color-success-solid: var(--color-success);
-  --color-info-solid: var(--color-info);
-  --color-border: oklch(0.923 0.006 260);
-  --color-input: oklch(0.923 0.006 260);
-  --color-ring: oklch(0.48 0.17 258);
-  --color-card: oklch(1 0 0);
-  --color-card-foreground: oklch(0.21 0.03 260);
-  /* Canvas de contenu (derrière AppShell, hors sidebar) — RÉAJUSTÉ
-     (AUDIT_PILIER2_ET_REFONTE_UX.md, D1, 2026-08-15) : la version quasi-
-     blanche (0.98) qui a suivi le premier essai "bleu-gris terne" (0.94,
-     jugé fade) est retombée dans l'excès inverse — sans second niveau de
-     profondeur entre le fond et les cartes blanches, la séparation ne
-     tenait plus que sur l'ombre, jugée fatigante sur des écrans de résultats
-     denses en usage prolongé. Nouvelle valeur : un cran plus présent (0.955)
-     avec un peu plus de chroma (0.012 vs 0.006) pour rester perçu comme
-     "teinté" plutôt que "gris neutre" — toujours nettement en dessous de la
-     carte (1 0 0 / blanc pur), la hiérarchie fond→carte se lit maintenant à
-     la couleur ET à l'ombre, pas l'ombre seule. Même teinte (258) que
-     --color-primary/--color-sidebar dans les deux cas. */
-  --color-background: oklch(0.955 0.012 258);
-  --color-foreground: oklch(0.21 0.03 260);
+  /* "accent" Tailwind = fond subtil de survol/sélection (pas la couleur de
+     marque — celle-ci est --color-primary, alias de --accent de themes.css.
+     Distinction déjà présente avant ce lot, conservée : éviter qu'un badge
+     "accent" hérite par erreur de la couleur de marque). */
+  --color-accent: var(--raised);
+  --color-accent-foreground: var(--text);
 
-  /* Palette de graphes (théme/charts.ts la consomme via les mêmes valeurs
-     hex dérivées — voir ce fichier pour le détail par usage). */
-  --color-chart-1: oklch(0.48 0.17 258);
-  --color-chart-2: oklch(0.72 0.12 200);
-  --color-chart-3: oklch(0.62 0.15 155);
-  --color-chart-4: oklch(0.72 0.16 65);
-  --color-chart-5: oklch(0.58 0.21 25);
+  --color-destructive: var(--danger);
+  --color-destructive-foreground: var(--on-accent);
+  --color-success: var(--success);
+  --color-success-foreground: var(--on-accent);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--on-accent);
+  --color-info: var(--info);
+  --color-info-foreground: var(--on-accent);
 
-  /* Sidebar — fond profond dérivé du bleu de marque (pas un simple gris
-     sombre neutre), plutôt que le blanc quasi invisible d'avant cette refonte
-     (0.99 de luminosité, confondu avec le fond de page --color-canvas juste à
-     côté) : donne à la navigation une vraie identité, cohérente avec le
-     dégradé de marque du logo/auth sans repeindre toute l'app en bleu — seule
-     la colonne de navigation porte la couleur forte, le contenu reste clair.
-     Teinte (258) identique à --color-primary/--color-brand-700, seule la
-     luminosité change : la sidebar est un bleu de marque assombri, pas une
-     couleur concurrente. */
-  --color-sidebar: oklch(0.26 0.05 258);
-  --color-sidebar-foreground: oklch(0.95 0.01 260);
-  --color-sidebar-muted-foreground: oklch(0.72 0.035 258);
-  --color-sidebar-accent: oklch(0.38 0.09 258);
-  --color-sidebar-accent-foreground: oklch(0.98 0.01 260);
-  --color-sidebar-border: oklch(0.34 0.06 258);
-  /* Teinte cyan de marque (pointe du dégradé du logo) réservée aux petits
-     accents de la sidebar (libellé de pilier actif) — pop davantage sur fond
-     sombre qu'un bleu profond, sans devenir un troisième accent concurrent
-     ailleurs dans l'app (usage strictement limité à la sidebar). */
-  --color-sidebar-highlight: oklch(0.83 0.14 200);
+  /* Variantes "solid" (remplissage plein + texte clair dessus, ex. Button
+     variant="destructive") — mêmes teintes sémantiques ici : à la
+     différence de l'ancien système à 2 thèmes, chaque teinte de themes.css
+     est déjà calculée pour rester ≥4,5:1 EN TEXTE sur les 3 fonds, donc
+     valable aussi en aplat avec --on-accent dessus (vérifié visuellement
+     dans les 5 thèmes, voir _design/JOURNAL.md Lot 1). */
+  --color-primary-solid: var(--accent-strong);
+  --color-destructive-solid: var(--danger);
+  --color-warning-solid: var(--warning);
+  --color-success-solid: var(--success);
+  --color-info-solid: var(--info);
 
-  /* ─────────────────────────────────────────────────────────────────────
-     Lot 2A — Fondation du design system (AUDIT_DATALAB_2026-08-16.md, §J.4)
-     Direction : sobre, dense, technique, confiante — l'instrument de
-     mesure, pas l'application grand public. La couleur reste un outil de
-     sens (statut, série, sévérité), jamais une décoration.
-     ───────────────────────────────────────────────────────────────────── */
+  /* Séries d'accent pour identité rotative (ColorIconBadge) — les 6 couleurs
+     de graphique, jamais une teinte Tailwind générique par magnitude fixe,
+     voir SPEC-UI.md §1. */
+  --color-accent-1: var(--s1);
+  --color-accent-2: var(--s2);
+  --color-accent-3: var(--s3);
+  --color-accent-4: var(--s4);
 
-  /* Échelle typographique — 6 rôles nommés, jamais de taille arbitraire
-     (text-[11px]...) dans les primitives à partir de ce lot. Alignée sur
-     les tailles Tailwind déjà répandues dans le code existant (14px/12px)
-     pour que le Lot 2B (application aux pages) soit une substitution
-     directe, pas une renégociation de tailles. `overline` remplace
-     spécifiquement le motif text-[11px] disséminé (en-têtes de tableau,
-     badges, libellés secondaires). Les chiffres de métrique s'écrivent
-     TOUJOURS avec la classe utilitaire Tailwind `tabular-nums` en plus du
-     rôle typographique — jamais une exception, voir /design. */
-  --text-display: 2rem; /* 32px — chiffre clé, en-tête de verdict */
-  --text-display--line-height: 1.15;
-  --text-display--font-weight: 700;
-  --text-display--letter-spacing: -0.02em;
+  --color-chart-1: var(--s1);
+  --color-chart-2: var(--s2);
+  --color-chart-3: var(--s3);
+  --color-chart-4: var(--s4);
+  --color-chart-5: var(--s5);
+  --color-chart-6: var(--s6);
 
-  --text-title: 1.375rem; /* 22px — titre de page/section */
-  --text-title--line-height: 1.3;
-  --text-title--font-weight: 600;
-  --text-title--letter-spacing: -0.01em;
+  /* Rail/barre haute — anatomie flottante en verre (SPEC-UI.md §5), pas un
+     bloc de couleur fixe indépendant du thème comme avant ce lot. La
+     reconstruction complète du rail (glass, halos) est faite au Lot 4
+     (Main.html, où la navigation est de toute façon reconstruite) — ici on
+     branche seulement les jetons pour qu'aucune classe existante ne casse
+     entre-temps. */
+  --color-sidebar: var(--surface);
+  --color-sidebar-foreground: var(--text);
+  --color-sidebar-muted-foreground: var(--text-muted);
+  --color-sidebar-accent: var(--raised);
+  --color-sidebar-accent-foreground: var(--text);
+  --color-sidebar-border: var(--border);
+  --color-sidebar-highlight: var(--accent);
 
-  --text-subtitle: 1rem; /* 16px — en-tête de carte, sous-section */
-  --text-subtitle--line-height: 1.4;
-  --text-subtitle--font-weight: 600;
+  /* ── Échelle typographique (SPEC-UI.md §3) — 6 rôles nommés, valeur
+     unique choisie dans chaque fourchette de la spec (documentée dans
+     _design/JOURNAL.md). Renommée depuis display/title/subtitle (ancien
+     Lot 2A) vers h1/h2/h3 : substitution directe, mêmes rôles. ────────── */
+  --text-h1: 1.75rem; /* 28px — titre de page (fourchette spec 26-29px) */
+  --text-h1--line-height: 1.2;
+  --text-h1--font-weight: 600;
+  --text-h1--letter-spacing: -0.03em;
 
-  --text-body: 0.875rem; /* 14px — texte courant (= text-sm existant) */
+  --text-h2: 1.125rem; /* 18px — titre de section (fourchette spec 17-19px) */
+  --text-h2--line-height: 1.3;
+  --text-h2--font-weight: 600;
+  --text-h2--letter-spacing: -0.02em;
+
+  --text-h3: 0.9375rem; /* 15px — titre de carte */
+  --text-h3--line-height: 1.35;
+  --text-h3--font-weight: 600;
+  --text-h3--letter-spacing: -0.015em;
+
+  --text-body: 0.875rem; /* 14px — texte courant (fourchette spec 13.5-14.5px) */
   --text-body--line-height: 1.55;
   --text-body--font-weight: 400;
 
-  --text-caption: 0.75rem; /* 12px — aide, méta-donnée (= text-xs existant) */
+  --text-caption: 0.78125rem; /* 12.5px — légende, aide */
   --text-caption--line-height: 1.4;
   --text-caption--font-weight: 400;
 
-  --text-overline: 0.6875rem; /* 11px — étiquette majuscule, en-tête de colonne */
+  --text-overline: 0.65625rem; /* 10.5px — surtitre MAJUSCULES */
   --text-overline--line-height: 1.3;
   --text-overline--font-weight: 600;
-  --text-overline--letter-spacing: 0.06em;
+  --text-overline--letter-spacing: 0.11em;
 
-  /* Famille typographique unique (retour utilisateur, Lot 2A correctif 6) —
-     le titre hero (AuthBrandPanel) était en serif, tout le reste en
-     sans-serif : incohérent, jamais un choix délibéré. Tranché pour le
-     sans-serif (déjà dominant partout ailleurs) — aucun webfont chargé
-     dans ce projet, la pile ne fait donc que documenter explicitement le
-     choix système déjà utilisé par défaut, pas une nouvelle dépendance. */
-  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  /* ── Formes et profondeur (SPEC-UI.md §4) — noms Tailwind existants
+     conservés (rounded-control/card/sheet, shadow-control/card/overlay),
+     valeurs réalignées sur l'échelle de themes.css : radius-1 (bouton/
+     champ/puce), radius-2 (carte), radius-3 (grand panneau/rail). ─────── */
+  --radius-control: var(--radius-1);
+  --radius-card: var(--radius-2);
+  --radius-sheet: var(--radius-3);
 
-  /* Rayons — 3 niveaux maximum, usage prescrit (jamais un 4ᵉ rayon ajouté
-     à l'œil). control = boutons/inputs/badges ; card = cartes/panneaux ;
-     sheet = modales/grandes surfaces de recouvrement. */
-  --radius-control: 0.5rem;
-  --radius-card: 0.75rem;
-  --radius-sheet: 1rem;
-
-  /* Élévation — 3 niveaux maximum, quasi plate (jamais d'ombre lourde) :
-     la hiérarchie visuelle vient d'abord de la couleur de fond et de la
-     bordure, l'ombre n'est qu'un renfort discret. control = éléments
-     interactifs au repos (boutons, inputs) ; card = cartes sur le canvas ;
-     overlay = modales/popovers, seul niveau où l'ombre porte réellement. */
-  --shadow-control: 0 1px 2px oklch(0.21 0.03 260 / 0.05);
-  --shadow-card: 0 1px 2px oklch(0.21 0.03 260 / 0.04), 0 1px 6px oklch(0.21 0.03 260 / 0.05);
-  --shadow-overlay: 0 4px 12px oklch(0.21 0.03 260 / 0.10), 0 12px 32px oklch(0.21 0.03 260 / 0.14);
+  /* Carte au repos = highlight interne SEUL, jamais d'ombre portée (SPEC
+     §4) ; carte survolée / popover / modale = --shadow-2. */
+  --shadow-control: var(--shadow-1);
+  --shadow-card: var(--highlight);
+  --shadow-overlay: var(--shadow-2);
 }
 
-/* Mouvement — deux durées sanctionnées (utilitaires Tailwind natifs
-   duration-150/duration-200, jamais une 3ᵉ valeur choisie à l'œil) + une
-   seule courbe d'accélération (ease-out, natif). Aucune animation
-   décorative : uniquement retour d'état (survol, apparition, transition
-   d'onglet). `prefers-reduced-motion` déjà respecté ailleurs dans ce
-   fichier (.hero-term, stat-tile-enter) — même règle pour tout nouveau
-   mouvement introduit par ce lot. */
-
-/* Fond global — plat, neutre et calme (thème clair). Pas de dégradé vif en
-   fond : c'est le dégradé de marque (.bg-brand-gradient) qui porte
-   l'identité visuelle, réservé aux moments vitrine. */
+/* Fond global — piloté entièrement par le thème actif. */
 body {
-  background-color: var(--color-canvas);
+  background-color: var(--canvas);
+  color: var(--text);
   font-family: var(--font-sans);
 }
 
-/* Thème sombre — retour utilisateur explicite ("ajoute un mode sombre, plus
-   professionnel"). Bascule manuelle (`ThemeContext`, page Profil >
-   Préférences) qui pose `data-theme="dark"`/`"light"` sur `<html>`, plus
-   respect de la préférence système quand l'utilisateur n'a rien choisi
-   (`data-theme` absent). Seuls les tokens de SURFACE changent (fond, carte,
-   bordure, muted/secondary/accent, primary/ring légèrement éclaircis pour
-   rester lisibles sur fond sombre) — jamais les teintes de marque
-   (--color-brand-700/400, sidebar, graphes) : la sidebar est déjà sombre
-   dans les deux thèmes, la marque doit rester identique partout. Même
-   teinte (258/260) que le thème clair sur chaque token, seule la
-   luminosité change — cohérence d'identité, pas une palette concurrente.
-   Non vérifié visuellement (aucun outil de navigateur disponible dans cet
-   environnement) — valeurs dérivées par calcul OKLCH, à ajuster sur retour
-   utilisateur direct comme chaque itération précédente de ce fichier. */
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    /* primary/destructive/warning/success/info : L relevé par rapport au
-       clair (0.6 vs 0.48 pour primary, etc.) — nécessaire pour rester
-       lisibles en TEXTE sur --color-card en sombre (fond bien plus sombre
-       qu'en clair). Vérifié par le calcul (≥4.5:1 sur --color-card à
-       chacune de ces valeurs, voir DECISIONS.md) — les valeurs d'origine
-       (destructive/warning/success non redéfinies en sombre avant ce lot,
-       donc réutilisant les valeurs claires 0.58/0.56/0.53) tombaient sous
-       4:1, jamais vérifié jusqu'ici. */
-    --color-primary: oklch(0.62 0.16 258);
-    --color-primary-foreground: oklch(0.99 0.005 260);
-    --color-secondary: oklch(0.26 0.018 258);
-    --color-secondary-foreground: oklch(0.92 0.01 260);
-    --color-muted: oklch(0.24 0.018 258);
-    --color-muted-foreground: oklch(0.66 0.02 258);
-    --color-accent: oklch(0.28 0.035 255);
-    --color-accent-foreground: oklch(0.88 0.04 258);
-    --color-destructive: oklch(0.64 0.15 25);
-    --color-warning: oklch(0.63 0.12 65);
-    --color-success: oklch(0.6 0.15 155);
-    --color-info: oklch(0.6 0.15 230);
-    --color-info-foreground: oklch(0.99 0.005 260);
-    /* Rôle "solid" (remplissage plein + texte blanc dessus) — direction
-       OPPOSÉE du texte ci-dessus : doit rester plus sombre pour que le
-       texte blanc garde 4.5:1 (une même valeur ne peut satisfaire les deux
-       rôles à la fois en sombre, voir la note dans le bloc @theme). */
-    --color-primary-solid: oklch(0.53 0.12 258);
-    --color-destructive-solid: oklch(0.555 0.15 25);
-    --color-warning-solid: oklch(0.53 0.12 65);
-    --color-success-solid: oklch(0.51 0.11 155);
-    --color-info-solid: oklch(0.53 0.11 230);
-    --color-border: oklch(0.32 0.02 258);
-    --color-input: oklch(0.32 0.02 258);
-    --color-ring: oklch(0.6 0.16 258);
-    --color-card: oklch(0.22 0.016 258);
-    --color-card-foreground: oklch(0.94 0.008 260);
-    --color-background: oklch(0.17 0.014 258);
-    --color-foreground: oklch(0.94 0.008 260);
-    --color-canvas: oklch(0.15 0.012 258);
-
-    /* Palette d'accent (ColorIconBadge.tsx : bg-blue-50, border-teal-200,
-       text-amber-600...) — Tailwind v4 expose tout son palet par défaut en
-       variables CSS (--color-blue-50 etc.), redéfinies ici pour le thème
-       sombre SANS toucher un seul composant : les classes bg-blue-50/
-       border-blue-100/text-blue-700 déjà posées partout (PageHeader, cartes
-       colorées, badges) en héritent automatiquement. Les teintes 50/100/200
-       (pastel quasi-blanc en clair) deviennent un lavis sombre du même ton
-       plutôt qu'un carré délavé sur fond sombre (bug réel signalé sur
-       capture : "les cartes" au sens des bandeaux PageHeader/StatTile). Même
-       formule de luminosité/chroma appliquée aux 5 teintes, seule la teinte
-       (H) change — cohérence garantie entre les couleurs. */
-    --color-blue-50: oklch(0.22 0.045 258);
-    --color-blue-100: oklch(0.28 0.055 258);
-    --color-blue-200: oklch(0.35 0.075 258);
-    --color-blue-400: oklch(0.64 0.14 258);
-    --color-blue-600: oklch(0.72 0.13 258);
-    --color-blue-700: oklch(0.8 0.12 258);
-    --color-teal-50: oklch(0.22 0.045 195);
-    --color-teal-100: oklch(0.28 0.055 195);
-    --color-teal-200: oklch(0.35 0.075 195);
-    --color-teal-400: oklch(0.64 0.14 195);
-    --color-teal-600: oklch(0.72 0.13 195);
-    --color-teal-700: oklch(0.8 0.12 195);
-    --color-amber-50: oklch(0.22 0.045 70);
-    --color-amber-100: oklch(0.28 0.055 70);
-    --color-amber-200: oklch(0.35 0.075 70);
-    --color-amber-400: oklch(0.64 0.14 70);
-    --color-amber-600: oklch(0.72 0.13 70);
-    --color-amber-700: oklch(0.8 0.12 70);
-    --color-violet-50: oklch(0.22 0.045 293);
-    --color-violet-100: oklch(0.28 0.055 293);
-    --color-violet-200: oklch(0.35 0.075 293);
-    --color-violet-400: oklch(0.64 0.14 293);
-    --color-violet-600: oklch(0.72 0.13 293);
-    --color-violet-700: oklch(0.8 0.12 293);
-    --color-rose-50: oklch(0.22 0.045 18);
-    --color-rose-100: oklch(0.28 0.055 18);
-    --color-rose-200: oklch(0.35 0.075 18);
-    --color-rose-400: oklch(0.64 0.14 18);
-    --color-rose-600: oklch(0.72 0.13 18);
-    --color-rose-700: oklch(0.8 0.12 18);
-  }
-}
-:root[data-theme="dark"] {
-  /* Miroir exact du bloc @media ci-dessus (bascule manuelle vs préférence
-     système) — voir ses commentaires pour le raisonnement des valeurs. */
-  --color-primary: oklch(0.62 0.16 258);
-  --color-primary-foreground: oklch(0.99 0.005 260);
-  --color-secondary: oklch(0.26 0.018 258);
-  --color-secondary-foreground: oklch(0.92 0.01 260);
-  --color-muted: oklch(0.24 0.018 258);
-  --color-muted-foreground: oklch(0.66 0.02 258);
-  --color-accent: oklch(0.28 0.035 255);
-  --color-accent-foreground: oklch(0.88 0.04 258);
-  --color-destructive: oklch(0.64 0.15 25);
-  --color-warning: oklch(0.63 0.12 65);
-  --color-success: oklch(0.6 0.15 155);
-  --color-info: oklch(0.6 0.15 230);
-  --color-info-foreground: oklch(0.99 0.005 260);
-  --color-primary-solid: oklch(0.53 0.12 258);
-  --color-destructive-solid: oklch(0.555 0.15 25);
-  --color-warning-solid: oklch(0.53 0.12 65);
-  --color-success-solid: oklch(0.51 0.11 155);
-  --color-info-solid: oklch(0.53 0.11 230);
-  --color-border: oklch(0.32 0.02 258);
-  --color-input: oklch(0.32 0.02 258);
-  --color-ring: oklch(0.6 0.16 258);
-  --color-card: oklch(0.22 0.016 258);
-  --color-card-foreground: oklch(0.94 0.008 260);
-  --color-background: oklch(0.17 0.014 258);
-  --color-foreground: oklch(0.94 0.008 260);
-  --color-canvas: oklch(0.15 0.012 258);
-
-  --color-blue-50: oklch(0.22 0.045 258);
-  --color-blue-100: oklch(0.28 0.055 258);
-  --color-blue-200: oklch(0.35 0.075 258);
-  --color-blue-400: oklch(0.64 0.14 258);
-  --color-blue-600: oklch(0.72 0.13 258);
-  --color-blue-700: oklch(0.8 0.12 258);
-  --color-teal-50: oklch(0.22 0.045 195);
-  --color-teal-100: oklch(0.28 0.055 195);
-  --color-teal-200: oklch(0.35 0.075 195);
-  --color-teal-400: oklch(0.64 0.14 195);
-  --color-teal-600: oklch(0.72 0.13 195);
-  --color-teal-700: oklch(0.8 0.12 195);
-  --color-amber-50: oklch(0.22 0.045 70);
-  --color-amber-100: oklch(0.28 0.055 70);
-  --color-amber-200: oklch(0.35 0.075 70);
-  --color-amber-400: oklch(0.64 0.14 70);
-  --color-amber-600: oklch(0.72 0.13 70);
-  --color-amber-700: oklch(0.8 0.12 70);
-  --color-violet-50: oklch(0.22 0.045 293);
-  --color-violet-100: oklch(0.28 0.055 293);
-  --color-violet-200: oklch(0.35 0.075 293);
-  --color-violet-400: oklch(0.64 0.14 293);
-  --color-violet-600: oklch(0.72 0.13 293);
-  --color-violet-700: oklch(0.8 0.12 293);
-  --color-rose-50: oklch(0.22 0.045 18);
-  --color-rose-100: oklch(0.28 0.055 18);
-  --color-rose-200: oklch(0.35 0.075 18);
-  --color-rose-400: oklch(0.64 0.14 18);
-  --color-rose-600: oklch(0.72 0.13 18);
-  --color-rose-700: oklch(0.8 0.12 18);
+/* Tout chiffre affiché passe par cette classe (SPEC-UI.md §3) : chasse fixe
+   tabulaire, jamais la police courante — une colonne de scores qui ne
+   s'aligne pas verticalement est un défaut, pas un détail. */
+.num {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
 }
 
-/* Dégradé de marque réutilisable — même direction diagonale que le "D" du
-   logo. Source unique : changer les tokens ci-dessus suffit à requalifier
-   tous les usages. */
+/* Surtitre (.ov) — SPEC-UI.md §3, en-tête de colonne / étiquette majuscule. */
+.ov {
+  font-family: var(--font-sans);
+  font-size: var(--text-overline);
+  line-height: var(--text-overline--line-height);
+  font-weight: var(--text-overline--font-weight);
+  letter-spacing: var(--text-overline--letter-spacing);
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+/* Verre (.glass) — réservé aux éléments flottant au-dessus du contenu (rail,
+   barre haute, panneau d'estimation) : SPEC-UI.md §4, « sans halo, pas de
+   verre ». Halos posés par les écrans qui en ont besoin, pas ici. */
+.glass {
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+}
+
+/* Dégradé de marque réutilisable — dérivé des jetons de thème actifs
+   (accent → accent-strong), donc cohérent dans les 5 thèmes. Remplace
+   l'ancien dégradé bleu→cyan fixe (Lot UI, correctif : ce dégradé ne
+   s'adaptait à aucun thème alternatif — voir _design/JOURNAL.md). */
 .bg-brand-gradient {
-  background-image: linear-gradient(135deg, var(--color-brand-700), var(--color-brand-400));
+  background-image: linear-gradient(135deg, var(--accent), var(--accent-strong));
 }
 
 /* Dérive lente des termes ML en fond du panneau de marque auth (login/register)
@@ -382,7 +241,7 @@ body {
 .hero-term {
   position: absolute;
   font-weight: 800;
-  color: #fff;
+  color: var(--on-accent);
   opacity: 0.1;
   pointer-events: none;
   -webkit-user-select: none;
@@ -397,4 +256,3 @@ body {
     animation: none;
   }
 }
-

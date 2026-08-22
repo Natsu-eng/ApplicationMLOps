@@ -1,0 +1,220 @@
+<!doctype html><html lang="fr"><head><meta charset="utf-8">
+<title>DataLab — Inscription</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,600;12..96,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+:root{
+ --canvas:oklch(0.145 0.008 60); --surf:oklch(0.192 0.009 60); --raise:oklch(0.235 0.010 60);
+ --bd:oklch(0.315 0.012 60); --tx:oklch(0.960 0.004 80); --mu:oklch(0.705 0.013 70);
+ --ac:oklch(0.790 0.150 78); --acs:oklch(0.700 0.150 62);
+ --ok:oklch(0.740 0.140 158); --wa:oklch(0.810 0.135 92); --da:oklch(0.680 0.190 27); --inf:oklch(0.750 0.100 222);
+ --gl:oklch(0.99 0.01 70 / .045); --gl2:oklch(0.99 0.01 70 / .075);
+ --hl:inset 0 1px 0 oklch(1 0 0 / .07);
+ --r1:10px; --r2:16px; --r3:22px;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--canvas);color:var(--tx);
+ font-family:"IBM Plex Sans",ui-sans-serif,system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+h1,h2,h3,.dsp{font-family:"Bricolage Grotesque","IBM Plex Sans",ui-sans-serif,sans-serif}
+a{color:var(--ac);text-decoration:none} a:hover{color:oklch(0.86 0.14 80)}
+.n{font-family:"IBM Plex Mono",ui-monospace,monospace;font-variant-numeric:tabular-nums;letter-spacing:-0.01em}
+.ov{font-size:10.5px;font-weight:600;letter-spacing:.11em;text-transform:uppercase;color:var(--mu)}
+.cp{font-size:12.5px;color:var(--mu);line-height:1.5}
+/* verre */
+.glass{background:var(--gl);backdrop-filter:blur(22px) saturate(150%);
+ -webkit-backdrop-filter:blur(22px) saturate(150%);border:1px solid oklch(1 0 0 / .085);
+ box-shadow:var(--hl),0 18px 44px oklch(0 0 0 / .42)}
+.pane{background:linear-gradient(180deg,oklch(0.235 0.010 60 / .92),oklch(0.205 0.009 60 / .92));
+ border:1px solid var(--bd);border-radius:var(--r2);box-shadow:var(--hl)}
+.pane.hv{border-color:oklch(0.79 0.15 78 / .38);
+ box-shadow:var(--hl),0 0 0 1px oklch(0.79 0.15 78 / .13),0 16px 38px oklch(0 0 0 / .45);
+ transform:translateY(-2px)}
+.btn{display:inline-flex;align-items:center;gap:8px;height:36px;padding:0 15px;border-radius:var(--r1);
+ font-size:13.5px;font-weight:500;border:1px solid transparent;font-family:inherit}
+.bp{background:var(--ac);color:oklch(0.16 0.02 65);font-weight:600}
+.bs{background:oklch(1 0 0 / .05);color:var(--tx);border-color:var(--bd)}
+.tag{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:500;padding:3px 9px;border-radius:99px}
+:root{--s1:#ffc75a;--s2:#007eb0;--s3:#56c9a2;--s4:#dd5da1;--s5:#f2efb4;--s6:#d8625c}
+.hd{height:56px;border-bottom:1px solid var(--bd);display:flex;align-items:center;padding:0 26px;gap:12px;font-size:12.5px;color:var(--mu)}
+.wrap{padding:26px 30px}
+.pane2{background:linear-gradient(180deg,oklch(0.235 0.010 60 / .92),oklch(0.205 0.009 60 / .92));
+ border:1px solid var(--bd);border-radius:var(--r2);box-shadow:var(--hl)}
+/* --- coquille applicative : rail + barre haute --- */
+.rail{width:60px;display:flex;flex-direction:column;align-items:center;gap:5px;padding:14px 0;
+ border-radius:var(--r3);position:absolute;left:18px;top:18px;bottom:18px;z-index:3}
+.ri{width:38px;height:38px;border-radius:11px;display:flex;align-items:center;justify-content:center;color:var(--mu)}
+.ri.on{background:oklch(0.79 0.15 78 / .15);color:var(--ac);box-shadow:inset 0 0 0 1px oklch(0.79 0.15 78 / .28)}
+.ri.hov{background:oklch(1 0 0 / .06);color:var(--tx)}
+.top{height:56px;border-radius:var(--r2);display:flex;align-items:center;padding:0 8px 0 18px;gap:14px;
+ position:absolute;left:96px;right:22px;top:22px;z-index:2}
+.body{position:absolute;left:96px;right:22px;top:96px;bottom:22px;overflow:hidden}
+/* --- segments, onglets --- */
+.seg{display:flex;background:oklch(0 0 0 / .28);border-radius:9px;padding:3px;gap:2px}
+.sgi{padding:5px 12px;border-radius:7px;font-size:12.5px;color:var(--mu);font-weight:500}
+.sgi.on{background:oklch(1 0 0 / .085);color:var(--tx);box-shadow:var(--hl)}
+.tb{display:flex;gap:24px;border-bottom:1px solid var(--bd)}
+.tbi{padding:10px 1px;font-size:13px;font-weight:500;color:var(--mu);border-bottom:2px solid transparent}
+.tbi.on{color:var(--tx);border-bottom-color:var(--ac)}
+/* --- tableaux --- */
+table{width:100%;border-collapse:collapse}
+th{font-size:10.5px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--mu);
+ text-align:left;padding:0 16px 10px;white-space:nowrap}
+td{padding:13px 16px;font-size:13.5px;border-top:1px solid oklch(1 0 0 / .05);vertical-align:middle}
+tr.hov td{background:oklch(1 0 0 / .035)}
+tr.sel td{background:oklch(0.79 0.15 78 / .07);box-shadow:inset 3px 0 0 var(--ac)}
+/* --- micro-graphiques --- */
+.sp{display:flex;align-items:flex-end;gap:2.5px;height:26px}
+.sp i{width:4px;border-radius:1.5px;background:oklch(0.79 0.15 78 / .32)}
+.sp i.hi{background:var(--ac)}
+.bar{height:7px;border-radius:99px;background:oklch(0 0 0 / .32);overflow:hidden}
+.bar i{display:block;height:100%;border-radius:99px;background:var(--ac)}
+/* --- formulaires --- */
+.fld{height:38px;border:1px solid var(--bd);border-radius:var(--r1);background:oklch(0 0 0 / .22);
+ display:flex;align-items:center;padding:0 12px;font-size:13.5px;color:var(--tx);gap:8px}
+.fld.foc{border-color:var(--ac);box-shadow:0 0 0 3px oklch(0.79 0.15 78 / .16)}
+.fld .ph{color:oklch(0.55 0.012 70)}
+.lb{font-size:12px;font-weight:500;color:var(--mu);display:block;margin-bottom:6px}
+.hint{font-size:11.5px;color:oklch(0.60 0.012 70);margin:6px 0 0;line-height:1.5}
+.sw{width:36px;height:20px;border-radius:99px;background:oklch(0 0 0 / .38);position:relative;flex-shrink:0}
+.sw i{position:absolute;width:15px;height:15px;border-radius:50%;background:var(--mu);top:2.5px;left:2.5px}
+.sw.on{background:var(--ac)}.sw.on i{left:18.5px;background:oklch(0.16 0.02 65)}
+/* --- cartes de choix --- */
+.ch{border:1px solid var(--bd);border-radius:var(--r2);padding:15px 16px;background:oklch(1 0 0 / .018)}
+.ch.on{border-color:var(--ac);background:oklch(0.79 0.15 78 / .08);box-shadow:0 0 0 1px oklch(0.79 0.15 78 / .3)}
+.ch.hv{border-color:oklch(0.79 0.15 78 / .35);background:oklch(1 0 0 / .04);transform:translateY(-2px)}
+/* --- pastilles d'étape --- */
+.stp{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--mu)}
+.stpn{width:22px;height:22px;border-radius:50%;border:1px solid var(--bd);display:flex;align-items:center;
+ justify-content:center;font-size:11px;font-weight:600}
+.stp.done .stpn{background:oklch(0.74 0.14 158 / .18);border-color:transparent;color:var(--ok)}
+.stp.on{color:var(--tx);font-weight:600}
+.stp.on .stpn{background:var(--ac);border-color:transparent;color:oklch(0.16 0.02 65)}
+/* --- divers --- */
+.kpi{font-family:"IBM Plex Mono",monospace;font-variant-numeric:tabular-nums;letter-spacing:-0.03em;font-weight:500}
+.gd{display:grid;gap:16px}
+.sect{font-size:15px;font-weight:600;letter-spacing:-0.015em;margin:0}
+.info{border-left:2px solid var(--inf);background:oklch(0.75 0.10 222 / .07);padding:11px 14px;
+ border-radius:0 var(--r1) var(--r1) 0;font-size:12.5px;line-height:1.55;color:oklch(0.88 0.03 222)}
+.warnb{border-left:2px solid var(--wa);background:oklch(0.81 0.135 92 / .07);padding:11px 14px;
+ border-radius:0 var(--r1) var(--r1) 0;font-size:12.5px;line-height:1.55;color:oklch(0.90 0.05 92)}
+
+.pt{display:flex;gap:12px;align-items:flex-start;padding:13px 0}
+.pt .ic2{width:30px;height:30px;border-radius:10px;background:oklch(1 0 0 / .07);display:flex;
+ align-items:center;justify-content:center;flex-shrink:0}
+.oa{height:42px;border:1px solid var(--bd);border-radius:var(--r1);background:oklch(1 0 0 / .04);
+ display:flex;align-items:center;justify-content:center;gap:10px;font-size:13.5px;font-weight:500}
+.oa.hv{background:oklch(1 0 0 / .075);border-color:oklch(1 0 0 / .18)}
+.pw{display:flex;gap:4px;margin-top:8px}
+.pw i{flex:1;height:3px;border-radius:99px;background:oklch(1 0 0 / .09)}
+
+body{display:flex;justify-content:center;padding:24px}</style>
+</head><body>
+<div style="width:1512px;height:920px;background:var(--canvas);position:relative;overflow:hidden;font-size:14px">
+
+<div style="position:absolute;width:900px;height:900px;left:-180px;top:-260px;border-radius:50%;
+ background:radial-gradient(circle,oklch(0.70 0.15 62 / .18),transparent 66%);filter:blur(30px)"></div>
+<div style="position:absolute;width:720px;height:720px;right:-200px;bottom:-280px;border-radius:50%;
+ background:radial-gradient(circle,oklch(0.62 0.12 220 / .14),transparent 68%);filter:blur(30px)"></div>
+<div style="position:absolute;inset:0;opacity:.5;background-image:
+ linear-gradient(oklch(1 0 0 / .014) 1px,transparent 1px),
+ linear-gradient(90deg,oklch(1 0 0 / .014) 1px,transparent 1px);background-size:56px 56px"></div>
+
+<div style="position:absolute;inset:0;display:grid;grid-template-columns:1.05fr 1fr">
+
+ <!-- panneau gauche : la promesse -->
+ <div style="padding:56px 60px;display:flex;flex-direction:column;position:relative">
+  <div style="display:flex;align-items:center;gap:11px;margin-bottom:auto">
+   <div style="width:36px;height:36px;border-radius:11px;background:linear-gradient(150deg,var(--ac),oklch(0.62 0.17 40));
+    display:flex;align-items:center;justify-content:center;color:oklch(0.16 0.02 65);font-weight:700;font-size:16px;
+    font-family:'Bricolage Grotesque',sans-serif">D</div>
+   <span style="font-size:16.5px;font-weight:600;letter-spacing:-0.02em;font-family:'Bricolage Grotesque',sans-serif">DataLab</span></div>
+
+  <div style="max-width:520px">
+   <h1 style="margin:0 0 16px;font-size:40px;font-weight:600;letter-spacing:-0.04em;line-height:1.12">
+    Vos données savent des choses.<br>
+    <span style="color:var(--ac)">Faites-les parler</span> — sans écrire une ligne de code.</h1>
+   <p style="margin:0 0 32px;font-size:15px;line-height:1.65;color:var(--mu);max-width:470px">
+    Chargez un fichier, dites ce que vous cherchez, laissez la plateforme entraîner et comparer les modèles.
+    Vous recevez un verdict en français, pas un tableau de métriques.</p>
+
+   <div class="pt">
+    <span class="ic2"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--ac)" stroke-width="2.1"><path d="M20 6 9 17l-5-5"/></svg></span>
+    <div><strong style="font-size:13.5px">Un verdict, pas un rapport</strong>
+     <p class="cp" style="margin:3px 0 0;max-width:400px">« Utilisable en production, avec une réserve
+      au-delà de 70 MPa » — et l'explication en dessous.</p></div></div>
+   <div class="pt">
+    <span class="ic2"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--ac)" stroke-width="2.1"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></span>
+    <div><strong style="font-size:13.5px">Les pièges détectés avant vous</strong>
+     <p class="cp" style="margin:3px 0 0;max-width:400px">Fuites de données, découpes trompeuses, colonnes
+      trop parfaites. C'est ce qui fait échouer neuf projets sur dix.</p></div></div>
+   <div class="pt">
+    <span class="ic2"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--ac)" stroke-width="2.1"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5M12 8v4l3 2"/></svg></span>
+    <div><strong style="font-size:13.5px">Chaque chiffre est traçable</strong>
+     <p class="cp" style="margin:3px 0 0;max-width:400px">Empreinte des données, graine, versions de
+      bibliothèques. Six mois plus tard, vous saurez d'où vient une prédiction.</p></div></div>
+  </div>
+
+  <div style="margin-top:auto;display:flex;align-items:center;gap:26px;padding-top:36px">
+   <div><p class="kpi" style="margin:0;font-size:21px">9</p><p class="cp" style="margin:2px 0 0;font-size:11.5px">modèles comparés</p></div>
+   <div style="width:1px;height:30px;background:var(--bd)"></div>
+   <div><p class="kpi" style="margin:0;font-size:21px">3</p><p class="cp" style="margin:2px 0 0;font-size:11.5px">familles d'analyse</p></div>
+   <div style="width:1px;height:30px;background:var(--bd)"></div>
+   <div><p class="kpi" style="margin:0;font-size:21px">0</p><p class="cp" style="margin:2px 0 0;font-size:11.5px">ligne de code à écrire</p></div>
+  </div>
+ </div>
+
+ <!-- panneau droit : formulaire -->
+ <div style="padding:56px 60px 56px 20px;display:flex;align-items:center">
+  <div class="pane2 glass" style="width:100%;max-width:430px;padding:32px 34px;border-radius:var(--r3)">
+   <p class="ov" style="margin:0 0 7px">Essai gratuit · 14 jours</p>
+   <h2 style="margin:0 0 5px;font-size:23px;font-weight:600;letter-spacing:-0.025em">Créer un compte</h2>
+   <p class="cp" style="margin:0 0 24px">Sans carte bancaire. Vos données restent chez vous.</p>
+
+   <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:18px">
+    <div class="oa hv"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M21.8 12.2c0-.7-.1-1.4-.2-2H12v3.9h5.5a4.7 4.7 0 0 1-2 3.1v2.6h3.2c1.9-1.7 3-4.3 3-7.6z"/><path d="M12 22c2.7 0 5-.9 6.7-2.4l-3.2-2.5c-.9.6-2.1 1-3.5 1a6.1 6.1 0 0 1-5.7-4.2H3v2.6A10 10 0 0 0 12 22z" opacity=".7"/><path d="M6.3 13.9a6 6 0 0 1 0-3.8V7.5H3a10 10 0 0 0 0 9l3.3-2.6z" opacity=".5"/><path d="M12 5.9c1.5 0 2.9.5 4 1.5l2.9-2.9A10 10 0 0 0 3 7.5l3.3 2.6A6.1 6.1 0 0 1 12 5.9z" opacity=".85"/></svg>Google</div>
+    <div class="oa"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M11.4 11.4H2V2h9.4v9.4zM22 11.4h-9.4V2H22v9.4zM11.4 22H2v-9.4h9.4V22zM22 22h-9.4v-9.4H22V22z"/></svg>Microsoft</div>
+   </div>
+
+   <div style="display:flex;align-items:center;gap:12px;margin-bottom:18px">
+    <span style="flex:1;height:1px;background:var(--bd)"></span>
+    <span class="cp" style="font-size:11px">ou par courriel</span>
+    <span style="flex:1;height:1px;background:var(--bd)"></span></div>
+
+   <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px">
+    <div><span class="lb">Prénom</span><div class="fld"><span>Marie</span></div></div>
+    <div><span class="lb">Nom</span><div class="fld"><span>Delcourt</span></div></div></div>
+
+   <div style="margin-bottom:14px"><span class="lb">Courriel professionnel</span>
+    <div class="fld foc"><span>marie.delcourt@groupe-btp.fr</span>
+     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ok)" stroke-width="2.6" style="margin-left:auto"><path d="M20 6 9 17l-5-5"/></svg></div></div>
+
+   <div style="margin-bottom:14px"><span class="lb">Mot de passe</span>
+    <div class="fld"><span style="letter-spacing:3px">••••••••••••</span>
+     <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--mu)" stroke-width="1.9" style="margin-left:auto"><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg></div>
+    <div class="pw"><i style="background:var(--ok)"></i><i style="background:var(--ok)"></i><i style="background:var(--ok)"></i><i></i></div>
+    <p class="hint" style="margin-top:6px">Bon mot de passe. Ajoutez 4 caractères pour atteindre « excellent ».</p></div>
+
+   <div style="margin-bottom:20px"><span class="lb">Organisation</span>
+    <div class="fld"><span>Groupe BTP Delcourt</span></div>
+    <p class="hint">Vos collègues avec une adresse <span class="n">@groupe-btp.fr</span> pourront rejoindre
+     cet espace.</p></div>
+
+   <label style="display:flex;gap:10px;align-items:flex-start;margin-bottom:20px">
+    <span class="cbx on" style="margin-top:1px"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="oklch(0.16 0.02 65)" stroke-width="4"><path d="M20 6 9 17l-5-5"/></svg></span>
+    <span class="cp" style="line-height:1.55">J'accepte les <a href="#">conditions d'utilisation</a> et la
+     <a href="#">politique de confidentialité</a>. Aucune donnée que je charge ne servira à entraîner un
+     modèle destiné à un autre client.</span></label>
+
+   <button class="btn bp" style="width:100%;height:42px;justify-content:center;font-size:14.5px">Créer mon compte</button>
+   <p class="cp" style="margin:14px 0 0;text-align:center">Déjà inscrit ? <a href="#">Se connecter</a></p>
+  </div>
+ </div>
+</div>
+
+<style>
+.cbx{width:17px;height:17px;border-radius:5px;border:1.5px solid var(--bd);flex-shrink:0;
+ display:flex;align-items:center;justify-content:center}
+.cbx.on{background:var(--ac);border-color:var(--ac)}
+</style>
+
+</div>
+</body></html>

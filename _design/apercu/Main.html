@@ -1,0 +1,251 @@
+<!doctype html><html lang="fr"><head><meta charset="utf-8">
+<title>DataLab — Main</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,600;12..96,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+:root{
+ --canvas:oklch(0.145 0.008 60); --surf:oklch(0.192 0.009 60); --raise:oklch(0.235 0.010 60);
+ --bd:oklch(0.315 0.012 60); --tx:oklch(0.960 0.004 80); --mu:oklch(0.705 0.013 70);
+ --ac:oklch(0.790 0.150 78); --acs:oklch(0.700 0.150 62);
+ --ok:oklch(0.740 0.140 158); --wa:oklch(0.810 0.135 92); --da:oklch(0.680 0.190 27); --inf:oklch(0.750 0.100 222);
+ --gl:oklch(0.99 0.01 70 / .045); --gl2:oklch(0.99 0.01 70 / .075);
+ --hl:inset 0 1px 0 oklch(1 0 0 / .07);
+ --r1:10px; --r2:16px; --r3:22px;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--canvas);color:var(--tx);
+ font-family:"IBM Plex Sans",ui-sans-serif,system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+h1,h2,h3,.dsp{font-family:"Bricolage Grotesque","IBM Plex Sans",ui-sans-serif,sans-serif}
+a{color:var(--ac);text-decoration:none} a:hover{color:oklch(0.86 0.14 80)}
+.n{font-family:"IBM Plex Mono",ui-monospace,monospace;font-variant-numeric:tabular-nums;letter-spacing:-0.01em}
+.ov{font-size:10.5px;font-weight:600;letter-spacing:.11em;text-transform:uppercase;color:var(--mu)}
+.cp{font-size:12.5px;color:var(--mu);line-height:1.5}
+/* verre */
+.glass{background:var(--gl);backdrop-filter:blur(22px) saturate(150%);
+ -webkit-backdrop-filter:blur(22px) saturate(150%);border:1px solid oklch(1 0 0 / .085);
+ box-shadow:var(--hl),0 18px 44px oklch(0 0 0 / .42)}
+.pane{background:linear-gradient(180deg,oklch(0.235 0.010 60 / .92),oklch(0.205 0.009 60 / .92));
+ border:1px solid var(--bd);border-radius:var(--r2);box-shadow:var(--hl)}
+.pane.hv{border-color:oklch(0.79 0.15 78 / .38);
+ box-shadow:var(--hl),0 0 0 1px oklch(0.79 0.15 78 / .13),0 16px 38px oklch(0 0 0 / .45);
+ transform:translateY(-2px)}
+.btn{display:inline-flex;align-items:center;gap:8px;height:36px;padding:0 15px;border-radius:var(--r1);
+ font-size:13.5px;font-weight:500;border:1px solid transparent;font-family:inherit}
+.bp{background:var(--ac);color:oklch(0.16 0.02 65);font-weight:600}
+.bs{background:oklch(1 0 0 / .05);color:var(--tx);border-color:var(--bd)}
+.tag{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:500;padding:3px 9px;border-radius:99px}
+.rail{width:60px;display:flex;flex-direction:column;align-items:center;gap:5px;padding:14px 0;
+ border-radius:var(--r3);position:absolute;left:18px;top:18px;bottom:18px;z-index:3}
+.ri{width:38px;height:38px;border-radius:11px;display:flex;align-items:center;justify-content:center;color:var(--mu)}
+.ri.on{background:oklch(0.79 0.15 78 / .15);color:var(--ac);box-shadow:inset 0 0 0 1px oklch(0.79 0.15 78 / .28)}
+.ri.hov{background:oklch(1 0 0 / .06);color:var(--tx)}
+.top{height:56px;border-radius:var(--r2);display:flex;align-items:center;padding:0 8px 0 18px;gap:14px;
+ position:absolute;left:96px;right:22px;top:22px;z-index:2}
+.seg{display:flex;background:oklch(0 0 0 / .28);border-radius:9px;padding:3px;gap:2px}
+.sgi{padding:5px 12px;border-radius:7px;font-size:12.5px;color:var(--mu);font-weight:500}
+.sgi.on{background:oklch(1 0 0 / .085);color:var(--tx);box-shadow:var(--hl)}
+th{font-size:10.5px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--mu);
+ text-align:left;padding:0 16px 10px}
+td{padding:13px 16px;font-size:13.5px;border-top:1px solid oklch(1 0 0 / .05)}
+tr.hov td{background:oklch(1 0 0 / .035)}
+.sp{display:flex;align-items:flex-end;gap:2.5px;height:26px}
+.sp i{width:4px;border-radius:1.5px;background:oklch(0.79 0.15 78 / .32)}
+.sp i.hi{background:var(--ac)}
+
+body{display:flex;justify-content:center;padding:24px}</style>
+</head><body>
+
+<div style="width:1512px;height:940px;background:var(--canvas);position:relative;overflow:hidden;
+ font-size:14px">
+  <!-- atmosphère : deux halos que le verre a quelque chose à flouter -->
+  <div style="position:absolute;width:820px;height:820px;left:-160px;top:-320px;border-radius:50%;
+    background:radial-gradient(circle,oklch(0.70 0.15 62 / .16),transparent 66%);filter:blur(30px)"></div>
+  <div style="position:absolute;width:700px;height:700px;right:-180px;bottom:-300px;border-radius:50%;
+    background:radial-gradient(circle,oklch(0.62 0.12 220 / .13),transparent 68%);filter:blur(30px)"></div>
+  <div style="position:absolute;inset:0;opacity:.5;background-image:
+    linear-gradient(oklch(1 0 0 / .014) 1px,transparent 1px),
+    linear-gradient(90deg,oklch(1 0 0 / .014) 1px,transparent 1px);background-size:56px 56px"></div>
+
+  <!-- rail -->
+  <div class="rail glass">
+    <div style="width:34px;height:34px;border-radius:11px;background:linear-gradient(150deg,var(--ac),oklch(0.62 0.17 40));
+      display:flex;align-items:center;justify-content:center;color:oklch(0.16 0.02 65);font-weight:700;font-size:15px;
+      font-family:'Bricolage Grotesque',sans-serif;margin-bottom:12px">D</div>
+    <div class="ri on"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="3" width="7" height="9" rx="2"/><rect x="14" y="3" width="7" height="5" rx="2"/><rect x="14" y="12" width="7" height="9" rx="2"/><rect x="3" y="16" width="7" height="5" rx="2"/></svg></div>
+    <div class="ri hov"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><ellipse cx="12" cy="6" rx="8" ry="3"/><path d="M4 6v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6"/></svg></div>
+    <div class="ri"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 3a3 3 0 0 0-3 3 3 3 0 0 0-2 5.2A3 3 0 0 0 9 17a3 3 0 0 0 6 0 3 3 0 0 0 2-5.8A3 3 0 0 0 15 6a3 3 0 0 0-3-3z"/></svg></div>
+    <div class="ri"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="m3 15 5-4 4 3 3-2 6 5"/></svg></div>
+    <div class="ri"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5M12 8v4l3 2"/></svg></div>
+    <div style="margin-top:auto;display:flex;flex-direction:column;align-items:center;gap:5px">
+      <div class="ri"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="9"/><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3M12 17h.01"/></svg></div>
+      <div style="width:32px;height:32px;border-radius:50%;background:oklch(0.42 0.08 60);color:var(--tx);
+        display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600">M</div>
+    </div>
+  </div>
+
+  <!-- barre haute en verre -->
+  <div class="top glass">
+    <div style="display:flex;align-items:center;gap:9px;color:var(--mu);font-size:12.5px">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+      Rechercher un modèle, un jeu de données…
+      <span style="border:1px solid var(--bd);border-radius:5px;padding:1px 5px;font-size:10.5px" class="n">⌘K</span>
+    </div>
+    <div class="seg" style="margin-left:auto">
+      <span class="sgi on">7 jours</span><span class="sgi">30 jours</span><span class="sgi">Tout</span>
+    </div>
+    <button class="btn bp">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M12 5v14M5 12h14"/></svg>
+      Nouvelle analyse
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" style="opacity:.55"><path d="m6 9 6 6 6-6"/></svg>
+    </button>
+  </div>
+
+  <!-- contenu -->
+  <div style="position:absolute;left:96px;right:22px;top:96px;bottom:22px;overflow:hidden">
+    <div style="display:flex;align-items:flex-end;justify-content:space-between;margin-bottom:20px">
+      <div>
+        <p class="ov" style="margin:0 0 7px">Mercredi 20 août</p>
+        <h1 style="margin:0;font-size:29px;font-weight:600;letter-spacing:-0.03em">Bonjour Marie</h1>
+      </div>
+      <p class="cp" style="margin:0;text-align:right">Trois analyses terminées depuis hier<br>
+        <span style="color:var(--wa)">une attend votre décision</span></p>
+    </div>
+
+    <!-- rangée héro -->
+    <div style="display:grid;grid-template-columns:1.5fr 1fr 1fr;gap:16px;margin-bottom:16px">
+      <div class="pane hv" style="padding:20px 22px;position:relative;overflow:hidden">
+        <div style="position:absolute;right:-40px;top:-40px;width:200px;height:200px;border-radius:50%;
+          background:radial-gradient(circle,oklch(0.79 0.15 78 / .10),transparent 70%)"></div>
+        <p class="ov" style="margin:0 0 12px">En production</p>
+        <div style="display:flex;align-items:flex-end;gap:14px">
+          <span class="n dsp" style="font-size:46px;font-weight:600;line-height:.9;letter-spacing:-0.035em">4</span>
+          <div style="padding-bottom:5px">
+            <p style="margin:0;font-size:13px">modèles font autorité</p>
+            <p class="cp" style="margin:2px 0 0;font-size:11.5px">sur 36 entraînements</p>
+          </div>
+          <div class="sp" style="margin-left:auto;padding-bottom:4px">
+            <i style="height:9px"></i><i style="height:14px"></i><i style="height:11px"></i><i style="height:18px"></i>
+            <i style="height:15px"></i><i style="height:22px"></i><i class="hi" style="height:26px"></i>
+          </div>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;margin-top:16px;padding-top:14px;
+          border-top:1px solid oklch(1 0 0 / .06)">
+          <span class="tag" style="background:oklch(0.81 0.135 92 / .15);color:var(--wa)">34 j</span>
+          <p class="cp" style="margin:0;font-size:12px">Le plus ancien n'a pas été revérifié —
+            <a href="#">contrôler sa dérive</a></p>
+        </div>
+      </div>
+
+      <div class="pane" style="padding:20px 22px">
+        <p class="ov" style="margin:0 0 12px">Fiabilité moyenne</p>
+        <div style="display:flex;align-items:flex-end;gap:9px">
+          <span class="n dsp" style="font-size:40px;font-weight:600;line-height:.9;letter-spacing:-0.03em;color:var(--ok)">92<span style="font-size:20px">%</span></span>
+        </div>
+        <p class="cp" style="margin:12px 0 0;font-size:12px">Part des modèles dont le verdict est « utilisable »</p>
+        <div style="height:5px;border-radius:3px;background:oklch(0 0 0 / .3);margin-top:14px;overflow:hidden;display:flex">
+          <i style="width:92%;background:var(--ok)"></i>
+        </div>
+      </div>
+
+      <div class="pane" style="padding:20px 22px">
+        <p class="ov" style="margin:0 0 12px">Analyses en cours</p>
+        <div style="display:flex;align-items:flex-end;gap:9px">
+          <span class="n dsp" style="font-size:40px;font-weight:600;line-height:.9;letter-spacing:-0.03em">2</span>
+        </div>
+        <p class="cp" style="margin:12px 0 0;font-size:12px">clustering · classification d'images</p>
+        <div style="display:flex;gap:5px;margin-top:14px">
+          <div style="flex:1;height:5px;border-radius:3px;background:oklch(0 0 0 / .3);overflow:hidden;display:flex">
+            <i style="width:64%;background:var(--ac)"></i></div>
+          <div style="flex:1;height:5px;border-radius:3px;background:oklch(0 0 0 / .3);overflow:hidden;display:flex">
+            <i style="width:21%;background:var(--ac)"></i></div>
+        </div>
+      </div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1.75fr 1fr;gap:16px">
+      <!-- tableau -->
+      <div class="pane" style="overflow:hidden">
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:17px 20px 14px">
+          <div><h2 style="margin:0;font-size:15.5px;font-weight:600;letter-spacing:-0.01em">Analyses récentes</h2>
+            <p class="cp" style="margin:2px 0 0;font-size:11.5px">Tous piliers confondus</p></div>
+          <a href="#" style="font-size:12.5px">Tout voir</a>
+        </div>
+        <table style="width:100%;border-collapse:collapse">
+          <thead><tr><th style="width:42%">Analyse</th><th>Résultat</th><th>Verdict</th><th></th></tr></thead>
+          <tbody>
+            <tr class="hov"><td>
+              <div style="display:flex;align-items:center;gap:11px">
+                <span style="width:7px;height:7px;border-radius:2px;background:var(--ac);flex-shrink:0"></span>
+                <div><p style="margin:0;font-weight:500">beton_c30 → resistance_28j</p>
+                <p class="cp" style="margin:1px 0 0;font-size:11px">Supervisé · il y a 2 h · Marie</p></div></div></td>
+              <td><span class="n" style="font-size:14px;font-weight:600">R² 0,912</span></td>
+              <td><span class="tag" style="background:oklch(0.74 0.14 158 / .15);color:var(--ok)">Utilisable</span></td>
+              <td style="text-align:right"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--mu)" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg></td></tr>
+            <tr><td>
+              <div style="display:flex;align-items:center;gap:11px">
+                <span style="width:7px;height:7px;border-radius:2px;background:oklch(0.62 0.12 220);flex-shrink:0"></span>
+                <div><p style="margin:0;font-weight:500">capteurs_ligne3 → 4 groupes</p>
+                <p class="cp" style="margin:1px 0 0;font-size:11px">Clustering · il y a 5 h · Ahmed</p></div></div></td>
+              <td><span class="n" style="font-size:14px;font-weight:600">Silhouette 0,58</span></td>
+              <td><span class="tag" style="background:oklch(0.74 0.14 158 / .15);color:var(--ok)">Structure nette</span></td>
+              <td></td></tr>
+            <tr><td>
+              <div style="display:flex;align-items:center;gap:11px">
+                <span style="width:7px;height:7px;border-radius:2px;background:oklch(0.66 0.15 300);flex-shrink:0"></span>
+                <div><p style="margin:0;font-weight:500">pieces_usinees → 2 classes</p>
+                <p class="cp" style="margin:1px 0 0;font-size:11px">Vision · hier 18:04 · Marie</p></div></div></td>
+              <td><span class="n" style="font-size:14px;font-weight:600">F1 0,847</span></td>
+              <td><span class="tag" style="background:oklch(0.81 0.135 92 / .16);color:var(--wa)">À arbitrer</span></td>
+              <td></td></tr>
+            <tr><td>
+              <div style="display:flex;align-items:center;gap:11px">
+                <span style="width:7px;height:7px;border-radius:2px;background:oklch(0.62 0.12 220);flex-shrink:0"></span>
+                <div><p style="margin:0;font-weight:500">retours_client → anomalies</p>
+                <p class="cp" style="margin:1px 0 0;font-size:11px">Anomalies · hier 11:20 · Ahmed</p></div></div></td>
+              <td><span class="n" style="font-size:14px;font-weight:600">31 atypiques</span></td>
+              <td><span class="tag" style="background:oklch(1 0 0 / .07);color:var(--mu)">Consulté</span></td>
+              <td></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- colonne droite -->
+      <div style="display:flex;flex-direction:column;gap:16px">
+        <div class="pane" style="padding:18px 20px;border-color:oklch(0.81 0.135 92 / .32);
+          background:linear-gradient(180deg,oklch(0.81 0.135 92 / .09),oklch(0.235 0.010 60 / .92))">
+          <div style="display:flex;align-items:center;gap:9px;margin-bottom:10px">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--wa)" stroke-width="2.1"><path d="M12 9v4M12 17h.01"/><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg>
+            <h3 style="margin:0;font-size:14px;font-weight:600;color:var(--wa)">Une décision vous attend</h3>
+          </div>
+          <p class="cp" style="margin:0 0 14px;color:oklch(0.87 0.05 92)">
+            <strong style="font-weight:600">pieces_usinees</strong> atteint 84,7 % de F1 mais rate
+            un défaut sur cinq. À trancher avant la mise en production.</p>
+          <button class="btn bs" style="height:31px;font-size:12.5px;border-color:oklch(0.81 0.135 92 / .35);color:var(--wa)">
+            Lire le verdict</button>
+        </div>
+
+        <div class="pane" style="padding:18px 20px;flex:1">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+            <h3 style="margin:0;font-size:14px;font-weight:600">Répartition</h3>
+            <span class="cp" style="font-size:11px">36 analyses</span></div>
+          <div style="display:flex;flex-direction:column;gap:13px">
+            <div><div style="display:flex;justify-content:space-between;margin-bottom:5px">
+              <span style="font-size:12.5px">Supervisé</span><span class="n cp" style="font-size:12px">13</span></div>
+              <div style="height:6px;border-radius:3px;background:oklch(0 0 0 / .3);overflow:hidden;display:flex">
+                <i style="width:36%;background:var(--ac)"></i></div></div>
+            <div><div style="display:flex;justify-content:space-between;margin-bottom:5px">
+              <span style="font-size:12.5px">Non supervisé</span><span class="n cp" style="font-size:12px">18</span></div>
+              <div style="height:6px;border-radius:3px;background:oklch(0 0 0 / .3);overflow:hidden;display:flex">
+                <i style="width:50%;background:oklch(0.62 0.12 220)"></i></div></div>
+            <div><div style="display:flex;justify-content:space-between;margin-bottom:5px">
+              <span style="font-size:12.5px">Vision</span><span class="n cp" style="font-size:12px">5</span></div>
+              <div style="height:6px;border-radius:3px;background:oklch(0 0 0 / .3);overflow:hidden;display:flex">
+                <i style="width:14%;background:oklch(0.66 0.15 300)"></i></div></div>
+          </div>
+          <p class="cp" style="margin:16px 0 0;padding-top:14px;border-top:1px solid oklch(1 0 0 / .06);font-size:11.5px">
+            Le pilier Vision est le moins utilisé — <a href="#">voir pourquoi</a></p>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</body></html>

@@ -1,0 +1,278 @@
+<!doctype html><html lang="fr"><head><meta charset="utf-8">
+<title>DataLab — Leaderboard</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,600;12..96,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+:root{
+ --canvas:oklch(0.145 0.008 60); --surf:oklch(0.192 0.009 60); --raise:oklch(0.235 0.010 60);
+ --bd:oklch(0.315 0.012 60); --tx:oklch(0.960 0.004 80); --mu:oklch(0.705 0.013 70);
+ --ac:oklch(0.790 0.150 78); --acs:oklch(0.700 0.150 62);
+ --ok:oklch(0.740 0.140 158); --wa:oklch(0.810 0.135 92); --da:oklch(0.680 0.190 27); --inf:oklch(0.750 0.100 222);
+ --gl:oklch(0.99 0.01 70 / .045); --gl2:oklch(0.99 0.01 70 / .075);
+ --hl:inset 0 1px 0 oklch(1 0 0 / .07);
+ --r1:10px; --r2:16px; --r3:22px;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--canvas);color:var(--tx);
+ font-family:"IBM Plex Sans",ui-sans-serif,system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+h1,h2,h3,.dsp{font-family:"Bricolage Grotesque","IBM Plex Sans",ui-sans-serif,sans-serif}
+a{color:var(--ac);text-decoration:none} a:hover{color:oklch(0.86 0.14 80)}
+.n{font-family:"IBM Plex Mono",ui-monospace,monospace;font-variant-numeric:tabular-nums;letter-spacing:-0.01em}
+.ov{font-size:10.5px;font-weight:600;letter-spacing:.11em;text-transform:uppercase;color:var(--mu)}
+.cp{font-size:12.5px;color:var(--mu);line-height:1.5}
+/* verre */
+.glass{background:var(--gl);backdrop-filter:blur(22px) saturate(150%);
+ -webkit-backdrop-filter:blur(22px) saturate(150%);border:1px solid oklch(1 0 0 / .085);
+ box-shadow:var(--hl),0 18px 44px oklch(0 0 0 / .42)}
+.pane{background:linear-gradient(180deg,oklch(0.235 0.010 60 / .92),oklch(0.205 0.009 60 / .92));
+ border:1px solid var(--bd);border-radius:var(--r2);box-shadow:var(--hl)}
+.pane.hv{border-color:oklch(0.79 0.15 78 / .38);
+ box-shadow:var(--hl),0 0 0 1px oklch(0.79 0.15 78 / .13),0 16px 38px oklch(0 0 0 / .45);
+ transform:translateY(-2px)}
+.btn{display:inline-flex;align-items:center;gap:8px;height:36px;padding:0 15px;border-radius:var(--r1);
+ font-size:13.5px;font-weight:500;border:1px solid transparent;font-family:inherit}
+.bp{background:var(--ac);color:oklch(0.16 0.02 65);font-weight:600}
+.bs{background:oklch(1 0 0 / .05);color:var(--tx);border-color:var(--bd)}
+.tag{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:500;padding:3px 9px;border-radius:99px}
+:root{--s1:#ffc75a;--s2:#007eb0;--s3:#56c9a2;--s4:#dd5da1;--s5:#f2efb4;--s6:#d8625c}
+.hd{height:56px;border-bottom:1px solid var(--bd);display:flex;align-items:center;padding:0 26px;gap:12px;font-size:12.5px;color:var(--mu)}
+.wrap{padding:26px 30px}
+.pane2{background:linear-gradient(180deg,oklch(0.235 0.010 60 / .92),oklch(0.205 0.009 60 / .92));
+ border:1px solid var(--bd);border-radius:var(--r2);box-shadow:var(--hl)}
+/* --- coquille applicative : rail + barre haute --- */
+.rail{width:60px;display:flex;flex-direction:column;align-items:center;gap:5px;padding:14px 0;
+ border-radius:var(--r3);position:absolute;left:18px;top:18px;bottom:18px;z-index:3}
+.ri{width:38px;height:38px;border-radius:11px;display:flex;align-items:center;justify-content:center;color:var(--mu)}
+.ri.on{background:oklch(0.79 0.15 78 / .15);color:var(--ac);box-shadow:inset 0 0 0 1px oklch(0.79 0.15 78 / .28)}
+.ri.hov{background:oklch(1 0 0 / .06);color:var(--tx)}
+.top{height:56px;border-radius:var(--r2);display:flex;align-items:center;padding:0 8px 0 18px;gap:14px;
+ position:absolute;left:96px;right:22px;top:22px;z-index:2}
+.body{position:absolute;left:96px;right:22px;top:96px;bottom:22px;overflow:hidden}
+/* --- segments, onglets --- */
+.seg{display:flex;background:oklch(0 0 0 / .28);border-radius:9px;padding:3px;gap:2px}
+.sgi{padding:5px 12px;border-radius:7px;font-size:12.5px;color:var(--mu);font-weight:500}
+.sgi.on{background:oklch(1 0 0 / .085);color:var(--tx);box-shadow:var(--hl)}
+.tb{display:flex;gap:24px;border-bottom:1px solid var(--bd)}
+.tbi{padding:10px 1px;font-size:13px;font-weight:500;color:var(--mu);border-bottom:2px solid transparent}
+.tbi.on{color:var(--tx);border-bottom-color:var(--ac)}
+/* --- tableaux --- */
+table{width:100%;border-collapse:collapse}
+th{font-size:10.5px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--mu);
+ text-align:left;padding:0 16px 10px;white-space:nowrap}
+td{padding:13px 16px;font-size:13.5px;border-top:1px solid oklch(1 0 0 / .05);vertical-align:middle}
+tr.hov td{background:oklch(1 0 0 / .035)}
+tr.sel td{background:oklch(0.79 0.15 78 / .07);box-shadow:inset 3px 0 0 var(--ac)}
+/* --- micro-graphiques --- */
+.sp{display:flex;align-items:flex-end;gap:2.5px;height:26px}
+.sp i{width:4px;border-radius:1.5px;background:oklch(0.79 0.15 78 / .32)}
+.sp i.hi{background:var(--ac)}
+.bar{height:7px;border-radius:99px;background:oklch(0 0 0 / .32);overflow:hidden}
+.bar i{display:block;height:100%;border-radius:99px;background:var(--ac)}
+/* --- formulaires --- */
+.fld{height:38px;border:1px solid var(--bd);border-radius:var(--r1);background:oklch(0 0 0 / .22);
+ display:flex;align-items:center;padding:0 12px;font-size:13.5px;color:var(--tx);gap:8px}
+.fld.foc{border-color:var(--ac);box-shadow:0 0 0 3px oklch(0.79 0.15 78 / .16)}
+.fld .ph{color:oklch(0.55 0.012 70)}
+.lb{font-size:12px;font-weight:500;color:var(--mu);display:block;margin-bottom:6px}
+.hint{font-size:11.5px;color:oklch(0.60 0.012 70);margin:6px 0 0;line-height:1.5}
+.sw{width:36px;height:20px;border-radius:99px;background:oklch(0 0 0 / .38);position:relative;flex-shrink:0}
+.sw i{position:absolute;width:15px;height:15px;border-radius:50%;background:var(--mu);top:2.5px;left:2.5px}
+.sw.on{background:var(--ac)}.sw.on i{left:18.5px;background:oklch(0.16 0.02 65)}
+/* --- cartes de choix --- */
+.ch{border:1px solid var(--bd);border-radius:var(--r2);padding:15px 16px;background:oklch(1 0 0 / .018)}
+.ch.on{border-color:var(--ac);background:oklch(0.79 0.15 78 / .08);box-shadow:0 0 0 1px oklch(0.79 0.15 78 / .3)}
+.ch.hv{border-color:oklch(0.79 0.15 78 / .35);background:oklch(1 0 0 / .04);transform:translateY(-2px)}
+/* --- pastilles d'étape --- */
+.stp{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--mu)}
+.stpn{width:22px;height:22px;border-radius:50%;border:1px solid var(--bd);display:flex;align-items:center;
+ justify-content:center;font-size:11px;font-weight:600}
+.stp.done .stpn{background:oklch(0.74 0.14 158 / .18);border-color:transparent;color:var(--ok)}
+.stp.on{color:var(--tx);font-weight:600}
+.stp.on .stpn{background:var(--ac);border-color:transparent;color:oklch(0.16 0.02 65)}
+/* --- divers --- */
+.kpi{font-family:"IBM Plex Mono",monospace;font-variant-numeric:tabular-nums;letter-spacing:-0.03em;font-weight:500}
+.gd{display:grid;gap:16px}
+.sect{font-size:15px;font-weight:600;letter-spacing:-0.015em;margin:0}
+.info{border-left:2px solid var(--inf);background:oklch(0.75 0.10 222 / .07);padding:11px 14px;
+ border-radius:0 var(--r1) var(--r1) 0;font-size:12.5px;line-height:1.55;color:oklch(0.88 0.03 222)}
+.warnb{border-left:2px solid var(--wa);background:oklch(0.81 0.135 92 / .07);padding:11px 14px;
+ border-radius:0 var(--r1) var(--r1) 0;font-size:12.5px;line-height:1.55;color:oklch(0.90 0.05 92)}
+
+.md{border:1px solid var(--bd);border-radius:var(--r2);padding:0;overflow:hidden;background:oklch(1 0 0 / .018)}
+.rk{width:24px;height:24px;border-radius:8px;display:flex;align-items:center;justify-content:center;
+ font-size:11.5px;font-weight:700;font-family:"IBM Plex Mono",monospace;flex-shrink:0}
+.rk1{background:var(--ac);color:oklch(0.16 0.02 65)}
+.rk2{background:oklch(1 0 0 / .09);color:var(--tx)}
+.gauge{position:relative;height:5px;border-radius:99px;background:oklch(0 0 0 / .34);width:132px}
+.gauge i{position:absolute;height:100%;border-radius:99px;top:0}
+.gauge b{position:absolute;width:2px;height:11px;top:-3px;background:oklch(1 0 0 / .55);border-radius:2px}
+
+body{display:flex;justify-content:center;padding:24px}</style>
+</head><body>
+<div style="width:1512px;height:1090px;background:var(--canvas);position:relative;overflow:hidden;font-size:14px">
+
+<div style="position:absolute;width:820px;height:820px;left:-160px;top:-320px;border-radius:50%;
+    background:radial-gradient(circle,oklch(0.79 0.15 78 / .13),transparent 66%);filter:blur(30px)"></div>
+  <div style="position:absolute;width:700px;height:700px;right:-180px;bottom:-320px;border-radius:50%;
+    background:radial-gradient(circle,oklch(0.62 0.12 220 / .12),transparent 68%);filter:blur(30px)"></div>
+  <div style="position:absolute;inset:0;opacity:.5;background-image:
+    linear-gradient(oklch(1 0 0 / .014) 1px,transparent 1px),
+    linear-gradient(90deg,oklch(1 0 0 / .014) 1px,transparent 1px);background-size:56px 56px"></div>
+<div class="rail glass">
+    <div style="width:34px;height:34px;border-radius:11px;background:linear-gradient(150deg,var(--ac),oklch(0.62 0.17 40));
+      display:flex;align-items:center;justify-content:center;color:oklch(0.16 0.02 65);font-weight:700;font-size:15px;
+      font-family:'Bricolage Grotesque',sans-serif;margin-bottom:12px">D</div>
+    <div class="ri"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="3" width="7" height="9" rx="2"/><rect x="14" y="3" width="7" height="5" rx="2"/><rect x="14" y="12" width="7" height="9" rx="2"/><rect x="3" y="16" width="7" height="5" rx="2"/></svg></div>
+    <div class="ri"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><ellipse cx="12" cy="6" rx="8" ry="3"/><path d="M4 6v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6"/></svg></div>
+    <div class="ri on"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 3a3 3 0 0 0-3 3 3 3 0 0 0-2 5.2A3 3 0 0 0 9 17a3 3 0 0 0 6 0 3 3 0 0 0 2-5.8A3 3 0 0 0 15 6a3 3 0 0 0-3-3z"/></svg></div>
+    <div class="ri"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="m3 15 5-4 4 3 3-2 6 5"/></svg></div>
+    <div class="ri"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5M12 8v4l3 2"/></svg></div>
+    <div style="margin-top:auto;display:flex;flex-direction:column;align-items:center;gap:5px">
+      <div class="ri"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="9"/><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3M12 17h.01"/></svg></div>
+      <div style="width:32px;height:32px;border-radius:50%;background:oklch(0.42 0.08 60);color:var(--tx);
+        display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600">M</div>
+    </div>
+  </div>
+<div class="top glass">
+    <div style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--mu);min-width:0"><a href="#" style="display:flex;align-items:center;gap:6px;color:var(--mu)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m15 18-6-6 6-6"/></svg>Historique</a>
+      <span style="opacity:.4">/</span><span style="color:var(--tx)">beton_c30 → resistance_28j</span>
+      <span class="tag" style="background:oklch(0.74 0.14 158 / .15);color:var(--ok)">terminé · 6 min 41 s</span>
+      </div>
+    <div style="margin-left:auto;display:flex;align-items:center;gap:9px"><div class="seg"><span class="sgi on">Score CV</span><span class="sgi">Score test</span><span class="sgi">Durée</span></div>
+      <button class="btn bs" style="height:32px;font-size:12.5px">Exporter le tableau</button>
+      <button class="btn bp" style="height:32px;font-size:12.5px">Voir le verdict</button></div>
+  </div>
+
+<div class="body">
+ <div style="display:flex;align-items:flex-end;justify-content:space-between;margin-bottom:6px">
+  <div>
+   <p class="ov" style="margin:0 0 7px">Comparaison · 4 modèles entraînés, 1 retenu</p>
+   <h1 style="margin:0;font-size:27px;font-weight:600;letter-spacing:-0.03em">Quel modèle garder ?</h1>
+  </div>
+  <p class="cp" style="margin:0;text-align:right;max-width:340px">La sélection se fait sur le score de
+   validation croisée, jamais sur le test.<br><span style="color:var(--ok)">Le test n'a été ouvert qu'une fois, à la fin.</span></p>
+ </div>
+
+ <div class="tb" style="margin:18px 0 20px"><span class="tbi">Verdict</span><span class="tbi on">Comparaison</span>
+  <span class="tbi">Explicabilité</span><span class="tbi">Fiabilité</span><span class="tbi">Prédire</span><span class="tbi">Traçabilité</span></div>
+
+ <!-- gagnant -->
+ <div class="pane2" style="border-color:oklch(0.79 0.15 78 / .40);
+  background:linear-gradient(115deg,oklch(0.79 0.15 78 / .10),oklch(0.215 0.010 60 / .94));padding:18px 22px;margin-bottom:16px;
+  display:flex;align-items:center;gap:22px">
+  <div class="rk rk1" style="width:34px;height:34px;border-radius:11px;font-size:14px">1</div>
+  <div style="min-width:210px">
+   <div style="display:flex;align-items:center;gap:9px">
+    <h2 style="margin:0;font-size:18px;font-weight:600;letter-spacing:-0.02em">LightGBM</h2>
+    <span class="tag" style="background:var(--ac);color:oklch(0.16 0.02 65);font-weight:600">RETENU</span></div>
+   <p class="cp" style="margin:5px 0 0">Arbres boostés · 40 essais Optuna</p></div>
+  <div style="display:flex;gap:30px;margin-left:auto;padding-right:6px">
+   <div><p class="ov" style="margin:0 0 4px">R² validation</p><p class="kpi" style="margin:0;font-size:24px">0,908</p>
+    <p class="cp" style="margin:2px 0 0;font-size:11px">± 0,021 sur 5 plis</p></div>
+   <div><p class="ov" style="margin:0 0 4px">R² test</p><p class="kpi" style="margin:0;font-size:24px">0,894</p>
+    <p class="cp" style="margin:2px 0 0;font-size:11px;color:var(--ok)">écart sain : −0,014</p></div>
+   <div><p class="ov" style="margin:0 0 4px">Erreur moyenne</p><p class="kpi" style="margin:0;font-size:24px">2,8 <span style="font-size:14px;color:var(--mu)">MPa</span></p>
+    <p class="cp" style="margin:2px 0 0;font-size:11px">sur 41 MPa moyens</p></div>
+   <div><p class="ov" style="margin:0 0 4px">Entraînement</p><p class="kpi" style="margin:0;font-size:24px">3<span style="font-size:14px;color:var(--mu)">m</span>12<span style="font-size:14px;color:var(--mu)">s</span></p>
+    <p class="cp" style="margin:2px 0 0;font-size:11px">prédit en 4 ms</p></div>
+  </div>
+ </div>
+
+ <!-- tableau -->
+ <div class="pane2" style="padding:16px 6px 6px">
+  <div style="display:flex;align-items:center;padding:0 16px 12px">
+   <h3 class="sect">Les quatre modèles, côte à côte</h3>
+   <p class="cp" style="margin:0 0 0 12px">Barre claire = validation croisée · repère blanc = test</p>
+   <span class="tag" style="margin-left:auto;background:oklch(1 0 0 / .06);color:var(--mu)">Trié par R² validation ↓</span></div>
+  <table>
+   <thead><tr><th style="width:34px"></th><th>Modèle</th><th>R² validation croisée</th><th style="text-align:right">Erreur (MPa)</th>
+    <th style="text-align:right">Durée</th><th style="text-align:right">Prédiction</th><th>Pourquoi ce rang</th><th style="width:70px"></th></tr></thead>
+   <tbody>
+    <tr class="sel"><td><span class="rk rk1">1</span></td>
+     <td><strong style="font-size:14px">LightGBM</strong><br><span class="cp">Arbres boostés</span></td>
+     <td><div style="display:flex;align-items:center;gap:11px"><div class="gauge"><i style="width:90.8%;background:var(--ac)"></i><b style="left:89.4%"></b></div>
+      <span class="kpi" style="font-size:14px">0,908</span></div></td>
+     <td style="text-align:right" class="kpi">2,81</td><td style="text-align:right" class="kpi">3m12s</td>
+     <td style="text-align:right" class="kpi">4 ms</td>
+     <td class="cp" style="max-width:250px">Meilleur score et écart validation↔test le plus faible.</td>
+     <td style="text-align:right"><span class="tag" style="background:oklch(0.74 0.14 158 / .15);color:var(--ok)">gardé</span></td></tr>
+
+    <tr class="hov"><td><span class="rk rk2">2</span></td>
+     <td><strong style="font-size:14px">XGBoost</strong><br><span class="cp">Arbres boostés</span></td>
+     <td><div style="display:flex;align-items:center;gap:11px"><div class="gauge"><i style="width:89.9%;background:oklch(0.79 0.15 78 / .55)"></i><b style="left:87.1%"></b></div>
+      <span class="kpi" style="font-size:14px">0,899</span></div></td>
+     <td style="text-align:right" class="kpi">2,94</td><td style="text-align:right" class="kpi">4m58s</td>
+     <td style="text-align:right" class="kpi">6 ms</td>
+     <td class="cp" style="max-width:250px">0,9 point derrière pour 55 % de temps en plus.</td>
+     <td style="text-align:right"><a href="#" style="font-size:12px">Détail</a></td></tr>
+
+    <tr><td><span class="rk rk2">3</span></td>
+     <td><strong style="font-size:14px">Forêt aléatoire</strong><br><span class="cp">Arbres en parallèle</span></td>
+     <td><div style="display:flex;align-items:center;gap:11px"><div class="gauge"><i style="width:87.2%;background:oklch(0.79 0.15 78 / .40)"></i><b style="left:86.8%"></b></div>
+      <span class="kpi" style="font-size:14px">0,872</span></div></td>
+     <td style="text-align:right" class="kpi">3,31</td><td style="text-align:right" class="kpi">1m40s</td>
+     <td style="text-align:right" class="kpi">11 ms</td>
+     <td class="cp" style="max-width:250px">Le plus stable entre plis (± 0,014) mais plafonne.</td>
+     <td style="text-align:right"><a href="#" style="font-size:12px">Détail</a></td></tr>
+
+    <tr><td><span class="rk rk2">4</span></td>
+     <td><strong style="font-size:14px">Régression Ridge</strong><br><span class="cp">Linéaire · référence</span></td>
+     <td><div style="display:flex;align-items:center;gap:11px"><div class="gauge"><i style="width:61.4%;background:oklch(0.79 0.15 78 / .28)"></i><b style="left:60.9%"></b></div>
+      <span class="kpi" style="font-size:14px">0,614</span></div></td>
+     <td style="text-align:right" class="kpi">6,12</td><td style="text-align:right" class="kpi">2s</td>
+     <td style="text-align:right" class="kpi">&lt;1 ms</td>
+     <td class="cp" style="max-width:250px">Sert de plancher : la relation n'est pas linéaire.</td>
+     <td style="text-align:right"><a href="#" style="font-size:12px">Détail</a></td></tr>
+   </tbody></table>
+ </div>
+
+ <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;margin-top:16px">
+  <div class="pane2" style="padding:17px 19px">
+   <p class="ov" style="margin:0 0 10px">Stabilité entre les 5 plis</p>
+   <svg width="100%" height="86" viewBox="0 0 380 86" style="overflow:visible">
+    <g stroke="oklch(1 0 0 / .07)"><line x1="0" y1="14" x2="380" y2="14"/><line x1="0" y1="44" x2="380" y2="44"/><line x1="0" y1="74" x2="380" y2="74"/></g>
+    <text x="0" y="10" fill="var(--mu)" font-size="9" font-family="IBM Plex Mono">0,95</text>
+    <text x="0" y="84" fill="var(--mu)" font-size="9" font-family="IBM Plex Mono">0,55</text>
+    <polyline points="40,26 118,22 196,29 274,24 352,25" fill="none" stroke="var(--s1)" stroke-width="2"/>
+    <polyline points="40,31 118,26 196,36 274,28 352,30" fill="none" stroke="var(--s2)" stroke-width="2"/>
+    <polyline points="40,38 118,36 196,40 274,37 352,39" fill="none" stroke="var(--s3)" stroke-width="2"/>
+    <polyline points="40,68 118,71 196,66 274,70 352,69" fill="none" stroke="var(--s6)" stroke-width="2"/>
+    <g fill="var(--mu)" font-size="9" font-family="IBM Plex Mono" text-anchor="middle">
+     <text x="40" y="86">P1</text><text x="118" y="86">P2</text><text x="196" y="86">P3</text><text x="274" y="86">P4</text><text x="352" y="86">P5</text></g>
+   </svg>
+   <p class="cp" style="margin:10px 0 0">Une courbe plate = le modèle se comporte pareil quel que soit le
+    découpage. Ridge est plate mais basse : régulièrement médiocre.</p></div>
+
+  <div class="pane2" style="padding:17px 19px">
+   <p class="ov" style="margin:0 0 10px">Coût de la précision</p>
+   <div style="display:flex;flex-direction:column;gap:11px;margin-top:4px">
+    <div><div style="display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:5px">
+     <span>LightGBM</span><span class="kpi" style="color:var(--mu)">3m12s · 4 ms</span></div>
+     <div class="bar"><i style="width:64%"></i></div></div>
+    <div><div style="display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:5px">
+     <span>XGBoost</span><span class="kpi" style="color:var(--mu)">4m58s · 6 ms</span></div>
+     <div class="bar"><i style="width:100%;background:oklch(0.79 0.15 78 / .5)"></i></div></div>
+    <div><div style="display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:5px">
+     <span>Forêt aléatoire</span><span class="kpi" style="color:var(--mu)">1m40s · 11 ms</span></div>
+     <div class="bar"><i style="width:34%;background:oklch(0.79 0.15 78 / .4)"></i></div></div>
+    <div><div style="display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:5px">
+     <span>Ridge</span><span class="kpi" style="color:var(--mu)">2s · &lt;1 ms</span></div>
+     <div class="bar"><i style="width:2%;background:oklch(0.79 0.15 78 / .3)"></i></div></div>
+   </div>
+   <p class="cp" style="margin:12px 0 0">Si vous prédisez en direct sur un site, les 11 ms de la forêt
+    comptent plus que ses 3 points de R² manquants.</p></div>
+
+  <div class="pane2" style="padding:17px 19px;border-color:oklch(0.81 0.135 92 / .3)">
+   <div style="display:flex;align-items:center;gap:8px;margin-bottom:9px">
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--wa)" stroke-width="2"><path d="M12 9v4M12 17h.01"/><circle cx="12" cy="12" r="9"/></svg>
+    <p class="ov" style="margin:0;color:var(--wa)">Ce que le classement ne dit pas</p></div>
+   <p class="cp" style="margin:0 0 10px;line-height:1.6">Un écart de moins de <strong style="color:var(--tx)">0,02</strong>
+    de R² entre deux modèles n'est pas significatif ici : il rentre dans l'incertitude des plis.</p>
+   <p class="cp" style="margin:0 0 12px;line-height:1.6">LightGBM et XGBoost sont donc <strong style="color:var(--tx)">à
+    égalité statistique</strong>. LightGBM l'emporte sur le temps, pas sur la précision.</p>
+   <button class="btn bs" style="width:100%;height:33px;font-size:12.5px;justify-content:center">Choisir XGBoost à la place</button>
+  </div>
+ </div>
+</div>
+
+</div>
+</body></html>
