@@ -45,6 +45,12 @@ class User(Base):
     actif: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     last_login: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Thème d'interface choisi (Lot UI — refonte visuelle) : "graphite" | "ivoire"
+    # | "minuit" | "ardoise" | "porcelaine". Server_default="graphite" pour que
+    # la migration s'applique sans backfill sur les lignes existantes — c'est
+    # aussi le thème par défaut du ThemeProvider frontend (ordre de résolution :
+    # ce champ → localStorage → prefers-color-scheme → graphite).
+    ui_theme: Mapped[str] = mapped_column(String(20), nullable=False, server_default="graphite")
 
     organization: Mapped["Organization"] = relationship("Organization", back_populates="users")
 

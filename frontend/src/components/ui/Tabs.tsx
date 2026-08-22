@@ -41,7 +41,7 @@ export function Tabs<T extends string>({
   }
 
   return (
-    <div className="flex items-center gap-1 overflow-x-auto rounded-control bg-muted p-1">
+    <div role="tablist" className="flex items-center gap-1 overflow-x-auto rounded-control bg-muted p-1">
       {items.map((tab) => {
         const Icon = tab.icon;
         const isActive = active === tab.id;

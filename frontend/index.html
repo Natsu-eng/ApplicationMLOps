@@ -7,16 +7,23 @@
     <title>DataLab Pro</title>
     <script>
       // Pose data-theme AVANT le premier rendu React — évite un flash de
-      // thème incorrect (clair → sombre) au chargement d'une page si
-      // l'utilisateur a explicitement choisi "sombre" (voir ThemeContext.tsx,
-      // même clé localStorage).
+      // thème incorrect au chargement (voir ThemeContext.tsx::resolveInitialTheme,
+      // qui DOIT rester en miroir exact de cette résolution : localStorage →
+      // prefers-color-scheme → graphite). La préférence serveur ne peut pas
+      // être lue ici de façon synchrone (pas de SSR) — ThemeProvider la
+      // récupère juste après montage et bascule sans rechargement si besoin.
       (function () {
+        var VALID = ["graphite", "ivoire", "minuit", "ardoise", "porcelaine"];
         try {
           var stored = localStorage.getItem("datalab_theme");
-          if (stored === "light" || stored === "dark") {
-            document.documentElement.setAttribute("data-theme", stored);
-          }
-        } catch (e) {}
+          var theme = VALID.indexOf(stored) !== -1 ? stored
+            : (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches === false)
+              ? "ivoire"
+              : "graphite";
+          document.documentElement.setAttribute("data-theme", theme);
+        } catch (e) {
+          document.documentElement.setAttribute("data-theme", "graphite");
+        }
       })();
     </script>
   </head>

@@ -26,6 +26,7 @@ from api.core.database import check_connection, init_db
 from api.core.observability import PrometheusMiddleware, RequestIdMiddleware, configure_logging, metrics_response
 from domains.anomalies.router import router as anomalies_router
 from domains.auth.router import router as auth_router
+from domains.auth.router import users_router
 from domains.clustering.router import router as clustering_router
 from domains.dashboard.router import router as dashboard_router
 from domains.datasets.router import router as datasets_router
@@ -151,6 +152,7 @@ app.add_middleware(RequestIdMiddleware)
 # prefix="/api")` compose avec le préfixe propre du router (ex. "/auth"),
 # résultat "/api/auth" — les routers eux-mêmes restent inchangés.
 app.include_router(auth_router, prefix="/api")
+app.include_router(users_router, prefix="/api")
 app.include_router(datasets_router, prefix="/api")
 app.include_router(training_router, prefix="/api")
 app.include_router(clustering_router, prefix="/api")

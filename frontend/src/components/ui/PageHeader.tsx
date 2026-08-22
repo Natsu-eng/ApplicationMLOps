@@ -35,7 +35,7 @@ export function PageHeader({
           </div>
           <div className="min-w-0">
             <p className="text-xs uppercase tracking-widest text-primary font-semibold mb-1.5">{eyebrow}</p>
-            <h1 className="text-title text-foreground">{title}</h1>
+            <h1 className="text-h2 text-foreground">{title}</h1>
             {description && <p className="text-sm text-muted-foreground mt-1.5 max-w-xl">{description}</p>}
           </div>
         </div>

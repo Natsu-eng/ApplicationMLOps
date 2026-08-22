@@ -1,0 +1,283 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><script src="./support.js"></script></head><body>
+<x-dc><helmet><style>
+@import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,600;12..96,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+:root{
+ --canvas:oklch(0.145 0.008 60); --surf:oklch(0.192 0.009 60); --raise:oklch(0.235 0.010 60);
+ --bd:oklch(0.315 0.012 60); --tx:oklch(0.960 0.004 80); --mu:oklch(0.705 0.013 70);
+ --ac:oklch(0.790 0.150 78); --acs:oklch(0.700 0.150 62);
+ --ok:oklch(0.740 0.140 158); --wa:oklch(0.810 0.135 92); --da:oklch(0.680 0.190 27); --inf:oklch(0.750 0.100 222);
+ --gl:oklch(0.99 0.01 70 / .045); --gl2:oklch(0.99 0.01 70 / .075);
+ --hl:inset 0 1px 0 oklch(1 0 0 / .07);
+ --r1:10px; --r2:16px; --r3:22px;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--canvas);color:var(--tx);
+ font-family:"IBM Plex Sans",ui-sans-serif,system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+h1,h2,h3,.dsp{font-family:"Bricolage Grotesque","IBM Plex Sans",ui-sans-serif,sans-serif}
+a{color:var(--ac);text-decoration:none} a:hover{color:oklch(0.86 0.14 80)}
+.n{font-family:"IBM Plex Mono",ui-monospace,monospace;font-variant-numeric:tabular-nums;letter-spacing:-0.01em}
+.ov{font-size:10.5px;font-weight:600;letter-spacing:.11em;text-transform:uppercase;color:var(--mu)}
+.cp{font-size:12.5px;color:var(--mu);line-height:1.5}
+/* verre */
+.glass{background:var(--gl);backdrop-filter:blur(22px) saturate(150%);
+ -webkit-backdrop-filter:blur(22px) saturate(150%);border:1px solid oklch(1 0 0 / .085);
+ box-shadow:var(--hl),0 18px 44px oklch(0 0 0 / .42)}
+.pane{background:linear-gradient(180deg,oklch(0.235 0.010 60 / .92),oklch(0.205 0.009 60 / .92));
+ border:1px solid var(--bd);border-radius:var(--r2);box-shadow:var(--hl)}
+.pane.hv{border-color:oklch(0.79 0.15 78 / .38);
+ box-shadow:var(--hl),0 0 0 1px oklch(0.79 0.15 78 / .13),0 16px 38px oklch(0 0 0 / .45);
+ transform:translateY(-2px)}
+.btn{display:inline-flex;align-items:center;gap:8px;height:36px;padding:0 15px;border-radius:var(--r1);
+ font-size:13.5px;font-weight:500;border:1px solid transparent;font-family:inherit}
+.bp{background:var(--ac);color:oklch(0.16 0.02 65);font-weight:600}
+.bs{background:oklch(1 0 0 / .05);color:var(--tx);border-color:var(--bd)}
+.tag{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:500;padding:3px 9px;border-radius:99px}
+:root{--s1:#ffc75a;--s2:#007eb0;--s3:#56c9a2;--s4:#dd5da1;--s5:#f2efb4;--s6:#d8625c}
+.hd{height:56px;border-bottom:1px solid var(--bd);display:flex;align-items:center;padding:0 26px;gap:12px;font-size:12.5px;color:var(--mu)}
+.wrap{padding:26px 30px}
+.pane2{background:linear-gradient(180deg,oklch(0.235 0.010 60 / .92),oklch(0.205 0.009 60 / .92));
+ border:1px solid var(--bd);border-radius:var(--r2);box-shadow:var(--hl)}
+/* --- coquille applicative : rail + barre haute --- */
+.rail{width:60px;display:flex;flex-direction:column;align-items:center;gap:5px;padding:14px 0;
+ border-radius:var(--r3);position:absolute;left:18px;top:18px;bottom:18px;z-index:3}
+.ri{width:38px;height:38px;border-radius:11px;display:flex;align-items:center;justify-content:center;color:var(--mu)}
+.ri.on{background:oklch(0.79 0.15 78 / .15);color:var(--ac);box-shadow:inset 0 0 0 1px oklch(0.79 0.15 78 / .28)}
+.ri.hov{background:oklch(1 0 0 / .06);color:var(--tx)}
+.top{height:56px;border-radius:var(--r2);display:flex;align-items:center;padding:0 8px 0 18px;gap:14px;
+ position:absolute;left:96px;right:22px;top:22px;z-index:2}
+.body{position:absolute;left:96px;right:22px;top:96px;bottom:22px;overflow:hidden}
+/* --- segments, onglets --- */
+.seg{display:flex;background:oklch(0 0 0 / .28);border-radius:9px;padding:3px;gap:2px}
+.sgi{padding:5px 12px;border-radius:7px;font-size:12.5px;color:var(--mu);font-weight:500}
+.sgi.on{background:oklch(1 0 0 / .085);color:var(--tx);box-shadow:var(--hl)}
+.tb{display:flex;gap:24px;border-bottom:1px solid var(--bd)}
+.tbi{padding:10px 1px;font-size:13px;font-weight:500;color:var(--mu);border-bottom:2px solid transparent}
+.tbi.on{color:var(--tx);border-bottom-color:var(--ac)}
+/* --- tableaux --- */
+table{width:100%;border-collapse:collapse}
+th{font-size:10.5px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--mu);
+ text-align:left;padding:0 16px 10px;white-space:nowrap}
+td{padding:13px 16px;font-size:13.5px;border-top:1px solid oklch(1 0 0 / .05);vertical-align:middle}
+tr.hov td{background:oklch(1 0 0 / .035)}
+tr.sel td{background:oklch(0.79 0.15 78 / .07);box-shadow:inset 3px 0 0 var(--ac)}
+/* --- micro-graphiques --- */
+.sp{display:flex;align-items:flex-end;gap:2.5px;height:26px}
+.sp i{width:4px;border-radius:1.5px;background:oklch(0.79 0.15 78 / .32)}
+.sp i.hi{background:var(--ac)}
+.bar{height:7px;border-radius:99px;background:oklch(0 0 0 / .32);overflow:hidden}
+.bar i{display:block;height:100%;border-radius:99px;background:var(--ac)}
+/* --- formulaires --- */
+.fld{height:38px;border:1px solid var(--bd);border-radius:var(--r1);background:oklch(0 0 0 / .22);
+ display:flex;align-items:center;padding:0 12px;font-size:13.5px;color:var(--tx);gap:8px}
+.fld.foc{border-color:var(--ac);box-shadow:0 0 0 3px oklch(0.79 0.15 78 / .16)}
+.fld .ph{color:oklch(0.55 0.012 70)}
+.lb{font-size:12px;font-weight:500;color:var(--mu);display:block;margin-bottom:6px}
+.hint{font-size:11.5px;color:oklch(0.60 0.012 70);margin:6px 0 0;line-height:1.5}
+.sw{width:36px;height:20px;border-radius:99px;background:oklch(0 0 0 / .38);position:relative;flex-shrink:0}
+.sw i{position:absolute;width:15px;height:15px;border-radius:50%;background:var(--mu);top:2.5px;left:2.5px}
+.sw.on{background:var(--ac)}.sw.on i{left:18.5px;background:oklch(0.16 0.02 65)}
+/* --- cartes de choix --- */
+.ch{border:1px solid var(--bd);border-radius:var(--r2);padding:15px 16px;background:oklch(1 0 0 / .018)}
+.ch.on{border-color:var(--ac);background:oklch(0.79 0.15 78 / .08);box-shadow:0 0 0 1px oklch(0.79 0.15 78 / .3)}
+.ch.hv{border-color:oklch(0.79 0.15 78 / .35);background:oklch(1 0 0 / .04);transform:translateY(-2px)}
+/* --- pastilles d'étape --- */
+.stp{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--mu)}
+.stpn{width:22px;height:22px;border-radius:50%;border:1px solid var(--bd);display:flex;align-items:center;
+ justify-content:center;font-size:11px;font-weight:600}
+.stp.done .stpn{background:oklch(0.74 0.14 158 / .18);border-color:transparent;color:var(--ok)}
+.stp.on{color:var(--tx);font-weight:600}
+.stp.on .stpn{background:var(--ac);border-color:transparent;color:oklch(0.16 0.02 65)}
+/* --- divers --- */
+.kpi{font-family:"IBM Plex Mono",monospace;font-variant-numeric:tabular-nums;letter-spacing:-0.03em;font-weight:500}
+.gd{display:grid;gap:16px}
+.sect{font-size:15px;font-weight:600;letter-spacing:-0.015em;margin:0}
+.info{border-left:2px solid var(--inf);background:oklch(0.75 0.10 222 / .07);padding:11px 14px;
+ border-radius:0 var(--r1) var(--r1) 0;font-size:12.5px;line-height:1.55;color:oklch(0.88 0.03 222)}
+.warnb{border-left:2px solid var(--wa);background:oklch(0.81 0.135 92 / .07);padding:11px 14px;
+ border-radius:0 var(--r1) var(--r1) 0;font-size:12.5px;line-height:1.55;color:oklch(0.90 0.05 92)}
+
+.pil{border-radius:var(--r3);padding:22px 24px;position:relative;overflow:hidden;
+ border:1px solid var(--bd);background:linear-gradient(170deg,oklch(0.245 0.010 60 / .94),oklch(0.200 0.009 60 / .94))}
+.pil.hv{transform:translateY(-3px);box-shadow:var(--hl),0 22px 50px oklch(0 0 0 / .48)}
+.pil .glow{position:absolute;right:-60px;top:-60px;width:220px;height:220px;border-radius:50%;filter:blur(28px)}
+.pil .ic{width:42px;height:42px;border-radius:13px;display:flex;align-items:center;justify-content:center;margin-bottom:14px}
+.task{display:flex;gap:12px;align-items:flex-start;padding:12px 14px;border-radius:var(--r1);
+ border:1px solid transparent;background:oklch(1 0 0 / .022)}
+.task.hv{background:oklch(1 0 0 / .055);border-color:oklch(1 0 0 / .09)}
+.task.dis{opacity:.42}
+.mini{display:flex;align-items:center;gap:7px;font-size:11px;color:oklch(0.60 0.012 70);margin-top:7px}
+</style></helmet>
+<div style="width:1512px;height:1020px;background:var(--canvas);position:relative;overflow:hidden;font-size:14px">
+
+<div style="position:absolute;width:820px;height:820px;left:-160px;top:-320px;border-radius:50%;
+    background:radial-gradient(circle,oklch(0.70 0.15 62 / .15),transparent 66%);filter:blur(30px)"></div>
+  <div style="position:absolute;width:700px;height:700px;right:-180px;bottom:-320px;border-radius:50%;
+    background:radial-gradient(circle,oklch(0.56 0.16 300 / .11),transparent 68%);filter:blur(30px)"></div>
+  <div style="position:absolute;inset:0;opacity:.5;background-image:
+    linear-gradient(oklch(1 0 0 / .014) 1px,transparent 1px),
+    linear-gradient(90deg,oklch(1 0 0 / .014) 1px,transparent 1px);background-size:56px 56px"></div>
+<div class="rail glass">
+    <div style="width:34px;height:34px;border-radius:11px;background:linear-gradient(150deg,var(--ac),oklch(0.62 0.17 40));
+      display:flex;align-items:center;justify-content:center;color:oklch(0.16 0.02 65);font-weight:700;font-size:15px;
+      font-family:'Bricolage Grotesque',sans-serif;margin-bottom:12px">D</div>
+    <div class="ri"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="3" width="7" height="9" rx="2"/><rect x="14" y="3" width="7" height="5" rx="2"/><rect x="14" y="12" width="7" height="9" rx="2"/><rect x="3" y="16" width="7" height="5" rx="2"/></svg></div>
+    <div class="ri"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><ellipse cx="12" cy="6" rx="8" ry="3"/><path d="M4 6v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6"/></svg></div>
+    <div class="ri on"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 3a3 3 0 0 0-3 3 3 3 0 0 0-2 5.2A3 3 0 0 0 9 17a3 3 0 0 0 6 0 3 3 0 0 0 2-5.8A3 3 0 0 0 15 6a3 3 0 0 0-3-3z"/></svg></div>
+    <div class="ri"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="m3 15 5-4 4 3 3-2 6 5"/></svg></div>
+    <div class="ri"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5M12 8v4l3 2"/></svg></div>
+    <div style="margin-top:auto;display:flex;flex-direction:column;align-items:center;gap:5px">
+      <div class="ri"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="9"/><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3M12 17h.01"/></svg></div>
+      <div style="width:32px;height:32px;border-radius:50%;background:oklch(0.42 0.08 60);color:var(--tx);
+        display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600">M</div>
+    </div>
+  </div>
+<div class="top glass">
+    <div style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--mu);min-width:0"><span style="color:var(--tx)">Nouvelle analyse</span>
+      <span style="opacity:.4">/</span><span class="cp">choisir la question</span>
+      </div>
+    <div style="margin-left:auto;display:flex;align-items:center;gap:9px"><a href="#" style="font-size:12.5px;display:flex;align-items:center;gap:6px">
+       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3M12 17h.01"/></svg>
+       Je ne sais pas laquelle choisir</a></div>
+  </div>
+
+<div class="body">
+ <div style="text-align:center;max-width:720px;margin:6px auto 26px">
+  <p class="ov" style="margin:0 0 9px">Étape 1 sur 5</p>
+  <h1 style="margin:0 0 10px;font-size:31px;font-weight:600;letter-spacing:-0.035em">Quelle question posez-vous à vos données ?</h1>
+  <p class="cp" style="margin:0;font-size:13.5px">Tout le reste en découle : les modèles proposés, les
+   contrôles de qualité, la façon de lire les résultats. Vous pourrez changer d'avis à tout moment.</p>
+ </div>
+
+ <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:18px">
+
+  <!-- pilier 1 -->
+  <div class="pil hv">
+   <div class="glow" style="background:radial-gradient(circle,oklch(0.79 0.15 78 / .28),transparent 70%)"></div>
+   <div style="position:relative">
+    <div class="ic" style="background:oklch(0.79 0.15 78 / .16)">
+     <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--ac)" stroke-width="1.9"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></svg></div>
+    <p class="ov" style="margin:0 0 5px;color:var(--ac)">Apprentissage supervisé</p>
+    <h2 style="margin:0 0 6px;font-size:19px;font-weight:600;letter-spacing:-0.02em">J'ai des exemples avec la réponse</h2>
+    <p class="cp" style="margin:0 0 18px;line-height:1.6">Vos données contiennent déjà la colonne que vous
+     voulez prédire sur de futurs cas.</p>
+
+    <div style="display:flex;flex-direction:column;gap:8px">
+     <div class="task hv">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="var(--ac)" stroke-width="1.9" style="flex-shrink:0;margin-top:2px"><path d="M3 17l6-6 4 4 8-8"/><path d="M21 7v5h-5"/></svg>
+      <div style="flex:1"><strong style="font-size:13.5px">Prédire un nombre</strong>
+       <p class="cp" style="margin:3px 0 0;font-size:12px">Un prix, une résistance, une durée, un volume.</p>
+       <p class="mini"><span class="n" style="color:var(--ac)">régression</span> · 9 modèles · intervalles de confiance</p></div>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--mu)" stroke-width="2.4" style="margin-top:4px"><path d="m9 18 6-6-6-6"/></svg></div>
+
+     <div class="task">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="var(--ac)" stroke-width="1.9" style="flex-shrink:0;margin-top:2px"><path d="M12 3v18M3 12h18"/><circle cx="12" cy="12" r="9"/></svg>
+      <div style="flex:1"><strong style="font-size:13.5px">Prédire une catégorie</strong>
+       <p class="cp" style="margin:3px 0 0;font-size:12px">Conforme ou non, client qui part ou reste, type de défaut.</p>
+       <p class="mini"><span class="n" style="color:var(--ac)">classification</span> · 9 modèles · probabilités calibrées</p></div>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--mu)" stroke-width="2.4" style="margin-top:4px"><path d="m9 18 6-6-6-6"/></svg></div>
+    </div>
+
+    <div style="margin-top:16px;padding-top:14px;border-top:1px solid oklch(1 0 0 / .06)">
+     <p class="cp" style="margin:0;font-size:11.5px"><strong style="color:var(--tx)">Il vous faut :</strong>
+      un tableau, une ligne par cas, une colonne « réponse » remplie. Environ 300 lignes minimum,
+      1 000 pour un résultat solide.</p></div>
+   </div></div>
+
+  <!-- pilier 2 -->
+  <div class="pil">
+   <div class="glow" style="background:radial-gradient(circle,oklch(0.56 0.16 300 / .26),transparent 70%)"></div>
+   <div style="position:relative">
+    <div class="ic" style="background:oklch(0.56 0.16 300 / .18)">
+     <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="oklch(0.78 0.13 300)" stroke-width="1.9"><circle cx="7" cy="8" r="3"/><circle cx="17" cy="7" r="3"/><circle cx="12" cy="17" r="3"/><path d="M9.4 9.9 11 14.4M15.2 9.3 13.4 14.6"/></svg></div>
+    <p class="ov" style="margin:0 0 5px;color:oklch(0.78 0.13 300)">Apprentissage non supervisé</p>
+    <h2 style="margin:0 0 6px;font-size:19px;font-weight:600;letter-spacing:-0.02em">Je n'ai pas la réponse, je cherche une structure</h2>
+    <p class="cp" style="margin:0 0 18px;line-height:1.6">Personne n'a étiqueté vos données. Vous voulez
+     savoir ce qu'elles contiennent.</p>
+
+    <div style="display:flex;flex-direction:column;gap:8px">
+     <div class="task">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="oklch(0.78 0.13 300)" stroke-width="1.9" style="flex-shrink:0;margin-top:2px"><circle cx="8" cy="8" r="4"/><circle cx="17" cy="16" r="4"/></svg>
+      <div style="flex:1"><strong style="font-size:13.5px">Regrouper ce qui se ressemble</strong>
+       <p class="cp" style="margin:3px 0 0;font-size:12px">Segments de clients, familles de produits, profils d'usage.</p>
+       <p class="mini"><span class="n" style="color:oklch(0.78 0.13 300)">clustering</span> · 4 algorithmes · nombre de groupes suggéré</p></div>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--mu)" stroke-width="2.4" style="margin-top:4px"><path d="m9 18 6-6-6-6"/></svg></div>
+
+     <div class="task">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="oklch(0.78 0.13 300)" stroke-width="1.9" style="flex-shrink:0;margin-top:2px"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></svg>
+      <div style="flex:1"><strong style="font-size:13.5px">Repérer ce qui sort de l'ordinaire</strong>
+       <p class="cp" style="margin:3px 0 0;font-size:12px">Transactions suspectes, pannes naissantes, saisies aberrantes.</p>
+       <p class="mini"><span class="n" style="color:oklch(0.78 0.13 300)">détection d'anomalies</span> · seuil réglable · score par ligne</p></div>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--mu)" stroke-width="2.4" style="margin-top:4px"><path d="m9 18 6-6-6-6"/></svg></div>
+
+     <div class="task">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="oklch(0.78 0.13 300)" stroke-width="1.9" style="flex-shrink:0;margin-top:2px"><path d="M4 20 20 4M4 4l6 6M14 14l6 6"/></svg>
+      <div style="flex:1"><strong style="font-size:13.5px">Résumer beaucoup de colonnes en deux axes</strong>
+       <p class="cp" style="margin:3px 0 0;font-size:12px">Voir sur un plan des données à 40 dimensions.</p>
+       <p class="mini"><span class="n" style="color:oklch(0.78 0.13 300)">réduction de dimension</span> · ACP, UMAP, t-SNE</p></div>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--mu)" stroke-width="2.4" style="margin-top:4px"><path d="m9 18 6-6-6-6"/></svg></div>
+    </div>
+
+    <div style="margin-top:16px;padding-top:14px;border-top:1px solid oklch(1 0 0 / .06)">
+     <p class="cp" style="margin:0;font-size:11.5px"><strong style="color:var(--tx)">Il vous faut :</strong>
+      un tableau numérique. Aucune colonne « réponse » n'est nécessaire — c'est justement l'intérêt.</p></div>
+   </div></div>
+
+  <!-- pilier 3 -->
+  <div class="pil">
+   <div class="glow" style="background:radial-gradient(circle,oklch(0.62 0.14 220 / .26),transparent 70%)"></div>
+   <div style="position:relative">
+    <div class="ic" style="background:oklch(0.62 0.14 220 / .18)">
+     <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--inf)" stroke-width="1.9"><rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="m3 15 5-4 4 3 3-2 6 5"/><circle cx="8.5" cy="8.5" r="1.5"/></svg></div>
+    <p class="ov" style="margin:0 0 5px;color:var(--inf)">Vision par ordinateur</p>
+    <h2 style="margin:0 0 6px;font-size:19px;font-weight:600;letter-spacing:-0.02em">Mes données sont des images</h2>
+    <p class="cp" style="margin:0 0 18px;line-height:1.6">Photos de pièces, radios, captures d'écran,
+     images satellite.</p>
+
+    <div style="display:flex;flex-direction:column;gap:8px">
+     <div class="task">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="var(--inf)" stroke-width="1.9" style="flex-shrink:0;margin-top:2px"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><path d="M14 17.5h7"/></svg>
+      <div style="flex:1"><strong style="font-size:13.5px">Trier des images en catégories</strong>
+       <p class="cp" style="margin:3px 0 0;font-size:12px">Un dossier par catégorie et le modèle apprend à les distinguer.</p>
+       <p class="mini"><span class="n" style="color:var(--inf)">classification d'images</span> · 7 architectures · Grad-CAM</p></div>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--mu)" stroke-width="2.4" style="margin-top:4px"><path d="m9 18 6-6-6-6"/></svg></div>
+
+     <div class="task">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="var(--inf)" stroke-width="1.9" style="flex-shrink:0;margin-top:2px"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5M11 8v6M8 11h6"/></svg>
+      <div style="flex:1"><strong style="font-size:13.5px">Repérer les pièces anormales</strong>
+       <p class="cp" style="margin:3px 0 0;font-size:12px">Vous n'avez que des pièces saines ? Cela suffit.</p>
+       <p class="mini"><span class="n" style="color:var(--inf)">anomalie visuelle</span> · sans étiquette · carte de chaleur</p></div>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--mu)" stroke-width="2.4" style="margin-top:4px"><path d="m9 18 6-6-6-6"/></svg></div>
+
+     <div class="task dis">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="var(--mu)" stroke-width="1.9" style="flex-shrink:0;margin-top:2px"><rect x="3" y="3" width="18" height="18" rx="2.5"/><rect x="7" y="7" width="6" height="5" rx="1"/></svg>
+      <div style="flex:1"><strong style="font-size:13.5px">Localiser des objets dans l'image</strong>
+       <p class="cp" style="margin:3px 0 0;font-size:12px">Encadrer chaque défaut plutôt que juger l'image entière.</p>
+       <p class="mini">bientôt disponible</p></div></div>
+    </div>
+
+    <div style="margin-top:16px;padding-top:14px;border-top:1px solid oklch(1 0 0 / .06)">
+     <p class="cp" style="margin:0;font-size:11.5px"><strong style="color:var(--tx)">Il vous faut :</strong>
+      un dossier compressé, un sous-dossier par catégorie. Environ 100 images par catégorie
+      minimum. Formats JPG, PNG, BMP.</p></div>
+   </div></div>
+ </div>
+
+ <!-- aide au choix -->
+ <div class="pane2 glass" style="margin-top:20px;padding:19px 22px;display:flex;gap:20px;align-items:center">
+  <div style="width:38px;height:38px;border-radius:12px;background:oklch(0.75 0.10 222 / .16);
+   display:flex;align-items:center;justify-content:center;flex-shrink:0">
+   <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--inf)" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3M12 17h.01"/></svg></div>
+  <div style="flex:1">
+   <strong style="font-size:14.5px">Le test qui tranche en dix secondes</strong>
+   <p class="cp" style="margin:5px 0 0;max-width:900px;line-height:1.6">Ouvrez votre fichier.
+    <strong style="color:var(--tx)">Y a-t-il une colonne qui contient déjà la réponse que vous voudriez
+    obtenir automatiquement demain ?</strong> Si oui → supervisé. Si non, et que vous cherchez à comprendre
+    ce qu'il y a dedans → non supervisé. Si votre fichier est un dossier d'images → vision.</p></div>
+  <button class="btn bs" style="flex-shrink:0">Voir 6 exemples concrets</button>
+ </div>
+</div>
+
+</div>
+</x-dc>
+</body></html>

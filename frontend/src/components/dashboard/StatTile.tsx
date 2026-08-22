@@ -131,19 +131,19 @@ export function StatTile({
       <ColorIconBadge icon={icon} color={color} size="sm" />
       <div className="flex items-stretch divide-x divide-border">
         <div className="pr-3 min-w-0">
-          <p className={`text-title tabular-nums leading-none ${split[0].color ? accentValueTextClass(split[0].color) : "text-foreground"}`}>
+          <p className={`text-h2 tabular-nums leading-none ${split[0].color ? accentValueTextClass(split[0].color) : "text-foreground"}`}>
             {displaySplitA ?? "—"}
           </p>
           <p className="text-caption text-muted-foreground mt-1.5">{split[0].label}</p>
         </div>
         <div className="px-3 min-w-0">
-          <p className={`text-title tabular-nums leading-none ${split[1].color ? accentValueTextClass(split[1].color) : "text-foreground"}`}>
+          <p className={`text-h2 tabular-nums leading-none ${split[1].color ? accentValueTextClass(split[1].color) : "text-foreground"}`}>
             {displaySplitB ?? "—"}
           </p>
           <p className="text-caption text-muted-foreground mt-1.5">{split[1].label}</p>
         </div>
         <div className="pl-3 min-w-0">
-          <p className={`text-title tabular-nums leading-none ${split[2].color ? accentValueTextClass(split[2].color) : "text-foreground"}`}>
+          <p className={`text-h2 tabular-nums leading-none ${split[2].color ? accentValueTextClass(split[2].color) : "text-foreground"}`}>
             {displaySplitC ?? "—"}
           </p>
           <p className="text-caption text-muted-foreground mt-1.5">{split[2].label}</p>
@@ -154,7 +154,7 @@ export function StatTile({
     <div className="p-4 space-y-2">
       <ColorIconBadge icon={icon} color={color} size="sm" />
       <div className="flex items-baseline gap-2">
-        <p className="text-display text-foreground tabular-nums leading-none">{displayValue ?? "—"}</p>
+        <p className="text-h1 text-foreground tabular-nums leading-none">{displayValue ?? "—"}</p>
         {trend && (
           <span
             className={`inline-flex items-center gap-0.5 text-caption tabular-nums flex-shrink-0 ${

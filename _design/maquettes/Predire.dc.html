@@ -1,0 +1,268 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><script src="./support.js"></script></head><body>
+<x-dc><helmet><style>
+@import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,600;12..96,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+:root{
+ --canvas:oklch(0.145 0.008 60); --surf:oklch(0.192 0.009 60); --raise:oklch(0.235 0.010 60);
+ --bd:oklch(0.315 0.012 60); --tx:oklch(0.960 0.004 80); --mu:oklch(0.705 0.013 70);
+ --ac:oklch(0.790 0.150 78); --acs:oklch(0.700 0.150 62);
+ --ok:oklch(0.740 0.140 158); --wa:oklch(0.810 0.135 92); --da:oklch(0.680 0.190 27); --inf:oklch(0.750 0.100 222);
+ --gl:oklch(0.99 0.01 70 / .045); --gl2:oklch(0.99 0.01 70 / .075);
+ --hl:inset 0 1px 0 oklch(1 0 0 / .07);
+ --r1:10px; --r2:16px; --r3:22px;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--canvas);color:var(--tx);
+ font-family:"IBM Plex Sans",ui-sans-serif,system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+h1,h2,h3,.dsp{font-family:"Bricolage Grotesque","IBM Plex Sans",ui-sans-serif,sans-serif}
+a{color:var(--ac);text-decoration:none} a:hover{color:oklch(0.86 0.14 80)}
+.n{font-family:"IBM Plex Mono",ui-monospace,monospace;font-variant-numeric:tabular-nums;letter-spacing:-0.01em}
+.ov{font-size:10.5px;font-weight:600;letter-spacing:.11em;text-transform:uppercase;color:var(--mu)}
+.cp{font-size:12.5px;color:var(--mu);line-height:1.5}
+/* verre */
+.glass{background:var(--gl);backdrop-filter:blur(22px) saturate(150%);
+ -webkit-backdrop-filter:blur(22px) saturate(150%);border:1px solid oklch(1 0 0 / .085);
+ box-shadow:var(--hl),0 18px 44px oklch(0 0 0 / .42)}
+.pane{background:linear-gradient(180deg,oklch(0.235 0.010 60 / .92),oklch(0.205 0.009 60 / .92));
+ border:1px solid var(--bd);border-radius:var(--r2);box-shadow:var(--hl)}
+.pane.hv{border-color:oklch(0.79 0.15 78 / .38);
+ box-shadow:var(--hl),0 0 0 1px oklch(0.79 0.15 78 / .13),0 16px 38px oklch(0 0 0 / .45);
+ transform:translateY(-2px)}
+.btn{display:inline-flex;align-items:center;gap:8px;height:36px;padding:0 15px;border-radius:var(--r1);
+ font-size:13.5px;font-weight:500;border:1px solid transparent;font-family:inherit}
+.bp{background:var(--ac);color:oklch(0.16 0.02 65);font-weight:600}
+.bs{background:oklch(1 0 0 / .05);color:var(--tx);border-color:var(--bd)}
+.tag{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:500;padding:3px 9px;border-radius:99px}
+:root{--s1:#ffc75a;--s2:#007eb0;--s3:#56c9a2;--s4:#dd5da1;--s5:#f2efb4;--s6:#d8625c}
+.hd{height:56px;border-bottom:1px solid var(--bd);display:flex;align-items:center;padding:0 26px;gap:12px;font-size:12.5px;color:var(--mu)}
+.wrap{padding:26px 30px}
+.pane2{background:linear-gradient(180deg,oklch(0.235 0.010 60 / .92),oklch(0.205 0.009 60 / .92));
+ border:1px solid var(--bd);border-radius:var(--r2);box-shadow:var(--hl)}
+/* --- coquille applicative : rail + barre haute --- */
+.rail{width:60px;display:flex;flex-direction:column;align-items:center;gap:5px;padding:14px 0;
+ border-radius:var(--r3);position:absolute;left:18px;top:18px;bottom:18px;z-index:3}
+.ri{width:38px;height:38px;border-radius:11px;display:flex;align-items:center;justify-content:center;color:var(--mu)}
+.ri.on{background:oklch(0.79 0.15 78 / .15);color:var(--ac);box-shadow:inset 0 0 0 1px oklch(0.79 0.15 78 / .28)}
+.ri.hov{background:oklch(1 0 0 / .06);color:var(--tx)}
+.top{height:56px;border-radius:var(--r2);display:flex;align-items:center;padding:0 8px 0 18px;gap:14px;
+ position:absolute;left:96px;right:22px;top:22px;z-index:2}
+.body{position:absolute;left:96px;right:22px;top:96px;bottom:22px;overflow:hidden}
+/* --- segments, onglets --- */
+.seg{display:flex;background:oklch(0 0 0 / .28);border-radius:9px;padding:3px;gap:2px}
+.sgi{padding:5px 12px;border-radius:7px;font-size:12.5px;color:var(--mu);font-weight:500}
+.sgi.on{background:oklch(1 0 0 / .085);color:var(--tx);box-shadow:var(--hl)}
+.tb{display:flex;gap:24px;border-bottom:1px solid var(--bd)}
+.tbi{padding:10px 1px;font-size:13px;font-weight:500;color:var(--mu);border-bottom:2px solid transparent}
+.tbi.on{color:var(--tx);border-bottom-color:var(--ac)}
+/* --- tableaux --- */
+table{width:100%;border-collapse:collapse}
+th{font-size:10.5px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--mu);
+ text-align:left;padding:0 16px 10px;white-space:nowrap}
+td{padding:13px 16px;font-size:13.5px;border-top:1px solid oklch(1 0 0 / .05);vertical-align:middle}
+tr.hov td{background:oklch(1 0 0 / .035)}
+tr.sel td{background:oklch(0.79 0.15 78 / .07);box-shadow:inset 3px 0 0 var(--ac)}
+/* --- micro-graphiques --- */
+.sp{display:flex;align-items:flex-end;gap:2.5px;height:26px}
+.sp i{width:4px;border-radius:1.5px;background:oklch(0.79 0.15 78 / .32)}
+.sp i.hi{background:var(--ac)}
+.bar{height:7px;border-radius:99px;background:oklch(0 0 0 / .32);overflow:hidden}
+.bar i{display:block;height:100%;border-radius:99px;background:var(--ac)}
+/* --- formulaires --- */
+.fld{height:38px;border:1px solid var(--bd);border-radius:var(--r1);background:oklch(0 0 0 / .22);
+ display:flex;align-items:center;padding:0 12px;font-size:13.5px;color:var(--tx);gap:8px}
+.fld.foc{border-color:var(--ac);box-shadow:0 0 0 3px oklch(0.79 0.15 78 / .16)}
+.fld .ph{color:oklch(0.55 0.012 70)}
+.lb{font-size:12px;font-weight:500;color:var(--mu);display:block;margin-bottom:6px}
+.hint{font-size:11.5px;color:oklch(0.60 0.012 70);margin:6px 0 0;line-height:1.5}
+.sw{width:36px;height:20px;border-radius:99px;background:oklch(0 0 0 / .38);position:relative;flex-shrink:0}
+.sw i{position:absolute;width:15px;height:15px;border-radius:50%;background:var(--mu);top:2.5px;left:2.5px}
+.sw.on{background:var(--ac)}.sw.on i{left:18.5px;background:oklch(0.16 0.02 65)}
+/* --- cartes de choix --- */
+.ch{border:1px solid var(--bd);border-radius:var(--r2);padding:15px 16px;background:oklch(1 0 0 / .018)}
+.ch.on{border-color:var(--ac);background:oklch(0.79 0.15 78 / .08);box-shadow:0 0 0 1px oklch(0.79 0.15 78 / .3)}
+.ch.hv{border-color:oklch(0.79 0.15 78 / .35);background:oklch(1 0 0 / .04);transform:translateY(-2px)}
+/* --- pastilles d'étape --- */
+.stp{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--mu)}
+.stpn{width:22px;height:22px;border-radius:50%;border:1px solid var(--bd);display:flex;align-items:center;
+ justify-content:center;font-size:11px;font-weight:600}
+.stp.done .stpn{background:oklch(0.74 0.14 158 / .18);border-color:transparent;color:var(--ok)}
+.stp.on{color:var(--tx);font-weight:600}
+.stp.on .stpn{background:var(--ac);border-color:transparent;color:oklch(0.16 0.02 65)}
+/* --- divers --- */
+.kpi{font-family:"IBM Plex Mono",monospace;font-variant-numeric:tabular-nums;letter-spacing:-0.03em;font-weight:500}
+.gd{display:grid;gap:16px}
+.sect{font-size:15px;font-weight:600;letter-spacing:-0.015em;margin:0}
+.info{border-left:2px solid var(--inf);background:oklch(0.75 0.10 222 / .07);padding:11px 14px;
+ border-radius:0 var(--r1) var(--r1) 0;font-size:12.5px;line-height:1.55;color:oklch(0.88 0.03 222)}
+.warnb{border-left:2px solid var(--wa);background:oklch(0.81 0.135 92 / .07);padding:11px 14px;
+ border-radius:0 var(--r1) var(--r1) 0;font-size:12.5px;line-height:1.55;color:oklch(0.90 0.05 92)}
+
+.wf{display:flex;align-items:center;gap:11px;padding:9px 0;font-size:12.5px}
+.wf .nm{width:126px;color:var(--mu);flex-shrink:0}
+.wf .track{flex:1;height:22px;position:relative}
+.wf .track .zero{position:absolute;left:50%;top:-3px;bottom:-3px;width:1px;background:oklch(1 0 0 / .16)}
+.wf .track i{position:absolute;height:13px;top:4.5px;border-radius:3px}
+.wf .vl{width:66px;text-align:right;font-family:"IBM Plex Mono",monospace;font-size:12px}
+</style></helmet>
+<div style="width:1512px;height:990px;background:var(--canvas);position:relative;overflow:hidden;font-size:14px">
+
+<div style="position:absolute;width:820px;height:820px;left:-160px;top:-320px;border-radius:50%;
+    background:radial-gradient(circle,oklch(0.74 0.14 158 / .12),transparent 66%);filter:blur(30px)"></div>
+  <div style="position:absolute;width:700px;height:700px;right:-180px;bottom:-320px;border-radius:50%;
+    background:radial-gradient(circle,oklch(0.70 0.15 62 / .12),transparent 68%);filter:blur(30px)"></div>
+  <div style="position:absolute;inset:0;opacity:.5;background-image:
+    linear-gradient(oklch(1 0 0 / .014) 1px,transparent 1px),
+    linear-gradient(90deg,oklch(1 0 0 / .014) 1px,transparent 1px);background-size:56px 56px"></div>
+<div class="rail glass">
+    <div style="width:34px;height:34px;border-radius:11px;background:linear-gradient(150deg,var(--ac),oklch(0.62 0.17 40));
+      display:flex;align-items:center;justify-content:center;color:oklch(0.16 0.02 65);font-weight:700;font-size:15px;
+      font-family:'Bricolage Grotesque',sans-serif;margin-bottom:12px">D</div>
+    <div class="ri"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="3" width="7" height="9" rx="2"/><rect x="14" y="3" width="7" height="5" rx="2"/><rect x="14" y="12" width="7" height="9" rx="2"/><rect x="3" y="16" width="7" height="5" rx="2"/></svg></div>
+    <div class="ri"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><ellipse cx="12" cy="6" rx="8" ry="3"/><path d="M4 6v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6"/></svg></div>
+    <div class="ri"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 3a3 3 0 0 0-3 3 3 3 0 0 0-2 5.2A3 3 0 0 0 9 17a3 3 0 0 0 6 0 3 3 0 0 0 2-5.8A3 3 0 0 0 15 6a3 3 0 0 0-3-3z"/></svg></div>
+    <div class="ri"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="m3 15 5-4 4 3 3-2 6 5"/></svg></div>
+    <div class="ri on"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5M12 8v4l3 2"/></svg></div>
+    <div style="margin-top:auto;display:flex;flex-direction:column;align-items:center;gap:5px">
+      <div class="ri"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="9"/><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3M12 17h.01"/></svg></div>
+      <div style="width:32px;height:32px;border-radius:50%;background:oklch(0.42 0.08 60);color:var(--tx);
+        display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600">M</div>
+    </div>
+  </div>
+<div class="top glass">
+    <div style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--mu);min-width:0"><span style="color:var(--tx)">Prédire</span><span style="opacity:.4">/</span>
+      <span class="cp">modèle <span style="color:var(--tx)">résistance_28j</span></span>
+      <span class="tag" style="background:oklch(0.74 0.14 158 / .15);color:var(--ok)">v3 · production</span>
+      </div>
+    <div style="margin-left:auto;display:flex;align-items:center;gap:9px"><div class="seg"><span class="sgi on">Une valeur</span><span class="sgi">Un fichier</span><span class="sgi">Par API</span></div>
+      <button class="btn bs" style="height:32px;font-size:12.5px">Historique des prédictions</button></div>
+  </div>
+
+<div class="body">
+ <div style="display:flex;align-items:flex-end;justify-content:space-between;margin-bottom:18px">
+  <div>
+   <p class="ov" style="margin:0 0 7px">Prédiction unitaire · 8 variables attendues</p>
+   <h1 style="margin:0;font-size:26px;font-weight:600;letter-spacing:-0.03em">Estimer une résistance</h1></div>
+  <p class="cp" style="margin:0;text-align:right;max-width:300px">Chaque prédiction est enregistrée avec la
+   version du modèle utilisée — vous pourrez toujours retrouver comment un chiffre a été obtenu.</p>
+ </div>
+
+ <div style="display:grid;grid-template-columns:1fr 1.25fr;gap:18px">
+  <!-- formulaire -->
+  <div class="pane2" style="padding:20px 22px">
+   <h3 class="sect" style="margin-bottom:14px">Composition de la gâchée</h3>
+   <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px 16px">
+    <div><span class="lb">Ciment (kg/m³)</span><div class="fld foc"><span class="n">340</span></div>
+     <p class="hint">Vu de 180 à 520 à l'entraînement</p></div>
+    <div><span class="lb">Eau (kg/m³)</span><div class="fld"><span class="n">168</span></div>
+     <p class="hint">Vu de 120 à 250</p></div>
+    <div><span class="lb">Granulat fin (kg/m³)</span><div class="fld"><span class="n">780</span></div>
+     <p class="hint">Vu de 590 à 990</p></div>
+    <div><span class="lb">Granulat gros (kg/m³)</span><div class="fld"><span class="n">1 020</span></div>
+     <p class="hint">Vu de 800 à 1 145</p></div>
+    <div><span class="lb">Cendres volantes (kg/m³)</span><div class="fld"><span class="n">62</span></div>
+     <p class="hint">Vu de 0 à 200</p></div>
+    <div><span class="lb">Superplastifiant (kg/m³)</span><div class="fld"><span class="n">4,8</span></div>
+     <p class="hint">Vu de 0 à 32</p></div>
+    <div><span class="lb">Laitier (kg/m³)</span>
+     <div class="fld" style="border-color:oklch(0.81 0.135 92 / .5)"><span class="n">265</span>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--wa)" stroke-width="2.2" style="margin-left:auto"><path d="M12 9v4M12 17h.01"/><circle cx="12" cy="12" r="9"/></svg></div>
+     <p class="hint" style="color:var(--wa)">Au-delà des 240 vus à l'entraînement</p></div>
+    <div><span class="lb">Chantier</span>
+     <div class="fld" style="justify-content:space-between">Nouveau (non listé)
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--mu)" stroke-width="2.4"><path d="m6 9 6 6 6-6"/></svg></div>
+     <p class="hint">Sans effet : le modèle n'utilise pas le chantier</p></div>
+   </div>
+   <div style="display:flex;gap:9px;margin-top:18px">
+    <button class="btn bs" style="flex:1;justify-content:center">Réinitialiser</button>
+    <button class="btn bp" style="flex:1.7;justify-content:center">Prédire</button></div>
+   <div class="acc" style="margin-top:16px;border-top:1px solid oklch(1 0 0 / .06);padding:13px 0 0;display:flex;align-items:center;gap:10px">
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--mu)" stroke-width="2.4"><path d="m9 18 6-6-6-6"/></svg>
+    <span style="font-size:12.5px">Prédire tout un fichier CSV d'un coup</span></div>
+  </div>
+
+  <!-- résultat -->
+  <div style="display:flex;flex-direction:column;gap:16px">
+   <div class="pane2" style="padding:22px 24px;border-color:oklch(0.79 0.15 78 / .34);
+    background:linear-gradient(150deg,oklch(0.79 0.15 78 / .09),oklch(0.215 0.010 60 / .94))">
+    <p class="ov" style="margin:0 0 9px">Résistance estimée à 28 jours</p>
+    <div style="display:flex;align-items:baseline;gap:13px">
+     <span class="kpi" style="font-size:52px;line-height:1;letter-spacing:-0.04em">44,7</span>
+     <span style="font-size:18px;color:var(--mu)">MPa</span>
+     <span class="tag" style="margin-left:auto;background:oklch(0.81 0.135 92 / .14);color:var(--wa)">confiance réduite</span></div>
+
+    <div style="margin-top:20px">
+     <div style="display:flex;justify-content:space-between;margin-bottom:7px">
+      <span class="cp">Intervalle à 90 %</span>
+      <span class="kpi" style="font-size:13px">39,1 — 50,3 MPa</span></div>
+     <div style="position:relative;height:30px">
+      <div style="position:absolute;left:0;right:0;top:12px;height:6px;border-radius:99px;background:oklch(0 0 0 / .3)"></div>
+      <div style="position:absolute;left:22%;width:44%;top:12px;height:6px;border-radius:99px;
+       background:linear-gradient(90deg,oklch(0.79 0.15 78 / .35),var(--ac),oklch(0.79 0.15 78 / .35))"></div>
+      <div style="position:absolute;left:44%;top:5px;width:2.5px;height:20px;background:var(--tx);border-radius:2px"></div>
+      <span class="n" style="position:absolute;left:0;top:-2px;font-size:10px;color:var(--mu)">20</span>
+      <span class="n" style="position:absolute;right:0;top:-2px;font-size:10px;color:var(--mu)">80</span></div>
+     <p class="cp" style="margin:9px 0 0;line-height:1.6">Sur 100 gâchées de cette composition,
+      <strong style="color:var(--tx)">90 environ</strong> tomberaient dans cet intervalle. Il est plus large
+      que d'habitude (±5,6 au lieu de ±3,2) parce que le laitier sort de la plage connue.</p></div>
+
+    <div style="display:flex;gap:11px;margin-top:16px;padding:12px 14px;border-radius:var(--r1);
+     background:oklch(0.81 0.135 92 / .08);border:1px solid oklch(0.81 0.135 92 / .24)">
+     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--wa)" stroke-width="2.2" style="flex-shrink:0;margin-top:1px"><path d="M12 9v4M12 17h.01"/><circle cx="12" cy="12" r="9"/></svg>
+     <p class="cp" style="margin:0;color:oklch(0.91 0.05 92)"><strong style="color:var(--tx)">Extrapolation.</strong>
+      265 kg de laitier dépasse le maximum vu (240). Le modèle prolonge une tendance qu'il n'a pas
+      observée. À vérifier par un essai réel avant de couler.</p></div>
+   </div>
+
+   <div class="pane2" style="padding:19px 21px">
+    <h3 class="sect" style="margin-bottom:4px">Pourquoi 44,7 et pas autre chose</h3>
+    <p class="cp" style="margin:0 0 16px">On part de la moyenne du jeu (41,2 MPa) et chaque variable de
+     votre gâchée pousse le chiffre vers le haut ou vers le bas.</p>
+
+    <div style="display:flex;justify-content:space-between;font-size:11.5px;color:var(--mu);margin-bottom:2px">
+     <span style="margin-left:126px">tire vers le bas</span><span style="margin-right:66px">tire vers le haut</span></div>
+    <div class="wf"><span class="nm">Ciment 340</span>
+     <span class="track"><span class="zero"></span><i style="left:50%;width:19%;background:var(--ok)"></i></span>
+     <span class="vl" style="color:var(--ok)">+2,9</span></div>
+    <div class="wf"><span class="nm">Superplastifiant 4,8</span>
+     <span class="track"><span class="zero"></span><i style="left:50%;width:14%;background:var(--ok)"></i></span>
+     <span class="vl" style="color:var(--ok)">+2,1</span></div>
+    <div class="wf"><span class="nm">Laitier 265</span>
+     <span class="track"><span class="zero"></span><i style="left:50%;width:11%;background:var(--ok);opacity:.6"></i></span>
+     <span class="vl" style="color:var(--ok)">+1,7</span></div>
+    <div class="wf"><span class="nm">Cendres 62</span>
+     <span class="track"><span class="zero"></span><i style="left:50%;width:4%;background:var(--ok);opacity:.5"></i></span>
+     <span class="vl" style="color:var(--ok)">+0,6</span></div>
+    <div class="wf"><span class="nm">Granulat gros 1 020</span>
+     <span class="track"><span class="zero"></span><i style="right:50%;width:3%;background:var(--da);opacity:.5"></i></span>
+     <span class="vl" style="color:var(--da)">−0,4</span></div>
+    <div class="wf"><span class="nm">Granulat fin 780</span>
+     <span class="track"><span class="zero"></span><i style="right:50%;width:6%;background:var(--da);opacity:.6"></i></span>
+     <span class="vl" style="color:var(--da)">−0,9</span></div>
+    <div class="wf"><span class="nm">Eau 168</span>
+     <span class="track"><span class="zero"></span><i style="right:50%;width:17%;background:var(--da)"></i></span>
+     <span class="vl" style="color:var(--da)">−2,5</span></div>
+
+    <div style="display:flex;align-items:center;gap:11px;padding:13px 0 0;margin-top:8px;
+     border-top:1px solid oklch(1 0 0 / .09);font-size:13px">
+     <span style="width:126px;color:var(--mu)">Point de départ</span>
+     <span style="flex:1;color:var(--mu)" class="cp">moyenne du jeu d'entraînement</span>
+     <span class="kpi" style="width:66px;text-align:right">41,2</span></div>
+    <div style="display:flex;align-items:center;gap:11px;padding:9px 0 0;font-size:13px;font-weight:600">
+     <span style="width:126px">Total</span>
+     <span style="flex:1"></span>
+     <span class="kpi" style="width:66px;text-align:right;color:var(--ac);font-size:15px">44,7</span></div>
+
+    <p class="hint" style="margin-top:14px">Ces contributions sont calculées par SHAP sur cette prédiction
+     précise — elles ne sont pas les importances générales du modèle. Une même variable peut pousser vers
+     le haut ici et vers le bas ailleurs.</p>
+    <div style="display:flex;gap:9px;margin-top:13px">
+     <button class="btn bs" style="height:32px;font-size:12.5px;flex:1;justify-content:center">Comparer à une autre gâchée</button>
+     <button class="btn bs" style="height:32px;font-size:12.5px;flex:1;justify-content:center">Exporter en PDF</button></div>
+   </div>
+  </div>
+ </div>
+</div>
+
+</div>
+</x-dc>
+</body></html>

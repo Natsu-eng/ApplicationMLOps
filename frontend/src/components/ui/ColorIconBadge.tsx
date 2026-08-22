@@ -2,41 +2,48 @@ import type { LucideIcon } from "lucide-react";
 
 /** Palette d'accent partagée pour les badges d'icône colorés (dashboard,
  * cartes dataset, listes) — une teinte par identité (Lot E1-ter), jamais
- * une magnitude : familles Tailwind -600 déjà utilisées ailleurs dans
- * l'app (règle E1-bis, lisible sur fond clair), fond -50/bordure -200
- * assortis comme les badges de garde-fous (DataQualityWarnings). Le bleu
- * n'est PAS le dégradé de marque (réservé aux moments de marque, voir
- * index.css) — c'est un bleu Tailwind ordinaire au même titre que les
- * trois autres teintes. */
+ * une magnitude. Refonte visuelle (Lot UI, Fondations) : les anciennes
+ * classes Tailwind par teinte/magnitude fixe sont interdites partout
+ * (SPEC-UI.md §1 — « un composant lit un jeton, point ») — chaque identité
+ * pointe maintenant vers l'une des 4 premières couleurs de série
+ * (--s1…--s4, alias Tailwind accent-1…4 posés dans index.css), calculées
+ * pour rester distinguables entre elles dans les 5 thèmes ET en
+ * deutéranopie simulée (_design/tune.py). "rose" reste réservé aux états
+ * d'échec/danger réels (jamais dans la rotation déterministe). */
 export type AccentColor = "blue" | "teal" | "amber" | "violet" | "rose" | "neutral";
 
 const ACCENT_CLASSES: Record<AccentColor, string> = {
-  blue: "bg-blue-50 border-blue-200 text-blue-600",
-  teal: "bg-teal-50 border-teal-200 text-teal-600",
-  amber: "bg-amber-50 border-amber-200 text-amber-600",
-  violet: "bg-violet-50 border-violet-200 text-violet-600",
+  blue: "bg-accent-1/12 border-accent-1/35 text-accent-1",
+  teal: "bg-accent-3/12 border-accent-3/35 text-accent-3",
+  amber: "bg-accent-2/12 border-accent-2/35 text-accent-2",
+  violet: "bg-accent-4/12 border-accent-4/35 text-accent-4",
   // Réservé aux états d'échec/danger (ex. entraînement en échec) — jamais
   // dans la rotation déterministe par id (ACCENT_ROTATION ci-dessous),
   // seulement quand la couleur doit refléter un statut réel.
-  rose: "bg-rose-50 border-rose-200 text-rose-600",
+  rose: "bg-destructive/12 border-destructive/35 text-destructive",
   // Pour une identité qui n'appartient à AUCUN pilier (ex. StatTile
   // "Datasets"/"Membres" du dashboard, Lot 2A correctif 3) — jamais dans
   // ACCENT_ROTATION : une teinte de pilier mal assignée est pire qu'une
-  // absence de teinte. Tokens `muted`/`border` du thème, pas un gris
-  // Tailwind brut — même convention que `Badge variant="neutral"`.
+  // absence de teinte.
   neutral: "bg-muted border-border text-muted-foreground",
 };
 
 // Fond de CARTE (pas de l'icône) — lavage très léger de la même teinte, pour
 // que la carte entière porte l'identité de couleur, pas seulement le badge
 // d'icône (retour explicite : des cartes toutes blanches manquaient de vie).
-// Reste largement en dessous du contraste du texte slate-900/700 dessus.
+// Opacité de fond volontairement faible (/4, pas /8) : --s1…--s4 sont des
+// couleurs de SÉRIE, pas des pastels calibrés comme --canvas/--surface —
+// certaines sont sombres même en thème clair (ex. --s1 en ivoire est un bleu profond),
+// et une teinte trop appuyée assombrit assez le fond pour faire tomber
+// `text-muted-foreground` sous 4,5:1 (mesuré à 4,47:1 en ivoire à /8,
+// _design/JOURNAL.md Lot 1) — /4 reste visuellement identifiable sans
+// jamais s'approcher du seuil sur aucun des 5 thèmes.
 const ACCENT_SURFACE_CLASSES: Record<AccentColor, string> = {
-  blue: "bg-blue-50/70 border-blue-100",
-  teal: "bg-teal-50/70 border-teal-100",
-  amber: "bg-amber-50/70 border-amber-100",
-  violet: "bg-violet-50/70 border-violet-100",
-  rose: "bg-rose-50/70 border-rose-100",
+  blue: "bg-accent-1/4 border-accent-1/20",
+  teal: "bg-accent-3/4 border-accent-3/20",
+  amber: "bg-accent-2/4 border-accent-2/20",
+  violet: "bg-accent-4/4 border-accent-4/20",
+  rose: "bg-destructive/4 border-destructive/20",
   neutral: "bg-muted/70 border-border",
 };
 
@@ -44,15 +51,16 @@ export function accentSurfaceClass(color: AccentColor): string {
   return ACCENT_SURFACE_CLASSES[color];
 }
 
-// Encre forte (valeur chiffrée mise en avant, ex. tuile de métrique) — un
-// ton au-dessus du texte -600 des badges, pour porter un gros nombre en gras
-// sans sacrifier le contraste.
+// Encre forte (valeur chiffrée mise en avant, ex. tuile de métrique) — même
+// teinte que le badge, pleine opacité, pour porter un gros nombre en gras
+// sans sacrifier le contraste (chaque --s1…--s4 est calculé ≥4,5:1 en texte
+// sur les 3 fonds du thème, voir themes.css).
 const ACCENT_VALUE_TEXT_CLASSES: Record<AccentColor, string> = {
-  blue: "text-blue-700",
-  teal: "text-teal-700",
-  amber: "text-amber-700",
-  violet: "text-violet-700",
-  rose: "text-rose-700",
+  blue: "text-accent-1",
+  teal: "text-accent-3",
+  amber: "text-accent-2",
+  violet: "text-accent-4",
+  rose: "text-destructive",
   neutral: "text-foreground",
 };
 
@@ -61,13 +69,13 @@ export function accentValueTextClass(color: AccentColor): string {
 }
 
 // Bordure pleine teinte (liseré fin, ex. carte de métrique) — un cran plus
-// affirmé que la bordure -100/-200 des badges/surfaces.
+// affirmé que la bordure /20 des surfaces.
 const ACCENT_BORDER_CLASSES: Record<AccentColor, string> = {
-  blue: "border-blue-200",
-  teal: "border-teal-200",
-  amber: "border-amber-200",
-  violet: "border-violet-200",
-  rose: "border-rose-200",
+  blue: "border-accent-1/35",
+  teal: "border-accent-3/35",
+  amber: "border-accent-2/35",
+  violet: "border-accent-4/35",
+  rose: "border-destructive/35",
   neutral: "border-border",
 };
 

@@ -277,7 +277,7 @@ export default function Dashboard() {
       <div className="grid gap-6 lg:grid-cols-2 mb-10">
         <Card className="p-5">
           <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
-            <h2 className="text-subtitle text-foreground">Dernière activité</h2>
+            <h2 className="text-h3 text-foreground">Dernière activité</h2>
             <div className="flex items-center gap-3 text-xs">
               <Link to="/training/history" className="text-primary hover:text-primary/80">
                 Historique supervisé
@@ -407,7 +407,7 @@ export default function Dashboard() {
 
         <Card className="p-5">
           <div className="flex items-center justify-between mb-4">
-            <h2 className="text-subtitle text-foreground">Derniers datasets</h2>
+            <h2 className="text-h3 text-foreground">Derniers datasets</h2>
             <Link to="/datasets" className="text-xs text-primary hover:text-primary/80">
               Voir tout
             </Link>

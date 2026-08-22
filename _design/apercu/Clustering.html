@@ -1,0 +1,315 @@
+<!doctype html><html lang="fr"><head><meta charset="utf-8">
+<title>DataLab — Clustering</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,600;12..96,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+:root{
+ --canvas:oklch(0.145 0.008 60); --surf:oklch(0.192 0.009 60); --raise:oklch(0.235 0.010 60);
+ --bd:oklch(0.315 0.012 60); --tx:oklch(0.960 0.004 80); --mu:oklch(0.705 0.013 70);
+ --ac:oklch(0.790 0.150 78); --acs:oklch(0.700 0.150 62);
+ --ok:oklch(0.740 0.140 158); --wa:oklch(0.810 0.135 92); --da:oklch(0.680 0.190 27); --inf:oklch(0.750 0.100 222);
+ --gl:oklch(0.99 0.01 70 / .045); --gl2:oklch(0.99 0.01 70 / .075);
+ --hl:inset 0 1px 0 oklch(1 0 0 / .07);
+ --r1:10px; --r2:16px; --r3:22px;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--canvas);color:var(--tx);
+ font-family:"IBM Plex Sans",ui-sans-serif,system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+h1,h2,h3,.dsp{font-family:"Bricolage Grotesque","IBM Plex Sans",ui-sans-serif,sans-serif}
+a{color:var(--ac);text-decoration:none} a:hover{color:oklch(0.86 0.14 80)}
+.n{font-family:"IBM Plex Mono",ui-monospace,monospace;font-variant-numeric:tabular-nums;letter-spacing:-0.01em}
+.ov{font-size:10.5px;font-weight:600;letter-spacing:.11em;text-transform:uppercase;color:var(--mu)}
+.cp{font-size:12.5px;color:var(--mu);line-height:1.5}
+/* verre */
+.glass{background:var(--gl);backdrop-filter:blur(22px) saturate(150%);
+ -webkit-backdrop-filter:blur(22px) saturate(150%);border:1px solid oklch(1 0 0 / .085);
+ box-shadow:var(--hl),0 18px 44px oklch(0 0 0 / .42)}
+.pane{background:linear-gradient(180deg,oklch(0.235 0.010 60 / .92),oklch(0.205 0.009 60 / .92));
+ border:1px solid var(--bd);border-radius:var(--r2);box-shadow:var(--hl)}
+.pane.hv{border-color:oklch(0.79 0.15 78 / .38);
+ box-shadow:var(--hl),0 0 0 1px oklch(0.79 0.15 78 / .13),0 16px 38px oklch(0 0 0 / .45);
+ transform:translateY(-2px)}
+.btn{display:inline-flex;align-items:center;gap:8px;height:36px;padding:0 15px;border-radius:var(--r1);
+ font-size:13.5px;font-weight:500;border:1px solid transparent;font-family:inherit}
+.bp{background:var(--ac);color:oklch(0.16 0.02 65);font-weight:600}
+.bs{background:oklch(1 0 0 / .05);color:var(--tx);border-color:var(--bd)}
+.tag{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:500;padding:3px 9px;border-radius:99px}
+:root{--s1:#ffc75a;--s2:#007eb0;--s3:#56c9a2;--s4:#dd5da1;--s5:#f2efb4;--s6:#d8625c}
+.hd{height:56px;border-bottom:1px solid var(--bd);display:flex;align-items:center;padding:0 26px;gap:12px;font-size:12.5px;color:var(--mu)}
+.wrap{padding:26px 30px}
+.pane2{background:linear-gradient(180deg,oklch(0.235 0.010 60 / .92),oklch(0.205 0.009 60 / .92));
+ border:1px solid var(--bd);border-radius:var(--r2);box-shadow:var(--hl)}
+/* --- coquille applicative : rail + barre haute --- */
+.rail{width:60px;display:flex;flex-direction:column;align-items:center;gap:5px;padding:14px 0;
+ border-radius:var(--r3);position:absolute;left:18px;top:18px;bottom:18px;z-index:3}
+.ri{width:38px;height:38px;border-radius:11px;display:flex;align-items:center;justify-content:center;color:var(--mu)}
+.ri.on{background:oklch(0.79 0.15 78 / .15);color:var(--ac);box-shadow:inset 0 0 0 1px oklch(0.79 0.15 78 / .28)}
+.ri.hov{background:oklch(1 0 0 / .06);color:var(--tx)}
+.top{height:56px;border-radius:var(--r2);display:flex;align-items:center;padding:0 8px 0 18px;gap:14px;
+ position:absolute;left:96px;right:22px;top:22px;z-index:2}
+.body{position:absolute;left:96px;right:22px;top:96px;bottom:22px;overflow:hidden}
+/* --- segments, onglets --- */
+.seg{display:flex;background:oklch(0 0 0 / .28);border-radius:9px;padding:3px;gap:2px}
+.sgi{padding:5px 12px;border-radius:7px;font-size:12.5px;color:var(--mu);font-weight:500}
+.sgi.on{background:oklch(1 0 0 / .085);color:var(--tx);box-shadow:var(--hl)}
+.tb{display:flex;gap:24px;border-bottom:1px solid var(--bd)}
+.tbi{padding:10px 1px;font-size:13px;font-weight:500;color:var(--mu);border-bottom:2px solid transparent}
+.tbi.on{color:var(--tx);border-bottom-color:var(--ac)}
+/* --- tableaux --- */
+table{width:100%;border-collapse:collapse}
+th{font-size:10.5px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--mu);
+ text-align:left;padding:0 16px 10px;white-space:nowrap}
+td{padding:13px 16px;font-size:13.5px;border-top:1px solid oklch(1 0 0 / .05);vertical-align:middle}
+tr.hov td{background:oklch(1 0 0 / .035)}
+tr.sel td{background:oklch(0.79 0.15 78 / .07);box-shadow:inset 3px 0 0 var(--ac)}
+/* --- micro-graphiques --- */
+.sp{display:flex;align-items:flex-end;gap:2.5px;height:26px}
+.sp i{width:4px;border-radius:1.5px;background:oklch(0.79 0.15 78 / .32)}
+.sp i.hi{background:var(--ac)}
+.bar{height:7px;border-radius:99px;background:oklch(0 0 0 / .32);overflow:hidden}
+.bar i{display:block;height:100%;border-radius:99px;background:var(--ac)}
+/* --- formulaires --- */
+.fld{height:38px;border:1px solid var(--bd);border-radius:var(--r1);background:oklch(0 0 0 / .22);
+ display:flex;align-items:center;padding:0 12px;font-size:13.5px;color:var(--tx);gap:8px}
+.fld.foc{border-color:var(--ac);box-shadow:0 0 0 3px oklch(0.79 0.15 78 / .16)}
+.fld .ph{color:oklch(0.55 0.012 70)}
+.lb{font-size:12px;font-weight:500;color:var(--mu);display:block;margin-bottom:6px}
+.hint{font-size:11.5px;color:oklch(0.60 0.012 70);margin:6px 0 0;line-height:1.5}
+.sw{width:36px;height:20px;border-radius:99px;background:oklch(0 0 0 / .38);position:relative;flex-shrink:0}
+.sw i{position:absolute;width:15px;height:15px;border-radius:50%;background:var(--mu);top:2.5px;left:2.5px}
+.sw.on{background:var(--ac)}.sw.on i{left:18.5px;background:oklch(0.16 0.02 65)}
+/* --- cartes de choix --- */
+.ch{border:1px solid var(--bd);border-radius:var(--r2);padding:15px 16px;background:oklch(1 0 0 / .018)}
+.ch.on{border-color:var(--ac);background:oklch(0.79 0.15 78 / .08);box-shadow:0 0 0 1px oklch(0.79 0.15 78 / .3)}
+.ch.hv{border-color:oklch(0.79 0.15 78 / .35);background:oklch(1 0 0 / .04);transform:translateY(-2px)}
+/* --- pastilles d'étape --- */
+.stp{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--mu)}
+.stpn{width:22px;height:22px;border-radius:50%;border:1px solid var(--bd);display:flex;align-items:center;
+ justify-content:center;font-size:11px;font-weight:600}
+.stp.done .stpn{background:oklch(0.74 0.14 158 / .18);border-color:transparent;color:var(--ok)}
+.stp.on{color:var(--tx);font-weight:600}
+.stp.on .stpn{background:var(--ac);border-color:transparent;color:oklch(0.16 0.02 65)}
+/* --- divers --- */
+.kpi{font-family:"IBM Plex Mono",monospace;font-variant-numeric:tabular-nums;letter-spacing:-0.03em;font-weight:500}
+.gd{display:grid;gap:16px}
+.sect{font-size:15px;font-weight:600;letter-spacing:-0.015em;margin:0}
+.info{border-left:2px solid var(--inf);background:oklch(0.75 0.10 222 / .07);padding:11px 14px;
+ border-radius:0 var(--r1) var(--r1) 0;font-size:12.5px;line-height:1.55;color:oklch(0.88 0.03 222)}
+.warnb{border-left:2px solid var(--wa);background:oklch(0.81 0.135 92 / .07);padding:11px 14px;
+ border-radius:0 var(--r1) var(--r1) 0;font-size:12.5px;line-height:1.55;color:oklch(0.90 0.05 92)}
+
+.seg-c{display:flex;height:26px;border-radius:7px;overflow:hidden;border:1px solid oklch(1 0 0 / .07)}
+.seg-c i{display:block;height:100%}
+.pers{display:flex;gap:13px;padding:13px 0;border-bottom:1px solid oklch(1 0 0 / .055)}
+.pers:last-child{border-bottom:none}
+.dot{width:10px;height:10px;border-radius:3px;flex-shrink:0;margin-top:4px}
+.trait{display:flex;align-items:center;gap:8px;font-size:12px;margin-top:5px}
+.trait .tn{width:104px;color:var(--mu);flex-shrink:0}
+.trait .tb{flex:1;height:5px;border-radius:99px;background:oklch(0 0 0 / .3);position:relative}
+.trait .tb i{position:absolute;height:100%;border-radius:99px;top:0}
+
+body{display:flex;justify-content:center;padding:24px}</style>
+</head><body>
+<div style="width:1512px;height:1090px;background:var(--canvas);position:relative;overflow:hidden;font-size:14px">
+
+<div style="position:absolute;width:820px;height:820px;left:-160px;top:-320px;border-radius:50%;
+    background:radial-gradient(circle,oklch(0.56 0.16 300 / .14),transparent 66%);filter:blur(30px)"></div>
+  <div style="position:absolute;width:700px;height:700px;right:-180px;bottom:-320px;border-radius:50%;
+    background:radial-gradient(circle,oklch(0.70 0.15 62 / .11),transparent 68%);filter:blur(30px)"></div>
+  <div style="position:absolute;inset:0;opacity:.5;background-image:
+    linear-gradient(oklch(1 0 0 / .014) 1px,transparent 1px),
+    linear-gradient(90deg,oklch(1 0 0 / .014) 1px,transparent 1px);background-size:56px 56px"></div>
+<div class="rail glass">
+    <div style="width:34px;height:34px;border-radius:11px;background:linear-gradient(150deg,var(--ac),oklch(0.62 0.17 40));
+      display:flex;align-items:center;justify-content:center;color:oklch(0.16 0.02 65);font-weight:700;font-size:15px;
+      font-family:'Bricolage Grotesque',sans-serif;margin-bottom:12px">D</div>
+    <div class="ri"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="3" width="7" height="9" rx="2"/><rect x="14" y="3" width="7" height="5" rx="2"/><rect x="14" y="12" width="7" height="9" rx="2"/><rect x="3" y="16" width="7" height="5" rx="2"/></svg></div>
+    <div class="ri"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><ellipse cx="12" cy="6" rx="8" ry="3"/><path d="M4 6v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6"/></svg></div>
+    <div class="ri on"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 3a3 3 0 0 0-3 3 3 3 0 0 0-2 5.2A3 3 0 0 0 9 17a3 3 0 0 0 6 0 3 3 0 0 0 2-5.8A3 3 0 0 0 15 6a3 3 0 0 0-3-3z"/></svg></div>
+    <div class="ri"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="m3 15 5-4 4 3 3-2 6 5"/></svg></div>
+    <div class="ri"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5M12 8v4l3 2"/></svg></div>
+    <div style="margin-top:auto;display:flex;flex-direction:column;align-items:center;gap:5px">
+      <div class="ri"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="9"/><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3M12 17h.01"/></svg></div>
+      <div style="width:32px;height:32px;border-radius:50%;background:oklch(0.42 0.08 60);color:var(--tx);
+        display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600">M</div>
+    </div>
+  </div>
+<div class="top glass">
+    <div style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--mu);min-width:0"><a href="#" style="display:flex;align-items:center;gap:6px;color:var(--mu)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m15 18-6-6 6-6"/></svg>Historique</a>
+      <span style="opacity:.4">/</span><span style="color:var(--tx)">clients_2026 · segmentation</span>
+      <span class="tag" style="background:oklch(0.56 0.16 300 / .18);color:oklch(0.80 0.12 300)">non supervisé · K-Means</span>
+      </div>
+    <div style="margin-left:auto;display:flex;align-items:center;gap:9px"><button class="btn bs" style="height:32px;font-size:12.5px">Renommer les groupes</button>
+      <button class="btn bs" style="height:32px;font-size:12.5px">Exporter avec l'étiquette</button>
+      <button class="btn bp" style="height:32px;font-size:12.5px">Classer de nouveaux clients</button></div>
+  </div>
+
+<div class="body">
+ <div style="display:flex;align-items:flex-end;justify-content:space-between">
+  <div>
+   <p class="ov" style="margin:0 0 7px">Regroupement · 4 820 clients répartis en 4 groupes</p>
+   <h1 style="margin:0;font-size:27px;font-weight:600;letter-spacing:-0.03em">Vos clients se regroupent naturellement en 4 profils</h1>
+  </div>
+  <div style="text-align:right">
+   <p class="ov" style="margin:0 0 4px">Qualité de séparation</p>
+   <p class="kpi" style="margin:0;font-size:22px;color:var(--ok)">0,61 <span style="font-size:12px;color:var(--mu);font-family:'IBM Plex Sans'">silhouette</span></p></div>
+ </div>
+
+ <div class="info" style="margin:16px 0 18px;max-width:none">
+  <strong>Comment lire ceci.</strong> Aucune de ces catégories ne vous a été fournie : l'algorithme les a
+  trouvées seul, en rapprochant les clients qui se ressemblent. Un score de silhouette au-dessus de 0,5
+  signifie que les groupes sont réellement distincts et pas un découpage arbitraire d'un nuage continu.
+  <strong>Les noms ci-dessous sont des propositions</strong> — c'est vous qui savez ce que ces profils
+  représentent dans votre métier.
+ </div>
+
+ <div style="display:grid;grid-template-columns:1.15fr 1fr;gap:16px">
+  <!-- projection -->
+  <div class="pane2" style="padding:18px 20px">
+   <div style="display:flex;align-items:center;margin-bottom:4px">
+    <h3 class="sect">Carte des groupes</h3>
+    <div class="seg" style="margin-left:auto;transform:scale(.92);transform-origin:right"><span class="sgi on">UMAP</span><span class="sgi">t-SNE</span><span class="sgi">ACP</span></div></div>
+   <p class="cp" style="margin:0 0 12px">Chaque point est un client. Deux points proches = deux clients aux
+    comportements semblables. Les axes n'ont pas d'unité : seules les distances comptent.</p>
+   <svg width="100%" height="332" viewBox="0 0 620 332" style="display:block">
+    <rect width="620" height="332" fill="oklch(0 0 0 / .18)" rx="12"/>
+    <g stroke="oklch(1 0 0 / .04)">
+     <line x1="0" y1="83" x2="620" y2="83"/><line x1="0" y1="166" x2="620" y2="166"/><line x1="0" y1="249" x2="620" y2="249"/>
+     <line x1="155" y1="0" x2="155" y2="332"/><line x1="310" y1="0" x2="310" y2="332"/><line x1="465" y1="0" x2="465" y2="332"/></g>
+    <g fill="var(--s1)" opacity=".78">
+     <circle cx="128" cy="88" r="3"/><circle cx="145" cy="72" r="3"/><circle cx="160" cy="96" r="3"/><circle cx="112" cy="105" r="3"/>
+     <circle cx="141" cy="110" r="3"/><circle cx="171" cy="79" r="3"/><circle cx="122" cy="66" r="3"/><circle cx="156" cy="120" r="3"/>
+     <circle cx="99" cy="86" r="3"/><circle cx="178" cy="103" r="3"/><circle cx="134" cy="94" r="3"/><circle cx="163" cy="60" r="3"/>
+     <circle cx="107" cy="122" r="3"/><circle cx="186" cy="88" r="3"/><circle cx="150" cy="132" r="3"/><circle cx="119" cy="78" r="3"/></g>
+    <g fill="var(--s2)" opacity=".8">
+     <circle cx="404" cy="83" r="3"/><circle cx="428" cy="66" r="3"/><circle cx="446" cy="95" r="3"/><circle cx="390" cy="104" r="3"/>
+     <circle cx="418" cy="112" r="3"/><circle cx="462" cy="76" r="3"/><circle cx="380" cy="70" r="3"/><circle cx="440" cy="126" r="3"/>
+     <circle cx="472" cy="104" r="3"/><circle cx="412" cy="52" r="3"/><circle cx="396" cy="132" r="3"/><circle cx="486" cy="88" r="3"/>
+     <circle cx="456" cy="46" r="3"/><circle cx="368" cy="92" r="3"/></g>
+    <g fill="var(--s3)" opacity=".8">
+     <circle cx="196" cy="238" r="3"/><circle cx="218" cy="222" r="3"/><circle cx="236" cy="252" r="3"/><circle cx="182" cy="260" r="3"/>
+     <circle cx="210" cy="268" r="3"/><circle cx="254" cy="232" r="3"/><circle cx="172" cy="228" r="3"/><circle cx="230" cy="282" r="3"/>
+     <circle cx="264" cy="260" r="3"/><circle cx="204" cy="208" r="3"/><circle cx="188" cy="288" r="3"/><circle cx="278" cy="244" r="3"/>
+     <circle cx="248" cy="204" r="3"/><circle cx="160" cy="248" r="3"/><circle cx="222" cy="246" r="3"/></g>
+    <g fill="var(--s4)" opacity=".8">
+     <circle cx="446" cy="236" r="3"/><circle cx="468" cy="220" r="3"/><circle cx="486" cy="250" r="3"/><circle cx="432" cy="258" r="3"/>
+     <circle cx="460" cy="266" r="3"/><circle cx="504" cy="230" r="3"/><circle cx="422" cy="226" r="3"/><circle cx="480" cy="280" r="3"/>
+     <circle cx="514" cy="258" r="3"/><circle cx="454" cy="206" r="3"/><circle cx="438" cy="286" r="3"/><circle cx="528" cy="242" r="3"/></g>
+    <g fill="oklch(0.50 0.01 70)" opacity=".55">
+     <circle cx="300" cy="160" r="2.5"/><circle cx="322" cy="176" r="2.5"/><circle cx="288" cy="182" r="2.5"/><circle cx="336" cy="152" r="2.5"/>
+     <circle cx="310" cy="196" r="2.5"/></g>
+    <g font-size="11" font-weight="600" font-family="IBM Plex Sans">
+     <text x="128" y="42" fill="var(--s1)">Fidèles réguliers</text>
+     <text x="380" y="32" fill="var(--s2)">Gros paniers rares</text>
+     <text x="164" y="188" fill="var(--s3)">Nouveaux prudents</text>
+     <text x="424" y="188" fill="var(--s4)">Sensibles aux promos</text></g>
+    <g><rect x="286" y="126" width="72" height="16" rx="4" fill="oklch(0.20 0.01 60 / .9)" stroke="oklch(1 0 0 / .1)"/>
+     <text x="322" y="138" fill="var(--mu)" font-size="9.5" text-anchor="middle" font-family="IBM Plex Sans">31 indécis</text></g>
+   </svg>
+   <p class="cp" style="margin:11px 0 0">
+    <strong style="color:var(--tx)">31 clients au centre</strong> n'appartiennent clairement à aucun groupe
+    (silhouette &lt; 0,1). Ils ne sont pas une erreur : ils sont à cheval. Vous pouvez les traiter à part.</p>
+  </div>
+
+  <!-- profils -->
+  <div class="pane2" style="padding:18px 20px">
+   <div style="display:flex;align-items:center;margin-bottom:12px">
+    <h3 class="sect">Ce qui distingue chaque groupe</h3>
+    <a href="#" style="margin-left:auto;font-size:12px">Tout déplier</a></div>
+
+   <div class="pers">
+    <span class="dot" style="background:var(--s1)"></span>
+    <div style="flex:1">
+     <div style="display:flex;align-items:baseline;gap:9px">
+      <strong style="font-size:14px">Fidèles réguliers</strong>
+      <span class="kpi" style="font-size:12px;color:var(--mu)">1 640 clients · 34 %</span>
+      <span class="tag" style="margin-left:auto;background:oklch(0.74 0.14 158 / .14);color:var(--ok)">silhouette 0,68</span></div>
+     <p class="cp" style="margin:5px 0 0">Achètent souvent, montants modestes, présents depuis plus de 2 ans.</p>
+     <div class="trait"><span class="tn">Fréquence</span><span class="tb"><i style="width:88%;background:var(--s1)"></i></span><span class="kpi" style="width:44px;text-align:right">+2,1σ</span></div>
+     <div class="trait"><span class="tn">Panier moyen</span><span class="tb"><i style="width:26%;background:var(--s1);opacity:.55"></i></span><span class="kpi" style="width:44px;text-align:right">−0,7σ</span></div>
+     <div class="trait"><span class="tn">Ancienneté</span><span class="tb"><i style="width:79%;background:var(--s1)"></i></span><span class="kpi" style="width:44px;text-align:right">+1,6σ</span></div></div></div>
+
+   <div class="pers">
+    <span class="dot" style="background:var(--s2)"></span>
+    <div style="flex:1">
+     <div style="display:flex;align-items:baseline;gap:9px">
+      <strong style="font-size:14px">Gros paniers rares</strong>
+      <span class="kpi" style="font-size:12px;color:var(--mu)">712 clients · 15 %</span>
+      <span class="tag" style="margin-left:auto;background:oklch(0.74 0.14 158 / .14);color:var(--ok)">silhouette 0,72</span></div>
+     <p class="cp" style="margin:5px 0 0">Deux ou trois commandes par an, mais les plus élevées du fichier.</p>
+     <div class="trait"><span class="tn">Fréquence</span><span class="tb"><i style="width:12%;background:var(--s2);opacity:.55"></i></span><span class="kpi" style="width:44px;text-align:right">−1,3σ</span></div>
+     <div class="trait"><span class="tn">Panier moyen</span><span class="tb"><i style="width:94%;background:var(--s2)"></i></span><span class="kpi" style="width:44px;text-align:right">+2,8σ</span></div>
+     <div class="trait"><span class="tn">Ancienneté</span><span class="tb"><i style="width:48%;background:var(--s2);opacity:.7"></i></span><span class="kpi" style="width:44px;text-align:right">+0,1σ</span></div></div></div>
+
+   <div class="pers">
+    <span class="dot" style="background:var(--s3)"></span>
+    <div style="flex:1">
+     <div style="display:flex;align-items:baseline;gap:9px">
+      <strong style="font-size:14px">Nouveaux prudents</strong>
+      <span class="kpi" style="font-size:12px;color:var(--mu)">1 205 clients · 25 %</span>
+      <span class="tag" style="margin-left:auto;background:oklch(0.81 0.135 92 / .14);color:var(--wa)">silhouette 0,44</span></div>
+     <p class="cp" style="margin:5px 0 0">Moins de 6 mois, une seule commande test. Groupe le moins net —
+      normal, ils n'ont pas encore d'habitudes.</p>
+     <div class="trait"><span class="tn">Fréquence</span><span class="tb"><i style="width:8%;background:var(--s3);opacity:.55"></i></span><span class="kpi" style="width:44px;text-align:right">−1,5σ</span></div>
+     <div class="trait"><span class="tn">Panier moyen</span><span class="tb"><i style="width:38%;background:var(--s3);opacity:.7"></i></span><span class="kpi" style="width:44px;text-align:right">−0,3σ</span></div>
+     <div class="trait"><span class="tn">Ancienneté</span><span class="tb"><i style="width:6%;background:var(--s3);opacity:.55"></i></span><span class="kpi" style="width:44px;text-align:right">−1,9σ</span></div></div></div>
+
+   <div class="pers">
+    <span class="dot" style="background:var(--s4)"></span>
+    <div style="flex:1">
+     <div style="display:flex;align-items:baseline;gap:9px">
+      <strong style="font-size:14px">Sensibles aux promos</strong>
+      <span class="kpi" style="font-size:12px;color:var(--mu)">1 263 clients · 26 %</span>
+      <span class="tag" style="margin-left:auto;background:oklch(0.74 0.14 158 / .14);color:var(--ok)">silhouette 0,59</span></div>
+     <p class="cp" style="margin:5px 0 0">N'achètent qu'en période de remise. Taux de retour le plus élevé.</p>
+     <div class="trait"><span class="tn">Fréquence</span><span class="tb"><i style="width:56%;background:var(--s4);opacity:.8"></i></span><span class="kpi" style="width:44px;text-align:right">+0,4σ</span></div>
+     <div class="trait"><span class="tn">Part en promo</span><span class="tb"><i style="width:91%;background:var(--s4)"></i></span><span class="kpi" style="width:44px;text-align:right">+2,4σ</span></div>
+     <div class="trait"><span class="tn">Taux de retour</span><span class="tb"><i style="width:73%;background:var(--s4);opacity:.9"></i></span><span class="kpi" style="width:44px;text-align:right">+1,4σ</span></div></div></div>
+  </div>
+ </div>
+
+ <!-- choix de k -->
+ <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px">
+  <div class="pane2" style="padding:17px 19px">
+   <h3 class="sect" style="margin-bottom:4px">Pourquoi 4 groupes et pas 3 ou 7 ?</h3>
+   <p class="cp" style="margin:0 0 12px">Nous avons testé de 2 à 10. Le score de silhouette culmine à 4.</p>
+   <svg width="100%" height="104" viewBox="0 0 560 104">
+    <g stroke="oklch(1 0 0 / .06)"><line x1="30" y1="12" x2="560" y2="12"/><line x1="30" y1="48" x2="560" y2="48"/><line x1="30" y1="84" x2="560" y2="84"/></g>
+    <text x="0" y="16" fill="var(--mu)" font-size="9" font-family="IBM Plex Mono">0,70</text>
+    <text x="0" y="88" fill="var(--mu)" font-size="9" font-family="IBM Plex Mono">0,20</text>
+    <polyline points="70,62 128,44 186,20 244,34 302,50 360,58 418,66 476,72 534,78"
+     fill="none" stroke="var(--ac)" stroke-width="2.2"/>
+    <circle cx="186" cy="20" r="5.5" fill="var(--ac)" stroke="var(--canvas)" stroke-width="2"/>
+    <g fill="var(--mu)" font-size="9.5" font-family="IBM Plex Mono" text-anchor="middle">
+     <text x="70" y="100">2</text><text x="128" y="100">3</text><text x="186" y="100" fill="var(--ac)" font-weight="600">4</text>
+     <text x="244" y="100">5</text><text x="302" y="100">6</text><text x="360" y="100">7</text>
+     <text x="418" y="100">8</text><text x="476" y="100">9</text><text x="534" y="100">10</text></g>
+   </svg>
+   <p class="cp" style="margin:9px 0 0">À 5 groupes, « Fidèles réguliers » se coupe en deux moitiés que rien
+    ne distingue vraiment. Vous pouvez forcer un autre nombre si votre métier l'exige.</p>
+   <button class="btn bs" style="height:32px;font-size:12.5px;margin-top:11px">Refaire avec un autre nombre</button></div>
+
+  <div class="pane2" style="padding:17px 19px">
+   <h3 class="sect" style="margin-bottom:4px">Et maintenant ?</h3>
+   <p class="cp" style="margin:0 0 13px">Un regroupement n'a de valeur que s'il change une décision.</p>
+   <div style="display:flex;flex-direction:column;gap:9px">
+    <div class="ch hv" style="display:flex;gap:12px;align-items:flex-start;padding:13px 15px">
+     <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="var(--ac)" stroke-width="1.9" style="margin-top:1px;flex-shrink:0"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+     <div><strong style="font-size:13.5px">Exporter le fichier étiqueté</strong>
+      <p class="cp" style="margin:3px 0 0">4 820 lignes + une colonne <span class="n">groupe</span> et une colonne
+       <span class="n">silhouette</span>, pour votre CRM.</p></div></div>
+    <div class="ch" style="display:flex;gap:12px;align-items:flex-start;padding:13px 15px">
+     <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="var(--ac)" stroke-width="1.9" style="margin-top:1px;flex-shrink:0"><path d="M12 3a3 3 0 0 0-3 3 3 3 0 0 0-2 5.2A3 3 0 0 0 9 17a3 3 0 0 0 6 0 3 3 0 0 0 2-5.8A3 3 0 0 0 15 6a3 3 0 0 0-3-3z"/></svg>
+     <div><strong style="font-size:13.5px">Classer les futurs clients</strong>
+      <p class="cp" style="margin:3px 0 0">Le modèle est figé : un nouveau client reçoit son groupe en une
+       requête, sans tout recalculer.</p></div></div>
+    <div class="ch" style="display:flex;gap:12px;align-items:flex-start;padding:13px 15px">
+     <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="var(--ac)" stroke-width="1.9" style="margin-top:1px;flex-shrink:0"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></svg>
+     <div><strong style="font-size:13.5px">Prédire une valeur par groupe</strong>
+      <p class="cp" style="margin:3px 0 0">Réutiliser <span class="n">groupe</span> comme variable dans un
+       modèle supervisé — le chiffre d'affaires à 12 mois, par exemple.</p></div></div>
+   </div></div>
+ </div>
+</div>
+
+</div>
+</body></html>

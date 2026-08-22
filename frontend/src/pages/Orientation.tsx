@@ -29,7 +29,7 @@ export default function Orientation() {
         <p className="text-xs uppercase tracking-widest text-primary font-semibold mb-2">
           Bonjour, {user.nom.split(" ")[0]}
         </p>
-        <h1 className="text-title text-foreground mb-2">Que voulez-vous faire aujourd'hui ?</h1>
+        <h1 className="text-h2 text-foreground mb-2">Que voulez-vous faire aujourd'hui ?</h1>
         <p className="text-sm text-muted-foreground">Choisissez votre objectif — la méthode s'adapte, pas l'inverse.</p>
         {/* Raccourci, jamais une redirection automatique (Lot 7, §J.1) —
             l'écran d'orientation reste un vrai choix à chaque visite. */}

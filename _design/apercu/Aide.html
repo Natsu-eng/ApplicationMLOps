@@ -1,0 +1,316 @@
+<!doctype html><html lang="fr"><head><meta charset="utf-8">
+<title>DataLab — Aide</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,600;12..96,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+:root{
+ --canvas:oklch(0.145 0.008 60); --surf:oklch(0.192 0.009 60); --raise:oklch(0.235 0.010 60);
+ --bd:oklch(0.315 0.012 60); --tx:oklch(0.960 0.004 80); --mu:oklch(0.705 0.013 70);
+ --ac:oklch(0.790 0.150 78); --acs:oklch(0.700 0.150 62);
+ --ok:oklch(0.740 0.140 158); --wa:oklch(0.810 0.135 92); --da:oklch(0.680 0.190 27); --inf:oklch(0.750 0.100 222);
+ --gl:oklch(0.99 0.01 70 / .045); --gl2:oklch(0.99 0.01 70 / .075);
+ --hl:inset 0 1px 0 oklch(1 0 0 / .07);
+ --r1:10px; --r2:16px; --r3:22px;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--canvas);color:var(--tx);
+ font-family:"IBM Plex Sans",ui-sans-serif,system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+h1,h2,h3,.dsp{font-family:"Bricolage Grotesque","IBM Plex Sans",ui-sans-serif,sans-serif}
+a{color:var(--ac);text-decoration:none} a:hover{color:oklch(0.86 0.14 80)}
+.n{font-family:"IBM Plex Mono",ui-monospace,monospace;font-variant-numeric:tabular-nums;letter-spacing:-0.01em}
+.ov{font-size:10.5px;font-weight:600;letter-spacing:.11em;text-transform:uppercase;color:var(--mu)}
+.cp{font-size:12.5px;color:var(--mu);line-height:1.5}
+/* verre */
+.glass{background:var(--gl);backdrop-filter:blur(22px) saturate(150%);
+ -webkit-backdrop-filter:blur(22px) saturate(150%);border:1px solid oklch(1 0 0 / .085);
+ box-shadow:var(--hl),0 18px 44px oklch(0 0 0 / .42)}
+.pane{background:linear-gradient(180deg,oklch(0.235 0.010 60 / .92),oklch(0.205 0.009 60 / .92));
+ border:1px solid var(--bd);border-radius:var(--r2);box-shadow:var(--hl)}
+.pane.hv{border-color:oklch(0.79 0.15 78 / .38);
+ box-shadow:var(--hl),0 0 0 1px oklch(0.79 0.15 78 / .13),0 16px 38px oklch(0 0 0 / .45);
+ transform:translateY(-2px)}
+.btn{display:inline-flex;align-items:center;gap:8px;height:36px;padding:0 15px;border-radius:var(--r1);
+ font-size:13.5px;font-weight:500;border:1px solid transparent;font-family:inherit}
+.bp{background:var(--ac);color:oklch(0.16 0.02 65);font-weight:600}
+.bs{background:oklch(1 0 0 / .05);color:var(--tx);border-color:var(--bd)}
+.tag{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:500;padding:3px 9px;border-radius:99px}
+:root{--s1:#ffc75a;--s2:#007eb0;--s3:#56c9a2;--s4:#dd5da1;--s5:#f2efb4;--s6:#d8625c}
+.hd{height:56px;border-bottom:1px solid var(--bd);display:flex;align-items:center;padding:0 26px;gap:12px;font-size:12.5px;color:var(--mu)}
+.wrap{padding:26px 30px}
+.pane2{background:linear-gradient(180deg,oklch(0.235 0.010 60 / .92),oklch(0.205 0.009 60 / .92));
+ border:1px solid var(--bd);border-radius:var(--r2);box-shadow:var(--hl)}
+/* --- coquille applicative : rail + barre haute --- */
+.rail{width:60px;display:flex;flex-direction:column;align-items:center;gap:5px;padding:14px 0;
+ border-radius:var(--r3);position:absolute;left:18px;top:18px;bottom:18px;z-index:3}
+.ri{width:38px;height:38px;border-radius:11px;display:flex;align-items:center;justify-content:center;color:var(--mu)}
+.ri.on{background:oklch(0.79 0.15 78 / .15);color:var(--ac);box-shadow:inset 0 0 0 1px oklch(0.79 0.15 78 / .28)}
+.ri.hov{background:oklch(1 0 0 / .06);color:var(--tx)}
+.top{height:56px;border-radius:var(--r2);display:flex;align-items:center;padding:0 8px 0 18px;gap:14px;
+ position:absolute;left:96px;right:22px;top:22px;z-index:2}
+.body{position:absolute;left:96px;right:22px;top:96px;bottom:22px;overflow:hidden}
+/* --- segments, onglets --- */
+.seg{display:flex;background:oklch(0 0 0 / .28);border-radius:9px;padding:3px;gap:2px}
+.sgi{padding:5px 12px;border-radius:7px;font-size:12.5px;color:var(--mu);font-weight:500}
+.sgi.on{background:oklch(1 0 0 / .085);color:var(--tx);box-shadow:var(--hl)}
+.tb{display:flex;gap:24px;border-bottom:1px solid var(--bd)}
+.tbi{padding:10px 1px;font-size:13px;font-weight:500;color:var(--mu);border-bottom:2px solid transparent}
+.tbi.on{color:var(--tx);border-bottom-color:var(--ac)}
+/* --- tableaux --- */
+table{width:100%;border-collapse:collapse}
+th{font-size:10.5px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--mu);
+ text-align:left;padding:0 16px 10px;white-space:nowrap}
+td{padding:13px 16px;font-size:13.5px;border-top:1px solid oklch(1 0 0 / .05);vertical-align:middle}
+tr.hov td{background:oklch(1 0 0 / .035)}
+tr.sel td{background:oklch(0.79 0.15 78 / .07);box-shadow:inset 3px 0 0 var(--ac)}
+/* --- micro-graphiques --- */
+.sp{display:flex;align-items:flex-end;gap:2.5px;height:26px}
+.sp i{width:4px;border-radius:1.5px;background:oklch(0.79 0.15 78 / .32)}
+.sp i.hi{background:var(--ac)}
+.bar{height:7px;border-radius:99px;background:oklch(0 0 0 / .32);overflow:hidden}
+.bar i{display:block;height:100%;border-radius:99px;background:var(--ac)}
+/* --- formulaires --- */
+.fld{height:38px;border:1px solid var(--bd);border-radius:var(--r1);background:oklch(0 0 0 / .22);
+ display:flex;align-items:center;padding:0 12px;font-size:13.5px;color:var(--tx);gap:8px}
+.fld.foc{border-color:var(--ac);box-shadow:0 0 0 3px oklch(0.79 0.15 78 / .16)}
+.fld .ph{color:oklch(0.55 0.012 70)}
+.lb{font-size:12px;font-weight:500;color:var(--mu);display:block;margin-bottom:6px}
+.hint{font-size:11.5px;color:oklch(0.60 0.012 70);margin:6px 0 0;line-height:1.5}
+.sw{width:36px;height:20px;border-radius:99px;background:oklch(0 0 0 / .38);position:relative;flex-shrink:0}
+.sw i{position:absolute;width:15px;height:15px;border-radius:50%;background:var(--mu);top:2.5px;left:2.5px}
+.sw.on{background:var(--ac)}.sw.on i{left:18.5px;background:oklch(0.16 0.02 65)}
+/* --- cartes de choix --- */
+.ch{border:1px solid var(--bd);border-radius:var(--r2);padding:15px 16px;background:oklch(1 0 0 / .018)}
+.ch.on{border-color:var(--ac);background:oklch(0.79 0.15 78 / .08);box-shadow:0 0 0 1px oklch(0.79 0.15 78 / .3)}
+.ch.hv{border-color:oklch(0.79 0.15 78 / .35);background:oklch(1 0 0 / .04);transform:translateY(-2px)}
+/* --- pastilles d'étape --- */
+.stp{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--mu)}
+.stpn{width:22px;height:22px;border-radius:50%;border:1px solid var(--bd);display:flex;align-items:center;
+ justify-content:center;font-size:11px;font-weight:600}
+.stp.done .stpn{background:oklch(0.74 0.14 158 / .18);border-color:transparent;color:var(--ok)}
+.stp.on{color:var(--tx);font-weight:600}
+.stp.on .stpn{background:var(--ac);border-color:transparent;color:oklch(0.16 0.02 65)}
+/* --- divers --- */
+.kpi{font-family:"IBM Plex Mono",monospace;font-variant-numeric:tabular-nums;letter-spacing:-0.03em;font-weight:500}
+.gd{display:grid;gap:16px}
+.sect{font-size:15px;font-weight:600;letter-spacing:-0.015em;margin:0}
+.info{border-left:2px solid var(--inf);background:oklch(0.75 0.10 222 / .07);padding:11px 14px;
+ border-radius:0 var(--r1) var(--r1) 0;font-size:12.5px;line-height:1.55;color:oklch(0.88 0.03 222)}
+.warnb{border-left:2px solid var(--wa);background:oklch(0.81 0.135 92 / .07);padding:11px 14px;
+ border-radius:0 var(--r1) var(--r1) 0;font-size:12.5px;line-height:1.55;color:oklch(0.90 0.05 92)}
+
+.qa{border-top:1px solid oklch(1 0 0 / .055);padding:14px 0}
+.qa:first-of-type{border-top:none}
+.qa .q{display:flex;align-items:flex-start;gap:11px;font-size:14px;font-weight:500}
+.qa.open .q{color:var(--ac)}
+.qa .a{margin:9px 0 0 27px;font-size:12.8px;line-height:1.65;color:var(--mu)}
+.qa .a strong{color:var(--tx);font-weight:500}
+.gcard{border:1px solid var(--bd);border-radius:var(--r2);padding:16px 18px;background:oklch(1 0 0 / .018);
+ display:flex;flex-direction:column}
+.gcard.hv{border-color:oklch(0.79 0.15 78 / .35);background:oklch(1 0 0 / .045);transform:translateY(-2px)}
+.gnum{width:24px;height:24px;border-radius:8px;background:oklch(0.79 0.15 78 / .15);color:var(--ac);
+ display:flex;align-items:center;justify-content:center;font-size:11.5px;font-weight:700;
+ font-family:"IBM Plex Mono",monospace;margin-bottom:11px}
+.gloss{display:grid;grid-template-columns:186px 1fr;gap:0;padding:11px 0;border-top:1px solid oklch(1 0 0 / .05);font-size:12.8px}
+.gloss:first-of-type{border-top:none}
+
+body{display:flex;justify-content:center;padding:24px}</style>
+</head><body>
+<div style="width:1512px;height:1080px;background:var(--canvas);position:relative;overflow:hidden;font-size:14px">
+
+<div style="position:absolute;width:820px;height:820px;left:-160px;top:-320px;border-radius:50%;
+    background:radial-gradient(circle,oklch(0.70 0.15 62 / .12),transparent 66%);filter:blur(30px)"></div>
+  <div style="position:absolute;width:700px;height:700px;right:-180px;bottom:-320px;border-radius:50%;
+    background:radial-gradient(circle,oklch(0.74 0.14 158 / .10),transparent 68%);filter:blur(30px)"></div>
+  <div style="position:absolute;inset:0;opacity:.5;background-image:
+    linear-gradient(oklch(1 0 0 / .014) 1px,transparent 1px),
+    linear-gradient(90deg,oklch(1 0 0 / .014) 1px,transparent 1px);background-size:56px 56px"></div>
+<div class="rail glass">
+    <div style="width:34px;height:34px;border-radius:11px;background:linear-gradient(150deg,var(--ac),oklch(0.62 0.17 40));
+      display:flex;align-items:center;justify-content:center;color:oklch(0.16 0.02 65);font-weight:700;font-size:15px;
+      font-family:'Bricolage Grotesque',sans-serif;margin-bottom:12px">D</div>
+    <div class="ri"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="3" width="7" height="9" rx="2"/><rect x="14" y="3" width="7" height="5" rx="2"/><rect x="14" y="12" width="7" height="9" rx="2"/><rect x="3" y="16" width="7" height="5" rx="2"/></svg></div>
+    <div class="ri"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><ellipse cx="12" cy="6" rx="8" ry="3"/><path d="M4 6v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6"/></svg></div>
+    <div class="ri"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 3a3 3 0 0 0-3 3 3 3 0 0 0-2 5.2A3 3 0 0 0 9 17a3 3 0 0 0 6 0 3 3 0 0 0 2-5.8A3 3 0 0 0 15 6a3 3 0 0 0-3-3z"/></svg></div>
+    <div class="ri"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="m3 15 5-4 4 3 3-2 6 5"/></svg></div>
+    <div class="ri"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5M12 8v4l3 2"/></svg></div>
+    <div style="margin-top:auto;display:flex;flex-direction:column;align-items:center;gap:5px">
+      <div class="ri on"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="9"/><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3M12 17h.01"/></svg></div>
+      <div style="width:32px;height:32px;border-radius:50%;background:oklch(0.42 0.08 60);color:var(--tx);
+        display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600">M</div>
+    </div>
+  </div>
+<div class="top glass">
+    <div style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--mu);min-width:0"><span style="color:var(--tx)">Aide</span>
+      </div>
+    <div style="margin-left:auto;display:flex;align-items:center;gap:9px"><div class="fld" style="height:32px;width:270px;font-size:12.5px">
+       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--mu)" stroke-width="2.2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+       <span class="ph">Chercher dans l'aide…</span>
+       <span style="border:1px solid var(--bd);border-radius:5px;padding:1px 5px;font-size:10px;margin-left:auto" class="n">/</span></div>
+      <button class="btn bs" style="height:32px;font-size:12.5px">Écrire au support</button></div>
+  </div>
+
+<div class="body">
+ <div style="display:flex;align-items:flex-end;justify-content:space-between;margin-bottom:20px">
+  <div>
+   <p class="ov" style="margin:0 0 7px">Centre d'aide</p>
+   <h1 style="margin:0;font-size:27px;font-weight:600;letter-spacing:-0.03em">Comprendre ce que fait la plateforme</h1></div>
+  <p class="cp" style="margin:0;text-align:right;max-width:340px">Écrit pour quelqu'un qui connaît son métier,
+   pas le vocabulaire de l'apprentissage automatique.</p>
+ </div>
+
+ <div style="display:grid;grid-template-columns:1.35fr 1fr;gap:18px">
+  <div>
+   <!-- parcours -->
+   <div class="pane2" style="padding:20px 22px;margin-bottom:16px">
+    <div style="display:flex;align-items:center;margin-bottom:5px">
+     <h3 class="sect">Le parcours complet, en cinq étapes</h3>
+     <span class="tag" style="margin-left:auto;background:oklch(1 0 0 / .06);color:var(--mu)">≈ 20 min la première fois</span></div>
+    <p class="cp" style="margin:0 0 16px">Chaque fiche s'ouvre sur un exemple réel que vous pouvez rejouer
+     avec un jeu de démonstration.</p>
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px">
+     <div class="gcard hv"><span class="gnum">1</span>
+      <strong style="font-size:13.5px">Charger un fichier</strong>
+      <p class="cp" style="margin:5px 0 0;flex:1">Ce qu'accepte la plateforme, comment la première ligne est
+       lue, ce qui se passe si votre séparateur est un point-virgule.</p>
+      <span class="cp" style="margin-top:10px;font-size:11px;color:oklch(0.58 0.012 70)">4 min · avec vidéo</span></div>
+     <div class="gcard"><span class="gnum">2</span>
+      <strong style="font-size:13.5px">Choisir la bonne question</strong>
+      <p class="cp" style="margin:5px 0 0;flex:1">Prédire un nombre, une catégorie, regrouper, détecter.
+       Le test qui tranche en dix secondes.</p>
+      <span class="cp" style="margin-top:10px;font-size:11px;color:oklch(0.58 0.012 70)">3 min</span></div>
+     <div class="gcard"><span class="gnum">3</span>
+      <strong style="font-size:13.5px">Lire les avertissements de qualité</strong>
+      <p class="cp" style="margin:5px 0 0;flex:1">Pourquoi une colonne trop parfaite est une mauvaise
+       nouvelle, et non une bonne.</p>
+      <span class="cp" style="margin-top:10px;font-size:11px;color:oklch(0.58 0.012 70)">5 min</span></div>
+     <div class="gcard"><span class="gnum">4</span>
+      <strong style="font-size:13.5px">Interpréter le verdict</strong>
+      <p class="cp" style="margin:5px 0 0;flex:1">Les six questions auxquelles la page de résultat répond,
+       et ce qu'il faut regarder en premier.</p>
+      <span class="cp" style="margin-top:10px;font-size:11px;color:oklch(0.58 0.012 70)">6 min</span></div>
+     <div class="gcard"><span class="gnum">5</span>
+      <strong style="font-size:13.5px">Mettre en production, surveiller</strong>
+      <p class="cp" style="margin:5px 0 0;flex:1">Versions, retour arrière, alerte de dérive quand les
+       données changent.</p>
+      <span class="cp" style="margin-top:10px;font-size:11px;color:oklch(0.58 0.012 70)">4 min</span></div>
+     <div class="gcard" style="border-style:dashed;justify-content:center;align-items:center;text-align:center">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--mu)" stroke-width="1.8" style="margin-bottom:8px"><path d="m10 8 6 4-6 4V8z"/><rect x="2" y="4" width="20" height="16" rx="2.5"/></svg>
+      <strong style="font-size:13px;color:var(--mu)">Rejouer tout le parcours</strong>
+      <p class="cp" style="margin:4px 0 0;font-size:11.5px">avec le jeu de démonstration</p></div>
+    </div></div>
+
+   <!-- questions -->
+   <div class="pane2" style="padding:20px 22px">
+    <div style="display:flex;align-items:center;margin-bottom:14px">
+     <h3 class="sect">Les questions qui reviennent</h3>
+     <div class="seg" style="margin-left:auto;transform:scale(.9);transform-origin:right">
+      <span class="sgi on">Toutes</span><span class="sgi">Données</span><span class="sgi">Résultats</span><span class="sgi">Compte</span></div></div>
+
+    <div class="qa open">
+     <div class="q"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" style="margin-top:3px;flex-shrink:0"><path d="m6 9 6 6 6-6"/></svg>
+      Mon score est de 0,99. C'est excellent, non ?</div>
+     <div class="a"><strong>Presque toujours non.</strong> Un score quasi parfait sur des données réelles
+      signale d'abord une fuite : une colonne contient, directement ou indirectement, la réponse.
+      Exemple classique — une colonne <span class="n">date_de_livraison</span> pour prédire si une commande
+      sera livrée. Elle n'existe que pour les commandes livrées.<br><br>
+      La plateforme signale automatiquement toute colonne corrélée à plus de 0,98 avec la cible, mais elle
+      ne peut pas tout attraper. Le réflexe utile : <strong>« cette colonne serait-elle disponible au moment
+      où je veux faire la prédiction ? »</strong> Si la réponse est non, elle doit sortir.</div></div>
+
+    <div class="qa">
+     <div class="q"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--mu)" stroke-width="2.6" style="margin-top:3px;flex-shrink:0"><path d="m9 18 6-6-6-6"/></svg>
+      Combien de lignes me faut-il au minimum ?</div></div>
+
+    <div class="qa">
+     <div class="q"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--mu)" stroke-width="2.6" style="margin-top:3px;flex-shrink:0"><path d="m9 18 6-6-6-6"/></svg>
+      Pourquoi le score baisse quand j'active la découpe par groupe ?</div></div>
+
+    <div class="qa">
+     <div class="q"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--mu)" stroke-width="2.6" style="margin-top:3px;flex-shrink:0"><path d="m9 18 6-6-6-6"/></svg>
+      Que veut dire « intervalle à 90 % » exactement ?</div></div>
+
+    <div class="qa">
+     <div class="q"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--mu)" stroke-width="2.6" style="margin-top:3px;flex-shrink:0"><path d="m9 18 6-6-6-6"/></svg>
+      Mes données sortent-elles de la plateforme ?</div></div>
+
+    <div class="qa">
+     <div class="q"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--mu)" stroke-width="2.6" style="margin-top:3px;flex-shrink:0"><path d="m9 18 6-6-6-6"/></svg>
+      Puis-je revenir à une version précédente d'un modèle ?</div></div>
+
+    <div class="qa">
+     <div class="q"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--mu)" stroke-width="2.6" style="margin-top:3px;flex-shrink:0"><path d="m9 18 6-6-6-6"/></svg>
+      Le modèle peut-il se tromper sans que je le sache ?</div></div>
+   </div>
+  </div>
+
+  <!-- colonne droite -->
+  <div style="display:flex;flex-direction:column;gap:16px">
+   <div class="pane2" style="padding:18px 20px">
+    <div style="display:flex;align-items:center;margin-bottom:4px">
+     <h3 class="sect">Petit lexique</h3>
+     <a href="#" style="margin-left:auto;font-size:12px">Les 34 termes</a></div>
+    <p class="cp" style="margin:0 0 14px">Le vocabulaire que vous croiserez, traduit en français courant.</p>
+
+    <div class="gloss"><strong>Sur-apprentissage</strong>
+     <span class="cp">Le modèle a retenu vos exemples par cœur au lieu d'apprendre la règle. Il excelle sur
+      ce qu'il a vu et échoue sur le reste.</span></div>
+    <div class="gloss"><strong>Validation croisée</strong>
+     <span class="cp">On découpe les données en 5 paquets et on entraîne 5 fois, en changeant à chaque fois
+      le paquet mis de côté. Un score moyen vaut mieux qu'un coup de chance.</span></div>
+    <div class="gloss"><strong>Fuite de données</strong>
+     <span class="cp">Une information qui n'existera pas au moment réel de la prédiction s'est glissée dans
+      l'entraînement. C'est la cause n°1 des modèles qui déçoivent en production.</span></div>
+    <div class="gloss"><strong>R²</strong>
+     <span class="cp">Part de la variation expliquée par le modèle. 1 = parfait, 0 = pas mieux que de
+      toujours répondre la moyenne. Négatif = pire que la moyenne.</span></div>
+    <div class="gloss"><strong>SHAP</strong>
+     <span class="cp">Méthode qui répartit l'écart entre une prédiction et la moyenne, variable par variable.
+      Elle répond à « pourquoi ce chiffre-là pour ce cas-là ».</span></div>
+    <div class="gloss"><strong>Dérive</strong>
+     <span class="cp">Le monde a changé depuis l'entraînement : nouveaux fournisseurs, nouvelle saison.
+      Le modèle est toujours juste sur l'ancien monde et faux sur le nouveau.</span></div>
+   </div>
+
+   <div class="pane2" style="padding:18px 20px;border-color:oklch(0.74 0.14 158 / .28)">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--ok)" stroke-width="2.2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+     <h3 class="sect" style="color:var(--ok)">Vos données</h3></div>
+    <div style="display:flex;flex-direction:column;gap:9px">
+     <div style="display:flex;gap:9px;align-items:flex-start">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ok)" stroke-width="2.6" style="flex-shrink:0;margin-top:3px"><path d="M20 6 9 17l-5-5"/></svg>
+      <p class="cp" style="margin:0">Stockées sur l'infrastructure de votre organisation, jamais envoyées
+       à un service tiers.</p></div>
+     <div style="display:flex;gap:9px;align-items:flex-start">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ok)" stroke-width="2.6" style="flex-shrink:0;margin-top:3px"><path d="M20 6 9 17l-5-5"/></svg>
+      <p class="cp" style="margin:0">Aucun modèle entraîné chez vous n'alimente le modèle d'un autre client.</p></div>
+     <div style="display:flex;gap:9px;align-items:flex-start">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ok)" stroke-width="2.6" style="flex-shrink:0;margin-top:3px"><path d="M20 6 9 17l-5-5"/></svg>
+      <p class="cp" style="margin:0">Suppression d'un jeu de données : effacement réel sous 24 h, y compris
+       des sauvegardes sous 30 jours.</p></div>
+     <div style="display:flex;gap:9px;align-items:flex-start">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ok)" stroke-width="2.6" style="flex-shrink:0;margin-top:3px"><path d="M20 6 9 17l-5-5"/></svg>
+      <p class="cp" style="margin:0">Journal d'accès consultable : qui a ouvert quoi, et quand.</p></div>
+    </div>
+    <a href="#" style="font-size:12px;display:inline-block;margin-top:12px">Lire la politique complète</a></div>
+
+   <div class="pane2 glass" style="padding:18px 20px">
+    <h3 class="sect" style="margin-bottom:10px">Toujours bloqué ?</h3>
+    <div style="display:flex;flex-direction:column;gap:9px">
+     <div class="ch hv" style="display:flex;gap:11px;align-items:center;padding:12px 14px">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="var(--ac)" stroke-width="1.9" style="flex-shrink:0"><path d="M4 4h16v12H7l-3 3V4z"/></svg>
+      <div style="flex:1"><strong style="font-size:13px">Écrire au support</strong>
+       <p class="cp" style="margin:2px 0 0;font-size:11.5px">Réponse sous 4 h ouvrées · en français</p></div></div>
+     <div class="ch" style="display:flex;gap:11px;align-items:center;padding:12px 14px">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="var(--ac)" stroke-width="1.9" style="flex-shrink:0"><rect x="2" y="4" width="20" height="16" rx="2.5"/><path d="m10 8 6 4-6 4V8z"/></svg>
+      <div style="flex:1"><strong style="font-size:13px">Prendre 30 min avec un data scientist</strong>
+       <p class="cp" style="margin:2px 0 0;font-size:11.5px">Inclus dans votre formule · créneaux cette semaine</p></div></div>
+     <div class="ch" style="display:flex;gap:11px;align-items:center;padding:12px 14px">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="var(--ac)" stroke-width="1.9" style="flex-shrink:0"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>
+      <div style="flex:1"><strong style="font-size:13px">Documentation de l'API</strong>
+       <p class="cp" style="margin:2px 0 0;font-size:11.5px">Pour brancher la prédiction sur vos outils</p></div></div>
+    </div></div>
+  </div>
+ </div>
+</div>
+
+</div>
+</body></html>

@@ -1,0 +1,198 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><script src="./support.js"></script></head><body>
+<x-dc>
+<helmet><style>
+@import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,600;12..96,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+:root{
+ --canvas:oklch(0.145 0.008 60); --surf:oklch(0.192 0.009 60); --raise:oklch(0.235 0.010 60);
+ --bd:oklch(0.315 0.012 60); --tx:oklch(0.960 0.004 80); --mu:oklch(0.705 0.013 70);
+ --ac:oklch(0.790 0.150 78); --acs:oklch(0.700 0.150 62);
+ --ok:oklch(0.740 0.140 158); --wa:oklch(0.810 0.135 92); --da:oklch(0.680 0.190 27); --inf:oklch(0.750 0.100 222);
+ --gl:oklch(0.99 0.01 70 / .045); --gl2:oklch(0.99 0.01 70 / .075);
+ --hl:inset 0 1px 0 oklch(1 0 0 / .07);
+ --r1:10px; --r2:16px; --r3:22px;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--canvas);color:var(--tx);
+ font-family:"IBM Plex Sans",ui-sans-serif,system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+h1,h2,h3,.dsp{font-family:"Bricolage Grotesque","IBM Plex Sans",ui-sans-serif,sans-serif}
+a{color:var(--ac);text-decoration:none} a:hover{color:oklch(0.86 0.14 80)}
+.n{font-family:"IBM Plex Mono",ui-monospace,monospace;font-variant-numeric:tabular-nums;letter-spacing:-0.01em}
+.ov{font-size:10.5px;font-weight:600;letter-spacing:.11em;text-transform:uppercase;color:var(--mu)}
+.cp{font-size:12.5px;color:var(--mu);line-height:1.5}
+/* verre */
+.glass{background:var(--gl);backdrop-filter:blur(22px) saturate(150%);
+ -webkit-backdrop-filter:blur(22px) saturate(150%);border:1px solid oklch(1 0 0 / .085);
+ box-shadow:var(--hl),0 18px 44px oklch(0 0 0 / .42)}
+.pane{background:linear-gradient(180deg,oklch(0.235 0.010 60 / .92),oklch(0.205 0.009 60 / .92));
+ border:1px solid var(--bd);border-radius:var(--r2);box-shadow:var(--hl)}
+.pane.hv{border-color:oklch(0.79 0.15 78 / .38);
+ box-shadow:var(--hl),0 0 0 1px oklch(0.79 0.15 78 / .13),0 16px 38px oklch(0 0 0 / .45);
+ transform:translateY(-2px)}
+.btn{display:inline-flex;align-items:center;gap:8px;height:36px;padding:0 15px;border-radius:var(--r1);
+ font-size:13.5px;font-weight:500;border:1px solid transparent;font-family:inherit}
+.bp{background:var(--ac);color:oklch(0.16 0.02 65);font-weight:600}
+.bs{background:oklch(1 0 0 / .05);color:var(--tx);border-color:var(--bd)}
+.tag{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:500;padding:3px 9px;border-radius:99px}
+.pal{border-radius:var(--r2);padding:20px 22px;border:1px solid;position:relative;overflow:hidden}
+.sw{height:52px;border-radius:9px;display:flex;align-items:flex-end;padding:7px 9px;font-size:10px;font-weight:600;
+ font-family:"IBM Plex Mono",monospace;letter-spacing:.02em}
+.mini{border-radius:11px;padding:13px;display:flex;flex-direction:column;gap:9px}
+.mrow{display:flex;align-items:center;gap:8px}
+.bar{height:5px;border-radius:3px;overflow:hidden;display:flex}
+</style></helmet>
+
+<div style="width:1512px;height:1180px;background:var(--canvas);padding:40px 44px;position:relative;overflow:hidden">
+  <div style="position:absolute;width:760px;height:760px;right:-200px;top:-300px;border-radius:50%;
+    background:radial-gradient(circle,oklch(0.70 0.15 62 / .10),transparent 68%);filter:blur(30px)"></div>
+
+  <p class="ov" style="margin:0 0 9px">Système de couleur</p>
+  <h1 style="margin:0;font-size:31px;font-weight:600;letter-spacing:-0.03em">Cinq directions, cinq intentions</h1>
+  <p class="cp" style="margin:11px 0 30px;max-width:780px;font-size:13.5px">
+    Chaque direction a été vérifiée par le calcul, pas à l'œil : le rapport de contraste le plus faible
+    de toutes les combinaisons texte / surface est indiqué sous chaque palette. Aucune ne descend sous 4,5:1.
+    Un seul accent par direction — la couleur porte le statut et la série de données, jamais la décoration.
+  </p>
+
+  <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:20px;margin-bottom:20px">
+
+    <!-- 1 -->
+    <div class="pal" style="background:#0d0907;border-color:#36302c">
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:14px">
+        <div><p style="margin:0;font-size:15.5px;font-weight:600;color:#f3f1ef;font-family:'Bricolage Grotesque',sans-serif">Graphite &amp; Ambre</p>
+          <p style="margin:3px 0 0;font-size:11.5px;color:#a59f97">Retenue pour la maquette centrale</p></div>
+        <span class="tag" style="background:#f0b64533;color:#f5c46a">4,9:1 min</span>
+      </div>
+      <p style="margin:0 0 14px;font-size:12px;line-height:1.5;color:#a59f97">
+        Instrument de mesure. Le graphite chaud efface l'interface, l'ambre ne sert qu'à ce qui compte.
+        Se distingue immédiatement de tous les outils ML, tous bleus.</p>
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:7px;margin-bottom:12px">
+        <div class="sw" style="background:#0d0907;border:1px solid #36302c;color:#a59f97">fond</div>
+        <div class="sw" style="background:#221d19;color:#a59f97">surface</div>
+        <div class="sw" style="background:#f5c46a;color:#2b1f0a">accent</div>
+        <div class="sw" style="background:#f3f1ef;color:#221d19">texte</div>
+      </div>
+      <div style="display:flex;gap:6px">
+        <span class="tag" style="background:#3ec48f26;color:#5fd6a6">succès</span>
+        <span class="tag" style="background:#f0c14a26;color:#f2cb63">alerte</span>
+        <span class="tag" style="background:#e0563f26;color:#eb7a63">erreur</span>
+        <span class="tag" style="background:#6aa8d626;color:#84bce6">info</span>
+      </div>
+    </div>
+
+    <!-- 2 -->
+    <div class="pal" style="background:#f9f6f2;border-color:#e0ded8">
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:14px">
+        <div><p style="margin:0;font-size:15.5px;font-weight:600;color:#221d18;font-family:'Bricolage Grotesque',sans-serif">Ivoire &amp; Encre</p>
+          <p style="margin:3px 0 0;font-size:11.5px;color:#69625b">Le mode clair comme intention</p></div>
+        <span class="tag" style="background:#0f766e1a;color:#0f766e">5,0:1 min</span>
+      </div>
+      <p style="margin:0 0 14px;font-size:12px;line-height:1.5;color:#69625b">
+        Papier, pas écran. Pour les rapports imprimés et les revues de projet en salle éclairée —
+        là où un fond sombre devient illisible au vidéoprojecteur.</p>
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:7px;margin-bottom:12px">
+        <div class="sw" style="background:#f9f6f2;border:1px solid #e0ded8;color:#69625b">fond</div>
+        <div class="sw" style="background:#ffffff;border:1px solid #e0ded8;color:#69625b">surface</div>
+        <div class="sw" style="background:#0f766e;color:#e6fffb">accent</div>
+        <div class="sw" style="background:#221d18;color:#f9f6f2">texte</div>
+      </div>
+      <div style="display:flex;gap:6px">
+        <span class="tag" style="background:#0f766e14;color:#116b4e">succès</span>
+        <span class="tag" style="background:#8a5a0014;color:#8a5a00">alerte</span>
+        <span class="tag" style="background:#a8291514;color:#a82915">erreur</span>
+        <span class="tag" style="background:#1d4ed814;color:#1d4ed8">info</span>
+      </div>
+    </div>
+
+    <!-- 3 -->
+    <div class="pal" style="background:#0b0b14;border-color:#343344">
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:14px">
+        <div><p style="margin:0;font-size:15.5px;font-weight:600;color:#eff0f4;font-family:'Bricolage Grotesque',sans-serif">Minuit &amp; Iris</p>
+          <p style="margin:3px 0 0;font-size:11.5px;color:#a0a0ae">Le plus consensuel</p></div>
+        <span class="tag" style="background:#a78bfa26;color:#b9a5fb">5,3:1 min</span>
+      </div>
+      <p style="margin:0 0 14px;font-size:12px;line-height:1.5;color:#a0a0ae">
+        Le registre SaaS attendu, exécuté proprement. Le choix sûr — mais celui où votre produit
+        ressemblera le plus à tous les autres.</p>
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:7px;margin-bottom:12px">
+        <div class="sw" style="background:#0b0b14;border:1px solid #343344;color:#a0a0ae">fond</div>
+        <div class="sw" style="background:#20202f;color:#a0a0ae">surface</div>
+        <div class="sw" style="background:#b9a5fb;color:#1b1330">accent</div>
+        <div class="sw" style="background:#eff0f4;color:#20202f">texte</div>
+      </div>
+      <div style="display:flex;gap:6px">
+        <span class="tag" style="background:#3ec48f26;color:#5fd6a6">succès</span>
+        <span class="tag" style="background:#f0c14a26;color:#f2cb63">alerte</span>
+        <span class="tag" style="background:#e0563f26;color:#ec7f68">erreur</span>
+        <span class="tag" style="background:#6aa8d626;color:#8ac0ea">info</span>
+      </div>
+    </div>
+  </div>
+
+  <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:20px">
+    <!-- 4 -->
+    <div class="pal" style="background:#090b0e;border-color:#2e3338">
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:14px">
+        <div><p style="margin:0;font-size:15.5px;font-weight:600;color:#f0f2f4;font-family:'Bricolage Grotesque',sans-serif">Ardoise &amp; Chaux</p>
+          <p style="margin:3px 0 0;font-size:11.5px;color:#999fa6">La plus tranchée</p></div>
+        <span class="tag" style="background:#b8e62826;color:#c9ef5c">5,4:1 min</span>
+      </div>
+      <p style="margin:0 0 14px;font-size:12px;line-height:1.5;color:#999fa6">
+        Ardoise froide, accent chaux presque fluorescent. Les chiffres claquent.
+        Assumez-la ou évitez-la : elle ne laisse personne indifférent.</p>
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:7px;margin-bottom:12px">
+        <div class="sw" style="background:#090b0e;border:1px solid #2e3338;color:#999fa6">fond</div>
+        <div class="sw" style="background:#1c2024;color:#999fa6">surface</div>
+        <div class="sw" style="background:#c9ef5c;color:#1a2205">accent</div>
+        <div class="sw" style="background:#f0f2f4;color:#1c2024">texte</div>
+      </div>
+      <div style="display:flex;gap:6px">
+        <span class="tag" style="background:#3ec48f26;color:#63dba9">succès</span>
+        <span class="tag" style="background:#f0c14a26;color:#f4cd6b">alerte</span>
+        <span class="tag" style="background:#e0563f26;color:#ec7f68">erreur</span>
+        <span class="tag" style="background:#6aa8d626;color:#8cc3e8">info</span>
+      </div>
+    </div>
+
+    <!-- 5 -->
+    <div class="pal" style="background:#f2f5f7;border-color:#d9dde0">
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:14px">
+        <div><p style="margin:0;font-size:15.5px;font-weight:600;color:#141a23;font-family:'Bricolage Grotesque',sans-serif">Porcelaine &amp; Cobalt</p>
+          <p style="margin:3px 0 0;font-size:11.5px;color:#5c626b">Clinique, suisse</p></div>
+        <span class="tag" style="background:#1e40af14;color:#1e40af">4,8:1 min</span>
+      </div>
+      <p style="margin:0 0 14px;font-size:12px;line-height:1.5;color:#5c626b">
+        Blanc froid, cobalt franc, densité élevée. Le registre du laboratoire et de la norme —
+        crédible face à un donneur d'ordre industriel.</p>
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:7px;margin-bottom:12px">
+        <div class="sw" style="background:#f2f5f7;border:1px solid #d9dde0;color:#5c626b">fond</div>
+        <div class="sw" style="background:#ffffff;border:1px solid #d9dde0;color:#5c626b">surface</div>
+        <div class="sw" style="background:#2244cc;color:#eaefff">accent</div>
+        <div class="sw" style="background:#141a23;color:#f2f5f7">texte</div>
+      </div>
+      <div style="display:flex;gap:6px">
+        <span class="tag" style="background:#0f766e14;color:#0f6b4e">succès</span>
+        <span class="tag" style="background:#8a5a0014;color:#8a5a00">alerte</span>
+        <span class="tag" style="background:#a8291514;color:#a82915">erreur</span>
+        <span class="tag" style="background:#1e40af14;color:#1e40af">info</span>
+      </div>
+    </div>
+
+    <!-- règles -->
+    <div class="pane" style="padding:20px 22px">
+      <p class="ov" style="margin:0 0 13px">Les règles, quelle que soit la direction</p>
+      <div style="display:flex;flex-direction:column;gap:13px">
+        <div><p style="margin:0;font-size:13px;font-weight:600">Un seul accent</p>
+          <p class="cp" style="margin:3px 0 0;font-size:11.5px">Il signale l'action principale et la série de référence. Deux accents et plus rien ne ressort.</p></div>
+        <div><p style="margin:0;font-size:13px;font-weight:600">Quatre sémantiques, jamais décoratives</p>
+          <p class="cp" style="margin:3px 0 0;font-size:11.5px">Succès, alerte, erreur, info ne servent qu'au statut. Une carte n'est jamais colorée « pour égayer ».</p></div>
+        <div><p style="margin:0;font-size:13px;font-weight:600">Le neutre porte 90 % de l'écran</p>
+          <p class="cp" style="margin:3px 0 0;font-size:11.5px">Sept nuances de neutre suffisent : fond, surface, surface haute, bordure, texte, texte discret, séparateur.</p></div>
+        <div><p style="margin:0;font-size:13px;font-weight:600">La palette de graphiques est séparée</p>
+          <p class="cp" style="margin:3px 0 0;font-size:11.5px">Six séries, teintes régulièrement espacées, distinguables en deutéranopie — jamais dérivée des couleurs de statut.</p></div>
+      </div>
+    </div>
+  </div>
+</div>
+</x-dc>
+</body></html>

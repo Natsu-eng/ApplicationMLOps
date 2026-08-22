@@ -928,7 +928,7 @@ function StepContent({
   return (
     <div className="space-y-4">
       <div>
-        <h3 className="text-subtitle text-foreground">{title}</h3>
+        <h3 className="text-h3 text-foreground">{title}</h3>
         {description && <p className="text-xs text-muted-foreground mt-0.5">{description}</p>}
       </div>
       {children}

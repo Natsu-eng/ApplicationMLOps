@@ -1,0 +1,168 @@
+<!doctype html><html lang="fr"><head><meta charset="utf-8">
+<title>DataLab — Composants</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,600;12..96,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+:root{
+ --canvas:oklch(0.145 0.008 60); --surf:oklch(0.192 0.009 60); --raise:oklch(0.235 0.010 60);
+ --bd:oklch(0.315 0.012 60); --tx:oklch(0.960 0.004 80); --mu:oklch(0.705 0.013 70);
+ --ac:oklch(0.790 0.150 78); --acs:oklch(0.700 0.150 62);
+ --ok:oklch(0.740 0.140 158); --wa:oklch(0.810 0.135 92); --da:oklch(0.680 0.190 27); --inf:oklch(0.750 0.100 222);
+ --gl:oklch(0.99 0.01 70 / .045); --gl2:oklch(0.99 0.01 70 / .075);
+ --hl:inset 0 1px 0 oklch(1 0 0 / .07);
+ --r1:10px; --r2:16px; --r3:22px;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--canvas);color:var(--tx);
+ font-family:"IBM Plex Sans",ui-sans-serif,system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+h1,h2,h3,.dsp{font-family:"Bricolage Grotesque","IBM Plex Sans",ui-sans-serif,sans-serif}
+a{color:var(--ac);text-decoration:none} a:hover{color:oklch(0.86 0.14 80)}
+.n{font-family:"IBM Plex Mono",ui-monospace,monospace;font-variant-numeric:tabular-nums;letter-spacing:-0.01em}
+.ov{font-size:10.5px;font-weight:600;letter-spacing:.11em;text-transform:uppercase;color:var(--mu)}
+.cp{font-size:12.5px;color:var(--mu);line-height:1.5}
+/* verre */
+.glass{background:var(--gl);backdrop-filter:blur(22px) saturate(150%);
+ -webkit-backdrop-filter:blur(22px) saturate(150%);border:1px solid oklch(1 0 0 / .085);
+ box-shadow:var(--hl),0 18px 44px oklch(0 0 0 / .42)}
+.pane{background:linear-gradient(180deg,oklch(0.235 0.010 60 / .92),oklch(0.205 0.009 60 / .92));
+ border:1px solid var(--bd);border-radius:var(--r2);box-shadow:var(--hl)}
+.pane.hv{border-color:oklch(0.79 0.15 78 / .38);
+ box-shadow:var(--hl),0 0 0 1px oklch(0.79 0.15 78 / .13),0 16px 38px oklch(0 0 0 / .45);
+ transform:translateY(-2px)}
+.btn{display:inline-flex;align-items:center;gap:8px;height:36px;padding:0 15px;border-radius:var(--r1);
+ font-size:13.5px;font-weight:500;border:1px solid transparent;font-family:inherit}
+.bp{background:var(--ac);color:oklch(0.16 0.02 65);font-weight:600}
+.bs{background:oklch(1 0 0 / .05);color:var(--tx);border-color:var(--bd)}
+.tag{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:500;padding:3px 9px;border-radius:99px}
+.lbl{font-size:10.5px;font-weight:600;letter-spacing:.09em;text-transform:uppercase;color:var(--mu);margin:0 0 9px}
+.dc{padding:16px;border-radius:var(--r2);border:1px dashed oklch(1 0 0 / .09)}
+.c{border-radius:var(--r2);padding:16px 18px;border:1px solid var(--bd);
+ background:linear-gradient(180deg,oklch(0.235 0.010 60 / .92),oklch(0.205 0.009 60 / .92));box-shadow:var(--hl)}
+.c.h{border-color:oklch(0.79 0.15 78 / .38);transform:translateY(-3px);
+ box-shadow:var(--hl),0 0 0 1px oklch(0.79 0.15 78 / .13),0 18px 40px oklch(0 0 0 / .5)}
+.c.a{border-color:oklch(0.79 0.15 78 / .55);box-shadow:var(--hl),0 0 0 3px oklch(0.79 0.15 78 / .18)}
+.c.d{opacity:.42}
+.inp{height:38px;border:1px solid var(--bd);background:oklch(0 0 0 / .26);border-radius:var(--r1);
+ padding:0 13px;display:flex;align-items:center;font-size:13.5px;color:var(--mu)}
+.inp.f{border-color:oklch(0.79 0.15 78 / .6);box-shadow:0 0 0 3px oklch(0.79 0.15 78 / .15);color:var(--tx)}
+.inp.e{border-color:oklch(0.68 0.19 27 / .6);box-shadow:0 0 0 3px oklch(0.68 0.19 27 / .13)}
+.sk{border-radius:6px;background:linear-gradient(90deg,oklch(1 0 0 / .05),oklch(1 0 0 / .10),oklch(1 0 0 / .05))}
+
+body{display:flex;justify-content:center;padding:24px}</style>
+</head><body>
+
+<div style="width:1512px;height:1060px;background:var(--canvas);padding:40px 44px;position:relative;overflow:hidden">
+  <div style="position:absolute;width:700px;height:700px;left:-180px;bottom:-280px;border-radius:50%;
+    background:radial-gradient(circle,oklch(0.70 0.15 62 / .11),transparent 68%);filter:blur(30px)"></div>
+
+  <p class="ov" style="margin:0 0 9px">Composants</p>
+  <h1 style="margin:0;font-size:31px;font-weight:600;letter-spacing:-0.03em">Cartes, états, verre</h1>
+  <p class="cp" style="margin:11px 0 30px;max-width:800px;font-size:13.5px">
+    Chaque état est dessiné, pas laissé au navigateur. Le survol lève la carte de 3 px et allume la bordure
+    à l'accent — jamais un changement de fond, qui ferait clignoter une grille entière au passage de la souris.
+  </p>
+
+  <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:18px;margin-bottom:26px">
+    <div><p class="lbl">Carte · repos</p><div class="dc"><div class="c">
+      <p class="ov" style="margin:0 0 9px">R² test</p>
+      <span class="n" style="font-size:27px;font-weight:600;letter-spacing:-0.025em">0,912</span>
+      <p class="cp" style="margin:6px 0 0;font-size:11.5px">IC 95 % [0,891 ; 0,929]</p></div></div></div>
+
+    <div><p class="lbl">Carte · survol</p><div class="dc"><div class="c h">
+      <p class="ov" style="margin:0 0 9px">R² test</p>
+      <span class="n" style="font-size:27px;font-weight:600;letter-spacing:-0.025em">0,912</span>
+      <p class="cp" style="margin:6px 0 0;font-size:11.5px">IC 95 % [0,891 ; 0,929]</p></div></div></div>
+
+    <div><p class="lbl">Carte · sélectionnée</p><div class="dc"><div class="c a">
+      <p class="ov" style="margin:0 0 9px;color:var(--ac)">R² test</p>
+      <span class="n" style="font-size:27px;font-weight:600;letter-spacing:-0.025em">0,912</span>
+      <p class="cp" style="margin:6px 0 0;font-size:11.5px">IC 95 % [0,891 ; 0,929]</p></div></div></div>
+
+    <div><p class="lbl">Carte · chargement</p><div class="dc"><div class="c">
+      <div class="sk" style="width:52px;height:9px;margin-bottom:12px"></div>
+      <div class="sk" style="width:96px;height:24px;margin-bottom:9px"></div>
+      <div class="sk" style="width:132px;height:9px"></div></div></div></div>
+  </div>
+
+  <div style="display:grid;grid-template-columns:1.15fr 1fr 1fr;gap:18px;margin-bottom:26px">
+    <div><p class="lbl">Verre — réservé aux surfaces flottantes</p>
+      <div class="dc" style="position:relative;overflow:hidden;padding:26px">
+        <div style="position:absolute;inset:0;background:
+          radial-gradient(circle at 25% 30%,oklch(0.70 0.15 62 / .30),transparent 55%),
+          radial-gradient(circle at 78% 72%,oklch(0.62 0.12 220 / .26),transparent 55%)"></div>
+        <div class="glass" style="border-radius:var(--r2);padding:15px 17px;position:relative">
+          <div style="display:flex;align-items:center;gap:10px">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--mu)" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+            <span class="cp" style="font-size:13px">Rechercher…</span>
+            <span class="n" style="margin-left:auto;border:1px solid var(--bd);border-radius:5px;padding:1px 6px;font-size:10.5px;color:var(--mu)">⌘K</span>
+          </div>
+        </div>
+        <p class="cp" style="margin:13px 0 0;font-size:11.5px;position:relative">
+          Flou 22 px, saturation 150 %, liseré clair à 7 % en haut. Uniquement sur ce qui flotte
+          au-dessus du contenu — barre de commande, rail, panneaux. Jamais sur une carte de données :
+          le flou coûte cher au défilement et rend les chiffres mous.</p>
+      </div></div>
+
+    <div><p class="lbl">Boutons</p><div class="dc" style="display:flex;flex-direction:column;gap:11px">
+      <div style="display:flex;gap:9px;align-items:center"><button class="btn bp">Lancer l'analyse</button>
+        <span class="cp" style="font-size:11px">principal</span></div>
+      <div style="display:flex;gap:9px;align-items:center"><button class="btn bp" style="filter:brightness(1.12)">Lancer l'analyse</button>
+        <span class="cp" style="font-size:11px">survol</span></div>
+      <div style="display:flex;gap:9px;align-items:center"><button class="btn bs">Comparer</button>
+        <span class="cp" style="font-size:11px">secondaire</span></div>
+      <div style="display:flex;gap:9px;align-items:center">
+        <button class="btn bs" style="border-color:oklch(0.68 0.19 27 / .42);color:oklch(0.78 0.15 27)">Supprimer</button>
+        <span class="cp" style="font-size:11px">destructif</span></div>
+      <div style="display:flex;gap:9px;align-items:center">
+        <button class="btn bp" style="opacity:.45">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" style="opacity:.8"><path d="M12 3a9 9 0 1 0 9 9"/></svg>Entraînement…</button>
+        <span class="cp" style="font-size:11px">en cours</span></div>
+    </div></div>
+
+    <div><p class="lbl">Champs</p><div class="dc" style="display:flex;flex-direction:column;gap:11px">
+      <div><p class="cp" style="margin:0 0 5px;font-size:11.5px">Repos</p><div class="inp">Colonne à prédire</div></div>
+      <div><p class="cp" style="margin:0 0 5px;font-size:11.5px">Focus</p><div class="inp f">resistance_28j</div></div>
+      <div><p class="cp" style="margin:0 0 5px;font-size:11.5px">Erreur</p><div class="inp e" style="color:var(--tx)">id_gachee</div>
+        <p style="margin:5px 0 0;font-size:11.5px;color:oklch(0.78 0.15 27)">Cette colonne est un identifiant — elle fausserait le modèle.</p></div>
+    </div></div>
+  </div>
+
+  <div style="display:grid;grid-template-columns:1.3fr 1fr;gap:18px">
+    <div><p class="lbl">Ligne de tableau — trois états</p>
+      <div class="c" style="padding:0;overflow:hidden">
+        <div style="display:flex;align-items:center;gap:13px;padding:13px 17px">
+          <span style="width:7px;height:7px;border-radius:2px;background:var(--ac)"></span>
+          <div style="flex:1"><p style="margin:0;font-size:13.5px;font-weight:500">beton_c30 → resistance_28j</p>
+            <p class="cp" style="margin:1px 0 0;font-size:11px">repos</p></div>
+          <span class="n" style="font-size:13.5px;font-weight:600">0,912</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:13px;padding:13px 17px;background:oklch(1 0 0 / .035);
+          border-top:1px solid oklch(1 0 0 / .05)">
+          <span style="width:7px;height:7px;border-radius:2px;background:var(--ac)"></span>
+          <div style="flex:1"><p style="margin:0;font-size:13.5px;font-weight:500">capteurs_ligne3 → 4 groupes</p>
+            <p class="cp" style="margin:1px 0 0;font-size:11px">survol — fond à 3,5 %, jamais de bordure qui décale</p></div>
+          <span class="n" style="font-size:13.5px;font-weight:600">0,58</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:13px;padding:13px 17px;background:oklch(0.79 0.15 78 / .08);
+          border-top:1px solid oklch(1 0 0 / .05);box-shadow:inset 3px 0 0 var(--ac)">
+          <span style="width:7px;height:7px;border-radius:2px;background:var(--ac)"></span>
+          <div style="flex:1"><p style="margin:0;font-size:13.5px;font-weight:500">pieces_usinees → 2 classes</p>
+            <p class="cp" style="margin:1px 0 0;font-size:11px">sélectionnée — filet à gauche, pas de bordure complète</p></div>
+          <span class="n" style="font-size:13.5px;font-weight:600">0,847</span>
+        </div>
+      </div></div>
+
+    <div><p class="lbl">État vide — jamais un tiret seul</p>
+      <div class="c" style="padding:30px 24px;text-align:center">
+        <div style="width:42px;height:42px;border-radius:12px;background:oklch(1 0 0 / .05);margin:0 auto 14px;
+          display:flex;align-items:center;justify-content:center">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="var(--mu)" stroke-width="1.7"><ellipse cx="12" cy="6" rx="8" ry="3"/><path d="M4 6v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6"/></svg></div>
+        <p style="margin:0;font-size:14px;font-weight:600">Aucune analyse pour l'instant</p>
+        <p class="cp" style="margin:6px 0 15px;font-size:12px;max-width:280px;margin-left:auto;margin-right:auto">
+          Importez un fichier ou partez d'un jeu d'exemple — le premier modèle prend environ trois minutes.</p>
+        <div style="display:flex;gap:8px;justify-content:center">
+          <button class="btn bp" style="height:32px;font-size:12.5px">Jeu d'exemple</button>
+          <button class="btn bs" style="height:32px;font-size:12.5px">Importer</button></div>
+      </div></div>
+  </div>
+</div>
+</body></html>
