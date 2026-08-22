@@ -1,11 +1,12 @@
 import { type ReactNode, useEffect, useState } from "react";
-import { Activity, Award, Calculator, ClipboardList, Download, Gauge, ShieldCheck, Sparkles, Trophy, Wand2 } from "lucide-react";
+import { Activity, AlertTriangle, Award, Calculator, ClipboardList, Download, Gauge, Scale, ShieldCheck, Sparkles, Trophy, Wand2 } from "lucide-react";
 import {
   ApiError,
   api,
   type BootstrapCI,
   type LeaderboardResponse,
   type MLModelDetail,
+  type ModelCandidate,
   type ModelStage,
   type TrainingJobSummary,
 } from "../../api/client";
@@ -27,6 +28,7 @@ import PredictionForm from "./PredictionForm";
 
 const RESULT_TABS = [
   { id: "performance", label: "Performance", icon: Gauge },
+  { id: "comparaison", label: "Comparaison", icon: Scale },
   { id: "explicabilite", label: "Explicabilité", icon: Sparkles },
   { id: "fiabilite", label: "Fiabilité", icon: Activity },
   { id: "predire", label: "Prédire", icon: Calculator },
@@ -277,6 +279,158 @@ function Leaderboard({ data }: { data: LeaderboardResponse | null }) {
   );
 }
 
+/** Trait de stabilité entre plis (Lot 6, Leaderboard.html) — `fold_scores`
+ * existe déjà par candidat (`ModelCandidate.fold_scores_json`, calculé
+ * pendant la validation croisée) mais n'était affiché nulle part avant ce
+ * lot. Un simple polyline SVG, mis à l'échelle sur le min/max RÉEL des plis
+ * de CE candidat — pas un graphique Recharts, juste assez pour montrer si
+ * le score varie beaucoup ou peu d'un pli à l'autre. */
+function FoldStabilitySparkline({ scores }: { scores: number[] }) {
+  if (scores.length < 2) return null;
+  const min = Math.min(...scores);
+  const max = Math.max(...scores);
+  const range = max - min || 1;
+  const w = 110;
+  const h = 24;
+  const points = scores
+    .map((s, i) => {
+      const x = (i / (scores.length - 1)) * w;
+      const y = h - ((s - min) / range) * h;
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    })
+    .join(" ");
+  return (
+    <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} className="text-primary/70 flex-shrink-0" aria-hidden="true">
+      <polyline points={points} fill="none" stroke="currentColor" strokeWidth={1.5} />
+    </svg>
+  );
+}
+
+function whyThisRank(candidate: ModelCandidate, winner: ModelCandidate | undefined, metricLabel: string): string {
+  if (candidate.is_winner) return `Meilleur ${metricLabel} en validation croisée.`;
+  if (!winner) return "";
+  const gap = winner.selection_score - candidate.selection_score;
+  return `${gap.toFixed(3)} point${gap >= 0.01 ? "s" : ""} derrière ${winner.algorithm}.`;
+}
+
+/** Onglet "Comparaison" (Lot 6, Leaderboard.html) — vue dédiée pleine page
+ * des candidats d'un job, complémentaire à la carte compacte `Leaderboard`
+ * déjà affichée dans l'onglet Performance (gardée telle quelle, elle sert de
+ * résumé rapide). Construite UNIQUEMENT à partir de données déjà persistées
+ * par `ModelCandidate` (selection_score, secondary_metric, fold_scores,
+ * rank) — jamais de durée d'entraînement ni de temps d'inférence par
+ * candidat : cette donnée n'existe nulle part côté backend (seule la durée
+ * TOTALE du job est connue, jamais répartie par modèle). L'ajouter
+ * demanderait d'instrumenter le moteur d'entraînement ET une migration de
+ * schéma (nouvelle colonne sur `ModelCandidate`) — un vrai chantier
+ * fonctionnel, hors périmètre d'une refonte visuelle. Les colonnes
+ * "Durée"/"Prédiction" et le graphe "coût de la précision" de la maquette
+ * sont donc omis plutôt qu'inventés (voir JOURNAL.md, Lot 6). */
+function ModelComparison({ data, verdict }: { data: LeaderboardResponse | null; verdict: MLModelDetail["verdict"] }) {
+  if (!data || data.candidates.length === 0) {
+    return <p className="text-sm text-muted-foreground">Aucun candidat détaillé disponible pour cet entraînement.</p>;
+  }
+  const winner = data.candidates.find((c) => c.is_winner);
+  const metricShortName = data.selection_metric_label.split(" (")[0];
+  const maxScore = Math.max(...data.candidates.map((c) => clampUnitScore(c.selection_score))) || 1;
+  // Réutilise le même verdict que la carte "Verdict" (services/verdict.py,
+  // `_assess_winner_margin`) — jamais une seconde comparaison recalculée ici,
+  // pour ne jamais risquer de dire deux choses différentes sur le même écart.
+  const marginClaim = verdict.claims.find((c) => c.code.startsWith("ecart_gagnant"));
+
+  return (
+    <div className="space-y-5">
+      {winner && (
+        <Card className={`p-5 ${accentSurfaceClass("amber")}`}>
+          <div className="flex items-center gap-3 flex-wrap mb-3">
+            <Badge variant="accent">#1</Badge>
+            <h3 className="text-h3 text-foreground">{winner.algorithm}</h3>
+            <Badge variant="success">Retenu</Badge>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+            <div>
+              <p className="text-xs text-muted-foreground mb-1">{metricShortName} (validation)</p>
+              <p className="num text-xl font-semibold text-foreground">
+                {clampUnitScore(winner.selection_score).toFixed(3)}
+              </p>
+            </div>
+            {winner.secondary_metric !== null && (
+              <div>
+                <p className="text-xs text-muted-foreground mb-1">{winner.secondary_metric_label}</p>
+                <p className="num text-xl font-semibold text-foreground">{winner.secondary_metric.toFixed(2)}</p>
+              </div>
+            )}
+            {winner.fold_scores && winner.fold_scores.length > 1 && (
+              <div>
+                <p className="text-xs text-muted-foreground mb-1">Stabilité entre plis</p>
+                <FoldStabilitySparkline scores={winner.fold_scores} />
+              </div>
+            )}
+          </div>
+        </Card>
+      )}
+
+      <Card className="p-5 overflow-x-auto">
+        <SectionHeader
+          icon={Scale}
+          color="blue"
+          label="Tous les modèles comparés"
+          help={`Triés par ${data.selection_metric_label} — la métrique qui a réellement départagé les candidats pendant l'entraînement.`}
+        />
+        <table className="w-full text-sm mt-2">
+          <thead>
+            <tr className="text-xs text-muted-foreground uppercase tracking-wide text-left">
+              <th className="pb-2 pr-3 font-medium">Rang</th>
+              <th className="pb-2 pr-3 font-medium">Modèle</th>
+              <th className="pb-2 pr-3 font-medium">{metricShortName} (validation)</th>
+              <th className="pb-2 pr-3 font-medium">Stabilité entre plis</th>
+              <th className="pb-2 font-medium">Pourquoi ce rang</th>
+            </tr>
+          </thead>
+          <tbody>
+            {data.candidates.map((c) => (
+              <tr key={c.algorithm} className="border-t border-border/60">
+                <td className="py-2.5 pr-3">
+                  <Badge variant={c.is_winner ? "accent" : "neutral"}>#{c.rank}</Badge>
+                </td>
+                <td className="py-2.5 pr-3 font-medium text-foreground whitespace-nowrap">{c.algorithm}</td>
+                <td className="py-2.5 pr-3">
+                  <div className="flex items-center gap-2">
+                    <div className="h-1.5 w-24 rounded-full bg-muted overflow-hidden flex-shrink-0">
+                      <div
+                        className={`h-full rounded-full ${c.is_winner ? "bg-primary" : "bg-primary/40"}`}
+                        style={{ width: `${(clampUnitScore(c.selection_score) / maxScore) * 100}%` }}
+                      />
+                    </div>
+                    <span className="num text-xs text-foreground">{clampUnitScore(c.selection_score).toFixed(3)}</span>
+                  </div>
+                </td>
+                <td className="py-2.5 pr-3">
+                  {c.fold_scores && c.fold_scores.length > 1 ? (
+                    <FoldStabilitySparkline scores={c.fold_scores} />
+                  ) : (
+                    <span className="text-xs text-muted-foreground">—</span>
+                  )}
+                </td>
+                <td className="py-2.5 text-xs text-muted-foreground max-w-[240px]">
+                  {whyThisRank(c, winner, metricShortName)}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </Card>
+
+      {marginClaim && (
+        <Card className="p-5 border-warning/20 bg-warning/5">
+          <SectionHeader icon={AlertTriangle} color="amber" label="Ce que le classement ne dit pas" />
+          <p className="text-sm text-foreground/90">{marginClaim.explanation}</p>
+        </Card>
+      )}
+    </div>
+  );
+}
+
 /** Registre de modèles (Lot 9) — promotion (staging/production) et export
  * de l'artefact. Un seul modèle "production" à la fois par dataset+cible,
  * la démotion de l'ancien est gérée côté serveur (voir `promote_model`,
@@ -463,6 +617,8 @@ export function ModelResultView({ job }: { job: TrainingJobSummary }) {
               />
             </div>
           )}
+
+          {activeTab === "comparaison" && <ModelComparison data={leaderboard} verdict={model.verdict} />}
 
           {activeTab === "explicabilite" && (
             <Card className={`p-5 ${accentSurfaceClass("violet")}`}>
