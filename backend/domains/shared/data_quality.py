@@ -141,14 +141,21 @@ _LEVEL_ORDER = {"critique": 0, "attention": 1, "info": 2}
 
 
 def _warning(
-    level: str, code: str, title: str, explanation: str, action: str,
+    level: str, code: str, title: str, explanation: str, action: str, question: str,
     columns: Optional[list[str]] = None, details: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
+    """`question` (Lot UI — refonte visuelle, Données et qualité) : LA
+    question métier à se poser avant de décider, distincte de `explanation`
+    (le pourquoi) et `action` (la recommandation) — SPEC-UI.md §7, règle de
+    fond n°3, exigée explicitement pour cet écran. Paramètre obligatoire
+    (pas de valeur par défaut) : chaque nouveau contrôle doit y répondre
+    dès sa création, jamais un ajout après coup facultatif."""
     return {
         "level": level,
         "code": code,
         "title": title,
         "explanation": explanation,
+        "question": question,
         "action": action,
         "columns": columns or [],
         "details": details,
@@ -205,6 +212,12 @@ def _detect_target_leakage(
                         "variable calculée APRÈS l'événement à prédire (une conséquence, "
                         "pas une cause)."
                     ),
+                    question=(
+                        f"Au moment où vous voudrez prédire {target_column}, "
+                        f"aurez-vous déjà « {feature} » ? Si non, gardez-la et le "
+                        "modèle affichera un score excellent en test — puis "
+                        "s'effondrera en conditions réelles."
+                    ),
                     action=(
                         "Vérifiez que cette colonne sera bien disponible AVANT de faire "
                         "une prédiction en conditions réelles. Si elle ne l'est pas, ou "
@@ -238,6 +251,10 @@ def _detect_class_imbalance(df: pd.DataFrame, target_column: str, task_type: str
             f"La classe la plus fréquente apparaît environ {ratio:.0f} fois plus "
             "souvent que la plus rare. Un modèle qui prédirait toujours la classe "
             "majoritaire afficherait déjà une exactitude élevée sans avoir rien appris."
+        ),
+        question=(
+            "Un modèle qui ne prédit jamais la classe rare — mais qui affiche "
+            "une exactitude élevée quand même — vous serait-il réellement utile ?"
         ),
         action=(
             "Regardez le F1-score ou le rappel par classe plutôt que la seule "
@@ -283,6 +300,11 @@ def _detect_high_cardinality(df: pd.DataFrame, features: list[str]) -> list[dict
                     f"{n_unique} valeurs différentes pour {n} lignes — cela ressemble "
                     "davantage à un identifiant (numéro de client, référence...) "
                     "qu'à une variable réellement prédictive."
+                ),
+                question=(
+                    f"« {col} » identifie-t-elle un cas précis (numéro, référence, "
+                    "code client) plutôt que de décrire une caractéristique partagée "
+                    "par plusieurs lignes ?"
                 ),
                 action=(
                     "Si c'est bien un identifiant, retirez-le des variables utilisées : "
@@ -330,6 +352,7 @@ def _detect_constant_columns(df: pd.DataFrame, features: list[str]) -> list[dict
                     "Cette colonne a (quasiment) toujours la même valeur — elle "
                     "n'apporte aucune information utile pour distinguer les cas."
                 ),
+                question=f"« {col} » peut-elle un jour varier, ou est-elle figée par construction (ex. toujours la même unité, le même site) ?",
                 action="Vous pouvez la retirer des variables utilisées, sans perte d'information.",
                 columns=[col],
             ))
@@ -354,6 +377,7 @@ def _detect_small_dataset(df: pd.DataFrame, features: list[str]) -> list[dict[st
                 "importance des variables) risquent d'être peu fiables et de mal "
                 "généraliser à de nouvelles données."
             ),
+            question="Avez-vous d'autres données déjà collectées mais pas encore chargées dans la plateforme ?",
             action="Interprétez les résultats avec prudence, ou complétez le dataset si possible.",
             details={"n_rows": n_rows},
         ))
@@ -368,6 +392,7 @@ def _detect_small_dataset(df: pd.DataFrame, features: list[str]) -> list[dict[st
                 "statistiquement plus de variables que d'exemples pour apprendre "
                 "à les utiliser, ce qui favorise le surapprentissage."
             ),
+            question="Toutes ces variables sont-elles vraiment nécessaires, ou certaines répètent-elles la même information sous une autre forme ?",
             action="Réduisez le nombre de variables utilisées, ou complétez le dataset si possible.",
             details={"n_rows": n_rows, "n_features": n_features},
         ))
@@ -394,6 +419,11 @@ def _detect_high_missing_rate(df: pd.DataFrame, features: list[str]) -> list[dic
                 "colonne. Au-delà d'un certain taux, le remplacement automatique "
                 "(médiane, valeur la plus fréquente) devient peu fiable et peut "
                 "introduire un biais."
+            ),
+            question=(
+                "L'absence de valeur est-elle un hasard de collecte (capteur en "
+                "panne, saisie oubliée), ou dit-elle quelque chose en soi (ex. une "
+                "mesure qui ne s'applique pas à ce cas) ?"
             ),
             action=(
                 "Vérifiez pourquoi ces valeurs manquent. Envisagez de retirer la "
@@ -435,6 +465,7 @@ def _detect_collinearity(df: pd.DataFrame, features: list[str]) -> list[dict[str
                 "Ces deux variables portent une information très redondante — "
                 "connaître l'une donne presque la valeur de l'autre."
             ),
+            question=f"Avez-vous besoin des DEUX variables pour l'interprétation métier du résultat, ou « {c1} » et « {c2} » se valent-elles ici ?",
             action="Vous pouvez généralement en retirer une des deux sans perte de performance notable.",
             columns=[c1, c2],
             details={"correlation": round(r, 4)},
@@ -490,6 +521,7 @@ def _detect_duplicate_columns(df: pd.DataFrame, features: list[str]) -> list[dic
                             "ligne par ligne — l'une est une copie ou un renommage de "
                             "l'autre, elle n'apporte aucune information supplémentaire."
                         ),
+                        question=f"« {c1} » et « {c2} » ont-elles vraiment vocation à coexister, ou l'une est-elle un import en double de l'autre ?",
                         action=f"Retirez « {c2} » (ou « {c1} ») des variables utilisées : garder les deux n'apporte rien.",
                         columns=[c1, c2],
                     ))
@@ -582,6 +614,7 @@ def _detect_mistyped_numeric(df: pd.DataFrame, features: list[str]) -> list[dict
                     "elle est donc traitée comme une catégorie (chaque valeur devient "
                     "une modalité distincte) au lieu d'une vraie variable numérique."
                 ),
+                question=f"« {col} » devrait-elle se comporter comme un nombre (comparable, moyennable) plutôt que comme une catégorie dans votre analyse ?",
                 action=f"Convertissez « {col} » en nombre (une suggestion automatique est proposée à l'étape suivante).",
                 columns=[col],
                 details={"parse_success_ratio": round(success_ratio, 4)},
@@ -602,6 +635,7 @@ def _group_column_transparency_warning(group_column: str) -> dict[str, Any]:
             "l'entraînement et le test — elle n'est pas analysée ci-dessus comme "
             "variable prédictive."
         ),
+        question="Est-ce bien le comportement voulu — cette colonne ne devrait servir qu'à séparer entraînement et test, jamais à prédire ?",
         action="Aucune action nécessaire, c'est le comportement attendu.",
         columns=[group_column],
     )

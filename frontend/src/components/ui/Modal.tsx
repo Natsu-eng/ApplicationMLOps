@@ -1,4 +1,5 @@
 import { useEffect, useRef, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 
 const SIZE_CLASSES = {
@@ -70,7 +71,13 @@ export function Modal({
     };
   }, [onClose]);
 
-  return (
+  // Portail vers document.body : AppShell place la barre latérale fixe
+  // (aside, z-20) en dehors du wrapper <main> qui, lui, crée sa propre
+  // pile d'empilement (relative z-10). Sans portail, le z-50 de la modale
+  // ne s'applique qu'à l'intérieur de cette pile et perd face à l'aside —
+  // la modale reste visible mais devient non cliquable/non focusable sous
+  // la bande occupée par la barre latérale.
+  return createPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-foreground/40 backdrop-blur-sm" onClick={onClose} aria-hidden="true" />
       <div
@@ -102,6 +109,7 @@ export function Modal({
             canevas/carte que le reste de l'app (index.css --color-background). */}
         <div className="overflow-auto p-5 bg-muted/40">{children}</div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

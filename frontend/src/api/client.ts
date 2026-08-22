@@ -377,6 +377,9 @@ export interface DataWarning {
   code: string;
   title: string;
   explanation: string;
+  /** Question métier à se poser avant de décider — distincte de `explanation`
+   * (le pourquoi) et `action` (la recommandation). */
+  question: string;
   action: string;
   columns: string[];
   details: Record<string, unknown> | null;

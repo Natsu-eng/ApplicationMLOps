@@ -179,6 +179,10 @@ class DataWarning(BaseModel):
     code: str
     title: str
     explanation: str
+    # Question métier à se poser avant de décider (Lot UI — refonte
+    # visuelle, Données et qualité) — distincte de `explanation` (le
+    # pourquoi) et `action` (la recommandation), SPEC-UI.md §7 règle n°3.
+    question: str
     action: str
     columns: List[str] = []
     details: Optional[dict] = None
