@@ -1,161 +1,41 @@
 [
   {
-    "screen": "Login",
+    "screen": "DevComponents",
     "theme": "graphite",
     "renderedTheme": "graphite",
-    "file": "login-graphite.png",
+    "file": "devcomponents-graphite.png",
     "axeViolationsSerious": [],
     "axeViolationsOther": 0
   },
   {
-    "screen": "Login",
+    "screen": "DevComponents",
     "theme": "ivoire",
     "renderedTheme": "ivoire",
-    "file": "login-ivoire.png",
+    "file": "devcomponents-ivoire.png",
     "axeViolationsSerious": [],
     "axeViolationsOther": 0
   },
   {
-    "screen": "Login",
+    "screen": "DevComponents",
     "theme": "minuit",
     "renderedTheme": "minuit",
-    "file": "login-minuit.png",
+    "file": "devcomponents-minuit.png",
     "axeViolationsSerious": [],
     "axeViolationsOther": 0
   },
   {
-    "screen": "Login",
+    "screen": "DevComponents",
     "theme": "ardoise",
     "renderedTheme": "ardoise",
-    "file": "login-ardoise.png",
+    "file": "devcomponents-ardoise.png",
     "axeViolationsSerious": [],
     "axeViolationsOther": 0
   },
   {
-    "screen": "Login",
+    "screen": "DevComponents",
     "theme": "porcelaine",
     "renderedTheme": "porcelaine",
-    "file": "login-porcelaine.png",
-    "axeViolationsSerious": [],
-    "axeViolationsOther": 0
-  },
-  {
-    "screen": "Register",
-    "theme": "graphite",
-    "renderedTheme": "graphite",
-    "file": "register-graphite.png",
-    "axeViolationsSerious": [],
-    "axeViolationsOther": 0
-  },
-  {
-    "screen": "Register",
-    "theme": "ivoire",
-    "renderedTheme": "ivoire",
-    "file": "register-ivoire.png",
-    "axeViolationsSerious": [],
-    "axeViolationsOther": 0
-  },
-  {
-    "screen": "Register",
-    "theme": "minuit",
-    "renderedTheme": "minuit",
-    "file": "register-minuit.png",
-    "axeViolationsSerious": [],
-    "axeViolationsOther": 0
-  },
-  {
-    "screen": "Register",
-    "theme": "ardoise",
-    "renderedTheme": "ardoise",
-    "file": "register-ardoise.png",
-    "axeViolationsSerious": [],
-    "axeViolationsOther": 0
-  },
-  {
-    "screen": "Register",
-    "theme": "porcelaine",
-    "renderedTheme": "porcelaine",
-    "file": "register-porcelaine.png",
-    "axeViolationsSerious": [],
-    "axeViolationsOther": 0
-  },
-  {
-    "screen": "Profile-Preferences",
-    "theme": "graphite",
-    "renderedTheme": "graphite",
-    "file": "profile-preferences-graphite.png",
-    "axeViolationsSerious": [],
-    "axeViolationsOther": 0
-  },
-  {
-    "screen": "Profile-Preferences",
-    "theme": "ivoire",
-    "renderedTheme": "ivoire",
-    "file": "profile-preferences-ivoire.png",
-    "axeViolationsSerious": [],
-    "axeViolationsOther": 0
-  },
-  {
-    "screen": "Profile-Preferences",
-    "theme": "minuit",
-    "renderedTheme": "minuit",
-    "file": "profile-preferences-minuit.png",
-    "axeViolationsSerious": [],
-    "axeViolationsOther": 0
-  },
-  {
-    "screen": "Profile-Preferences",
-    "theme": "ardoise",
-    "renderedTheme": "ardoise",
-    "file": "profile-preferences-ardoise.png",
-    "axeViolationsSerious": [],
-    "axeViolationsOther": 0
-  },
-  {
-    "screen": "Profile-Preferences",
-    "theme": "porcelaine",
-    "renderedTheme": "porcelaine",
-    "file": "profile-preferences-porcelaine.png",
-    "axeViolationsSerious": [],
-    "axeViolationsOther": 0
-  },
-  {
-    "screen": "AvatarThemeMenu",
-    "theme": "graphite",
-    "renderedTheme": "graphite",
-    "file": "avatarthememenu-graphite.png",
-    "axeViolationsSerious": [],
-    "axeViolationsOther": 0
-  },
-  {
-    "screen": "AvatarThemeMenu",
-    "theme": "ivoire",
-    "renderedTheme": "ivoire",
-    "file": "avatarthememenu-ivoire.png",
-    "axeViolationsSerious": [],
-    "axeViolationsOther": 0
-  },
-  {
-    "screen": "AvatarThemeMenu",
-    "theme": "minuit",
-    "renderedTheme": "minuit",
-    "file": "avatarthememenu-minuit.png",
-    "axeViolationsSerious": [],
-    "axeViolationsOther": 0
-  },
-  {
-    "screen": "AvatarThemeMenu",
-    "theme": "ardoise",
-    "renderedTheme": "ardoise",
-    "file": "avatarthememenu-ardoise.png",
-    "axeViolationsSerious": [],
-    "axeViolationsOther": 0
-  },
-  {
-    "screen": "AvatarThemeMenu",
-    "theme": "porcelaine",
-    "renderedTheme": "porcelaine",
-    "file": "avatarthememenu-porcelaine.png",
+    "file": "devcomponents-porcelaine.png",
     "axeViolationsSerious": [],
     "axeViolationsOther": 0
   }

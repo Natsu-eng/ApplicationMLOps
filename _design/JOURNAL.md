@@ -287,3 +287,139 @@ vertes).
 Branche `ui/1-fondations` → `main`, porte de qualité au vert sur les 5
 points. Serveurs de test (backend SQLite jetable, Vite dev) laissés actifs
 pour réutilisation par les lots suivants (même méthode de vérification).
+
+---
+
+## Lot 2 — Bibliothèque de composants
+
+### Inventaire avant d'écrire du code
+
+Un état des lieux (agent d'exploration dédié) a montré que Button, Field,
+Input, Select, Switch, Table, Tabs, Modal, Badge/StatusBadge, Card
+existaient déjà et étaient globalement solides — seuls certains états
+manquaient (voir durcissements ci-dessous). **Construits à neuf** : Skeleton
+(primitive générique), ProgressBar (déterminée + indéterminée), Segmented,
+Alert (4 sémantiques), Stepper (consolidé), Popover, Breadcrumb, Toast +
+`ToastProvider`, Drawer, CommandPalette (⌘K/Ctrl+K). Tooltip généralisé
+(nouvel export `TooltipWrapper`, l'ancien `Tooltip`/`LabelWithHelp` reste
+inchangé — 0 régression sur les usages existants).
+
+### Décisions
+
+15. **Stepper non consolidé dans `Training.tsx`/`VisionWizard.tsx`.**
+    `components/ui/Stepper.tsx` reprend fidèlement le motif déjà dupliqué
+    dans ces deux fichiers (`StepperNav`/`StepPill`), mais les deux pages
+    existantes n'ont PAS été migrées vers ce composant partagé : ce sont des
+    écrans fonctionnels en production, migrés sans bénéfice fonctionnel
+    immédiat aurait été un risque de régression pur. Migration laissée aux
+    lots qui touchent substantiellement ces écrans (Lot 6 : Entraînement/
+    Progression ; Lot 8 : Vision) — cohérent avec la décision 4 du Lot 1
+    (même principe : ne pas toucher une page qui marche sans raison
+    fonctionnelle de ce lot).
+16. **`/dev/components` est un alias de `/design`**, pas une seconde page :
+    un seul contenu à maintenir (voir `App.tsx`). La page existante
+    (`DesignSystem.tsx`, héritée du Lot 2A antérieur à cette mission) a été
+    étendue avec les nouvelles sections plutôt que reconstruite.
+17. **`Table` : en-tête collant implique un défilement vertical interne
+    plafonné (32rem).** Nécessaire pour que `position: sticky` ait un
+    ancêtre défilant — cohérent avec l'exigence explicite « défilement
+    horizontal dans le tableau, jamais sur la page » (même logique
+    appliquée à l'axe vertical pour les tableaux longs). N'affecte
+    visuellement aucun tableau existant plus court que 32rem.
+18. **Chasse aux couleurs en dur : même périmètre différé qu'au Lot 1.**
+    0 nouvelle occurrence introduite par les composants du Lot 2 — la grep
+    gate reste à 7 fichiers (themes.css + les 6 fichiers du sous-système de
+    graphiques, toujours réservés au Lot 3, décision 1 du Lot 1).
+
+### Bugs réels trouvés et corrigés pendant la vérification
+
+Comme au Lot 1, la vérification a trouvé des bugs réels, pas de façade :
+
+19. **Tailwind v4 élague les jetons de thème jamais référencés par une
+    classe LITTÉRALE dans le code scanné.** `--color-primary-solid`,
+    `--color-warning-solid`, `--color-success-solid`, `--color-info-solid`
+    n'étaient JAMAIS effectivement générés dans le CSS compilé (vérifié en
+    grepant le CSS servi par Vite) — seul `--color-destructive-solid`
+    survivait, par accident, parce que `Button.tsx` contient littéralement
+    la chaîne `"bg-destructive-solid"` (variant="destructive"). La
+    démonstration `ColorSection` les utilisait via `var(--color-${nom}-solid)`
+    en style inline — invisible pour le scanner de contenu de Tailwind, qui
+    élague alors la propriété CSS. Conséquence mesurée par axe-core : fond
+    non appliqué, retombant sur la carte ambiante, texte quasi invisible
+    dessus (contraste ~1.0:1 au lieu de 4,5:1 attendu). **Corrigé** en
+    remplaçant l'interpolation dynamique par une table de classes Tailwind
+    écrites en toutes lettres (`SOLID_SWATCH_CLASSES`, `DesignSystem.tsx`) —
+    le scanner les voit, les génère, le composite fonctionne. Leçon
+    générale pour la suite de la mission : ne jamais construire un nom de
+    classe Tailwind par interpolation de chaîne si rien d'autre dans le
+    code ne référence la même classe en toutes lettres.
+20. **`text-white` en dur, préexistant, dans `ColorSection`** (le bloc
+    "remplissage plein + texte blanc", antérieur à cette mission) — cassait
+    déjà à 3,14:1 sur `--color-destructive-solid` en graphite (jamais
+    vérifié par un outil jusqu'ici). Corrigé avec le même mécanisme que la
+    décision 19 (classes littérales, chaque `-solid` avec son propre
+    `-foreground`).
+21. **Contraste des badges en double lavis (`Badge.tsx`), ivoire/porcelaine
+    uniquement.** `bg-success/10 text-success` (et les 3 autres sémantiques)
+    ne sont garantis ≥4,5:1 QUE sur les 3 fonds neutres du thème
+    (canvas/surface/raised, garantie de `themes.css`) — un lavis à 10 %
+    compose un 4ᵉ fond légèrement différent. Mesuré sous le seuil dans les
+    2 thèmes au minimum de contraste le plus serré (ivoire 4,52:1,
+    porcelaine 4,55:1), et encore insuffisant quand le badge est en plus
+    posé sur une ligne de tableau elle-même teintée (double lavis composé :
+    4,23:1 → 4,47:1 → toujours sous le seuil). **Corrigé par itération
+    empirique revérifiée à chaque étape** (jamais un ajustement au pixel
+    sans reréexécuter axe-core) : /10 → /6 → /5 → /4, jusqu'à 0 violation
+    sur les 5 thèmes dans le cas le plus défavorable (badge de statut dans
+    une ligne de tableau surlignée).
+22. **Démo `Alert` malhonnête (bouton de fermeture qui ne fermait rien).**
+    Le test clavier automatisé a cliqué le bouton "Fermer l'alerte" et
+    trouvé l'alerte toujours présente : `AlertSection` passait
+    `onDismiss={() => {}}` (no-op) — le composant `Alert` lui-même
+    fonctionne correctement (le clic déclenche bien le callback), c'est la
+    démonstration qui ne gérait aucun état. Corrigé avec un vrai
+    `useState` local qui masque l'alerte après fermeture (et permet de la
+    réafficher, pour ne pas rendre la section inutilisable après un test).
+
+### Porte de qualité — résultat réel
+
+**1. Build & tsc** — `npx tsc -b --noEmit` puis `npm run build` : code de
+sortie 0 sur les deux, aucune erreur. Bundle : 1 028,79 → 1 051,52 Ko JS
+(+22,7 Ko de code applicatif réel pour ~11 nouveaux composants — aucune
+nouvelle dépendance npm, donc rien à remonter au titre du seuil de 100 Ko).
+Avertissement de chunk >500 Ko toujours préexistant, non nouveau.
+
+**2. Lint** — `npm run lint` : `✖ 18 problems (0 errors, 18 warnings)` — 16
+préexistants + 2 nouveaux (`Popover.tsx`, `Toast.tsx`), même catégorie
+tolérée (`react-refresh/only-export-components`) que `ColorIconBadge.tsx`/
+`AuthContext.tsx` déjà présents avant ce lot. 0 erreur.
+
+**3. Chasse aux couleurs en dur** — 7 fichiers, identique au Lot 1 (voir
+décision 18). 0 régression introduite.
+
+**4. Rendu des 5 thèmes** — `frontend/scripts/visual-check.mjs` sur
+`/dev/components` (page unique regroupant tous les composants du lot),
+5 thèmes. **Résultat final : 5 captures, 0 échec**, après correction des
+bugs 19-21 ci-dessus (le premier passage avait trouvé 5/5 thèmes en échec).
+Captures : `_design/captures/devcomponents-{graphite,ivoire,minuit,ardoise,
+porcelaine}.png`.
+
+**5. Accessibilité** — axe-core (mêmes tags qu'au Lot 1) : 0 violation
+sérieuse/critique après correction. Navigation clavier vérifiée par un
+script dédié (`frontend/scripts/keyboard-check-lot2.mjs`, vraies frappes
+`Ctrl+K`/flèches/`Enter`/`Échap`/`Tab`) sur les composants les plus
+complexes du lot :
+- `CommandPalette` : s'ouvre à `Ctrl+K`, se ferme à `Échap`, la saisie +
+  `Enter` navigue réellement vers la bonne route (`commandPaletteEnterNavigates:
+  true`, testé en tapant "profil" puis `Enter` → arrivée sur `/profile`) ;
+- `Drawer` : piège de focus, `Échap` ferme, le focus revient exactement au
+  bouton qui l'a ouvert (`focusReturnsToTrigger: true`) — même garantie que
+  `Modal` ;
+- `Segmented` : nom accessible présent (`role="radiogroup"` + `aria-label`) ;
+- `Alert` : le bouton de fermeture masque réellement l'alerte
+  (`alertDismissWorks: true`, après correction du bug 22).
+
+### Merge
+
+Branche `ui/2-composants` → `main`, porte de qualité au vert sur les 5
+points. Serveurs de test toujours actifs pour le Lot 3.

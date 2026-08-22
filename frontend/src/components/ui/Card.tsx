@@ -13,6 +13,10 @@ interface CardProps extends HTMLAttributes<HTMLDivElement> {
   density?: Density;
   header?: ReactNode;
   footer?: ReactNode;
+  /** Carte désactivée (SPEC-UI.md §6.5) — 42% d'opacité, `cursor-not-allowed`,
+   * `aria-disabled`. Reste affichée (contrairement à ne pas la rendre du
+   * tout) : l'utilisateur voit CE QUI existe mais n'est pas actionnable. */
+  disabled?: boolean;
 }
 
 const VARIANT_CLASSES: Record<Variant, string> = {
@@ -23,7 +27,7 @@ const VARIANT_CLASSES: Record<Variant, string> = {
   // (listes denses).
   outlined: "border border-border bg-card",
   interactive:
-    "border border-border/70 bg-card shadow-card transition-all duration-200 hover:border-primary/30 hover:shadow-overlay hover:-translate-y-0.5 cursor-pointer",
+    "border border-border/70 bg-card shadow-card transition-all duration-200 hover:border-primary/30 hover:shadow-overlay hover:-translate-y-0.5 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-[var(--accent)]",
   // stat : fond légèrement teinté (accent) plutôt que blanc — se distingue
   // d'une carte de contenu au premier coup d'œil (StatTile).
   stat: "border border-border/70 bg-card shadow-card",
@@ -39,22 +43,32 @@ export function Card({
   density = "default",
   header,
   footer,
+  disabled = false,
   className = "",
   ...rest
 }: CardProps) {
   const resolvedVariant = variant ?? (interactive ? "interactive" : "elevated");
   const padding = CARD_PADDING[density];
+  const disabledClass = disabled ? "opacity-[.42] cursor-not-allowed pointer-events-none" : "";
 
   if (!header && !footer) {
     return (
-      <div className={`rounded-card ${VARIANT_CLASSES[resolvedVariant]} ${padding} ${className}`} {...rest}>
+      <div
+        className={`rounded-card ${VARIANT_CLASSES[resolvedVariant]} ${padding} ${disabledClass} ${className}`}
+        aria-disabled={disabled || undefined}
+        {...rest}
+      >
         {children}
       </div>
     );
   }
 
   return (
-    <div className={`rounded-card overflow-hidden ${VARIANT_CLASSES[resolvedVariant]} ${className}`} {...rest}>
+    <div
+      className={`rounded-card overflow-hidden ${VARIANT_CLASSES[resolvedVariant]} ${disabledClass} ${className}`}
+      aria-disabled={disabled || undefined}
+      {...rest}
+    >
       {header && <div className={`${padding} border-b border-border/60`}>{header}</div>}
       <div className={padding}>{children}</div>
       {footer && <div className={`${padding} border-t border-border/60`}>{footer}</div>}

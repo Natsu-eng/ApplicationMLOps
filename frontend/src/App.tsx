@@ -1,7 +1,9 @@
 import { Navigate, Route, BrowserRouter as Router, Routes } from "react-router-dom";
 import ProtectedRoute from "./components/ProtectedRoute";
-import { AuthProvider } from "./contexts/AuthContext";
+import { AuthProvider, useAuth } from "./contexts/AuthContext";
 import { ThemeProvider } from "./contexts/ThemeContext";
+import { ToastProvider } from "./components/ui/Toast";
+import { CommandPalette } from "./components/ui/CommandPalette";
 import AllHistory from "./pages/AllHistory";
 import AnomalyDetection from "./pages/AnomalyDetection";
 import Clustering from "./pages/Clustering";
@@ -21,11 +23,23 @@ import VisionClassification from "./pages/VisionClassification";
 import VisionDatasets from "./pages/VisionDatasets";
 import VisionHistory from "./pages/VisionHistory";
 
+/** Palette de commandes globale (⌘K) — n'a de sens que pour un utilisateur
+ * connecté (les destinations sont toutes des routes protégées) : montée
+ * ici, à l'intérieur de `<Router>` (nécessite `useNavigate`) mais après
+ * `AuthProvider`, pour lire `isAuth`. */
+function GlobalCommandPalette() {
+  const { isAuth } = useAuth();
+  if (!isAuth) return null;
+  return <CommandPalette />;
+}
+
 export default function App() {
   return (
     <ThemeProvider>
       <AuthProvider>
+        <ToastProvider>
         <Router>
+          <GlobalCommandPalette />
           <Routes>
             <Route path="/login" element={<Login />} />
             <Route path="/register" element={<Register />} />
@@ -151,9 +165,22 @@ export default function App() {
               }
             />
             {/* Lot 2A — page de style guide, protégée mais jamais liée
-                depuis la navigation (accès direct par URL uniquement). */}
+                depuis la navigation (accès direct par URL uniquement).
+                /dev/components (Lot 2, mission refonte visuelle) est un
+                alias de la même page — un seul contenu à maintenir, deux
+                chemins d'accès (l'historique du projet utilisait déjà
+                /design avant que la mission ne nomme explicitement
+                /dev/components). */}
             <Route
               path="/design"
+              element={
+                <ProtectedRoute>
+                  <DesignSystem />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/dev/components"
               element={
                 <ProtectedRoute>
                   <DesignSystem />
@@ -163,6 +190,7 @@ export default function App() {
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </Router>
+        </ToastProvider>
       </AuthProvider>
     </ThemeProvider>
   );

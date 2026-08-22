@@ -5,7 +5,10 @@ import {
   Check,
   CircleCheck,
   Download,
+  Grid3x3,
+  LayoutList,
   Palette,
+  Rows3,
   Sparkles,
   Trash2,
 } from "lucide-react";
@@ -28,6 +31,15 @@ import { IsolatableLegend, useSeriesIsolation } from "../components/ui/ChartLege
 import { CHART_GRID_STROKE, CHART_HEIGHT_SM, CHART_SERIES_COLORS, CHART_TICK_STYLE, CHART_TOOLTIP_STYLE } from "../theme/charts";
 import type { Density } from "../theme/density";
 import { DENSITY_LABELS } from "../theme/density";
+import { Skeleton, SkeletonGroup } from "../components/ui/Skeleton";
+import { ProgressBar, IndeterminateProgressBar } from "../components/ui/ProgressBar";
+import { Segmented } from "../components/ui/Segmented";
+import { Alert } from "../components/ui/Alert";
+import { Stepper } from "../components/ui/Stepper";
+import { Popover } from "../components/ui/Popover";
+import { Breadcrumb } from "../components/ui/Breadcrumb";
+import { useToast } from "../components/ui/Toast";
+import { Drawer } from "../components/ui/Drawer";
 
 /** Page de style guide (Lot 2A, AUDIT_DATALAB_2026-08-16.md §J.4) —
  * protégée, jamais liée depuis la navigation (accès direct par URL
@@ -58,6 +70,13 @@ export default function DesignSystem() {
         <TableSection />
         <ChartSection />
         <BadgeSection />
+        <SkeletonSection />
+        <ProgressBarSection />
+        <SegmentedSection />
+        <AlertSection />
+        <StepperSection />
+        <PopoverBreadcrumbSection />
+        <ToastDrawerCommandSection />
       </div>
     </AppShell>
   );
@@ -94,6 +113,23 @@ const SEMANTIC_SWATCHES = [
   { name: "destructive", contrastLight: "4.76:1", contrastDark: "4.65:1" },
 ];
 
+// Classes littérales (jamais construites par interpolation de chaîne) — Tailwind
+// v4 ne génère la variable CSS d'un jeton de thème QUE s'il détecte une classe
+// qui l'utilise, littéralement, dans le code source scanné. `var(--color-${x}-solid)`
+// en style inline n'est PAS détecté par ce scanner : --color-primary-solid/
+// -warning-solid/-success-solid/-info-solid n'étaient jamais générés, le fond
+// retombait silencieusement sur celui de la carte ambiante derrière (contraste
+// ~1:1 avec le texte dessus — trouvé par axe-core, Lot 2, voir _design/JOURNAL.md).
+// Seul --color-destructive-solid existait, par accident : Button.tsx l'utilise
+// littéralement (variant="destructive").
+const SOLID_SWATCH_CLASSES: Record<string, string> = {
+  primary: "bg-primary-solid text-primary-foreground",
+  info: "bg-info-solid text-info-foreground",
+  success: "bg-success-solid text-success-foreground",
+  warning: "bg-warning-solid text-warning-foreground",
+  destructive: "bg-destructive-solid text-destructive-foreground",
+};
+
 function ColorSection() {
   return (
     <Section
@@ -129,14 +165,11 @@ function ColorSection() {
           ))}
         </div>
 
-        <p className="text-overline uppercase text-muted-foreground mb-3">Sémantique — remplissage plein ("-solid") + texte blanc</p>
+        <p className="text-overline uppercase text-muted-foreground mb-3">Sémantique — remplissage plein ("-solid") + texte clair</p>
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mb-6">
           {SEMANTIC_SWATCHES.map((s) => (
             <div key={s.name} className="space-y-1.5">
-              <div
-                className="h-14 rounded-control flex items-center justify-center text-body font-semibold text-white"
-                style={{ background: `var(--color-${s.name}-solid)` }}
-              >
+              <div className={`h-14 rounded-control flex items-center justify-center text-body font-semibold ${SOLID_SWATCH_CLASSES[s.name]}`}>
                 Aa
               </div>
               <p className="text-caption text-foreground font-medium">{s.name}-solid</p>
@@ -453,6 +486,7 @@ function TableSection() {
   const [selected, setSelected] = useState<Set<string | number>>(new Set());
   const [showEmpty, setShowEmpty] = useState(false);
   const [showLoading, setShowLoading] = useState(false);
+  const [showError, setShowError] = useState(false);
 
   const columns: TableColumn<DemoRow>[] = [
     { key: "dataset", header: "Dataset", sticky: true, sortable: true },
@@ -471,7 +505,7 @@ function TableSection() {
   return (
     <Section
       title="Tableau"
-      description="Tri, pagination, sélection, colonne figée (Dataset), état vide avec action, squelette de chargement — le composant à plus fort effet de levier de ce lot."
+      description="Tri, pagination, sélection avec liseré d'accent, colonne figée (Dataset), en-tête collant, ligne repliable, état vide/erreur avec action, squelette de chargement — le composant à plus fort effet de levier de ce lot."
     >
       <Card>
         <div className="flex flex-wrap gap-2 mb-3">
@@ -480,6 +514,9 @@ function TableSection() {
           </Button>
           <Button variant="ghost" size="sm" onClick={() => setShowLoading((v) => !v)}>
             {showLoading ? "Arrêter le squelette" : "Voir le squelette"}
+          </Button>
+          <Button variant="ghost" size="sm" onClick={() => setShowError((v) => !v)}>
+            {showError ? "Revenir aux données" : "Voir l'état d'erreur"}
           </Button>
         </div>
         <Table
@@ -492,9 +529,15 @@ function TableSection() {
           selectedKeys={selected}
           onSelectionChange={setSelected}
           loading={showLoading}
+          error={showError ? { message: "Impossible de charger les entraînements.", action: <Button size="sm" onClick={() => setShowError(false)}>Réessayer</Button> } : undefined}
           highlightRow={(r) => r.score > 0.95}
           emptyMessage="Aucun entraînement pour l'instant."
           emptyAction={<Button size="sm">Lancer un entraînement</Button>}
+          renderExpanded={(r) => (
+            <p className="text-caption text-muted-foreground">
+              Détail (ligne repliable) — dataset « {r.dataset} », algorithme {r.algorithme}, score {r.score.toFixed(3)}.
+            </p>
+          )}
         />
         {selected.size > 0 && (
           <p className="text-caption text-muted-foreground mt-2">{selected.size} ligne(s) sélectionnée(s)</p>
@@ -585,6 +628,197 @@ function BadgeSection() {
           <Download size={14} /> Export (icône + libellé)
         </Button>
       </Card>
+    </Section>
+  );
+}
+
+// ── Squelettes ───────────────────────────────────────────────────────────
+
+function SkeletonSection() {
+  return (
+    <Section
+      title="Squelettes"
+      description="Reprennent la FORME du contenu réel, jamais un bloc générique. role=&quot;status&quot; posé une seule fois sur le groupe, aria-hidden sur chaque bloc — un lecteur d'écran entend « chargement en cours », pas 5 rectangles."
+    >
+      <Card>
+        <SkeletonGroup label="Chargement d'une fiche" className="space-y-2 max-w-sm">
+          <Skeleton className="h-3 w-20" />
+          <Skeleton className="h-6 w-40" />
+          <Skeleton className="h-3 w-56" />
+        </SkeletonGroup>
+      </Card>
+    </Section>
+  );
+}
+
+// ── Progression ──────────────────────────────────────────────────────────
+
+function ProgressBarSection() {
+  return (
+    <Section title="Barre de progression" description="Déterminée (valeur connue) ou indéterminée (durée inconnue, ex. file d'attente).">
+      <Card className="space-y-5 max-w-md">
+        <ProgressBar label="Entraînement — époque 14/20" value={14} max={20} />
+        <ProgressBar label="Compact" value={62} size="sm" />
+        <IndeterminateProgressBar label="En file d'attente…" />
+      </Card>
+    </Section>
+  );
+}
+
+// ── Contrôle segmenté ────────────────────────────────────────────────────
+
+function SegmentedSection() {
+  const [view, setView] = useState<"table" | "grid" | "list">("table");
+  return (
+    <Section
+      title="Contrôle segmenté"
+      description="Bascule entre modes mutuellement exclusifs (role=&quot;radiogroup&quot;) — jamais de la navigation entre pages, qui reste le rôle de Tabs (role=&quot;tablist&quot;)."
+    >
+      <Card>
+        <Segmented
+          aria-label="Mode d'affichage"
+          value={view}
+          onChange={setView}
+          options={[
+            { id: "table", label: "Tableau", icon: Rows3 },
+            { id: "grid", label: "Grille", icon: Grid3x3 },
+            { id: "list", label: "Liste", icon: LayoutList },
+          ]}
+        />
+        <p className="text-caption text-muted-foreground mt-3">Mode actif : {view}</p>
+      </Card>
+    </Section>
+  );
+}
+
+// ── Alertes ──────────────────────────────────────────────────────────────
+
+function AlertSection() {
+  // État réel (pas un onDismiss no-op) — une démonstration qui prétend
+  // fermer l'alerte doit vraiment la retirer de l'affichage (retrouvé par
+  // le test clavier automatisé, Lot 2 : le bouton cliquait mais rien ne
+  // disparaissait, voir _design/JOURNAL.md).
+  const [dangerDismissed, setDangerDismissed] = useState(false);
+
+  return (
+    <Section
+      title="Alertes"
+      description="4 sémantiques. Règle de fond n°3 : un avertissement dit quoi faire — « ne rien changer » est toujours une action valable."
+    >
+      <div className="space-y-3">
+        <Alert variant="info" title="12 valeurs manquantes détectées">
+          Colonne « epaisseur_mm » — 4 % des lignes. Cela peut biaiser légèrement l'entraînement.
+        </Alert>
+        <Alert
+          variant="warning"
+          title="Colonne quasi-constante"
+          actions={
+            <>
+              <Button size="sm" variant="secondary">
+                Exclure la colonne
+              </Button>
+              <Button size="sm" variant="ghost">
+                Garder telle quelle
+              </Button>
+            </>
+          }
+        >
+          « site_id » ne varie que sur 2 % des lignes — apporte peu d'information au modèle.
+        </Alert>
+        {dangerDismissed ? (
+          <Button variant="ghost" size="sm" onClick={() => setDangerDismissed(false)}>
+            Réafficher l'alerte fermée (démonstration)
+          </Button>
+        ) : (
+          <Alert variant="danger" title="Échec de l'entraînement" onDismiss={() => setDangerDismissed(true)}>
+            La colonne cible contient des valeurs manquantes. Corrigez le jeu de données puis relancez.
+          </Alert>
+        )}
+        <Alert variant="success" title="Modèle prêt">
+          R² test 0,912 — au-dessus du seuil recommandé (0,80) pour cet usage.
+        </Alert>
+      </div>
+    </Section>
+  );
+}
+
+// ── Fil d'étapes ─────────────────────────────────────────────────────────
+
+function StepperSection() {
+  const [active, setActive] = useState(2);
+  return (
+    <Section title="Fil d'étapes" description="Assistant multi-écrans (entraînement, wizard Vision).">
+      <Card>
+        <Stepper
+          ariaLabel="Étapes de démonstration"
+          activeStep={active}
+          maxReachedStep={3}
+          onSelect={setActive}
+          steps={[
+            { number: 1, label: "Données" },
+            { number: 2, label: "Cible" },
+            { number: 3, label: "Configuration" },
+            { number: 4, label: "Résultat" },
+          ]}
+        />
+      </Card>
+    </Section>
+  );
+}
+
+// ── Popover & fil d'Ariane ───────────────────────────────────────────────
+
+function PopoverBreadcrumbSection() {
+  return (
+    <Section title="Popover & fil d'Ariane" description="Panneau flottant déclenché au clic (fermeture au clic extérieur ou à Échap) ; navigation contextuelle de la barre haute.">
+      <Card className="space-y-5">
+        <Breadcrumb items={[{ label: "Prédire une valeur", to: "/training" }, { label: "Entraînement", to: "/training" }, { label: "Résultat" }]} />
+        <Popover
+          trigger={({ toggle, triggerProps }) => (
+            <Button variant="secondary" size="sm" onClick={toggle} {...triggerProps}>
+              Ouvrir le popover
+            </Button>
+          )}
+        >
+          <p className="text-body text-foreground font-medium mb-1">Titre du panneau</p>
+          <p className="text-caption text-muted-foreground">Contenu flottant posé sur --popover, jamais --surface.</p>
+        </Popover>
+      </Card>
+    </Section>
+  );
+}
+
+// ── Toast, tiroir, palette de commandes ─────────────────────────────────
+
+function ToastDrawerCommandSection() {
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const { push } = useToast();
+
+  return (
+    <Section
+      title="Toast, tiroir, palette de commandes"
+      description="Notification empilée (auto-disparition 5s), panneau latéral (même a11y que Modal), et ⌘K/Ctrl+K monté globalement sur toute route authentifiée (essayez le raccourci maintenant)."
+    >
+      <Card className="flex flex-wrap gap-2">
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={() => push({ variant: "success", title: "Modèle enregistré", description: "Version v3 promue en production." })}
+        >
+          Déclencher un toast
+        </Button>
+        <Button variant="secondary" size="sm" onClick={() => setDrawerOpen(true)}>
+          Ouvrir le tiroir
+        </Button>
+        <Badge variant="neutral">Essayez ⌘K / Ctrl+K</Badge>
+      </Card>
+      {drawerOpen && (
+        <Drawer title="Détail (démonstration)" onClose={() => setDrawerOpen(false)}>
+          <p className="text-body text-muted-foreground">
+            Piège de focus, Échap pour fermer, focus restauré sur le bouton qui a ouvert ce tiroir — même mécanique que Modal.
+          </p>
+        </Drawer>
+      )}
     </Section>
   );
 }
