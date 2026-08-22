@@ -1,3 +1,5 @@
+import type { LucideIcon } from "lucide-react";
+
 interface Term {
   label: string;
   size: string;
@@ -31,10 +33,20 @@ const TERMS: Term[] = [
   { label: "Intervalle de confiance", size: "text-xl", left: "36%", top: "88%", duration: 18, delay: -14, drift: "c" },
 ];
 
+export interface AuthBrandFeature {
+  icon: LucideIcon;
+  title: string;
+  description: string;
+}
+
 interface Props {
   kicker: string;
   heading: string;
   tagline: string;
+  /** 3 promesses concrètes (Inscription.html) — optionnel : Login.tsx garde
+   * la version plus sobre (tagline seule), Register.tsx les affiche pour
+   * convaincre un premier visiteur. */
+  features?: AuthBrandFeature[];
 }
 
 /** Panneau de marque partagé par Login et Register — dégradé bleu→cyan
@@ -43,7 +55,7 @@ interface Props {
  * flottants. Un seul composant qui change de FORME selon la largeur d'écran
  * plutôt que deux variantes : bandeau réduit en haut sous lg, panneau plein
  * à gauche au-delà — jamais complètement masqué. */
-export function AuthBrandPanel({ kicker, heading, tagline }: Props) {
+export function AuthBrandPanel({ kicker, heading, tagline, features }: Props) {
   return (
     <section className="relative overflow-hidden bg-brand-gradient text-primary-foreground flex flex-col h-36 sm:h-44 lg:h-auto lg:min-h-screen lg:w-[42%] xl:w-[40%] shrink-0 px-6 py-5 lg:p-12">
       <div className="absolute top-0 right-0 w-64 h-64 bg-white/5 rounded-full -translate-y-28 translate-x-28 pointer-events-none" />
@@ -85,6 +97,22 @@ export function AuthBrandPanel({ kicker, heading, tagline }: Props) {
           {heading}
         </h1>
         <p className="mt-5 text-white/80 text-base leading-relaxed max-w-md">{tagline}</p>
+
+        {features && features.length > 0 && (
+          <ul className="mt-7 space-y-4 max-w-md">
+            {features.map((f) => (
+              <li key={f.title} className="flex items-start gap-3">
+                <span className="flex-shrink-0 h-7 w-7 rounded-lg bg-white/10 flex items-center justify-center mt-0.5">
+                  <f.icon size={14} className="text-white" />
+                </span>
+                <div>
+                  <p className="text-sm font-semibold text-white">{f.title}</p>
+                  <p className="text-xs text-white/70 leading-relaxed mt-0.5">{f.description}</p>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
       </div>
 
       <p className="relative z-10 mt-auto text-xs text-white/50 tracking-wide hidden lg:block">

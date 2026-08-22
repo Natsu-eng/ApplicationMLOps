@@ -208,9 +208,29 @@ export default function AppShell({ children, pillarId }: { children: ReactNode; 
   );
 
   return (
-    <div className="flex min-h-screen bg-background">
-      {/* Sidebar desktop — fixe, toujours visible dès lg */}
-      <aside className="fixed inset-y-0 left-0 hidden w-64 flex-col border-r border-sidebar-border bg-sidebar lg:flex">
+    <div className="relative flex min-h-screen bg-background">
+      {/* Atmosphère — deux halos + grille très faible, uniquement pour que le
+          rail et la barre haute en verre (.glass) aient quelque chose à
+          flouter (SPEC-UI.md §4 : « sans halo, pas de verre »). Fixe, hors
+          du flux, jamais au-dessus du contenu (z-0) ni cliquable. */}
+      <div className="fixed inset-0 z-0 overflow-hidden pointer-events-none" aria-hidden="true">
+        <div
+          className="absolute -left-40 -top-64 h-[560px] w-[560px] rounded-full opacity-60"
+          style={{ background: "radial-gradient(circle, color-mix(in oklch, var(--accent) 16%, transparent), transparent 68%)" }}
+        />
+        <div
+          className="absolute -right-40 -bottom-56 h-[480px] w-[480px] rounded-full opacity-60"
+          style={{ background: "radial-gradient(circle, color-mix(in oklch, var(--info) 14%, transparent), transparent 68%)" }}
+        />
+      </div>
+
+      {/* Rail — flottant en verre (SPEC-UI.md §5) : navigation complète par
+          étiquettes conservée (pas la version 60px icônes seules de la
+          maquette de référence, qui suppose une IA à 5 entrées fixes — cette
+          app a des sous-listes de longueur variable par pilier ; réduire à
+          des icônes nues aurait exigé une refonte de la navigation elle-même,
+          hors périmètre de ce lot — voir _design/JOURNAL.md). */}
+      <aside className="fixed left-[18px] top-[18px] bottom-[18px] z-20 hidden w-64 flex-col rounded-sheet glass lg:flex">
         {sidebarContent}
       </aside>
 
@@ -224,12 +244,12 @@ export default function AppShell({ children, pillarId }: { children: ReactNode; 
         </div>
       )}
 
-      <div className="flex min-h-screen flex-1 flex-col lg:pl-64">
-        <header className="sticky top-0 z-30 flex h-16 items-center gap-3 border-b border-border bg-background/80 px-4 backdrop-blur-md sm:px-6">
+      <div className="relative z-10 flex min-h-screen flex-1 flex-col lg:pl-[292px]">
+        <header className="sticky top-0 z-30 mx-4 mt-4 flex h-14 items-center gap-3 rounded-card glass px-4 sm:mx-6 sm:mt-[22px] sm:px-5 lg:mr-[4px]">
           <button
             onClick={() => setMobileNavOpen((v) => !v)}
             aria-label="Menu"
-            className="lg:hidden flex items-center justify-center h-9 w-9 rounded-lg text-muted-foreground hover:bg-muted transition-colors flex-shrink-0"
+            className="lg:hidden flex items-center justify-center h-9 w-9 rounded-lg text-muted-foreground hover:bg-muted/60 transition-colors flex-shrink-0"
           >
             {mobileNavOpen ? <X size={18} /> : <Menu size={18} />}
           </button>
@@ -237,7 +257,7 @@ export default function AppShell({ children, pillarId }: { children: ReactNode; 
           <div className="ml-auto flex items-center gap-2">
             <button
               onClick={() => setHelpOpen(true)}
-              className="flex items-center gap-1.5 h-9 rounded-lg px-3 text-sm text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+              className="flex items-center gap-1.5 h-9 rounded-lg px-3 text-sm text-muted-foreground hover:bg-muted/60 hover:text-foreground transition-colors"
             >
               <HelpCircle size={16} />
               <span className="hidden sm:inline">Aide</span>
@@ -245,7 +265,7 @@ export default function AppShell({ children, pillarId }: { children: ReactNode; 
           </div>
         </header>
 
-        <main className="flex-1 px-4 py-8 sm:px-6 lg:px-8">
+        <main className="flex-1 px-4 py-6 sm:px-6 lg:px-8">
           <div className="max-w-6xl mx-auto">{children}</div>
         </main>
       </div>
