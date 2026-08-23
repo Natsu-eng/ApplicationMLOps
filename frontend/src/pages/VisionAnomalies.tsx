@@ -529,7 +529,7 @@ function MetricTile({ label, value, color }: { label: string; value: string; col
   return (
     <div className={`rounded-xl border px-4 py-3 ${accentSurfaceClass(color)}`}>
       <p className="text-xs text-muted-foreground mb-1">{label}</p>
-      <p className={`text-xl font-semibold tabular-nums ${accentValueTextClass(color)}`}>{value}</p>
+      <p className={`text-xl font-bold tabular-nums ${accentValueTextClass(color)}`}>{value}</p>
     </div>
   );
 }

@@ -598,9 +598,7 @@ function ClusteringResultView({ job }: { job: ClusteringJobSummary }) {
         </div>
 
         <div className={`rounded-xl border p-3 mt-4 ${accentSurfaceClass(QUALITY_TONE_ACCENT[quality.tone])}`}>
-          <span
-            className={`inline-flex items-center text-overline px-2 py-0.5 rounded-full bg-card/80 ${accentValueTextClass(QUALITY_TONE_ACCENT[quality.tone])}`}
-          >
+          <span className="inline-flex items-center text-overline px-2 py-0.5 rounded-full bg-card/80 text-foreground">
             {quality.label}
           </span>
           <p className="text-xs text-foreground/70 mt-1.5">{quality.caveat}</p>
@@ -610,9 +608,7 @@ function ClusteringResultView({ job }: { job: ClusteringJobSummary }) {
         </div>
         {typeof stabilityAri === "number" && (
           <div className={`rounded-xl border p-3 mt-3 ${accentSurfaceClass(QUALITY_TONE_ACCENT[stability.tone])}`}>
-            <span
-              className={`inline-flex items-center text-overline px-2 py-0.5 rounded-full bg-card/80 ${accentValueTextClass(QUALITY_TONE_ACCENT[stability.tone])}`}
-            >
+            <span className="inline-flex items-center text-overline px-2 py-0.5 rounded-full bg-card/80 text-foreground">
               {stability.label} ({stabilityAri.toFixed(2)})
             </span>
             <p className="text-xs text-foreground/70 mt-1.5">{stability.caveat}</p>
@@ -730,7 +726,7 @@ function ClusteringResultView({ job }: { job: ClusteringJobSummary }) {
                     <ColorIconBadge icon={Boxes} color={color} size="sm" />
                     <span className="text-sm font-medium text-foreground">Segment {profile.cluster_id + 1}</span>
                   </div>
-                  <span className={`text-sm font-semibold tabular-nums ${accentValueTextClass(color)}`}>
+                  <span className="text-sm font-semibold tabular-nums text-foreground">
                     {profile.size_pct.toFixed(1)} %
                   </span>
                 </div>
@@ -919,7 +915,7 @@ function MetricTile({
         {label}
         {direction && <MetricDirection better={direction} />}
       </p>
-      <p className={`text-xl font-semibold tabular-nums ${accentValueTextClass(color)}`}>{value}</p>
+      <p className={`text-xl font-bold tabular-nums ${accentValueTextClass(color)}`}>{value}</p>
     </div>
   );
 }

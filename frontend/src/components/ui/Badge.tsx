@@ -2,22 +2,26 @@ import type { ReactNode } from "react";
 
 type Variant = "neutral" | "accent" | "success" | "warning" | "danger" | "primary";
 
-// Opacité de fond volontairement faible (/4, pas /10) : --success/--warning/
-// --destructive/--primary ne sont garantis ≥4,5:1 QUE sur les 3 fonds neutres
-// du thème (canvas/surface/raised, voir themes.css) — un lavis de ces teintes
+// Opacité de fond volontairement faible : --success/--warning/--destructive/
+// --primary ne sont garantis ≥4,5:1 QUE sur les 3 fonds neutres du thème
+// (canvas/surface/raised, voir themes.css) — un lavis de ces teintes
 // composite un 4ᵉ fond légèrement différent, sous le seuil en ivoire/
 // porcelaine (les 2 thèmes au minimum de contraste le plus serré, 4.52/
-// 4.55:1) quand le badge est en plus posé sur une ligne de tableau
-// elle-même teintée (double lavis composé) — /6 puis /5 encore
-// insuffisants (4.47:1 mesuré), /4 revérifié par axe-core dans ce cas
-// précis, voir _design/JOURNAL.md Lot 2.
+// 4.55:1) quand le badge est en plus posé sur une ligne de tableau ou une
+// carte déjà teintée (double lavis composé) — /6 puis /5 insuffisants
+// (4.47:1 mesuré, _design/JOURNAL.md Lot 2), /4 pensé suffisant à l'époque
+// mais remesuré à 4,48-4,66:1 par axe-core dans deux doubles-lavis réels
+// (Lot 11, vérification finale : badge dans une carte `bg-muted`, badge
+// dans une ligne de tableau `bg-primary/5`) — sous le seuil de quelques
+// centièmes à quelques dixièmes selon le cas. /3 repasse au-dessus avec une
+// marge réelle dans les deux cas, revérifié par axe-core sur les 5 thèmes.
 const VARIANT_CLASSES: Record<Variant, string> = {
   neutral: "bg-muted text-muted-foreground border border-border",
   accent: "bg-accent text-accent-foreground border border-accent",
-  primary: "bg-primary/4 text-primary border border-primary/20",
-  success: "bg-success/4 text-success border border-success/20",
-  warning: "bg-warning/4 text-warning border border-warning/20",
-  danger: "bg-destructive/4 text-destructive border border-destructive/20",
+  primary: "bg-primary/2 text-primary border border-primary/20",
+  success: "bg-success/2 text-success border border-success/20",
+  warning: "bg-warning/2 text-warning border border-warning/20",
+  danger: "bg-destructive/2 text-destructive border border-destructive/20",
 };
 
 const DOT_CLASSES: Record<Variant, string> = {

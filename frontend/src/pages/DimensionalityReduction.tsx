@@ -593,9 +593,7 @@ function DimensionalityResultView({ jobId }: { jobId: number }) {
           <MetricTile label="Conservation des voisinages" value={result.trustworthiness_primary.toFixed(3)} color="teal" />
         </div>
         <div className={`rounded-xl border p-3 mt-4 ${accentSurfaceClass(QUALITY_TONE_ACCENT[quality.tone])}`}>
-          <span
-            className={`inline-flex items-center text-overline px-2 py-0.5 rounded-full bg-card/80 ${accentValueTextClass(QUALITY_TONE_ACCENT[quality.tone])}`}
-          >
+          <span className="inline-flex items-center text-overline px-2 py-0.5 rounded-full bg-card/80 text-foreground">
             {quality.label}
           </span>
           <p className="text-xs text-foreground/70 mt-1.5">{quality.caveat}</p>
@@ -721,7 +719,7 @@ function MetricTile({ label, value, color }: { label: string; value: string; col
   return (
     <div className={`rounded-xl border px-4 py-3 ${accentSurfaceClass(color)}`}>
       <p className="text-xs text-muted-foreground mb-1">{label}</p>
-      <p className={`text-xl font-semibold tabular-nums ${accentValueTextClass(color)}`}>{value}</p>
+      <p className={`text-xl font-bold tabular-nums ${accentValueTextClass(color)}`}>{value}</p>
     </div>
   );
 }

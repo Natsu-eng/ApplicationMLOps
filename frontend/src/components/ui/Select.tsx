@@ -6,7 +6,7 @@ import type { SelectHTMLAttributes } from "react";
 export function Select({ className = "", ...rest }: SelectHTMLAttributes<HTMLSelectElement>) {
   return (
     <select
-      className={`w-full rounded-lg border border-input bg-card px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring/40 focus:border-ring/50 transition-colors disabled:opacity-[.42] disabled:cursor-not-allowed aria-[invalid=true]:border-destructive aria-[invalid=true]:focus:ring-destructive/30 ${className}`}
+      className={`w-full min-w-0 rounded-lg border border-input bg-card px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring/40 focus:border-ring/50 transition-colors disabled:opacity-[.42] disabled:cursor-not-allowed aria-[invalid=true]:border-destructive aria-[invalid=true]:focus:ring-destructive/30 ${className}`}
       {...rest}
     />
   );
