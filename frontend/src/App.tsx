@@ -12,11 +12,13 @@ import Dashboard from "./pages/Dashboard";
 import Datasets from "./pages/Datasets";
 import DesignSystem from "./pages/DesignSystem";
 import DimensionalityReduction from "./pages/DimensionalityReduction";
+import ForgotPassword from "./pages/ForgotPassword";
 import Login from "./pages/Login";
 import Onboarding from "./pages/Onboarding";
 import Orientation from "./pages/Orientation";
 import Profile from "./pages/Profile";
 import Register from "./pages/Register";
+import ResetPassword from "./pages/ResetPassword";
 import Training from "./pages/Training";
 import TrainingHistory from "./pages/TrainingHistory";
 import UnsupervisedHistory from "./pages/UnsupervisedHistory";
@@ -45,6 +47,8 @@ export default function App() {
           <Routes>
             <Route path="/login" element={<Login />} />
             <Route path="/register" element={<Register />} />
+            <Route path="/forgot-password" element={<ForgotPassword />} />
+            <Route path="/reset-password" element={<ResetPassword />} />
             <Route
               path="/"
               element={

@@ -27,7 +27,7 @@ email-validator==2.3.0
 # ── Auth / Sécurité (Lot 1) ─────────────────────────────────────
 python-jose[cryptography]==3.5.0
 bcrypt==5.0.0
-python-multipart==0.0.27
+python-multipart==0.0.31
 
 # ── Datasets tabulaires (Lot 2) ──────────────────────────────────
 pandas==2.2.2

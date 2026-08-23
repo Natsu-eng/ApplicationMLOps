@@ -79,6 +79,22 @@ class Settings(BaseSettings):
     max_vision_upload_size_mb: int = 500
     max_vision_dataset_images: int = 5000
 
+    # Correctif (Phase 1, AUDIT_BACKEND_2026-08-23.md §A.6) — la topologie
+    # documentée (docker-compose.yml) place TOUJOURS nginx devant le backend
+    # ; sans confiance explicite dans cette seule couche réseau, tout le
+    # rate-limiting par IP (login, register, upload, explain) retombe sur
+    # l'IP du conteneur nginx pour tout le monde (voir api/core/rate_limit.py
+    # ::get_client_ip). Liste de CIDR séparés par des virgules, JAMAIS "*" —
+    # défaut = plage standard des réseaux bridge Docker (172.16.0.0/12,
+    # couvre 172.17.0.0/16 à 172.31.0.0/16, l'espace où Docker alloue ses
+    # réseaux `bridge` par défaut, dont `datalab_network`). Le backend n'a de
+    # toute façon aucun port publié sur l'hôte (`expose:`, pas `ports:`,
+    # docker-compose.yml) : cette plage n'est jamais joignable depuis
+    # l'extérieur du démon Docker, seulement depuis les conteneurs du même
+    # réseau — resserrer davantage (IP fixe du conteneur nginx) est fragile
+    # car cette IP change à chaque recréation du conteneur.
+    trusted_proxy_cidrs: str = "172.16.0.0/12"
+
     # Durcissement SaaS (H11, AUDIT_ROADMAP.md) — aucune limite n'existait
     # sur les tentatives de connexion échouées, brute force possible sans
     # borne. Fenêtre glissante par IP cliente, stockée dans Redis (déjà une
@@ -117,6 +133,32 @@ class Settings(BaseSettings):
     # accumuler indéfiniment des données personnelles potentiellement
     # sensibles saisies dans `input_json`.
     prediction_retention_days: int = 90
+
+    # Réinitialisation de mot de passe (Phase 1B, AUDIT_BACKEND_2026-08-23.md)
+    # — mêmes noms de variable que CIAM (E:\concrete-ai-platform), pour que
+    # le même bloc `.env` fonctionne des deux côtés sans réécriture. Canal
+    # mail OPTIONNEL au démarrage (voir `api/core/mailer.py::mailer_configured`)
+    # : sans configuration SMTP, l'API démarre normalement et
+    # `/auth/password-reset/request` répond toujours 204 en journalisant que
+    # le canal est absent — une plateforme ne refuse pas de démarrer parce
+    # que le serveur de mail manque. En production en revanche, l'absence de
+    # configuration SMTP est un avertissement explicite au démarrage (voir
+    # `api/main.py::lifespan`) : un reset qui répond 204 sans jamais envoyer
+    # de mail est le pire des deux mondes.
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password: str = ""
+    password_reset_expire_minutes: int = 30
+
+    # Durcissement au-delà de CIAM (Phase 1B, point 2 — « ce qu'il faut
+    # faire mieux ») : CIAM limite uniquement par IP (5/heure) — un
+    # attaquant qui change d'IP inonde la boîte mail de la victime. Ajoute
+    # une limite PAR COMPTE (adresse email), même réponse neutre dans les
+    # deux cas (voir domains/auth/router.py).
+    password_reset_rate_limit_max_attempts_per_ip: int = 5
+    password_reset_rate_limit_max_attempts_per_email: int = 3
+    password_reset_rate_limit_window_seconds: int = 3600
 
     # Journalisation
     log_level: str = "INFO"

@@ -51,6 +51,15 @@ class User(Base):
     # aussi le thème par défaut du ThemeProvider frontend (ordre de résolution :
     # ce champ → localStorage → prefers-color-scheme → graphite).
     ui_theme: Mapped[str] = mapped_column(String(20), nullable=False, server_default="graphite")
+    # Cycle de vie des jetons (Phase 1, AUDIT_BACKEND_2026-08-23.md, Axe A) —
+    # tout jeton ACCESS dont `iat` est antérieur à cette date est rejeté par
+    # `get_current_user`, quel que soit son `jti` individuel. NULL = aucune
+    # révocation en masse n'a jamais eu lieu, tous les jetons signés valides
+    # sont acceptés (comportement historique). Mis à jour au changement de
+    # mot de passe (volontaire ou réinitialisation, Phase 1B) — c'est le
+    # mécanisme qui permet de fermer TOUTES les sessions d'un coup sans
+    # énumérer chaque jeton émis.
+    token_valid_after: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
     organization: Mapped["Organization"] = relationship("Organization", back_populates="users")
 
@@ -62,6 +71,39 @@ class User(Base):
     def organization_name(self) -> str:
         """Exposé pour les réponses API — évite de sérialiser l'objet Organization entier."""
         return self.organization.name
+
+
+class PasswordResetToken(Base):
+    """Jeton de réinitialisation de mot de passe (Phase 1B,
+    AUDIT_BACKEND_2026-08-23.md) — table dédiée plutôt que des colonnes sur
+    `User` : conserve l'historique (audit) et permet d'invalider EN BLOC
+    tous les jetons non utilisés d'un compte (voir
+    `domains/auth/router.py::_issue_password_reset_token`). Repris de CIAM
+    (`E:\\concrete-ai-platform`), mécanisme déjà éprouvé — voir le journal
+    pour les points corrigés par rapport à cette référence.
+
+    `token_hash` : SHA-256 du jeton — le jeton en clair n'est JAMAIS stocké,
+    ni journalisé, ni renvoyé par l'API ; il n'existe que dans le lien
+    envoyé par e-mail (voir `api/core/mailer.py`)."""
+
+    __tablename__ = "password_reset_tokens"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    used_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    # IP du demandeur (Phase 1B, point 6 — « dire à l'utilisateur ce qui
+    # s'est passé ») : incluse dans le mail envoyé, pour qu'un destinataire
+    # qui reçoit un lien non demandé puisse juger si ça lui dit quelque
+    # chose. IP réelle (voir `api/core/rate_limit.py::get_client_ip`), pas
+    # l'IP du conteneur nginx.
+    requested_from_ip: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    user: Mapped["User"] = relationship("User")
 
 
 class Dataset(Base):

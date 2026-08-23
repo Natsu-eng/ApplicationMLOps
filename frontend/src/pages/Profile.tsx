@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { KeyRound, Palette, ScrollText, User, Users } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 import {
   ApiError,
   api,
@@ -166,17 +167,17 @@ function EditNameForm({ currentName, onSaved }: { currentName: string; onSaved: 
 }
 
 function ChangePasswordForm() {
+  const { logout } = useAuth();
+  const navigate = useNavigate();
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
     setError(null);
-    setSuccess(false);
     if (newPassword !== confirmPassword) {
       setError("La confirmation ne correspond pas au nouveau mot de passe.");
       return;
@@ -188,13 +189,15 @@ function ChangePasswordForm() {
         new_password: newPassword,
         new_password_confirm: confirmPassword,
       });
-      setCurrentPassword("");
-      setNewPassword("");
-      setConfirmPassword("");
-      setSuccess(true);
+      // Phase 1B (AUDIT_BACKEND_2026-08-23.md) — le backend révoque TOUTES
+      // les sessions au changement de mot de passe, y compris celle-ci :
+      // le jeton actuel est déjà invalide côté serveur. On ne laisse pas
+      // l'utilisateur découvrir ça au hasard sur le prochain appel API —
+      // déconnexion explicite et reconnexion demandée immédiatement.
+      await logout();
+      navigate("/login?password_changed=1");
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Impossible de changer le mot de passe");
-    } finally {
       setIsSubmitting(false);
     }
   }
@@ -244,7 +247,9 @@ function ChangePasswordForm() {
         />
       </div>
       {error && <ErrorNote message={error} />}
-      {success && <p className="text-sm text-success">Mot de passe mis à jour.</p>}
+      <p className="text-caption text-muted-foreground">
+        Toutes vos sessions ouvertes seront fermées, y compris celle-ci — vous devrez vous reconnecter.
+      </p>
       <Button type="submit" disabled={isSubmitting}>
         {isSubmitting ? "Enregistrement…" : "Changer le mot de passe"}
       </Button>
