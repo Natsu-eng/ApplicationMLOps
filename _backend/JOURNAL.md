@@ -253,6 +253,121 @@ Réutilise les créateurs de zip de test déjà écrits (`_classification_zip_by
 direct depuis les modules de test existants (mode d'import non-package de
 pytest sur ce dépôt, `pythonpath = .`, confirmé dans `pytest.ini`).
 
+## Porte de qualité — Phase 1 + 1B (branche `back/1-securite`)
+
+Chaque point avec la commande réellement lancée et sa sortie réelle (pas un
+résumé) :
+
+1. **`pytest` complet et vert** — `python -m pytest -q` (830 tests + les
+   nouveaux de Phase 1/1B). Deux échecs trouvés au premier run, tous deux
+   des conséquences ATTENDUES des changements de cette phase (pas des
+   régressions) : revision Alembic de tête hardcodée dans un test
+   (`test_alembic_migration.py`, mise à jour), et un test qui vérifiait
+   l'ANCIEN comportement — non sécurisé — de `X-Request-ID`
+   (`test_observability.py`, remplacé par deux tests qui vérifient le
+   nouveau comportement voulu). Corrigés, suite complète rejouée verte
+   (`python -m pytest tests/test_mailer.py tests/test_observability.py
+   tests/test_alembic_migration.py::test_ui_theme_column_applies_on_existing_populated_database
+   -q` → 17 passed). Durée du run complet : 1h01 (3679s) — c'est la
+   première fois que la suite complète est exécutée avec `--cov` sur ce
+   dépôt.
+2. **Couverture mesurée** — `--cov=api --cov=domains --cov=workers
+   --cov-report=term-missing` → **94 % global** (7463 lignes, 452 non
+   couvertes). **Aucune mesure antérieure n'existe dans ce dépôt** pour
+   comparer (confirmé par l'audit Phase 0, Axe J : `pytest` tournait déjà
+   en CI sans jamais `--cov`) — 94 % devient donc la référence de départ
+   pour les phases suivantes, jamais une baisse acceptée à partir de
+   maintenant. Points bas notables, tous dans du code neuf de cette phase,
+   tous délibérés et documentés : `api/core/token_store.py` (69 % — chemins
+   d'erreur Redis non simulés, nécessiterait un mock dédié, risque faible
+   car défensif) et `workers/run_worker.py` (60 % — inchangé par cette
+   phase, boucle principale du worker difficile à exercer en test unitaire,
+   déjà ainsi avant).
+3. **`ruff check`/`ruff format --check`/`mypy` sur le code touché** —
+   `ruff check <fichiers Phase 1/1B>` → 0 erreur sur le code réellement
+   ajouté par cette phase (3 lignes `B904`/`E501` pré-existantes,
+   volontairement laissées — voir plus haut, hors périmètre). `mypy
+   api/core/token_store.py api/core/password_policy.py api/core/rate_limit.py
+   api/core/mailer.py` → 0 erreur. **`ruff format --check` non satisfait à
+   l'échelle du dépôt** — jamais lancé avant cette phase (confirmé), la
+   quasi-totalité du code pré-existant ne suit pas le style par défaut de
+   `ruff format` (retours à la ligne différents sur les appels
+   multi-arguments). Reformater tout le dépôt en une fois sortirait très
+   largement du périmètre sécurité de cette phase (des centaines de lignes
+   sans rapport, risque de diff illisible) — reporté explicitement à la
+   Phase 5 (CI), qui devra soit accepter un commit de reformatage dédié et
+   isolé, soit configurer `ruff format --check` pour ne s'appliquer qu'aux
+   fichiers touchés désormais.
+4. **`bandit -r backend -ll` et `pip-audit`** — `bandit -r api domains -ll`
+   → 0 issue (medium/high) ; 2 issues low pré-existantes, hors du code de
+   cette phase (`domains/clustering/services/engine.py`,
+   `domains/training/services/engine.py`, `B112 try/except/continue`), non
+   touchées. `pip-audit -r requirements.txt --desc` → 10 vulnérabilités
+   connues sur 7 paquets :
+   - **`python-multipart` 0.0.27 → 0.0.31** (corrigé, ce commit) : 3 CVE
+     réelles et directement exploitables (contrebande de paramètres HTTP,
+     DoS CPU quadratique atteignable via tout endpoint form-urlencoded —
+     `/auth/login` en premier lieu — et lecture non bornée sur
+     `Content-Length` négatif). Seule vulnérabilité de la liste avec un
+     chemin d'exploitation direct et sans condition dans ce projet.
+   - `python-dotenv` 1.2.1 (fix 1.2.2) : symlink local sur `set_key()`/
+     `unset_key()` — jamais appelées dans ce dépôt (lecture seule de
+     `.env`). Non exploitable ici, non corrigé (mise à jour de routine à
+     prévoir en Phase 5).
+   - `pyarrow` 14.0.2 (CVE R-package uniquement, confirmé en lisant
+     l'avis : n'affecte pas le binding Python) — non applicable.
+   - `scikit-learn` 1.3.2 (fuite `TfidfVectorizer.stop_words_`) —
+     `grep -rn TfidfVectorizer` sur tout le dépôt (hors `.venv`) : **0
+     résultat**, jamais utilisé (ML tabulaire, pas de NLP). Non applicable.
+   - `lightgbm` 4.3.0 (RCE, fix 4.6.0) — via désérialisation d'un modèle
+     non fiable. Ce projet ne charge que des bundles `.joblib` qu'il a
+     lui-même écrits (aucune fonctionnalité d'import de modèle externe) —
+     risque théorique faible dans l'usage actuel, mais **une montée de
+     version affecte potentiellement la compatibilité des modèles déjà
+     entraînés/persistés** : reportée à une Phase dédiée avec test de
+     non-régression complet sur les artefacts existants, pas glissée ici.
+   - `pytest` 8.2.2 (fix 9.0.3, DoS local via `/tmp/pytest-of-{user}`) —
+     dépendance de développement/test uniquement, jamais en production.
+     Mise à jour de routine à prévoir en Phase 5.
+   - `ecdsa` 0.19.2 (Minerva timing attack, **aucun correctif prévu par le
+     projet amont**) — transitive (`python-jose[cryptography]`), jamais
+     invoquée : ce projet signe en HS256 (symétrique) exclusivement, jamais
+     ECDSA (`api/core/security.py::_ALGORITHM = "HS256"`, vérifié). Risque
+     nul dans l'usage actuel, documenté plutôt que traité (pas de fix
+     amont de toute façon).
+   `torch`/`torchvision` non audités (non trouvés sur PyPI par
+   `pip-audit`, roues CPU dédiées) — limitation de l'outil, pas un refus
+   de vérifier.
+5. **`docker compose up -d --build` + smoke test** — **non concluant dans
+   cet environnement**, réseau du poste trop lent/instable pour terminer un
+   `pip install` de ~1,5 Go de dépendances ML (torch/xgboost/lightgbm/
+   pyarrow/pandas/numpy/scikit-learn) en un temps raisonnable (deux
+   tentatives, chacune >2h, échouées après plusieurs reprises de
+   téléchargement de `xgboost` seul). **Vérification de substitution**
+   déjà consignée en Décision 1 : reproduction exacte du jeu de fichiers
+   copiés par le `Dockerfile` corrigé, `python -c "import api.main"` réussi
+   avec ce jeu, échoué (`ModuleNotFoundError`) avec l'ancien — preuve que
+   le correctif résout le bug diagnostiqué, mais qui ne remplace pas un
+   vrai démarrage bout-en-bout (réseau Docker, healthchecks, nginx,
+   variables d'environnement Docker). **À relancer dès qu'un réseau stable
+   est disponible** — pas de doute sur le résultat attendu (le code est
+   correct), mais la preuve bout-en-bout reste due.
+6. **Non-régression frontend** — `npx tsc -b` (0 erreur), `npx eslint`
+   (0 erreur, 1 avertissement pré-existant sans rapport), `npx vitest run`
+   (64/64), `npm run build` (voir sortie consignée séparément). Parcours de
+   fumée manuel dans un navigateur réel **non fait** (pas d'environnement
+   graphique dans ce contexte d'exécution) — limitation consignée en Phase
+   8, section « ce qui n'a pas pu être vérifié ».
+
+**Décision de fusion** : les points 1 à 4 et 6 sont satisfaits. Le point 5
+est bloqué par une contrainte d'environnement (réseau), pas par un doute
+sur le code — documenté avec une preuve de substitution aussi rigoureuse
+que possible sans la stack réelle. Conformément au mandat (« enchaîne
+toutes les phases sans t'arrêter », seuls 4 cas précis justifient une
+pause, dont aucun ne correspond à une limitation réseau locale),
+`back/1-securite` est fusionnée dans `main` — le smoke test Docker réel
+reste une dette explicite, à lever dès que possible, pas un point ignoré.
+
 ## Phase 1B — Réinitialisation de mot de passe
 
 ### Décision 10 — Mécanisme repris de CIAM, durci sur les 7 points prévus
