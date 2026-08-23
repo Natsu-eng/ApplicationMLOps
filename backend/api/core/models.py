@@ -924,4 +924,35 @@ class VisionAnomalyExampleRecord(Base):
     mask_png: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
+    # Bug réel trouvé (Lot 10, exposé par l'ajout de `Feedback.author` — voir
+    # JOURNAL.md) : `VisionAnomalyModel.examples` déclare `back_populates=
+    # "model"` depuis toujours, mais ce côté de la relation ne l'avait jamais
+    # défini — SQLAlchemy ne configure les mappers qu'à la première requête
+    # ORM du process, jamais détecté avant. Corrigé en ajoutant la relation
+    # manquante, jamais un simple contournement du symptôme.
     model: Mapped["VisionAnomalyModel"] = relationship("VisionAnomalyModel", back_populates="examples")
+
+
+class Feedback(Base):
+    """Retour utilisateur libre depuis le centre d'aide (Lot 10, refonte UI —
+    retour direct : « ajoute un formulaire pour renseigner ce problème »
+    plutôt qu'un simple lien mailto vers un support qui n'existe pas).
+    Stocké tel quel, jamais traité automatiquement : consultable par les
+    administrateurs de l'organisation concernée, jamais visible d'une autre
+    (même isolation par organization_id que le reste de l'app)."""
+
+    __tablename__ = "feedback"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    organization_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    # Chemin de la page depuis laquelle le retour a été envoyé (ex. "/aide",
+    # "/training?job=45") — contexte utile pour comprendre le signalement,
+    # jamais interprété/parsé côté serveur.
+    page: Mapped[str] = mapped_column(String(300), nullable=False)
+    message: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    author: Mapped["User"] = relationship("User")

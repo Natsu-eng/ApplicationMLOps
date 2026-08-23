@@ -21,7 +21,7 @@ from sqlalchemy.orm import Session
 from api.core.config import get_settings
 from api.core.database import get_db
 from api.core.job_queue import redis_conn
-from api.core.models import AuditLog, Organization, User
+from api.core.models import AuditLog, Feedback, Organization, User
 from api.core.rate_limit import is_rate_limited, rate_limit_dependency, reset_rate_limit
 from api.core.security import create_access_token, decode_token, hash_password, verify_password
 from domains.shared.audit import log_action
@@ -300,6 +300,72 @@ def update_preferences(
     db.commit()
     db.refresh(current_user)
     return current_user
+
+
+# ── Retour utilisateur (Lot 10, refonte UI) ──────────────────────────────────
+# Retour utilisateur direct pendant la mission : « ajoute un formulaire pour
+# renseigner ce problème » plutôt qu'un simple lien mailto vers un support qui
+# n'existe pas pour cette app. Stocké tel quel (table `Feedback`), jamais
+# traité automatiquement — consultable par les administrateurs de LEUR
+# organisation uniquement (même isolation que le reste de l'app).
+
+class FeedbackCreate(BaseModel):
+    page: str = Field(..., min_length=1, max_length=300)
+    message: str = Field(..., min_length=1, max_length=4000)
+
+
+class FeedbackOut(BaseModel):
+    id: int
+    page: str
+    message: str
+    author_name: str
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+feedback_router = APIRouter(prefix="/feedback", tags=["retour utilisateur"])
+
+
+@feedback_router.post("", response_model=FeedbackOut, status_code=status.HTTP_201_CREATED)
+def create_feedback(
+    body: FeedbackCreate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    entry = Feedback(
+        organization_id=current_user.organization_id,
+        user_id=current_user.id,
+        page=body.page,
+        message=body.message,
+    )
+    db.add(entry)
+    db.commit()
+    db.refresh(entry)
+    return FeedbackOut(
+        id=entry.id, page=entry.page, message=entry.message,
+        author_name=current_user.nom, created_at=entry.created_at,
+    )
+
+
+@feedback_router.get("", response_model=List[FeedbackOut])
+def list_feedback(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Retours de MON organisation uniquement — jamais ceux d'une autre."""
+    entries = (
+        db.query(Feedback)
+        .filter(Feedback.organization_id == current_user.organization_id)
+        .order_by(Feedback.created_at.desc())
+        .limit(200)
+        .all()
+    )
+    return [
+        FeedbackOut(id=e.id, page=e.page, message=e.message, author_name=e.author.nom, created_at=e.created_at)
+        for e in entries
+    ]
 
 
 # ── Endpoints — équipe (organisation) ────────────────────────────────────────

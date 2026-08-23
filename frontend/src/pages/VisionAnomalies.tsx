@@ -23,6 +23,8 @@ import { Input } from "../components/ui/Input";
 import { PageHeader } from "../components/ui/PageHeader";
 import { SectionHeader } from "../components/ui/SectionHeader";
 import { Select } from "../components/ui/Select";
+import { Tabs } from "../components/ui/Tabs";
+import { ModelExportActions } from "../components/ui/ModelExportActions";
 import { VisionDatasetPicker } from "../components/vision/VisionDatasetPicker";
 import { useJobEvents } from "../hooks/useJobEvents";
 import { VisionImage } from "../components/vision/VisionImage";
@@ -537,6 +539,7 @@ function AnomalyVisionResultView({ jobId, datasetId }: { jobId: number; datasetI
   const [examples, setExamples] = useState<VisionAnomalyExample[]>([]);
   const [examplesError, setExamplesError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<"performance" | "exemples">("performance");
 
   useEffect(() => {
     api.visionAnomalies
@@ -598,42 +601,72 @@ function AnomalyVisionResultView({ jobId, datasetId }: { jobId: number; datasetI
         </p>
       </Card>
 
-      <Card className="p-5">
-        <SectionHeader icon={Sparkles} color="blue" label="Courbe d'apprentissage (reconstruction)" />
-        <ResponsiveContainer width="100%" height={220}>
-          <LineChart data={historyData} margin={{ top: 8, right: 8, bottom: 8, left: 0 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke={CHART_GRID_STROKE} vertical={false} />
-            <XAxis dataKey="epoch" tick={CHART_TICK_STYLE_SM} label={{ value: "Époque", position: "insideBottom", offset: -2 }} />
-            <YAxis tick={CHART_TICK_STYLE_SM} />
-            <RechartsTooltip {...CHART_TOOLTIP_STYLE} />
-            <Line type="monotone" dataKey="Perte (train)" stroke={CHART_SERIES_COLORS[0]} dot={false} isAnimationActive={false} />
-            <Line type="monotone" dataKey="Perte (validation)" stroke={CHART_SERIES_COLORS[1]} dot={false} isAnimationActive={false} />
-          </LineChart>
-        </ResponsiveContainer>
-      </Card>
+      <ModelExportActions
+        onExportArtifact={() => api.visionAnomalies.exportModel(jobId)}
+        exportConfig={{
+          threshold: result.threshold,
+          roc_auc: result.roc_auc,
+          test_accuracy: result.test_accuracy,
+          test_precision: result.test_precision,
+          test_recall: result.test_recall,
+          test_f1: result.test_f1,
+          model_card: result.model_card,
+        }}
+        configFilename={`vision_anomalies_config_job${jobId}.json`}
+      />
 
-      <Card className="p-5">
-        <SectionHeader icon={AlertTriangle} color="rose" label="Matrice de confusion" help="0 = normal, 1 = défaut." />
-        <Heatmap xLabels={["Normal", "Défaut"]} yLabels={["Normal", "Défaut"]} matrix={result.confusion_matrix} variant="sequential" />
-      </Card>
+      <Tabs
+        items={[
+          { id: "performance" as const, label: "Performance", icon: Sparkles },
+          { id: "exemples" as const, label: "Exemples", icon: AlertTriangle },
+        ]}
+        active={activeTab}
+        onChange={setActiveTab}
+        urlParam="onglet"
+      />
 
-      <div>
-        <SectionHeader
-          icon={AlertTriangle}
-          color="amber"
-          label={`Exemples les plus atypiques (${examples.length})`}
-          help="Triés par score d'anomalie décroissant — la carte de chaleur et le masque indiquent où se situe l'écart par rapport aux pièces normales."
-        />
-        {examplesError ? (
-          <p className="text-sm text-destructive text-center">{examplesError}</p>
-        ) : (
-          <div className="grid gap-4 sm:grid-cols-2">
-            {examples.map((example) => (
-              <AnomalyExampleCard key={example.relative_path} example={example} datasetId={datasetId} />
-            ))}
-          </div>
-        )}
-      </div>
+      {activeTab === "performance" && (
+        <>
+          <Card className="p-5">
+            <SectionHeader icon={Sparkles} color="blue" label="Courbe d'apprentissage (reconstruction)" />
+            <ResponsiveContainer width="100%" height={220}>
+              <LineChart data={historyData} margin={{ top: 8, right: 8, bottom: 8, left: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke={CHART_GRID_STROKE} vertical={false} />
+                <XAxis dataKey="epoch" tick={CHART_TICK_STYLE_SM} label={{ value: "Époque", position: "insideBottom", offset: -2 }} />
+                <YAxis tick={CHART_TICK_STYLE_SM} />
+                <RechartsTooltip {...CHART_TOOLTIP_STYLE} />
+                <Line type="monotone" dataKey="Perte (train)" stroke={CHART_SERIES_COLORS[0]} dot={false} isAnimationActive={false} />
+                <Line type="monotone" dataKey="Perte (validation)" stroke={CHART_SERIES_COLORS[1]} dot={false} isAnimationActive={false} />
+              </LineChart>
+            </ResponsiveContainer>
+          </Card>
+
+          <Card className="p-5">
+            <SectionHeader icon={AlertTriangle} color="rose" label="Matrice de confusion" help="0 = normal, 1 = défaut." />
+            <Heatmap xLabels={["Normal", "Défaut"]} yLabels={["Normal", "Défaut"]} matrix={result.confusion_matrix} variant="sequential" />
+          </Card>
+        </>
+      )}
+
+      {activeTab === "exemples" && (
+        <div>
+          <SectionHeader
+            icon={AlertTriangle}
+            color="amber"
+            label={`Exemples les plus atypiques (${examples.length})`}
+            help="Triés par score d'anomalie décroissant — la carte de chaleur et le masque indiquent où se situe l'écart par rapport aux pièces normales."
+          />
+          {examplesError ? (
+            <p className="text-sm text-destructive text-center">{examplesError}</p>
+          ) : (
+            <div className="grid gap-4 sm:grid-cols-2">
+              {examples.map((example) => (
+                <AnomalyExampleCard key={example.relative_path} example={example} datasetId={datasetId} />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

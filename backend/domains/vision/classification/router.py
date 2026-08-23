@@ -24,7 +24,7 @@ from typing import Any, List, Optional
 
 import torch
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Response, UploadFile, status
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from PIL import Image, UnidentifiedImageError
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session, joinedload
@@ -386,6 +386,28 @@ def get_vision_classification_result(job_id: int, current_user: User = Depends(g
         pr_curves=json.loads(result.pr_curves_json) if result.pr_curves_json else None,
         test_roc_auc=result.test_roc_auc,
     )
+
+
+@router.get("/jobs/{job_id}/model/export")
+def export_vision_classification_model(job_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Export de l'artefact (Lot 10, retour utilisateur direct — parité avec
+    `GET /training/jobs/{job_id}/model/export`) : les poids du réseau entraîné,
+    pour un déploiement hors de la plateforme (`torch.load` avec la même
+    architecture de backbone)."""
+    job = _get_org_job(job_id, current_user, db)
+    if job.status != "completed" or job.result is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"code": "MODELE_NON_DISPONIBLE", "message": "Cet entraînement n'a pas encore produit de modèle"},
+        )
+    artifact_path = Path(job.result.file_path)
+    if not artifact_path.exists():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "ARTEFACT_INTROUVABLE", "message": "Artefact du modèle introuvable sur le serveur"},
+        )
+    filename = f"vision_classification_job{job.id}.pt"
+    return FileResponse(path=artifact_path, filename=filename, media_type="application/octet-stream")
 
 
 _explain_rate_limit = rate_limit_dependency(

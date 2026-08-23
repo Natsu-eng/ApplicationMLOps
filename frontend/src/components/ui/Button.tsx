@@ -1,4 +1,4 @@
-import type { ButtonHTMLAttributes } from "react";
+import { forwardRef, type ButtonHTMLAttributes } from "react";
 import { Loader2 } from "lucide-react";
 
 type Variant = "primary" | "secondary" | "ghost" | "danger" | "destructive" | "link";
@@ -39,18 +39,18 @@ const SIZE_CLASSES: Record<Size, string> = {
   md: "text-body px-4 py-2 rounded-control",
 };
 
-export function Button({
-  variant = "primary",
-  size = "md",
-  loading = false,
-  disabled,
-  className = "",
-  children,
-  ...rest
-}: ButtonProps) {
+// `forwardRef` (Lot 10) : un déclencheur de popover/menu doit pouvoir
+// mesurer sa propre position (`getBoundingClientRect`) pour placer un panneau
+// porté vers `document.body` — voir Dashboard.tsx::NewAnalysisMenu, corrigé
+// pour échapper au rognage d'une Card ancêtre (overflow-hidden).
+export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button(
+  { variant = "primary", size = "md", loading = false, disabled, className = "", children, ...rest },
+  ref,
+) {
   const sizeClass = variant === "link" ? "" : SIZE_CLASSES[size];
   return (
     <button
+      ref={ref}
       disabled={disabled || loading}
       aria-busy={loading || undefined}
       className={`font-medium transition-colors disabled:opacity-[.42] disabled:cursor-not-allowed inline-flex items-center justify-center gap-1.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-[var(--accent)] ${VARIANT_CLASSES[variant]} ${sizeClass} ${className}`}
@@ -60,4 +60,4 @@ export function Button({
       {children}
     </button>
   );
-}
+});

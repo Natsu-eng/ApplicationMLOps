@@ -39,6 +39,8 @@ import { PageHeader } from "../components/ui/PageHeader";
 import { SectionHeader } from "../components/ui/SectionHeader";
 import { Select } from "../components/ui/Select";
 import { Table, type TableColumn } from "../components/ui/Table";
+import { Tabs } from "../components/ui/Tabs";
+import { ModelExportActions } from "../components/ui/ModelExportActions";
 import { DataQualityWarnings } from "../components/training/DataQualityWarnings";
 import { useJobEvents } from "../hooks/useJobEvents";
 import { useConfirmAction } from "../hooks/useConfirmAction";
@@ -534,6 +536,7 @@ function ClusteringResultView({ job }: { job: ClusteringJobSummary }) {
   const [candidates, setCandidates] = useState<ClusterCandidate[]>([]);
   const [candidatesError, setCandidatesError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<"comparaison" | "profils" | "assigner">("profils");
 
   useEffect(() => {
     api.clustering
@@ -624,23 +627,48 @@ function ClusteringResultView({ job }: { job: ClusteringJobSummary }) {
         )}
       </Card>
 
-      {candidatesError ? (
-        <p className="text-sm text-destructive text-center">{candidatesError}</p>
-      ) : (
-        candidates.length > 0 && (
-          <div>
-            <SectionHeader
-              icon={ListChecks}
-              color="blue"
-              label={`Configurations comparées (${candidates.length})`}
-              help="Plusieurs algorithmes et nombres de groupes sont testés à chaque lancement, classés sur le score de silhouette — jamais un seul essai lancé à l'aveugle. ↑ = plus haut est meilleur, ↓ = plus bas est meilleur."
-            />
-            <Table columns={CANDIDATE_COLUMNS} rows={candidates} rowKey={(c) => `${c.algorithm}-${c.rank}`} highlightRow={(c) => c.is_winner} />
-          </div>
+      <ModelExportActions
+        onExportArtifact={() => api.clustering.exportModel(jobId)}
+        exportConfig={{
+          algorithm: result.algorithm,
+          n_clusters: result.n_clusters,
+          feature_columns: job.feature_columns,
+          metrics: result.metrics,
+          model_card: result.model_card,
+        }}
+        configFilename={`clustering_config_job${jobId}.json`}
+      />
+
+      <Tabs
+        items={[
+          { id: "profils" as const, label: "Profils de segments", icon: Sparkles },
+          { id: "comparaison" as const, label: "Comparaison", icon: ListChecks },
+          { id: "assigner" as const, label: "Assigner", icon: Target },
+        ]}
+        active={activeTab}
+        onChange={setActiveTab}
+        urlParam="onglet"
+      />
+
+      {activeTab === "comparaison" && (
+        candidatesError ? (
+          <p className="text-sm text-destructive text-center">{candidatesError}</p>
+        ) : (
+          candidates.length > 0 && (
+            <div>
+              <SectionHeader
+                icon={ListChecks}
+                color="blue"
+                label={`Configurations comparées (${candidates.length})`}
+                help="Plusieurs algorithmes et nombres de groupes sont testés à chaque lancement, classés sur le score de silhouette — jamais un seul essai lancé à l'aveugle. ↑ = plus haut est meilleur, ↓ = plus bas est meilleur."
+              />
+              <Table columns={CANDIDATE_COLUMNS} rows={candidates} rowKey={(c) => `${c.algorithm}-${c.rank}`} highlightRow={(c) => c.is_winner} />
+            </div>
+          )
         )
       )}
 
-      {distribution.length > 0 && (
+      {activeTab === "profils" && distribution.length > 0 && (
         <Card className="p-5">
           <SectionHeader
             icon={CircleDashed}
@@ -689,6 +717,7 @@ function ClusteringResultView({ job }: { job: ClusteringJobSummary }) {
         </Card>
       )}
 
+      {activeTab === "profils" && (
       <div>
         <SectionHeader icon={Sparkles} color="violet" label="Profils de segments" help="Chaque groupe décrit par sa taille et ce qui le distingue le plus du reste de la population — jamais une simple étiquette numérique." />
         <div className="grid sm:grid-cols-2 gap-4">
@@ -752,8 +781,9 @@ function ClusteringResultView({ job }: { job: ClusteringJobSummary }) {
           })}
         </div>
       </div>
+      )}
 
-      <ClusterAssignmentForm jobId={jobId} featureColumns={job.feature_columns} />
+      {activeTab === "assigner" && <ClusterAssignmentForm jobId={jobId} featureColumns={job.feature_columns} />}
 
       <Card className="p-4 flex items-center justify-between gap-3 flex-wrap">
         <div className="flex items-start gap-3">

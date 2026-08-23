@@ -4,7 +4,6 @@ import { HelpCircle, History, LayoutDashboard, LogOut, Menu, Palette, Target, X 
 import { useAuth } from "../contexts/AuthContext";
 import { Avatar } from "./ui/Avatar";
 import { Badge } from "./ui/Badge";
-import { HelpModal } from "./HelpModal";
 import { ThemePickerCompact } from "./ui/ThemePicker";
 import { PILLARS, type PillarId } from "../config/pillars";
 import { setLastPillar } from "../utils/lastPillar";
@@ -13,7 +12,9 @@ import { setLastPillar } from "../utils/lastPillar";
  * moderne (refonte UI, calquée sur la maquette de référence) : logo en
  * tête, navigation groupée par pilier (ML supervisé actif, non
  * supervisé/vision "Bientôt"), profil utilisateur en pied de sidebar.
- * Barre du haut réduite à un point d'entrée d'aide (`HelpModal`) — la
+ * Barre du haut réduite à un point d'entrée d'aide (lien vers `/aide`,
+ * Lot 10 — remplace l'ancienne modale `HelpModal`, même contenu, une seule
+ * source désormais) — la
  * recherche et les notifications, visuelles mais jamais câblées, ont été
  * retirées (AUDIT_ROADMAP.md, H16 : une UI qui a l'air fonctionnelle sans
  * l'être casse la confiance, contrairement au traitement honnête déjà
@@ -34,7 +35,6 @@ export default function AppShell({ children, pillarId }: { children: ReactNode; 
   const { user, logout } = useAuth();
   const location = useLocation();
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
-  const [helpOpen, setHelpOpen] = useState(false);
   const [themeMenuOpen, setThemeMenuOpen] = useState(false);
   const themeMenuRef = useRef<HTMLDivElement>(null);
 
@@ -255,13 +255,13 @@ export default function AppShell({ children, pillarId }: { children: ReactNode; 
           </button>
 
           <div className="ml-auto flex items-center gap-2">
-            <button
-              onClick={() => setHelpOpen(true)}
+            <Link
+              to="/aide"
               className="flex items-center gap-1.5 h-9 rounded-lg px-3 text-sm text-muted-foreground hover:bg-muted/60 hover:text-foreground transition-colors"
             >
               <HelpCircle size={16} />
               <span className="hidden sm:inline">Aide</span>
-            </button>
+            </Link>
           </div>
         </header>
 
@@ -270,7 +270,6 @@ export default function AppShell({ children, pillarId }: { children: ReactNode; 
         </main>
       </div>
 
-      {helpOpen && <HelpModal onClose={() => setHelpOpen(false)} />}
     </div>
   );
 }

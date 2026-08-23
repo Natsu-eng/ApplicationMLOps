@@ -1306,3 +1306,209 @@ statique, `dl`/`dt`/`dd`) — l'accès par onglet était déjà vérifié au Lot
 
 Branche `ui/9-exploiter-tracer` → `main`. Serveurs de test toujours actifs
 pour le Lot 10.
+
+## Lot 10 — Aide
+
+### État des lieux avant de coder
+
+`HelpModal.tsx` existant est une modale unique qui empile les 3 guides
+(supervisé/non supervisé/vision) l'un après l'autre, sans FAQ, sans
+glossaire, sans recherche, sans moyen de signaler un problème réel — la
+maquette `aide.dc.html` attend un écran dédié bien plus riche. Décision :
+nouvelle page `/aide` (route protégée), `HelpModal.tsx` supprimé
+(confirmé inutilisé ailleurs que dans son propre commentaire de doc).
+
+Ce lot a reçu, en cours de construction, une séquence dense de retours
+utilisateur en direct — chacun traité et intégré sans interrompre le
+travail, conformément à la règle de la mission :
+
+### Décisions et raisons
+
+58. **Guide « pilier par pilier » en onglets, pas empilé.** Retour direct :
+    « c'est long le parcours, mets par onglet ». Les 3 guides
+    (`PILLAR_GUIDES`) partagent maintenant un seul `<Tabs>` au lieu de se
+    dérouler l'un sous l'autre — contenu identique à l'ancien `HelpModal`,
+    seule la présentation change.
+59. **Cette carte de guide rendue pliable, fermée par défaut.** Retour
+    direct : « lui aussi pliable cette carte ». Un simple bouton-titre
+    (`guideOpen`, chevron rotatif) contrôle l'affichage des onglets +
+    contenu — cohérent avec le patron accordéon déjà utilisé pour la FAQ.
+60. **Glossaire fermé par défaut, ouverture au clic.** Retour direct,
+    accompagné d'une capture du glossaire à plat : « mieux que ce soit
+    fermé ». `GlossaryItem` reprend exactement le patron déjà en place
+    pour `FaqItem` (chevron, `aria-expanded`) — l'utilisateur a ensuite
+    confirmé explicitement apprécier ce même patron sur une capture de FAQ
+    repliée (« j'aime bien c'est lui la »), donc aucune variante inventée :
+    un seul et même composant accordéon partout sur la page.
+61. **Vrai formulaire de signalement, pas un texte de support factice.**
+    Retour direct, explicite sur l'autonomie de la décision (« ou c'est
+    pas moi ce qui se fait ») : ajout d'un modèle `Feedback` réel
+    (migration `f1b7fa244aeb`), d'un routeur `feedback_router`
+    (`POST`/`GET /feedback`, org-scopé) et d'un composant `FeedbackForm`
+    qui poste réellement en base (page courante via `useLocation()`,
+    message libre, état succès/erreur réel — aucune fausse promesse
+    d'équipe support qui n'existe pas).
+62. **Menu « Nouvelle analyse » du Dashboard : bug réel de découpe
+    corrigé.** Voir section bugs ci-dessous — retour direct avec capture,
+    reformulé en priorité explicite (« règle ce problème ensuite »).
+63. **Verdict d'entraînement re-rendu pliable, comme la nouvelle page
+    Aide.** Retour direct : « parfois c'est long les résultats
+    d'entraînement, fait le par onglets pliable comme dans aide ». Les
+    onglets existaient déjà (Lot 6) ; ce qui manquait était le repli des
+    `claims` individuels — `VerdictClaimItem` réintroduit dans
+    `ModelVerdict.tsx` avec le même patron accordéon que 59/60.
+64. **Le même patron onglets + export appliqué à Clustering, Détection
+    d'anomalies, Réduction de dimension, Vision classification, Vision
+    anomalies.** Retour direct, avec capture des onglets propres déjà
+    présents côté Entraînement : « pas un truc de ce genre, je comprends
+    pas ». Chacune des 5 vues de résultat reçoit désormais un `<Tabs>`
+    séparant ce qui était auparavant tout empilé (Clustering :
+    Profils/Comparaison/Assigner ; Anomalies : Observations/Distribution ;
+    Réduction de dimension : Projection/Variables contributives, PCA
+    seulement ; Vision classification : Performance/Exemples/Grad-CAM ;
+    Vision anomalies : Performance/Exemples).
+65. **Export d'artefact + configuration JSON, parité complète avec
+    Entraînement, sur les 5 mêmes domaines.** Retour direct, avec
+    justification explicite de robustesse professionnelle (« ce que font
+    les entreprises... moderne robuste fiable et transparent ») : chaque
+    domaine avait déjà un artefact réel persistant sur disque
+    (`file_path` — confirmé par grep sur `models.py`, colonnes déjà
+    présentes, jamais exposées) ; ajout d'un endpoint
+    `GET /{domaine}/jobs/{id}/model/export` (409/404/`FileResponse`,
+    identique au patron déjà existant pour l'entraînement) sur les 5
+    routeurs, et d'un composant partagé `ModelExportActions` (téléchar-
+    gement réel de l'artefact + export JSON 100% client des variables/
+    métriques déjà en mémoire, zéro appel réseau superflu). Vérifié de
+    bout en bout : les 5 téléchargements d'artefact produisent un vrai
+    fichier (`clustering_fashion-mnist_test_job12.joblib`,
+    `anomalies_..._job7.joblib`, `projection_Iris_job7.joblib`,
+    `vision_classification_job7.pt`, `vision_anomalies_job5.pt`).
+66. **Rééquilibrage des classes (question directe de l'utilisateur sur le
+    SMOTE) : réponse donnée, implémentation reportée délibérément.**
+    L'utilisateur a demandé si le pondérage de classes (seule option
+    actuelle) est le meilleur choix ou si SMOTE devrait être proposé.
+    Analyse réelle du portefeuille de modèles : LightGBM/XGBoost/
+    CatBoost/RandomForest/Ridge supportent tous nativement
+    `class_weight`/`sample_weight`, zéro risque de fuite — c'est un
+    défaut sûr et déjà correct. SMOTE, pour ce jeu de données mixte
+    numérique/catégoriel, exigerait SMOTENC placé strictement à
+    l'intérieur de chaque pli de validation croisée (sinon fuite des
+    plus proches voisins du test vers l'entraînement) : un vrai chantier
+    d'option « mode expert », pas un interrupteur ajoutable en fin de
+    lot visuel. Décision : documenté ici, non implémenté ce lot — un des
+    3 déclencheurs d'escalade (nouvelle fonctionnalité de fond) plutôt
+    qu'une décision unilatérale.
+67. **Prévisualisation avant/après de l'augmentation (ML et Vision) —
+    absente, confirmée hors périmètre de ce lot.** L'utilisateur a
+    observé qu'aucun graphique ne montre concrètement l'effet de
+    l'augmentation appliquée. Vérifié : ni le pipeline d'augmentation
+    tabulaire ni le pipeline Vision ne renvoient d'échantillons
+    avant/après au frontend — ajouter cette prévisualisation exige un
+    nouvel endpoint backend qui applique la transformation à quelques
+    lignes/images réelles et retourne les deux états. Fonctionnalité
+    réelle et légitime, mais un nouveau calcul serveur, pas un reskin —
+    documenté ici pour un lot ultérieur, jamais improvisé avec des
+    données inventées.
+
+### Bug critique trouvé et corrigé (le plus grave de la mission)
+
+Pendant ce lot, `POST /auth/register` (et donc la connexion) a commencé à
+renvoyer une vraie erreur HTTP 500 sur le serveur de développement.
+Diagnostic via `fastapi.testclient.TestClient` en processus (les fichiers
+de log restaient vides malgré `PYTHONUNBUFFERED=1` — piste abandonnée au
+profit de l'exception Python réelle levée en process). Deux bugs
+`SQLAlchemy` empilés, exposés tous les deux par `configure_mappers()`
+(qui ne valide l'ensemble des mappers qu'à la toute première requête ORM
+d'un processus) :
+
+1. **Pré-existant, non causé par ce lot** : `VisionAnomalyModel.examples`
+   déclare `back_populates="model"`, mais `VisionAnomalyExampleRecord` ne
+   définissait aucune relation `model` en retour — un bug dormant depuis
+   son introduction, resté invisible tant qu'aucun process frais n'avait
+   déclenché `configure_mappers()` après lui. Corrigé en ajoutant la
+   relation manquante.
+2. **Introduit par ce lot, ma propre erreur** : après le correctif (1),
+   une SECONDE `NoForeignKeysError` est apparue — tracée à une ligne
+   dupliquée par erreur : la même relation `model` s'était retrouvée
+   insérée par erreur à l'intérieur du corps de la classe `Feedback`
+   (juste après `author = relationship("User")`) pendant l'écriture du
+   modèle `Feedback` de la décision 61. Corrigée en supprimant le
+   doublon.
+
+Vérifié de bout en bout contre le serveur réellement redémarré :
+inscription → 201, connexion → 200, `POST /feedback` → 201 avec une
+vraie ligne retournée. Documenté ici intégralement et honnêtement,
+conformément à l'exigence de transparence de la mission — y compris la
+part qui est ma propre erreur, introduite puis corrigée dans le même lot.
+
+### Bug réel trouvé et corrigé (retour direct, capture à l'appui)
+
+Le menu déroulant « Nouvelle analyse » du tableau de bord était visuel-
+lement tronqué à un mince filet, illisible. Cause réelle : `Card.tsx`
+applique un `overflow-hidden` inconditionnel, qui rognait le menu
+`absolute` niché dans la carte « Vue d'ensemble ». Corrigé en portant le
+menu hors de cette pile via `createPortal(..., document.body)`, avec un
+positionnement `fixed` calculé manuellement depuis
+`getBoundingClientRect()` du bouton déclencheur (le contenu porté perd
+son positionnement relatif au parent), plus des écouteurs
+`resize`/`scroll` tant que le menu est ouvert. `Button.tsx` converti en
+`forwardRef` pour exposer la référence du déclencheur. Vérifié par
+`scripts/verify-dashboard-menu.mjs` : menu entièrement visible à
+l'écran, capture à l'appui.
+
+### Porte de qualité — résultat réel
+
+**1. Build & tsc** — `npx tsc --noEmit` : aucune sortie, code 0. `npm run
+build` : code 0, `1 143,54 Ko` JS (gzip 319,57 Ko) / `79,07 Ko` CSS (gzip
+12,55 Ko) — soit +17,6 Ko JS / +0,4 Ko CSS vs la ligne de base du Lot 9,
+cohérent avec l'ampleur réelle du lot (nouvelle page Aide, composant
+`ModelExportActions`, formulaire de feedback, onglets sur 5 vues de
+résultat).
+
+**2. Lint** — `✖ 18 problems (0 errors, 18 warnings)`, identique à tous
+les lots précédents — aucune nouvelle alerte.
+
+**3. Chasse aux couleurs en dur** — identique à la ligne de base (2
+occurrences Vision, exception documentée au Lot 8, + 4 dans
+`charts.test.ts`). Aucune nouvelle occurrence.
+
+**4. Rendu des 5 thèmes** — `scripts/lot10-verify.mjs` (page `/aide` :
+carte guide repliée par défaut puis ouverte, bascule d'onglet pilier,
+FAQ repliée par défaut puis ouverte au clic, filtre par catégorie,
+recherche filtrant FAQ et glossaire) + `scripts/lot10-results-themes-axe.mjs`
+(Clustering job #12, Anomalies job #7, Réduction de dimension job #7,
+Vision classification job #7, Vision anomalies job #5, Verdict
+d'entraînement job #50 — onglet Détails) × 5 thèmes, avec le PATCH de
+préférence serveur avant chaque navigation et vérification
+`renderedTheme === theme` : toutes les captures produites, aucune
+anomalie visuelle.
+
+**5. Accessibilité** — axe-core (`wcag2a`/`wcag2aa`/`wcag21aa`) sur les 6
+écrans ci-dessus × 5 thèmes : **0 violation sérieuse/critique en
+graphite, ardoise et minuit.** En ivoire et porcelaine : 1 violation
+`color-contrast` par écran, systématiquement sur les jetons
+`text-accent-2`/`text-accent-3`/`text-warning` déjà documentés au Lot 6/7
+(bug pré-existant, non causé par ce lot — `MetricTile`/`Badge` calibrés
+contre un fond neutre, pas contre leur propre fond teinté) — reconfirmé
+systémique, pas une régression de ce lot.
+
+**6. Clavier** — `scripts/keyboard-check-lot10.mjs` : lien « Aide » de la
+barre du haut focusable et navigable au clavier vers `/aide`, première
+question de FAQ focusable et s'ouvrant à `Entrée`.
+
+**7. Vérification fonctionnelle des exports** — pour les 5 domaines
+(Clustering, Anomalies, Réduction de dimension, Vision classification,
+Vision anomalies) : boutons d'export visibles, téléchargement de
+configuration JSON réel déclenché, **téléchargement de l'artefact réel
+déclenché avec le bon nom de fichier** (`.joblib` ×3, `.pt` ×2).
+
+**8. Tests backend** — migration `f1b7fa244aeb` appliquée contre la
+base Postgres de développement réelle (`alembic upgrade head`), routes
+`feedback` et les 5 routes `model/export` vérifiées par requêtes réelles
+contre le serveur redémarré (incluant la régression critique ci-dessus,
+résolue avant la vérification).
+
+### Merge
+
+Branche `ui/10-aide` → `main`. Enchaînement direct sur le Lot 11
+(Vérification finale), sans pause, conformément à la mission.

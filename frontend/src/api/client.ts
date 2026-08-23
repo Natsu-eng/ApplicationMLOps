@@ -113,6 +113,33 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+/** Export d'artefact — pas de JSON, un fichier binaire : fetch direct (pas
+ * `request()`, qui suppose toujours une réponse JSON), déclenche le
+ * téléchargement navigateur via un lien éphémère. Partagé par tous les
+ * domaines qui persistent un artefact de modèle (Lot 9 supervisé, Lot 10
+ * clustering/réduction de dimension/anomalies/vision) — même logique,
+ * jamais dupliquée à chaque domaine. */
+async function downloadModelExport(path: string, suggestedFilename: string): Promise<void> {
+  const token = getToken();
+  const res = await fetch(apiUrl(path), {
+    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+  });
+  if (res.status === 401) handleUnauthorized();
+  if (!res.ok) throw await extractError(res);
+  const blob = await res.blob();
+  const disposition = res.headers.get("content-disposition") ?? "";
+  const match = /filename="?([^"]+)"?/.exec(disposition);
+  const filename = match?.[1] ?? suggestedFilename;
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
 /** Requête formulaire x-www-form-urlencoded — uniquement pour /auth/login, qui
  * attend un OAuth2PasswordRequestForm côté FastAPI (username/password). */
 async function requestForm<T>(path: string, fields: Record<string, string>): Promise<T> {
@@ -220,6 +247,20 @@ export interface AuditLogEntry {
   details: Record<string, unknown> | null;
   actor_name: string | null;
   created_at: string;
+}
+
+// Lot 10 — retour utilisateur libre depuis le centre d'aide.
+export interface FeedbackEntry {
+  id: number;
+  page: string;
+  message: string;
+  author_name: string;
+  created_at: string;
+}
+
+export interface FeedbackCreatePayload {
+  page: string;
+  message: string;
 }
 
 export interface TeamMember {
@@ -1223,6 +1264,13 @@ export const api = {
       request<UserPreferences>("/users/me/preferences", { method: "PATCH", body: JSON.stringify(data) }),
   },
 
+  // Lot 10 — retour utilisateur libre (centre d'aide).
+  feedback: {
+    create: (data: FeedbackCreatePayload) =>
+      request<FeedbackEntry>("/feedback", { method: "POST", body: JSON.stringify(data) }),
+    list: () => request<FeedbackEntry[]>("/feedback"),
+  },
+
   team: {
     members: () => request<TeamMember[]>("/auth/team/members"),
     addMember: (data: AddMemberPayload) =>
@@ -1307,29 +1355,8 @@ export const api = {
         body: JSON.stringify({ stage: stageValue }),
       }),
     registry: () => request<ModelRegistryResponse>("/training/models/registry"),
-    /** Export de l'artefact — pas de JSON, un fichier binaire : fetch direct
-     * (pas `request()`, qui suppose toujours une réponse JSON), déclenche le
-     * téléchargement navigateur via un lien éphémère. */
-    exportModel: async (jobId: number, suggestedFilename?: string): Promise<void> => {
-      const token = getToken();
-      const res = await fetch(apiUrl(`/training/jobs/${jobId}/model/export`), {
-        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-      });
-      if (res.status === 401) handleUnauthorized();
-      if (!res.ok) throw await extractError(res);
-      const blob = await res.blob();
-      const disposition = res.headers.get("content-disposition") ?? "";
-      const match = /filename="?([^"]+)"?/.exec(disposition);
-      const filename = match?.[1] ?? suggestedFilename ?? `modele_job${jobId}.joblib`;
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = filename;
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      URL.revokeObjectURL(url);
-    },
+    exportModel: (jobId: number, suggestedFilename?: string) =>
+      downloadModelExport(`/training/jobs/${jobId}/model/export`, suggestedFilename ?? `modele_job${jobId}.joblib`),
   },
 
   clustering: {
@@ -1351,6 +1378,7 @@ export const api = {
     cancel: (id: number) => request<ClusteringJobSummary>(`/clustering/jobs/${id}/cancel`, { method: "POST" }),
     rerun: (id: number) => request<ClusteringJobSummary>(`/clustering/jobs/${id}/rerun`, { method: "POST" }),
     remove: (id: number) => request<void>(`/clustering/jobs/${id}`, { method: "DELETE" }),
+    exportModel: (id: number) => downloadModelExport(`/clustering/jobs/${id}/model/export`, `clustering_job${id}.joblib`),
   },
 
   dimensionality: {
@@ -1369,6 +1397,7 @@ export const api = {
     cancel: (id: number) => request<DimensionalityJobSummary>(`/dimensionality/jobs/${id}/cancel`, { method: "POST" }),
     rerun: (id: number) => request<DimensionalityJobSummary>(`/dimensionality/jobs/${id}/rerun`, { method: "POST" }),
     remove: (id: number) => request<void>(`/dimensionality/jobs/${id}`, { method: "DELETE" }),
+    exportModel: (id: number) => downloadModelExport(`/dimensionality/jobs/${id}/model/export`, `projection_job${id}.joblib`),
   },
 
   anomalies: {
@@ -1384,6 +1413,7 @@ export const api = {
     cancel: (id: number) => request<AnomalyJobSummary>(`/anomalies/jobs/${id}/cancel`, { method: "POST" }),
     rerun: (id: number) => request<AnomalyJobSummary>(`/anomalies/jobs/${id}/rerun`, { method: "POST" }),
     remove: (id: number) => request<void>(`/anomalies/jobs/${id}`, { method: "DELETE" }),
+    exportModel: (id: number) => downloadModelExport(`/anomalies/jobs/${id}/model/export`, `anomalies_job${id}.joblib`),
   },
 
   visionDatasets: {
@@ -1425,6 +1455,8 @@ export const api = {
     rerun: (id: number) =>
       request<VisionClassificationJobSummary>(`/vision/classification/jobs/${id}/rerun`, { method: "POST" }),
     remove: (id: number) => request<void>(`/vision/classification/jobs/${id}`, { method: "DELETE" }),
+    exportModel: (id: number) =>
+      downloadModelExport(`/vision/classification/jobs/${id}/model/export`, `vision_classification_job${id}.pt`),
   },
 
   visionAnomalies: {
@@ -1441,5 +1473,6 @@ export const api = {
     cancel: (id: number) => request<VisionAnomalyJobSummary>(`/vision/anomalies/jobs/${id}/cancel`, { method: "POST" }),
     rerun: (id: number) => request<VisionAnomalyJobSummary>(`/vision/anomalies/jobs/${id}/rerun`, { method: "POST" }),
     remove: (id: number) => request<void>(`/vision/anomalies/jobs/${id}`, { method: "DELETE" }),
+    exportModel: (id: number) => downloadModelExport(`/vision/anomalies/jobs/${id}/model/export`, `vision_anomalies_job${id}.pt`),
   },
 };
