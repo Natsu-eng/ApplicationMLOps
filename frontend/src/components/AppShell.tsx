@@ -244,7 +244,7 @@ export default function AppShell({ children, pillarId }: { children: ReactNode; 
         </div>
       )}
 
-      <div className="relative z-10 flex min-h-screen flex-1 flex-col lg:pl-[292px]">
+      <div className="relative z-10 flex min-h-screen min-w-0 flex-1 flex-col lg:pl-[292px]">
         <header className="sticky top-0 z-30 mx-4 mt-4 flex h-14 items-center gap-3 rounded-card glass px-4 sm:mx-6 sm:mt-[22px] sm:px-5 lg:mr-[4px]">
           <button
             onClick={() => setMobileNavOpen((v) => !v)}
@@ -265,7 +265,7 @@ export default function AppShell({ children, pillarId }: { children: ReactNode; 
           </div>
         </header>
 
-        <main className="flex-1 px-4 py-6 sm:px-6 lg:px-8">
+        <main className="flex-1 min-w-0 px-4 py-6 sm:px-6 lg:px-8">
           <div className="max-w-6xl mx-auto">{children}</div>
         </main>
       </div>

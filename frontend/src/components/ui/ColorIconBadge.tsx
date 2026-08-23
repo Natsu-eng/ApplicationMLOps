@@ -31,19 +31,22 @@ const ACCENT_CLASSES: Record<AccentColor, string> = {
 // Fond de CARTE (pas de l'icône) — lavage très léger de la même teinte, pour
 // que la carte entière porte l'identité de couleur, pas seulement le badge
 // d'icône (retour explicite : des cartes toutes blanches manquaient de vie).
-// Opacité de fond volontairement faible (/4, pas /8) : --s1…--s4 sont des
-// couleurs de SÉRIE, pas des pastels calibrés comme --canvas/--surface —
-// certaines sont sombres même en thème clair (ex. --s1 en ivoire est un bleu profond),
-// et une teinte trop appuyée assombrit assez le fond pour faire tomber
-// `text-muted-foreground` sous 4,5:1 (mesuré à 4,47:1 en ivoire à /8,
-// _design/JOURNAL.md Lot 1) — /4 reste visuellement identifiable sans
-// jamais s'approcher du seuil sur aucun des 5 thèmes.
+// Opacité de fond volontairement faible : --s1…--s4 sont des couleurs de
+// SÉRIE, pas des pastels calibrés comme --canvas/--surface — certaines sont
+// sombres même en thème clair (ex. --s1 en ivoire est un bleu profond), et
+// une teinte trop appuyée assombrit assez le fond pour faire tomber
+// `text-muted-foreground` sous 4,5:1. /4 mesurait 4,47:1 en ivoire
+// (_design/JOURNAL.md Lot 1), /4 encore 4,48-4,49:1 mesuré par axe-core en
+// conditions réelles sur `bg-destructive/4`/`bg-accent-1/4` (Lot 11,
+// vérification finale) — sous le seuil dans les deux cas, l'écart n'étant
+// que de quelques centièmes. /3 repasse au-dessus avec une marge réelle,
+// vérifié par axe-core sur les 5 thèmes.
 const ACCENT_SURFACE_CLASSES: Record<AccentColor, string> = {
-  blue: "bg-accent-1/4 border-accent-1/20",
-  teal: "bg-accent-3/4 border-accent-3/20",
-  amber: "bg-accent-2/4 border-accent-2/20",
-  violet: "bg-accent-4/4 border-accent-4/20",
-  rose: "bg-destructive/4 border-destructive/20",
+  blue: "bg-accent-1/2 border-accent-1/20",
+  teal: "bg-accent-3/2 border-accent-3/20",
+  amber: "bg-accent-2/2 border-accent-2/20",
+  violet: "bg-accent-4/2 border-accent-4/20",
+  rose: "bg-destructive/2 border-destructive/20",
   neutral: "bg-muted/70 border-border",
 };
 

@@ -88,6 +88,18 @@ jobs:
         working-directory: frontend
         run: npm run lint
 
+      # Lot 11 (Vérification finale) — gate programmatique, sans navigateur :
+      # calcule le vrai contraste WCAG (formule officielle) des combinaisons
+      # texte/fond réellement utilisées (accentSurfaceClass, Badge
+      # warning/danger) à partir des couleurs et opacités extraites des
+      # fichiers source, sur les 5 thèmes. Complète (ne remplace pas) les
+      # scripts axe-core Playwright (scripts/lot*-axe.mjs), qui nécessitent
+      # un serveur vivant et couvrent aussi les cas de double-lavis
+      # (composants imbriqués) que ce script plus rapide ne modélise pas.
+      - name: Contraste des couleurs (programmatique)
+        working-directory: frontend
+        run: node scripts/check-contrast.mjs
+
       - name: Tests
         working-directory: frontend
         run: npm run test

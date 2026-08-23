@@ -274,7 +274,7 @@ export default function TrainingHistory() {
               className="pl-9"
             />
           </div>
-          <Select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as JobStatus | "all")}>
+          <Select aria-label="Filtrer par statut" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as JobStatus | "all")}>
             {STATUS_FILTER_OPTIONS.map((opt) => (
               <option key={opt.value} value={opt.value}>
                 {opt.label}

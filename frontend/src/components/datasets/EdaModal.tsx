@@ -424,7 +424,7 @@ export default function EdaModal({ dataset, onClose }: { dataset: DatasetSummary
                   label="Distribution d'une variable"
                   help="Histogramme d'une colonne au choix — bins réguliers pour le numérique, comptage des modalités les plus fréquentes pour le catégoriel."
                 />
-                <Select value={selectedColumn} onChange={(e) => setSelectedColumn(e.target.value)} className="mb-3">
+                <Select aria-label="Choisir une variable" value={selectedColumn} onChange={(e) => setSelectedColumn(e.target.value)} className="mb-3">
                   {eda.column_stats.map((c) => (
                     <option key={c.name} value={c.name}>
                       {c.name} ({c.dtype})
@@ -464,6 +464,7 @@ export default function EdaModal({ dataset, onClose }: { dataset: DatasetSummary
                   help="Choisir une colonne cible débloque sa distribution et le pouvoir discriminant des autres variables par rapport à elle."
                 />
                 <Select
+                  aria-label="Choisir une cible"
                   value={targetColumn}
                   onChange={(e) => {
                     setTargetColumn(e.target.value);
@@ -515,6 +516,7 @@ export default function EdaModal({ dataset, onClose }: { dataset: DatasetSummary
                     help="Boîtes à moustaches d'une variable numérique, une par valeur de la cible — si les boîtes sont nettement séparées, cette variable aide probablement à distinguer les cas."
                   />
                   <Select
+                    aria-label="Choisir une variable numérique"
                     value={featureForTarget}
                     onChange={(e) => setFeatureForTarget(e.target.value)}
                     className="mb-3"

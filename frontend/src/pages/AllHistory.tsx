@@ -321,7 +321,7 @@ export default function AllHistory() {
       {error && <ErrorNote message={error} />}
 
       <Card className="p-5">
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5 mb-5">
+        <div className="grid gap-3 sm:grid-cols-2 2xl:grid-cols-5 mb-5">
           <div className="relative lg:col-span-2">
             <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
             <Input
@@ -331,7 +331,7 @@ export default function AllHistory() {
               className="pl-9"
             />
           </div>
-          <Select value={kindFilter} onChange={(e) => setKindFilter(e.target.value as JobKind | "all")}>
+          <Select aria-label="Filtrer par type" value={kindFilter} onChange={(e) => setKindFilter(e.target.value as JobKind | "all")}>
             <option value="all">Tous les types</option>
             {(Object.keys(KIND_META) as JobKind[]).map((k) => (
               <option key={k} value={k}>
@@ -339,21 +339,21 @@ export default function AllHistory() {
               </option>
             ))}
           </Select>
-          <Select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as JobStatus | "all")}>
+          <Select aria-label="Filtrer par statut" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as JobStatus | "all")}>
             {STATUS_OPTIONS.map((opt) => (
               <option key={opt.value} value={opt.value}>
                 {opt.label}
               </option>
             ))}
           </Select>
-          <Select value={periodFilter} onChange={(e) => setPeriodFilter(e.target.value)}>
+          <Select aria-label="Filtrer par période" value={periodFilter} onChange={(e) => setPeriodFilter(e.target.value)}>
             {PERIOD_OPTIONS.map((opt) => (
               <option key={opt.value} value={opt.value}>
                 {opt.label}
               </option>
             ))}
           </Select>
-          <Select value={authorFilter} onChange={(e) => setAuthorFilter(e.target.value)}>
+          <Select aria-label="Filtrer par auteur" value={authorFilter} onChange={(e) => setAuthorFilter(e.target.value)}>
             <option value="all">Tous les auteurs</option>
             {authors.map((a) => (
               <option key={a} value={a}>

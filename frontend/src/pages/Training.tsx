@@ -269,7 +269,7 @@ export default function Training() {
           <TrainingForm datasets={datasets} datasetsError={datasetsError} onJobCreated={openJob} />
           <p className="text-xs text-muted-foreground text-center mt-4">
             Vos entraînements précédents restent consultables depuis le{" "}
-            <Link to="/dashboard" className="text-primary hover:text-primary/80">
+            <Link to="/dashboard" className="text-primary underline underline-offset-2 hover:text-primary/80">
               tableau de bord
             </Link>
             .

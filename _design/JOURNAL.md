@@ -1512,3 +1512,192 @@ résolue avant la vérification).
 
 Branche `ui/10-aide` → `main`. Enchaînement direct sur le Lot 11
 (Vérification finale), sans pause, conformément à la mission.
+
+## Lot 11 — Vérification finale
+
+Dernier lot de la mission : aucune nouvelle fonctionnalité, uniquement une
+vérification systématique des 20 écrans réels de l'application (les 18
+routes protégées + login/register), sur les 5 thèmes, avec de vraies
+données (compte réel de l'organisation #2, jobs déjà entraînés
+précédemment) — jamais de fixtures inventées.
+
+### Décisions et raisons
+
+68. **Vérification systématique plutôt qu'un échantillon.** Les lots
+    précédents vérifiaient les écrans qu'ils modifiaient. Ce lot couvre les
+    20 écrans de navigation réels (`App.tsx`), y compris ceux qu'aucun lot
+    n'avait jamais reciblés spécifiquement (`/onboarding`, `/profile`,
+    `/design`) — c'est précisément ce filet qui a permis de trouver les
+    bugs listés ci-dessous, aucun n'ayant de rapport avec un lot en
+    particulier.
+69. **`check-contrast.mjs` : gate de contraste programmatique ajouté à la
+    CI, portée assumée et documentée.** Contrairement aux scripts axe-core
+    (Playwright, nécessitent un serveur vivant), ce script ne dépend que
+    des fichiers source (thèmes, opacités) et tourne sans navigateur —
+    ajouté à `.github/workflows/ci.yml` (job `frontend`). Il calcule le
+    vrai contraste WCAG pour les combinaisons `text-muted-foreground` sur
+    `accentSurfaceClass` et `Badge` (warning/danger) sur surface nue, sur
+    les 5 thèmes, à partir des couleurs et opacités EXTRAITES par regex des
+    vrais fichiers (`themes.css`, `ColorIconBadge.tsx`, `Badge.tsx`) —
+    jamais des valeurs recopiées à la main qui se périmeraient au premier
+    changement de couleur. Limite assumée, testée : ce script ne modélise
+    PAS le cas plus rare du double lavis (un composant coloré niché dans un
+    conteneur déjà teinté, ex. un badge dans une ligne de tableau mise en
+    évidence) — vérifié en le testant délibérément contre une régression
+    connue (repasser un jeton à `/4`) : le script ne l'a PAS détectée, ce
+    qui a confirmé sa portée réelle avant de l'ajouter à la CI plutôt que
+    de le présenter comme une garantie qu'il ne tient pas.
+
+### Bugs réels trouvés et corrigés pendant la vérification
+
+70. **11 violations de contraste axe-core réelles, deux causes racines
+    distinctes.** Sur les vues de résultat retabulées au Lot 10
+    (Clustering, Anomalies, Réduction de dimension, Vision × 2, Verdict
+    d'entraînement), en ivoire et porcelaine :
+    - Les valeurs numériques des tuiles de métrique (`text-xl
+      font-semibold`) n'atteignaient pas le poids `bold` (600 &lt; 700)
+      requis par WCAG pour l'exception « texte large » (3:1 au lieu de
+      4,5:1) — corrigé en passant à `font-bold` (6 occurrences réelles :
+      Clustering, Anomalies, Réduction de dimension, Vision × 2,
+      `ModelResultModal`).
+    - Les couleurs catégorielles de série (`--s1…--s4`) réutilisées comme
+      texte de badge à 12-14px (jamais assez grand pour l'exception « texte
+      large », quel que soit le poids), composées avec un fond de carte
+      déjà teinté (`accentSurfaceClass`, `Badge` warning/danger) —
+      calibrées à l'origine pour un seul lavis (Lot 1/Lot 2), retombaient
+      sous 4,5:1 une fois composées avec un second fond déjà teinté
+      (mesuré réellement par axe-core à 4,35-4,49:1 selon les cas, jamais
+      simplement calculé à la main — une approximation manuelle par
+      mélange alpha linéaire donnait des chiffres notablement différents
+      des vraies mesures du navigateur, écartée après vérification).
+      Corrigé en réduisant l'opacité de fond (`/4` → `/2` ou `/3` selon les
+      jetons, `ColorIconBadge.tsx`/`Badge.tsx`) et en repassant les
+      libellés de badge de qualité/stabilité en `text-foreground` neutre
+      (l'identité de couleur restant portée par l'icône adjacente,
+      `ColorIconBadge`). Revérifié par axe-core en conditions réelles à
+      chaque itération : **0 violation restante** sur les 5 thèmes.
+71. **2 bugs d'accessibilité structurelle**, jamais trouvés avant car aucun
+    lot n'avait testé ces écrans avec axe-core :
+    - 5 `&lt;select&gt;` de filtre sans nom accessible (`AllHistory.tsx`
+      ×4, `TrainingHistory.tsx` ×1) — corrigé par `aria-label`. En
+      inspectant le code pour vérifier qu'aucun autre `&lt;select&gt;` de
+      l'application n'avait le même défaut, 3 de plus trouvés dans
+      `EdaModal.tsx` (une modale, donc jamais capturée par le scan
+      automatique par route) — corrigés par la même occasion, plutôt que
+      laissés en l'état en sachant qu'ils partagent le même bug.
+    - 1 lien inline distinguable uniquement par la couleur
+      (`Training.tsx`, « tableau de bord ») — corrigé en ajoutant
+      `underline underline-offset-2`, motif déjà établi ailleurs
+      (`Dashboard.tsx`, `Aide.tsx`, `ChartFrame.tsx`).
+72. **1 bug de mise en page responsive, diagnostic en 3 temps — le premier
+    plus long que prévu, documenté honnêtement.** `historique` et
+    `training-history` débordaient horizontalement à 1280/1440px.
+    - **Piste 1 (fausse)** : la grille de filtres à 5 colonnes
+      (`lg:grid-cols-5`, `AllHistory.tsx`) ne tiendrait pas dans l'espace
+      disponible une fois la barre latérale soustraite. Plausible, mais
+      réfutée en mesurant directement `document.body.scrollWidth` avant et
+      après avoir repoussé le point de rupture de la grille à `2xl:` :
+      la valeur est restée **strictement identique** (1464px), preuve que
+      la grille n'était pas la cause.
+    - **Piste 2 (fausse)** : `min-w-0` ajouté sur `&lt;main&gt;`
+      (`AppShell.tsx`), puis sur `Select.tsx` — aucun effet mesurable non
+      plus, pour la même raison : ni l'un ni l'autre n'est le véritable
+      élément flex à contraindre.
+    - **Cause réelle** : le conteneur flex racine d'`AppShell.tsx`
+      (`flex min-h-screen flex-1 flex-col lg:pl-[292px]`, pas `&lt;main&gt;`
+      qui n'en est qu'un enfant) est le seul véritable élément flex de la
+      ligne parente (la barre latérale et le halo de fond sont en
+      `position: fixed`, donc hors du flux flex) — son `min-width` par
+      défaut (`auto`) laissait un tableau large en dessous le pousser
+      au-delà du viewport, malgré l'enveloppe `overflow-x-auto` du
+      tableau lui-même (qui ne peut agir que si son propre conteneur est
+      contraint). Corrigé par un seul `min-w-0` sur ce conteneur ; revérifié
+      directement (`document.body.scrollWidth === document.documentElement.
+      clientWidth`, exactement, plus aucun écart) avant de relancer les 60
+      vérifications écran × largeur : **0 débordement restant**. Ce
+      diagnostic en 3 temps est documenté ici intégralement, y compris les
+      deux pistes fausses, conformément à l'exigence de transparence de la
+      mission — mieux vaut montrer le vrai raisonnement que prétendre avoir
+      trouvé la cause du premier coup.
+
+### Nettoyage du dépôt (hors refonte visuelle, demandé explicitement par
+l'utilisateur en cours de lot)
+
+144 fichiers suivis par git supprimés : l'intégralité de l'ancienne
+application Streamlit/computer-vision qui précédait la migration vers
+DataLab Pro — `helpers/`, `monitoring/`, `notebooks/`, `orchestrators/`,
+`pipeline_visio/`, `scripts/` et `tests/` à la racine, `src/`, `ui/`,
+`utils/`, plus `diagnostic_pipeline.py`, `logging_patch.py`,
+`test_augmentation_fix.py`, `requirements.txt` et `pytest.ini` à la racine.
+Vérifié avant suppression (pas supposé) : `git ls-files` pour confirmer
+qu'ils étaient bien suivis, dates de dernière modification (Oct 2025-Jan
+2026, toutes antérieures à la migration), et absence de toute référence
+depuis `backend/`, `frontend/`, `docker-compose.yml` (contextes de build
+`./backend` et `.` avec `Dockerfile.frontend` qui ne copie que
+`frontend/`/`nginx/`), ni `.github/workflows/ci.yml`. Un environnement
+virtuel Python égaré (`env/`, déjà exclu par `.gitignore`, jamais suivi)
+également supprimé. `_design/` et tous les fichiers `.md` du dépôt
+(y compris `docs/legacy/*.md`) conservés tels quels, sur demande explicite.
+
+### Porte de qualité — résultat réel
+
+**1. Build & tsc** — `npx tsc --noEmit` : aucune sortie, code 0. `npm run
+build` : code 0, `1 143,86 Ko` JS (gzip 319,65 Ko) / `79,97 Ko` CSS (gzip
+12,62 Ko) — stable par rapport au Lot 10 (+0,3 Ko JS, corrections de
+classes uniquement, aucun nouveau composant).
+
+**2. Lint** — `✖ 18 problems (0 errors, 18 warnings)`, identique à tous les
+lots précédents.
+
+**3. Tests** — `npm run test` (Vitest) : **64/64 tests passent** (11
+fichiers). `node scripts/check-contrast.mjs` : toutes les combinaisons
+vérifiées ≥ 4,5:1 sur les 5 thèmes.
+
+**4. Chasse aux couleurs en dur** — identique à la ligne de base (2
+occurrences Vision, exception documentée au Lot 8, + 4 dans
+`charts.test.ts`). Aucune nouvelle occurrence.
+
+**5. Rendu des 5 thèmes + accessibilité** — `scripts/lot11-all-screens.mjs` :
+20 écrans × 5 thèmes = 100 combinaisons, captures + axe-core
+(`wcag2a`/`wcag2aa`/`wcag21aa`) sur chacune. Avant correctifs : 15
+violations sérieuses (11 de contraste, 4 structurelles — voir bugs 70/71).
+**Après correctifs : 0 violation sérieuse/critique sur les 100
+combinaisons.**
+
+**6. Clavier** — `scripts/lot11-keyboard-all-screens.mjs` : 25 pressions de
+Tab par écran sur les 20 écrans, comparaison de l'élément focus par
+identité DOM réelle (`===`, pas une comparaison de chaîne tronquée à 80
+caractères qui donnait de faux positifs à la première tentative — deux
+éléments différents partageant les mêmes 80 premiers caractères de leur
+`outerHTML`, ex. plusieurs boutons d'icône avec la même classe, étaient
+comptés à tort comme « focus bloqué ») — **0 focus perdu, 0 boucle
+bloquée** sur les 20 écrans après correction de la méthode de
+vérification elle-même.
+
+**7. Responsive** — `scripts/lot11-responsive.mjs` : 1280/1440/1920px × 20
+écrans = 60 vérifications, détection de débordement horizontal réel
+(`document.body.scrollWidth`). 1 bug réel trouvé et corrigé (bug 72) : 3
+débordements avant correctif, **0 après**.
+
+**8. Backend** — aucun fichier applicatif backend modifié par ce lot (seul
+`.github/workflows/ci.yml` a changé). Une exécution locale de `pytest` a
+été lancée par souci de vérification complète, mais interrompue à 27 % de
+progression : Docker Desktop n'était pas démarré sur cette machine, donc
+le conteneur Redis local (`datalab_redis`) était injoignable, et les tests
+touchant le rate-limiting (`is_rate_limited()`, fail-open mais lent en
+pratique sans Redis réel) ralentissaient la suite au point de la rendre
+impraticable dans un délai raisonnable — un gap d'environnement local
+constaté et documenté honnêtement, pas un bug de code, et sans rapport
+avec les changements de ce lot. La CI réelle (`.github/workflows/ci.yml`)
+provisionne son propre service Redis pour le job `backend` et n'est pas
+affectée par ce gap local.
+
+**9. Rapport final** — `_design/RAPPORT-FINAL.md` rédigé : bilan des 11
+lots, liste honnête de tout ce qui a été délibérément laissé de côté
+(avec référence à la décision numérotée correspondante), résultats de
+vérification finaux, recommandations pour la suite.
+
+### Merge
+
+Branche `ui/11-verification-finale` → `main`, branche supprimée après
+fusion. Fin de la mission de refonte visuelle en 11 lots.
