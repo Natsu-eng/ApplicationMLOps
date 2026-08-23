@@ -4,6 +4,7 @@ import { AuthProvider, useAuth } from "./contexts/AuthContext";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import { ToastProvider } from "./components/ui/Toast";
 import { CommandPalette } from "./components/ui/CommandPalette";
+import Aide from "./pages/Aide";
 import AllHistory from "./pages/AllHistory";
 import AnomalyDetection from "./pages/AnomalyDetection";
 import Clustering from "./pages/Clustering";
@@ -81,6 +82,14 @@ export default function App() {
               element={
                 <ProtectedRoute>
                   <AllHistory />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/aide"
+              element={
+                <ProtectedRoute>
+                  <Aide />
                 </ProtectedRoute>
               }
             />

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { AlertCircle, Ban, Info, Loader2, PlayCircle, RotateCcw, ScatterChart as ScatterChartIcon, Sparkles, Trash2 } from "lucide-react";
+import { AlertCircle, Ban, Info, ListChecks, Loader2, PlayCircle, RotateCcw, ScatterChart as ScatterChartIcon, Sparkles, Trash2 } from "lucide-react";
 import {
   CartesianGrid,
   Legend,
@@ -31,6 +31,8 @@ import { PageHeader } from "../components/ui/PageHeader";
 import { SectionHeader } from "../components/ui/SectionHeader";
 import { Select } from "../components/ui/Select";
 import { Table, type TableColumn } from "../components/ui/Table";
+import { Tabs } from "../components/ui/Tabs";
+import { ModelExportActions } from "../components/ui/ModelExportActions";
 import { useConfirmAction } from "../hooks/useConfirmAction";
 import { CHART_GRID_STROKE, CHART_SERIES_COLORS, CHART_TICK_STYLE, CHART_TOOLTIP_STYLE } from "../theme/charts";
 import { binIndexForValue, computeQuantileEdges, formatBinLabel } from "../utils/quantileBins";
@@ -545,6 +547,7 @@ function DimensionalityResultView({ jobId }: { jobId: number }) {
   const [error, setError] = useState<string | null>(null);
   const [colorByColumn, setColorByColumn] = useState<string>(COLOR_NONE);
   const [colorByData, setColorByData] = useState<DimensionalityColorByResponse | null>(null);
+  const [activeTab, setActiveTab] = useState<"projection" | "contributions">("projection");
 
   useEffect(() => {
     api.dimensionality
@@ -632,6 +635,31 @@ function DimensionalityResultView({ jobId }: { jobId: number }) {
         <p className="text-xs text-foreground/70">{result.distance_fidelity_note}</p>
       </Card>
 
+      <ModelExportActions
+        onExportArtifact={() => api.dimensionality.exportModel(jobId)}
+        exportConfig={{
+          algorithm: result.algorithm,
+          feature_columns: result.feature_columns,
+          total_variance_explained: result.total_variance_explained,
+          trustworthiness_primary: result.trustworthiness_primary,
+          model_card: result.model_card,
+        }}
+        configFilename={`projection_config_job${jobId}.json`}
+      />
+
+      {result.algorithm_id === "pca" && result.loadings.length > 0 && (
+        <Tabs
+          items={[
+            { id: "projection" as const, label: "Projection en 2D", icon: Sparkles },
+            { id: "contributions" as const, label: "Variables contributives", icon: ListChecks },
+          ]}
+          active={activeTab}
+          onChange={setActiveTab}
+          urlParam="onglet"
+        />
+      )}
+
+      {activeTab === "projection" && (
       <Card className="p-5">
         <div className="flex items-center justify-between flex-wrap gap-3 mb-3">
           <SectionHeader icon={Sparkles} color="violet" label="Projection en 2 dimensions" />
@@ -668,8 +696,9 @@ function DimensionalityResultView({ jobId }: { jobId: number }) {
           </ResponsiveContainer>
         )}
       </Card>
+      )}
 
-      {result.algorithm_id === "pca" && result.loadings.length > 0 && (
+      {activeTab === "contributions" && result.algorithm_id === "pca" && result.loadings.length > 0 && (
         <div>
           <SectionHeader
             icon={Sparkles}

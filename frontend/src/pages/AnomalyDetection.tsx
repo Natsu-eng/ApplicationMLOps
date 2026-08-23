@@ -24,6 +24,8 @@ import { PageHeader } from "../components/ui/PageHeader";
 import { SectionHeader } from "../components/ui/SectionHeader";
 import { Select } from "../components/ui/Select";
 import { Table, type TableColumn } from "../components/ui/Table";
+import { Tabs } from "../components/ui/Tabs";
+import { ModelExportActions } from "../components/ui/ModelExportActions";
 import { useConfirmAction } from "../hooks/useConfirmAction";
 import { CHART_COLOR_PRIMARY, CHART_GRID_STROKE, CHART_TICK_STYLE_SM, CHART_TOOLTIP_STYLE } from "../theme/charts";
 import { DataQualityWarnings } from "../components/training/DataQualityWarnings";
@@ -283,7 +285,7 @@ export default function AnomalyDetection() {
           </div>
         </Card>
       ) : phase === "results" && activeJob ? (
-        <AnomalyResultView jobId={activeJob.id} />
+        <AnomalyResultView jobId={activeJob.id} featureColumns={activeJob.feature_columns} />
       ) : null}
 
       {phase === "configure" && (
@@ -643,12 +645,13 @@ function observationColumns(onOpenDetail: (obs: AnomalyObservation) => void): Ta
   ];
 }
 
-function AnomalyResultView({ jobId }: { jobId: number }) {
+function AnomalyResultView({ jobId, featureColumns }: { jobId: number; featureColumns: string[] }) {
   const [result, setResult] = useState<AnomalyResult | null>(null);
   const [observations, setObservations] = useState<AnomalyObservation[]>([]);
   const [observationsError, setObservationsError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [detailObservation, setDetailObservation] = useState<AnomalyObservation | null>(null);
+  const [activeTab, setActiveTab] = useState<"distribution" | "observations">("observations");
 
   useEffect(() => {
     api.anomalies
@@ -711,33 +714,59 @@ function AnomalyResultView({ jobId }: { jobId: number }) {
         </p>
       </Card>
 
-      <Card className="p-5">
-        <SectionHeader
-          icon={BarChart3}
-          color="blue"
-          label="Distribution des scores de consensus"
-          help="Score continu de 0 à 1 (moyenne des rangs Isolation Forest/LOF) — plus un score est élevé, plus l'observation est atypique par rapport au reste du jeu de données."
-        />
-        <ResponsiveContainer width="100%" height={220}>
-          <BarChart data={histogramData} margin={{ top: 8, right: 8, bottom: 40, left: 0 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke={CHART_GRID_STROKE} vertical={false} />
-            <XAxis
-              dataKey="range"
-              tick={CHART_TICK_STYLE_SM}
-              interval={3}
-              angle={-40}
-              textAnchor="end"
-              height={55}
+      <ModelExportActions
+        onExportArtifact={() => api.anomalies.exportModel(jobId)}
+        exportConfig={{
+          feature_columns: featureColumns,
+          n_anomalies_consensus: result.n_anomalies_consensus,
+          anomaly_rate_consensus: result.anomaly_rate_consensus,
+          model_card: result.model_card,
+        }}
+        configFilename={`anomalies_config_job${jobId}.json`}
+      />
+
+      <Tabs
+        items={[
+          { id: "observations" as const, label: "Observations", icon: Search },
+          { id: "distribution" as const, label: "Distribution des scores", icon: BarChart3 },
+        ]}
+        active={activeTab}
+        onChange={setActiveTab}
+        urlParam="onglet"
+      />
+
+      {activeTab === "distribution" && (
+        <>
+          <Card className="p-5">
+            <SectionHeader
+              icon={BarChart3}
+              color="blue"
+              label="Distribution des scores de consensus"
+              help="Score continu de 0 à 1 (moyenne des rangs Isolation Forest/LOF) — plus un score est élevé, plus l'observation est atypique par rapport au reste du jeu de données."
             />
-            <YAxis tick={CHART_TICK_STYLE_SM} allowDecimals={false} />
-            <RechartsTooltip {...CHART_TOOLTIP_STYLE} />
-            <Bar dataKey="count" fill={CHART_COLOR_PRIMARY} radius={[3, 3, 0, 0]} isAnimationActive={false} />
-          </BarChart>
-        </ResponsiveContainer>
-      </Card>
+            <ResponsiveContainer width="100%" height={220}>
+              <BarChart data={histogramData} margin={{ top: 8, right: 8, bottom: 40, left: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke={CHART_GRID_STROKE} vertical={false} />
+                <XAxis
+                  dataKey="range"
+                  tick={CHART_TICK_STYLE_SM}
+                  interval={3}
+                  angle={-40}
+                  textAnchor="end"
+                  height={55}
+                />
+                <YAxis tick={CHART_TICK_STYLE_SM} allowDecimals={false} />
+                <RechartsTooltip {...CHART_TOOLTIP_STYLE} />
+                <Bar dataKey="count" fill={CHART_COLOR_PRIMARY} radius={[3, 3, 0, 0]} isAnimationActive={false} />
+              </BarChart>
+            </ResponsiveContainer>
+          </Card>
 
-      <ThresholdExplorer result={result} />
+          <ThresholdExplorer result={result} />
+        </>
+      )}
 
+      {activeTab === "observations" && (
       <div>
         <SectionHeader
           icon={Search}
@@ -770,6 +799,7 @@ function AnomalyResultView({ jobId }: { jobId: number }) {
           />
         )}
       </div>
+      )}
 
       {detailObservation && (
         <Modal title={`Ligne ${detailObservation.row_index + 1} — détail`} onClose={() => setDetailObservation(null)}>

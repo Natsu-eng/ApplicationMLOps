@@ -37,6 +37,8 @@ import { PageHeader } from "../components/ui/PageHeader";
 import { SectionHeader } from "../components/ui/SectionHeader";
 import { Select } from "../components/ui/Select";
 import { Switch } from "../components/ui/Switch";
+import { Tabs } from "../components/ui/Tabs";
+import { ModelExportActions } from "../components/ui/ModelExportActions";
 import { VisionDatasetPicker } from "../components/vision/VisionDatasetPicker";
 import { useJobEvents } from "../hooks/useJobEvents";
 import { VisionImage } from "../components/vision/VisionImage";
@@ -672,6 +674,7 @@ function MetricTile({ label, value, color }: { label: string; value: string; col
 function ClassificationResultView({ jobId, datasetId }: { jobId: number; datasetId: number }) {
   const [result, setResult] = useState<VisionClassificationResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<"performance" | "exemples" | "gradcam">("performance");
 
   useEffect(() => {
     api.visionClassification
@@ -719,52 +722,84 @@ function ClassificationResultView({ jobId, datasetId }: { jobId: number; dataset
         </p>
       </Card>
 
-      <Card className="p-5">
-        <SectionHeader icon={Sparkles} color="blue" label="Courbes d'apprentissage" />
-        <ResponsiveContainer width="100%" height={220}>
-          <LineChart data={historyData} margin={{ top: 8, right: 8, bottom: 8, left: 0 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke={CHART_GRID_STROKE} vertical={false} />
-            <XAxis dataKey="epoch" tick={CHART_TICK_STYLE_SM} label={{ value: "Époque", position: "insideBottom", offset: -2 }} />
-            <YAxis tick={CHART_TICK_STYLE_SM} />
-            <RechartsTooltip {...CHART_TOOLTIP_STYLE} />
-            <Line type="monotone" dataKey="Exactitude (train)" stroke={CHART_SERIES_COLORS[0]} dot={false} isAnimationActive={false} />
-            <Line type="monotone" dataKey="Exactitude (validation)" stroke={CHART_SERIES_COLORS[1]} dot={false} isAnimationActive={false} />
-          </LineChart>
-        </ResponsiveContainer>
-      </Card>
-
-      {/* Réutilise EvaluationCharts.tsx tel quel (matrice de confusion +
-          ROC + PR) — même composant que le tabulaire, jamais un second
-          composant de graphique à maintenir en parallèle (Lot 6A,
-          correctif 16G). roc_curves/pr_curves absents (undefined) sur les
-          modèles entraînés avant ce correctif : les deux Card ROC/PR ne
-          s'affichent simplement pas (EvaluationCharts gère déjà ce cas
-          pour le tabulaire). */}
-      <EvaluationCharts
-        taskType="classification"
-        evaluation={{
-          confusion_matrix: result.confusion_matrix,
+      <ModelExportActions
+        onExportArtifact={() => api.visionClassification.exportModel(jobId)}
+        exportConfig={{
           class_names: result.class_names,
-          roc_curves: result.roc_curves,
-          pr_curves: result.pr_curves,
+          test_accuracy: result.test_accuracy,
+          test_precision_macro: result.test_precision_macro,
+          test_recall_macro: result.test_recall_macro,
+          test_f1_macro: result.test_f1_macro,
+          model_card: result.model_card,
         }}
+        configFilename={`vision_classification_config_job${jobId}.json`}
       />
 
-      {incorrectExamples.length > 0 && (
-        <div>
-          <SectionHeader icon={AlertCircle} color="rose" label={`Erreurs de classification (${incorrectExamples.length})`} />
-          <ExampleGrid examples={incorrectExamples} datasetId={datasetId} />
-        </div>
+      <Tabs
+        items={[
+          { id: "performance" as const, label: "Performance", icon: Sparkles },
+          { id: "exemples" as const, label: "Exemples", icon: Target },
+          { id: "gradcam" as const, label: "Grad-CAM", icon: AlertCircle },
+        ]}
+        active={activeTab}
+        onChange={setActiveTab}
+        urlParam="onglet"
+      />
+
+      {activeTab === "performance" && (
+        <>
+          <Card className="p-5">
+            <SectionHeader icon={Sparkles} color="blue" label="Courbes d'apprentissage" />
+            <ResponsiveContainer width="100%" height={220}>
+              <LineChart data={historyData} margin={{ top: 8, right: 8, bottom: 8, left: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke={CHART_GRID_STROKE} vertical={false} />
+                <XAxis dataKey="epoch" tick={CHART_TICK_STYLE_SM} label={{ value: "Époque", position: "insideBottom", offset: -2 }} />
+                <YAxis tick={CHART_TICK_STYLE_SM} />
+                <RechartsTooltip {...CHART_TOOLTIP_STYLE} />
+                <Line type="monotone" dataKey="Exactitude (train)" stroke={CHART_SERIES_COLORS[0]} dot={false} isAnimationActive={false} />
+                <Line type="monotone" dataKey="Exactitude (validation)" stroke={CHART_SERIES_COLORS[1]} dot={false} isAnimationActive={false} />
+              </LineChart>
+            </ResponsiveContainer>
+          </Card>
+
+          {/* Réutilise EvaluationCharts.tsx tel quel (matrice de confusion +
+              ROC + PR) — même composant que le tabulaire, jamais un second
+              composant de graphique à maintenir en parallèle (Lot 6A,
+              correctif 16G). roc_curves/pr_curves absents (undefined) sur les
+              modèles entraînés avant ce correctif : les deux Card ROC/PR ne
+              s'affichent simplement pas (EvaluationCharts gère déjà ce cas
+              pour le tabulaire). */}
+          <EvaluationCharts
+            taskType="classification"
+            evaluation={{
+              confusion_matrix: result.confusion_matrix,
+              class_names: result.class_names,
+              roc_curves: result.roc_curves,
+              pr_curves: result.pr_curves,
+            }}
+          />
+        </>
       )}
 
-      {correctExamples.length > 0 && (
-        <div>
-          <SectionHeader icon={Target} color="teal" label={`Exemples corrects (${correctExamples.length})`} />
-          <ExampleGrid examples={correctExamples} datasetId={datasetId} />
-        </div>
+      {activeTab === "exemples" && (
+        <>
+          {incorrectExamples.length > 0 && (
+            <div>
+              <SectionHeader icon={AlertCircle} color="rose" label={`Erreurs de classification (${incorrectExamples.length})`} />
+              <ExampleGrid examples={incorrectExamples} datasetId={datasetId} />
+            </div>
+          )}
+
+          {correctExamples.length > 0 && (
+            <div>
+              <SectionHeader icon={Target} color="teal" label={`Exemples corrects (${correctExamples.length})`} />
+              <ExampleGrid examples={correctExamples} datasetId={datasetId} />
+            </div>
+          )}
+        </>
       )}
 
-      <GradCamPanel jobId={jobId} />
+      {activeTab === "gradcam" && <GradCamPanel jobId={jobId} />}
     </div>
   );
 }

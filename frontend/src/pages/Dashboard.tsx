@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Link, useSearchParams } from "react-router-dom";
 import {
   Activity,
@@ -486,36 +487,64 @@ const NEW_ANALYSIS_GROUPS: {
 
 function NewAnalysisMenu() {
   const [open, setOpen] = useState(false);
+  // Position calculée à l'ouverture (Lot 10, retour utilisateur direct —
+  // capture réelle) : ce menu vit dans le bandeau "Vue d'ensemble", une
+  // `Card` (overflow-hidden inconditionnel, Card.tsx) — un menu simplement
+  // `absolute` à l'intérieur y était rogné aux bords de la carte, presque
+  // entièrement invisible. Porté vers `document.body` (même correctif que
+  // Modal.tsx, Lot 5) avec une position `fixed` recalculée depuis le
+  // bouton, pour échapper à CETTE carte ET à toute future ancêtre du même
+  // genre — plus robuste qu'un simple changement d'`overflow` sur la carte.
+  const [menuPos, setMenuPos] = useState<{ top: number; right: number } | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  const updatePosition = useCallback(() => {
+    const rect = buttonRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    setMenuPos({ top: rect.bottom + 8, right: window.innerWidth - rect.right });
+  }, []);
 
   useEffect(() => {
     if (!open) return;
+    updatePosition();
     function onPointerDown(e: MouseEvent) {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) setOpen(false);
+      const target = e.target as Node;
+      if (containerRef.current?.contains(target)) return;
+      if (menuRef.current?.contains(target)) return;
+      setOpen(false);
     }
     function onKeyDown(e: KeyboardEvent) {
       if (e.key === "Escape") setOpen(false);
     }
+    window.addEventListener("resize", updatePosition);
+    window.addEventListener("scroll", updatePosition, true);
     document.addEventListener("mousedown", onPointerDown);
     document.addEventListener("keydown", onKeyDown);
     return () => {
+      window.removeEventListener("resize", updatePosition);
+      window.removeEventListener("scroll", updatePosition, true);
       document.removeEventListener("mousedown", onPointerDown);
       document.removeEventListener("keydown", onKeyDown);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
   return (
     <div className="relative" ref={containerRef}>
-      <Button onClick={() => setOpen((o) => !o)} aria-haspopup="menu" aria-expanded={open}>
+      <Button ref={buttonRef} onClick={() => setOpen((o) => !o)} aria-haspopup="menu" aria-expanded={open}>
         <BrainCircuit size={15} />
         Nouvelle analyse
         <ChevronDown size={14} className={`transition-transform ${open ? "rotate-180" : ""}`} />
       </Button>
 
-      {open && (
+      {open && menuPos && createPortal(
         <div
+          ref={menuRef}
           role="menu"
-          className="absolute right-0 top-full mt-2 w-64 rounded-xl border border-border bg-card shadow-lg py-2 z-20"
+          style={{ top: menuPos.top, right: menuPos.right }}
+          className="fixed w-64 rounded-xl border border-border bg-card shadow-lg py-2 z-50"
         >
           {NEW_ANALYSIS_GROUPS.map((group, i) => (
             <div key={group.pillar} className={i > 0 ? "mt-1 pt-1 border-t border-border" : ""}>
@@ -537,7 +566,8 @@ function NewAnalysisMenu() {
               })}
             </div>
           ))}
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   );

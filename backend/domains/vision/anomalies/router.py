@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session, joinedload
 
@@ -338,6 +338,26 @@ def get_vision_anomaly_result(job_id: int, current_user: User = Depends(get_curr
         confusion_matrix=json.loads(result.confusion_matrix_json),
         model_card=json.loads(result.model_card_json or "{}"),
     )
+
+
+@router.get("/jobs/{job_id}/model/export")
+def export_vision_anomaly_model(job_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Export de l'artefact (Lot 10, retour utilisateur direct — parité avec
+    `GET /training/jobs/{job_id}/model/export`)."""
+    job = _get_org_job(job_id, current_user, db)
+    if job.status != "completed" or job.result is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"code": "MODELE_NON_DISPONIBLE", "message": "Cet entraînement n'a pas encore produit de modèle"},
+        )
+    artifact_path = Path(job.result.file_path)
+    if not artifact_path.exists():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "ARTEFACT_INTROUVABLE", "message": "Artefact du modèle introuvable sur le serveur"},
+        )
+    filename = f"vision_anomalies_job{job.id}.pt"
+    return FileResponse(path=artifact_path, filename=filename, media_type="application/octet-stream")
 
 
 @router.get("/jobs/{job_id}/examples", response_model=List[VisionAnomalyExampleOut])

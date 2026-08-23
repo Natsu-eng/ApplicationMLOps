@@ -1,4 +1,5 @@
-import { AlertTriangle, Info, Lightbulb, ShieldAlert } from "lucide-react";
+import { useState } from "react";
+import { AlertTriangle, ChevronDown, Info, Lightbulb, ShieldAlert } from "lucide-react";
 import type { ModelVerdictData, VerdictLevel } from "../../api/client";
 import { Badge } from "../ui/Badge";
 import { Card } from "../ui/Card";
@@ -79,6 +80,40 @@ function EvidenceLine({ details }: { details: Record<string, unknown> }) {
   );
 }
 
+/** Une affirmation du Verdict — repliée par défaut (retour utilisateur
+ * direct, Lot 10 : la section devenait longue une fois la ligne de preuve
+ * ajoutée au Lot 6) : seuls le niveau et le titre restent toujours
+ * visibles, l'explication et la ligne de preuve se déplient au clic — même
+ * motif que la FAQ/le lexique du centre d'aide. */
+function VerdictClaimItem({ claim }: { claim: ModelVerdictData["claims"][number] }) {
+  const [open, setOpen] = useState(false);
+  const config = LEVEL_CONFIG[claim.level];
+  const Icon = config.icon;
+  return (
+    <div className={`rounded-lg border ${config.border} bg-muted px-3 py-2.5`}>
+      <button type="button" onClick={() => setOpen((v) => !v)} aria-expanded={open} className="w-full flex items-start gap-2 text-left">
+        <Icon size={15} className={`flex-shrink-0 mt-0.5 ${config.iconColor}`} />
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2 flex-wrap">
+            <Badge variant={config.badge}>{LEVEL_LABEL[claim.level]}</Badge>
+            <p className="text-sm text-foreground font-medium">{claim.title}</p>
+          </div>
+        </div>
+        <ChevronDown
+          size={14}
+          className={`flex-shrink-0 text-muted-foreground transition-transform mt-1 ${open ? "rotate-180" : ""}`}
+        />
+      </button>
+      {open && (
+        <>
+          <p className="text-xs text-muted-foreground mt-2 pl-6">{claim.explanation}</p>
+          <EvidenceLine details={claim.details} />
+        </>
+      )}
+    </div>
+  );
+}
+
 export function ModelVerdict({ verdict }: { verdict: ModelVerdictData }) {
   return (
     <Card className="p-5">
@@ -90,25 +125,9 @@ export function ModelVerdict({ verdict }: { verdict: ModelVerdictData }) {
       </div>
 
       <div className="space-y-2">
-        {verdict.claims.map((claim) => {
-          const config = LEVEL_CONFIG[claim.level];
-          const Icon = config.icon;
-          return (
-            <div key={claim.code} className={`rounded-lg border ${config.border} bg-muted px-3 py-2.5`}>
-              <div className="flex items-start gap-2">
-                <Icon size={15} className={`flex-shrink-0 mt-0.5 ${config.iconColor}`} />
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <Badge variant={config.badge}>{LEVEL_LABEL[claim.level]}</Badge>
-                    <p className="text-sm text-foreground font-medium">{claim.title}</p>
-                  </div>
-                  <p className="text-xs text-muted-foreground mt-1.5">{claim.explanation}</p>
-                </div>
-              </div>
-              <EvidenceLine details={claim.details} />
-            </div>
-          );
-        })}
+        {verdict.claims.map((claim) => (
+          <VerdictClaimItem key={claim.code} claim={claim} />
+        ))}
       </div>
     </Card>
   );
