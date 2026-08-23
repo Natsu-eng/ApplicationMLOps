@@ -61,9 +61,26 @@ def test_missing_request_id_header_generates_one(client):
     assert resp.headers.get("x-request-id")
 
 
-def test_provided_request_id_header_is_preserved(client):
+def test_provided_valid_uuid_request_id_header_is_preserved(client):
+    """Phase 1 (AUDIT_BACKEND_2026-08-23.md, Axe E) — un UUID valide fourni
+    par le client reste préservé, utile pour du traçage distribué où le
+    client génère déjà son propre identifiant de corrélation."""
+    resp = client.get("/api/health", headers={"X-Request-ID": "d290f1ee-6c54-4b01-90e6-d701748f0851"})
+    assert resp.headers["x-request-id"] == "d290f1ee-6c54-4b01-90e6-d701748f0851"
+
+
+def test_provided_non_uuid_request_id_header_is_replaced(client):
+    """Correctif Phase 1 (AUDIT_BACKEND_2026-08-23.md, Axe E) — avant ce
+    correctif, un `X-Request-ID` arbitraire fourni par le client était
+    accepté tel quel et injecté dans chaque ligne de log JSON, sans
+    validation (confusion de corrélation, contenu arbitraire pour un outil
+    de logs en aval). Seul un UUID valide est désormais accepté ; une
+    chaîne arbitraire ("mon-id-fixe", vérifié en direct qu'elle était
+    reflétée avant ce correctif) est ignorée, comme si rien n'avait été
+    fourni."""
     resp = client.get("/api/health", headers={"X-Request-ID": "mon-id-fixe"})
-    assert resp.headers["x-request-id"] == "mon-id-fixe"
+    assert resp.headers["x-request-id"] != "mon-id-fixe"
+    assert resp.headers["x-request-id"]  # un UUID généré est bien présent
 
 
 def test_two_requests_get_different_generated_ids(client):
