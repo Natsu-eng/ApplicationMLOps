@@ -45,6 +45,36 @@ versions historiques du fichier.
 confirmer la résolution — build relancé en arrière-plan, résultat consigné
 en fin de phase avec le reste de la porte de qualité.
 
+**⚠️ Limitation d'environnement rencontrée** : `docker compose build backend`
+a été tenté deux fois (une fois avant ce correctif pour confirmer le bug,
+une fois après pour le vérifier) — les deux tentatives ont échoué après
+plus de 2h chacune, non pas à cause du code mais d'un réseau extrêmement
+lent et instable sur ce poste (~20-30 kB/s, coupures répétées ; `xgboost`
+seul pèse 297 Mo, jamais téléchargé en entier avant épuisement des
+tentatives de reprise de `pip`). **Impossible d'obtenir une image Docker
+construite dans cet environnement** — voir mémoire
+`feedback_test_docker_environment.md`.
+
+**Vérification de substitution, honnête et rigoureuse** (pas une
+supposition) : reproduction EXACTE du jeu de fichiers que copie le
+`Dockerfile` (`api/`, `domains/`, `workers/`, rien d'autre) dans un
+répertoire temporaire isolé, puis `python -c "import api.main"` avec le
+même interpréteur (le `.venv` local a déjà toutes les dépendances
+installées, donc ce test isole précisément la variable qui a changé — le
+jeu de fichiers copiés — de celle qui n'a pas changé — les dépendances) :
+- **Avant correctif** (jeu `api/` + `services/` vide + `workers/`, sans
+  `domains/`) : `ModuleNotFoundError: No module named 'domains'` — confirme
+  le bug tel que diagnostiqué en lecture de code.
+- **Après correctif** (jeu `api/` + `domains/` + `workers/`) : import
+  réussi.
+
+Preuve suffisante que le correctif résout le problème diagnostiqué ; ne
+remplace pas un vrai `docker compose up` + smoke test bout-en-bout (healthcheck
+réseau, volumes, variables d'environnement Docker, nginx) — repris dès que
+la construction de l'image aboutira (build laissé en arrière-plan,
+opportuniste, ou à relancer sur un réseau plus stable). Consigné aussi en
+Phase 8, section « ce qui a été approximé ».
+
 ### Décision 2 — IP cliente réelle (§A.6)
 
 `api/core/rate_limit.py::get_client_ip` (nouveau) : ne fait confiance à
@@ -198,6 +228,30 @@ scénario exact demandé par la mission (Phase 1B, point 1 : « l'utilisateur
 qui change son mot de passe parce qu'il se croit compromis doit pouvoir
 chasser quiconque »). Confirmé en PostgreSQL non nécessaire ici : le
 correctif fonctionne dans les deux cas (`dt.tzinfo is not None` → no-op).
+
+### Décision 9 — Suite de régression IDOR consolidée (Axe B)
+
+`tests/test_idor_regression.py` (9 tests) — mission : « un test paramétré
+qui, pour CHAQUE route à ressource, vérifie qu'un utilisateur d'une autre
+organisation reçoit 404 ». L'audit délégué (Phase 0) a déjà vérifié les 110
+routes manuellement, sans trouver d'IDOR. Plutôt que dupliquer 110
+assertions individuelles (chaque domaine délègue à UN SEUL helper interne
+`_get_org_dataset`/`_get_org_job`, donc un test par route n'apporterait
+aucune garantie supplémentaire par rapport à un test par domaine), ce
+fichier teste l'endpoint « détail » de CHAQUE domaine à ressource
+(datasets, training, clustering, dimensionality, anomalies, vision
+datasets, vision classification, vision anomalies) — un proxy fidèle de
+toutes les routes du même domaine qui partagent le même helper, et surtout
+un garde-fou qui couvre AUTOMATIQUEMENT un futur domaine ajouté au backend,
+contrairement aux tests d'isolation déjà dispersés dans chaque
+`test_<domaine>_api.py` (qui existent et restent en place, non
+supprimés). Un test dédié vérifie aussi explicitement l'absence de 403
+(qui confirmerait l'existence de la ressource à l'attaquant).
+
+Réutilise les créateurs de zip de test déjà écrits (`_classification_zip_bytes`,
+`_mvtec_zip_bytes`) plutôt que de les dupliquer une troisième fois — import
+direct depuis les modules de test existants (mode d'import non-package de
+pytest sur ce dépôt, `pythonpath = .`, confirmé dans `pytest.ini`).
 
 ### Décision 4 — `/feedback` : rôle documenté aligné sur le rôle appliqué (Axe B)
 

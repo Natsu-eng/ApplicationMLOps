@@ -179,6 +179,17 @@ def _extract_zip_members(content: bytes, max_images: int, max_uncompressed_bytes
         rel_path = _safe_member_path(info.filename)
         if rel_path is None or rel_path.suffix.lower() not in IMAGE_EXTENSIONS:
             continue
+        # Correctif Phase 1 (AUDIT_BACKEND_2026-08-23.md §C.3) — `info.file_size`
+        # (taille décompressée déclarée dans le répertoire central, lue SANS
+        # décompresser) est vérifié AVANT `zf.read(info)` : la garde
+        # `_accumulate_member` s'appliquait seulement APRÈS avoir déjà
+        # matérialisé l'entrée entière en mémoire, donc une archive à UNE
+        # seule entrée à ratio de compression extrême pouvait faire exploser
+        # la mémoire avant que le rejet n'ait l'occasion de s'appliquer.
+        if info.file_size > max_uncompressed_bytes:
+            raise VisionDatasetError(
+                f"Archive trop volumineuse une fois décompressée (max {max_uncompressed_bytes // (1024 * 1024)} Mo)"
+            )
         total_uncompressed = _accumulate_member(
             rel_path, zf.read(info), members, total_uncompressed, max_images, max_uncompressed_bytes
         )
@@ -207,6 +218,13 @@ def _extract_tar_members(content: bytes, max_images: int, max_uncompressed_bytes
             rel_path = _safe_member_path(info.name)
             if rel_path is None or rel_path.suffix.lower() not in IMAGE_EXTENSIONS:
                 continue
+            # Même correctif que _extract_zip_members ci-dessus — `info.size`
+            # (taille décompressée déclarée dans l'en-tête tar) est connu
+            # sans extraire.
+            if info.size > max_uncompressed_bytes:
+                raise VisionDatasetError(
+                    f"Archive trop volumineuse une fois décompressée (max {max_uncompressed_bytes // (1024 * 1024)} Mo)"
+                )
             extracted = tf.extractfile(info)
             if extracted is None:
                 continue
