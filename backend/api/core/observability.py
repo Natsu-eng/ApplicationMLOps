@@ -98,7 +98,21 @@ class RequestIdMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next):
         incoming = request.headers.get("x-request-id")
-        request_id = incoming if incoming else str(uuid.uuid4())
+        # Correctif Phase 1 (AUDIT_BACKEND_2026-08-23.md, Axe E) — un
+        # `X-Request-ID` fourni par le client était accepté tel quel, sans
+        # validation, et reflété dans chaque ligne de log JSON : un
+        # attaquant pouvait injecter n'importe quelle chaîne (confusion de
+        # corrélation, contenu arbitraire dans un outil de logs en aval).
+        # Un UUID valide seulement — sinon on en génère un nouveau, comme si
+        # rien n'avait été fourni.
+        request_id = incoming if incoming and _is_valid_request_id(incoming) else str(uuid.uuid4())
+        # En plus du ContextVar (pour les logs émis DANS la pile de
+        # middlewares) : `request.state` survit à la remontée d'une
+        # exception jusqu'à `ServerErrorMiddleware` (hors de cette pile,
+        # où le ContextVar a déjà été réinitialisé par le `finally`
+        # ci-dessous) — c'est ce que lisent les gestionnaires d'erreur
+        # globaux (api/main.py) pour inclure `request_id` même sur un 500.
+        request.state.request_id = request_id
         token = request_id_var.set(request_id)
         try:
             response = await call_next(request)
@@ -106,6 +120,14 @@ class RequestIdMiddleware(BaseHTTPMiddleware):
             request_id_var.reset(token)
         response.headers["X-Request-ID"] = request_id
         return response
+
+
+def _is_valid_request_id(value: str) -> bool:
+    try:
+        uuid.UUID(value)
+    except ValueError:
+        return False
+    return True
 
 
 # ── Métriques Prometheus ────────────────────────────────────────────────────

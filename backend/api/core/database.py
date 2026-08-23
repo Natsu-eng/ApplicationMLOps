@@ -26,6 +26,28 @@ if _db_url.startswith("postgres://"):
 
 _is_sqlite = _db_url.startswith("sqlite")
 
+# Correctif Phase 1 (AUDIT_BACKEND_2026-08-23.md, Axe D) — seul
+# JWT_SECRET_KEY avait un hard-fail en production (security.py) ; rien
+# n'empêchait de démarrer avec la base SQLite de développement (mono-fichier,
+# pas de vrai contrôle de concurrence multi-tenant) ou avec le mot de passe
+# Postgres placeholder documenté dans .env.example/docker-compose.yml.
+# Bloquant, pas juste journalisé — même principe que security.py : un
+# défaut dangereux qui reste silencieux est pire qu'un démarrage refusé.
+if _settings.environment == "production":
+    if _is_sqlite:
+        raise RuntimeError(
+            "DATABASE_URL pointe vers SQLite en environnement de production — "
+            "démarrage refusé. PostgreSQL est requis en production (isolation "
+            "multi-tenant, concurrence réelle) : définir DATABASE_URL vers une "
+            "instance PostgreSQL."
+        )
+    if "CHANGE_ME" in _db_url:
+        raise RuntimeError(
+            "DATABASE_URL contient encore le mot de passe placeholder "
+            "'CHANGE_ME' (voir .env.example) en environnement de production — "
+            "démarrage refusé. Définir POSTGRES_PASSWORD avec une valeur réelle."
+        )
+
 # En SQLite, le dossier cible doit exister avant la première connexion
 if _is_sqlite:
     _sqlite_path = _db_url.replace("sqlite:///", "", 1)

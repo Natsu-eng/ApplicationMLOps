@@ -51,6 +51,15 @@ class User(Base):
     # aussi le thème par défaut du ThemeProvider frontend (ordre de résolution :
     # ce champ → localStorage → prefers-color-scheme → graphite).
     ui_theme: Mapped[str] = mapped_column(String(20), nullable=False, server_default="graphite")
+    # Cycle de vie des jetons (Phase 1, AUDIT_BACKEND_2026-08-23.md, Axe A) —
+    # tout jeton ACCESS dont `iat` est antérieur à cette date est rejeté par
+    # `get_current_user`, quel que soit son `jti` individuel. NULL = aucune
+    # révocation en masse n'a jamais eu lieu, tous les jetons signés valides
+    # sont acceptés (comportement historique). Mis à jour au changement de
+    # mot de passe (volontaire ou réinitialisation, Phase 1B) — c'est le
+    # mécanisme qui permet de fermer TOUTES les sessions d'un coup sans
+    # énumérer chaque jeton émis.
+    token_valid_after: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
     organization: Mapped["Organization"] = relationship("Organization", back_populates="users")
 

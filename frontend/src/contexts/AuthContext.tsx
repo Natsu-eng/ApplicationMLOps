@@ -8,9 +8,9 @@ import {
 } from "react";
 import {
   api,
-  clearToken,
+  clearTokens,
   getToken,
-  setToken as persistToken,
+  setTokens as persistTokens,
   type RegisterPayload,
   type UserProfile,
 } from "../api/client";
@@ -22,7 +22,7 @@ interface AuthContextValue {
   isLoading: boolean;
   login: (email: string, password: string) => Promise<void>;
   register: (data: RegisterPayload) => Promise<void>;
-  logout: () => void;
+  logout: () => Promise<void>;
   refreshUser: () => Promise<void>;
 }
 
@@ -43,7 +43,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setUser(profile);
     } catch {
       // Token présent mais invalide/expiré côté serveur — on efface l'état local.
-      clearToken();
+      clearTokens();
       setUser(null);
     } finally {
       setIsLoading(false);
@@ -58,18 +58,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const login = useCallback(async (email: string, password: string) => {
     const token = await api.auth.login(email, password);
-    persistToken(token.access_token);
+    persistTokens(token.access_token, token.refresh_token);
     await refreshUser();
   }, [refreshUser]);
 
   const register = useCallback(async (data: RegisterPayload) => {
     const token = await api.auth.register(data);
-    persistToken(token.access_token);
+    persistTokens(token.access_token, token.refresh_token);
     await refreshUser();
   }, [refreshUser]);
 
-  const logout = useCallback(() => {
-    clearToken();
+  const logout = useCallback(async () => {
+    // Révocation réelle côté serveur (Phase 1, AUDIT_BACKEND_2026-08-23.md
+    // §A.2) — best-effort : même si l'appel échoue (déjà expiré, réseau
+    // coupé), on efface quand même l'état local, sinon l'utilisateur reste
+    // bloqué sur un bouton "déconnexion" qui ne répond pas.
+    try {
+      await api.auth.logout();
+    } catch {
+      // ignoré volontairement — voir commentaire ci-dessus
+    }
+    clearTokens();
     setUser(null);
   }, []);
 

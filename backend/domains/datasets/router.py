@@ -276,7 +276,13 @@ def _get_org_dataset(dataset_id: int, current_user: User, db: Session) -> Datase
 # ── Endpoints ────────────────────────────────────────────────────────────────
 
 _upload_rate_limit = rate_limit_dependency(
-    "dataset_upload", _settings.upload_rate_limit_max_attempts, _settings.upload_rate_limit_window_seconds
+    "dataset_upload", _settings.upload_rate_limit_max_attempts, _settings.upload_rate_limit_window_seconds,
+    # Échec FERMÉ (Phase 1, AUDIT_BACKEND_2026-08-23.md §4) — l'upload
+    # parse un fichier entier en mémoire, synchrone dans la requête HTTP :
+    # qui met Redis à genoux ne doit jamais déverrouiller l'endpoint le
+    # plus coûteux, contrairement à l'authentification (disponibilité
+    # prioritaire là-bas).
+    fail_open=False,
 )
 
 

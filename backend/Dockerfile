@@ -24,7 +24,7 @@ RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
     pip install --no-cache-dir -r requirements.txt
 
 COPY api/ ./api/
-COPY services/ ./services/
+COPY domains/ ./domains/
 COPY workers/ ./workers/
 
 RUN mkdir -p database logs storage/datasets storage/models && \

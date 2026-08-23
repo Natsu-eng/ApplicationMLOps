@@ -151,7 +151,11 @@ def _get_org_dataset(dataset_id: int, current_user: User, db: Session) -> Vision
 
 
 _upload_rate_limit = rate_limit_dependency(
-    "vision_dataset_upload", _settings.upload_rate_limit_max_attempts, _settings.upload_rate_limit_window_seconds
+    "vision_dataset_upload", _settings.upload_rate_limit_max_attempts, _settings.upload_rate_limit_window_seconds,
+    # Échec FERMÉ (Phase 1, AUDIT_BACKEND_2026-08-23.md §4) — extraction
+    # ZIP synchrone dans la requête HTTP, encore plus coûteuse que l'upload
+    # tabulaire. Voir domains/datasets/router.py::_upload_rate_limit.
+    fail_open=False,
 )
 
 

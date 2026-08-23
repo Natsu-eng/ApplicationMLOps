@@ -411,7 +411,12 @@ def export_vision_classification_model(job_id: int, current_user: User = Depends
 
 
 _explain_rate_limit = rate_limit_dependency(
-    "vision_explain", _settings.explain_rate_limit_max_attempts, _settings.explain_rate_limit_window_seconds
+    "vision_explain", _settings.explain_rate_limit_max_attempts, _settings.explain_rate_limit_window_seconds,
+    # Échec FERMÉ (Phase 1, AUDIT_BACKEND_2026-08-23.md §4, constat déjà
+    # identifié dans l'audit initial) — charge un modèle torch complet à
+    # chaque appel, l'endpoint le plus coûteux du backend : qui met Redis à
+    # genoux ne doit jamais le déverrouiller.
+    fail_open=False,
 )
 
 

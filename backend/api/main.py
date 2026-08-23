@@ -16,14 +16,22 @@ import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from api.core.config import get_settings
 from api.core.database import check_connection, init_db
-from api.core.observability import PrometheusMiddleware, RequestIdMiddleware, configure_logging, metrics_response
+from api.core.observability import (
+    PrometheusMiddleware,
+    RequestIdMiddleware,
+    configure_logging,
+    metrics_response,
+    request_id_var,
+)
 from domains.anomalies.router import router as anomalies_router
 from domains.auth.router import router as auth_router
 from domains.auth.router import feedback_router, users_router
@@ -91,6 +99,47 @@ class MaxJsonBodySizeMiddleware(BaseHTTPMiddleware):
         return await call_next(request)
 
 
+# Correctif Phase 1 (AUDIT_BACKEND_2026-08-23.md, Axe E) — aucun en-tête de
+# sécurité, vérifié en direct (requête réelle contre le backend démarré
+# localement) : ni HSTS, ni X-Content-Type-Options, ni X-Frame-Options/CSP,
+# ni Referrer-Policy, ni Permissions-Policy. Exempté sur /docs, /redoc,
+# /openapi.json (Swagger UI charge ses assets depuis un CDN — CSP stricte
+# incompatible ; ces routes sont de toute façon désactivées en production,
+# voir plus haut) : la CSP ne s'applique qu'au SPA et à l'API JSON.
+_CSP = (
+    "default-src 'self'; "
+    "script-src 'self'; "
+    # 'unsafe-inline' réservé à style-src : les graphiques (Recharts, SVG)
+    # posent des styles inline sur les éléments — script-src reste, lui,
+    # strict (aucune exécution de script arbitraire, c'est le risque réel).
+    "style-src 'self' 'unsafe-inline'; "
+    "img-src 'self' data: blob:; "
+    "font-src 'self'; "
+    "connect-src 'self'; "
+    "frame-ancestors 'none'; "
+    "base-uri 'self'; "
+    "form-action 'self'"
+)
+_DOCS_PATHS = frozenset({"/docs", "/redoc", "/openapi.json"})
+
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+        # N'a d'effet que servi sur HTTPS (le navigateur ignore ce header
+        # sur une réponse HTTP) — envoyé inconditionnellement : ce backend
+        # ne sait pas s'il est atteint via un terminaison TLS en amont
+        # (load balancer, nginx avec certificat) ou en clair.
+        response.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains"
+        if request.url.path not in _DOCS_PATHS:
+            response.headers["Content-Security-Policy"] = _CSP
+        return response
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Initialisation au démarrage.
@@ -108,18 +157,34 @@ async def lifespan(app: FastAPI):
     logger.info("[SHUTDOWN] Arrêt de l'API")
 
 
+_IS_PROD = settings.environment == "production"
+
 app = FastAPI(
     title=settings.app_name,
     version=settings.app_version,
     lifespan=lifespan,
+    # Correctif Phase 1 (AUDIT_BACKEND_2026-08-23.md, Axe E) — /docs et
+    # /openapi.json étaient exposés sans authentification quel que soit
+    # l'environnement (vérifié en direct : 200 sur les deux). La
+    # documentation interactive complète (schémas, tous les endpoints)
+    # n'a rien à faire en production.
+    docs_url=None if _IS_PROD else "/docs",
+    redoc_url=None if _IS_PROD else "/redoc",
+    openapi_url=None if _IS_PROD else "/openapi.json",
 )
 
-# CORS — le frontend Vite (dev) et l'URL de production déclarée en config
-_allowed_origins = list({
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",
-    settings.frontend_url,
-})
+# CORS — le frontend Vite (dev) et l'URL de production déclarée en config.
+# Correctif Phase 1 (AUDIT_BACKEND_2026-08-23.md, Axe E) — les origines de
+# dev (localhost:5173) étaient whitelistées INCONDITIONNELLEMENT, y compris
+# en production, avec allow_credentials=True : vérifié en direct (preflight
+# accepté avec Origin: http://localhost:5173 même hors dev). Un serveur qui
+# tournerait sur ce port sur la machine d'une victime aurait pu émettre des
+# requêtes cross-origin authentifiées vers l'API de production.
+_allowed_origins = (
+    [settings.frontend_url]
+    if _IS_PROD
+    else list({"http://localhost:5173", "http://127.0.0.1:5173", settings.frontend_url})
+)
 # Lot 1.4 (§C.2.7/§D.4, AUDIT_DATALAB_2026-08-16.md) — méthodes/en-têtes
 # resserrés à ce que l'API utilise réellement (GET/POST/PATCH/DELETE,
 # Authorization + Content-Type) plutôt que "*". Les origines étaient déjà
@@ -137,6 +202,7 @@ app.add_middleware(
     expose_headers=["Content-Disposition"],
 )
 app.add_middleware(MaxJsonBodySizeMiddleware, max_bytes=settings.max_json_body_size_mb * 1024 * 1024)
+app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(PrometheusMiddleware)
 # RequestIdMiddleware EN DERNIER : le dernier `add_middleware` devient le
 # plus externe de la pile Starlette — sans ça, les logs émis par les
@@ -183,3 +249,75 @@ def metrics():
     ni d'authentification, même convention que `/api/health` : un
     collecteur de métriques n'a pas de session utilisateur."""
     return metrics_response()
+
+
+# ── Gestionnaires d'erreur globaux (Phase 1, AUDIT_BACKEND_2026-08-23.md,
+# Axe E) ──────────────────────────────────────────────────────────────────
+# Avant ce correctif, seules les `HTTPException` levées explicitement par le
+# code métier portaient l'enveloppe `{"detail": {"code", "message"}}` — les
+# erreurs produites par FastAPI/Starlette lui-même (404 sans route, 422 de
+# validation Pydantic, 401 "Not authenticated" d'OAuth2PasswordBearer sans
+# en-tête, 500 non gérée) y échappaient, vérifié en direct :
+# `GET /api/does-not-exist` renvoyait `{"detail":"Not Found"}`, sans code
+# stable, sans `request_id` dans le corps. Les trois gestionnaires
+# ci-dessous unifient l'enveloppe partout, sans changer les codes HTTP.
+
+def _request_id(request: Request) -> str:
+    return getattr(request.state, "request_id", "-")
+
+
+@app.exception_handler(StarletteHTTPException)
+async def http_exception_handler(request: Request, exc: StarletteHTTPException) -> JSONResponse:
+    detail = exc.detail
+    if isinstance(detail, dict) and "code" in detail and "message" in detail:
+        body = {**detail, "request_id": _request_id(request)}
+    else:
+        # `exc.detail` est une chaîne brute (ex. "Not authenticated" posé
+        # par OAuth2PasswordBearer, "Not Found" par le routeur Starlette
+        # lui-même) — jamais renvoyée telle quelle, toujours reformulée en
+        # français avec un code stable dérivé du statut.
+        code = {401: "AUTH_NON_AUTHENTIFIE", 404: "NON_TROUVE", 405: "METHODE_NON_AUTORISEE"}.get(
+            exc.status_code, "ERREUR_HTTP"
+        )
+        message = {
+            401: "Authentification requise.",
+            404: "Ressource introuvable.",
+            405: "Méthode non autorisée pour cette ressource.",
+        }.get(exc.status_code, str(detail) if detail else "Une erreur est survenue.")
+        body = {"code": code, "message": message, "request_id": _request_id(request)}
+    return JSONResponse(status_code=exc.status_code, content={"detail": body}, headers=dict(exc.headers or {}))
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
+    """422 Pydantic — le message par défaut ("Field required", en anglais
+    technique) n'est ni en français ni actionnable. Reformule un résumé
+    lisible ; le détail champ par champ reste disponible sous `errors` pour
+    le débogage frontend, sans être LE message affiché à l'utilisateur."""
+    fields = ", ".join(".".join(str(p) for p in err["loc"][1:]) for err in exc.errors()) or "champ(s) invalide(s)"
+    body = {
+        "code": "VALIDATION_ECHOUEE",
+        "message": f"Requête invalide : vérifiez {fields}.",
+        "request_id": _request_id(request),
+        "errors": exc.errors(),
+    }
+    return JSONResponse(status_code=422, content={"detail": body})
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    """Filet de sécurité final — ne doit normalement jamais se déclencher
+    sur un chemin métier (chaque domaine traduit déjà ses erreurs
+    attendues), mais si un bug échappe à tout le reste, le client ne doit
+    JAMAIS recevoir `str(exc)` brut (fuite de détails internes) : le
+    `request_id` est la seule chose qu'on lui donne pour permettre le
+    support, l'exception complète part dans les logs structurés (déjà
+    corrélés par `request_id`, voir observability.py)."""
+    logger.exception("[UNHANDLED] %s %s", request.method, request.url.path)
+    body = {
+        "code": "ERREUR_INTERNE",
+        "message": "Une erreur inattendue est survenue. Réessayez ; si le problème persiste, "
+        f"contactez le support avec la référence {_request_id(request)}.",
+        "request_id": _request_id(request),
+    }
+    return JSONResponse(status_code=500, content={"detail": body})

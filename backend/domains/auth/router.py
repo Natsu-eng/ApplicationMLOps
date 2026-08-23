@@ -10,6 +10,7 @@ recoupent jamais (voir `list_team_members`, filtré par `organization_id`).
 from __future__ import annotations
 
 import json
+import time
 from datetime import datetime, timezone
 from typing import List, Optional
 
@@ -22,8 +23,24 @@ from api.core.config import get_settings
 from api.core.database import get_db
 from api.core.job_queue import redis_conn
 from api.core.models import AuditLog, Feedback, Organization, User
-from api.core.rate_limit import is_rate_limited, rate_limit_dependency, reset_rate_limit
-from api.core.security import create_access_token, decode_token, hash_password, verify_password
+from api.core.rate_limit import get_client_ip, is_rate_limited, rate_limit_dependency, reset_rate_limit
+from api.core.security import (
+    access_token_ttl_seconds,
+    create_access_token,
+    create_refresh_token,
+    decode_token,
+    hash_password,
+    refresh_token_ttl_seconds,
+    verify_password,
+)
+from api.core.token_store import (
+    get_refresh_jti_owner,
+    is_access_jti_revoked,
+    revoke_access_jti,
+    revoke_all_refresh_tokens,
+    revoke_refresh_jti,
+    store_refresh_jti,
+)
 from domains.shared.audit import log_action
 
 router = APIRouter(prefix="/auth", tags=["authentification"])
@@ -42,10 +59,23 @@ class RegisterRequest(BaseModel):
 
 class TokenResponse(BaseModel):
     access_token: str
+    refresh_token: str
     token_type: str = "bearer"
     role: str
     nom: str
     organization_name: str
+
+
+class RefreshRequest(BaseModel):
+    refresh_token: str
+
+
+class LogoutRequest(BaseModel):
+    # Optionnel : sans lui, seul le jeton access de la requête est révoqué —
+    # le refresh token resté valide permettrait de regénérer un accès. Le
+    # frontend l'envoie toujours (voir api/client.ts), optionnel côté schéma
+    # pour ne pas casser un appelant qui n'aurait plus de refresh en main.
+    refresh_token: Optional[str] = None
 
 
 class UserProfile(BaseModel):
@@ -118,29 +148,56 @@ class TeamMemberProfile(BaseModel):
 
 # ── Dépendances ──────────────────────────────────────────────────────────────
 
+def _as_aware_utc(dt: Optional[datetime]) -> Optional[datetime]:
+    """SQLite (dev) ne conserve pas le fuseau horaire des colonnes
+    `DateTime(timezone=True)` — une valeur relue est naïve alors qu'elle a
+    toujours été écrite en UTC (`datetime.now(timezone.utc)`, voir
+    `change_own_password` ci-dessous). PostgreSQL (prod) conserve le fuseau :
+    `dt.tzinfo` est déjà renseigné, ne rien changer. Même correctif déjà
+    appliqué à `job_watchdog.py`/`prediction_retention.py` — dupliqué ici
+    plutôt qu'importé : `domains/auth/router.py` n'a sinon aucune raison de
+    dépendre de `domains/shared/job_watchdog.py` (modèles `TrainingJob`/
+    `ClusteringJob` sans rapport)."""
+    if dt is None or dt.tzinfo is not None:
+        return dt
+    return dt.replace(tzinfo=timezone.utc)
+
+
+_TOKEN_INVALIDE = HTTPException(
+    status_code=status.HTTP_401_UNAUTHORIZED,
+    detail={"code": "AUTH_TOKEN_INVALIDE", "message": "Token invalide ou expiré"},
+)
+
+
 def get_current_user(
     token: str = Depends(oauth2_scheme),
     db: Session = Depends(get_db),
 ) -> User:
-    payload = decode_token(token)
+    payload = decode_token(token, expected_type="access")
     if payload is None:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail={"code": "AUTH_TOKEN_INVALIDE", "message": "Token invalide ou expiré"},
-        )
+        raise _TOKEN_INVALIDE
+    jti = payload.get("jti")
+    if not jti or is_access_jti_revoked(redis_conn, jti):
+        raise _TOKEN_INVALIDE
     try:
         user_id = int(payload.get("sub", 0))
     except (TypeError, ValueError):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail={"code": "AUTH_TOKEN_INVALIDE", "message": "Token invalide ou expiré"},
-        )
+        raise _TOKEN_INVALIDE
     user = db.query(User).filter(User.id == user_id).first()
     if user is None or not user.actif:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail={"code": "AUTH_UTILISATEUR_INTROUVABLE_OU_DESACTIVE", "message": "Utilisateur introuvable ou désactivé"},
         )
+    # Correctif Phase 1 (AUDIT_BACKEND_2026-08-23.md §A.4) — un jeton émis
+    # AVANT la dernière révocation en masse (changement de mot de passe,
+    # réinitialisation) est rejeté même s'il n'a pas encore expiré et même
+    # si son `jti` individuel n'a jamais été révoqué explicitement.
+    valid_after = _as_aware_utc(user.token_valid_after)
+    if valid_after is not None:
+        iat = payload.get("iat")
+        if iat is None or iat < valid_after.timestamp():
+            raise _TOKEN_INVALIDE
     return user
 
 
@@ -189,8 +246,13 @@ def register(body: RegisterRequest, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(user)
 
-    token = create_access_token({"sub": user.id, "role": user.role, "org": organization.id})
-    return TokenResponse(access_token=token, role=user.role, nom=user.nom, organization_name=organization.name)
+    access_token, _ = create_access_token(user.id, user.role, organization.id)
+    refresh_token, refresh_jti = create_refresh_token(user.id)
+    store_refresh_jti(redis_conn, user.id, refresh_jti, refresh_token_ttl_seconds())
+    return TokenResponse(
+        access_token=access_token, refresh_token=refresh_token,
+        role=user.role, nom=user.nom, organization_name=organization.name,
+    )
 
 
 @router.post("/login", response_model=TokenResponse)
@@ -202,7 +264,7 @@ def login(request: Request, form: OAuth2PasswordRequestForm = Depends(), db: Ses
     glissante, 429 avant même de consulter la base — brute force sur mot de
     passe rendu impraticable sans pénaliser un utilisateur qui se trompe une
     ou deux fois."""
-    client_ip = request.client.host if request.client else "inconnu"
+    client_ip = get_client_ip(request)
     rate_limit_key = f"login_attempts:{client_ip}"
     if is_rate_limited(
         redis_conn, rate_limit_key, _settings.login_rate_limit_max_attempts, _settings.login_rate_limit_window_seconds
@@ -229,10 +291,52 @@ def login(request: Request, form: OAuth2PasswordRequestForm = Depends(), db: Ses
 
     reset_rate_limit(redis_conn, rate_limit_key)
     user.last_login = datetime.now(timezone.utc)
+    log_action(db, user.organization_id, user.id, "auth.login", details={"ip": client_ip})
     db.commit()
 
-    token = create_access_token({"sub": user.id, "role": user.role, "org": user.organization_id})
-    return TokenResponse(access_token=token, role=user.role, nom=user.nom, organization_name=user.organization_name)
+    access_token, _ = create_access_token(user.id, user.role, user.organization_id)
+    refresh_token, refresh_jti = create_refresh_token(user.id)
+    store_refresh_jti(redis_conn, user.id, refresh_jti, refresh_token_ttl_seconds())
+    return TokenResponse(
+        access_token=access_token, refresh_token=refresh_token,
+        role=user.role, nom=user.nom, organization_name=user.organization_name,
+    )
+
+
+@router.post("/refresh", response_model=TokenResponse)
+def refresh_tokens(body: RefreshRequest, db: Session = Depends(get_db)):
+    """Renouvellement transparent (Phase 1, AUDIT_BACKEND_2026-08-23.md §A.1)
+    — le frontend appelle cet endpoint quand un jeton access a expiré (20
+    min) plutôt que de renvoyer l'utilisateur au formulaire de connexion.
+    Rotatif : l'ancien refresh token est immédiatement invalidé, qu'il soit
+    réutilisé ou non — une seconde présentation du MÊME refresh token (vol,
+    rejeu) échoue toujours, elle ne prolonge jamais une session volée."""
+    payload = decode_token(body.refresh_token, expected_type="refresh")
+    if payload is None:
+        raise _TOKEN_INVALIDE
+    jti = payload.get("jti")
+    try:
+        user_id = int(payload.get("sub", 0))
+    except (TypeError, ValueError):
+        raise _TOKEN_INVALIDE
+    owner_id = get_refresh_jti_owner(redis_conn, jti) if jti else None
+    if owner_id is None or owner_id != user_id:
+        raise _TOKEN_INVALIDE
+    user = db.query(User).filter(User.id == user_id).first()
+    if user is None or not user.actif:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"code": "AUTH_UTILISATEUR_INTROUVABLE_OU_DESACTIVE", "message": "Utilisateur introuvable ou désactivé"},
+        )
+    revoke_refresh_jti(redis_conn, user_id, jti)  # usage unique — avant d'émettre le remplaçant
+
+    access_token, _ = create_access_token(user.id, user.role, user.organization_id)
+    new_refresh_token, new_refresh_jti = create_refresh_token(user.id)
+    store_refresh_jti(redis_conn, user.id, new_refresh_jti, refresh_token_ttl_seconds())
+    return TokenResponse(
+        access_token=access_token, refresh_token=new_refresh_token,
+        role=user.role, nom=user.nom, organization_name=user.organization_name,
+    )
 
 
 @router.get("/me", response_model=UserProfile)
@@ -256,24 +360,60 @@ def update_me(
 
 @router.patch("/me/password", status_code=status.HTTP_204_NO_CONTENT)
 def change_own_password(
+    request: Request,
     body: ChangePasswordRequest,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Change le mot de passe du compte connecté — jamais celui d'un autre utilisateur."""
+    """Change le mot de passe du compte connecté — jamais celui d'un autre
+    utilisateur. Révoque TOUTES les sessions existantes (Phase 1,
+    AUDIT_BACKEND_2026-08-23.md §A.4) : un utilisateur qui change son mot de
+    passe parce qu'il se sait/croit compromis doit pouvoir chasser
+    quiconque détiendrait déjà un jeton — sans ça, un jeton volé restait
+    valide jusqu'à 24h après ce geste de protection."""
     if not verify_password(body.current_password, current_user.hashed_password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail={"code": "AUTH_MDP_ACTUEL_INCORRECT", "message": "Mot de passe actuel incorrect"},
         )
     current_user.hashed_password = hash_password(body.new_password)
+    current_user.token_valid_after = datetime.now(timezone.utc)
+    log_action(
+        db, current_user.organization_id, current_user.id, "auth.password_changed",
+        details={"ip": get_client_ip(request)},
+    )
     db.commit()
+    revoke_all_refresh_tokens(redis_conn, current_user.id)
 
 
-@router.post("/logout")
-def logout():
-    """JWT est stateless : la déconnexion consiste à supprimer le token côté client."""
-    return {"message": "Déconnexion effectuée (supprimer le token côté client)"}
+@router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
+def logout(
+    request: Request,
+    body: LogoutRequest,
+    token: str = Depends(oauth2_scheme),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Révoque réellement le jeton access de CETTE session (Phase 1,
+    AUDIT_BACKEND_2026-08-23.md §A.2) — avant ce correctif, `/logout` ne
+    faisait rien côté serveur, un jeton "déconnecté" restait valide jusqu'à
+    expiration naturelle. Révoque aussi le refresh token fourni, s'il y en
+    a un (voir `LogoutRequest`) — sans ça, le refresh resté valide
+    permettrait de regénérer un nouvel access token juste après."""
+    payload = decode_token(token, expected_type="access")
+    if payload is not None:
+        jti = payload.get("jti")
+        exp = payload.get("exp")
+        if jti and exp:
+            revoke_access_jti(redis_conn, jti, int(exp - time.time()))
+    if body.refresh_token:
+        refresh_payload = decode_token(body.refresh_token, expected_type="refresh")
+        if refresh_payload is not None:
+            refresh_jti = refresh_payload.get("jti")
+            if refresh_jti:
+                revoke_refresh_jti(redis_conn, current_user.id, refresh_jti)
+    log_action(db, current_user.organization_id, current_user.id, "auth.logout", details={"ip": get_client_ip(request)})
+    db.commit()
 
 
 # ── Préférences d'interface (Lot UI — refonte visuelle) ─────────────────────
@@ -351,13 +491,20 @@ def create_feedback(
 
 @feedback_router.get("", response_model=List[FeedbackOut])
 def list_feedback(
-    current_user: User = Depends(get_current_user),
+    owner: User = Depends(require_owner),
     db: Session = Depends(get_db),
 ):
-    """Retours de MON organisation uniquement — jamais ceux d'une autre."""
+    """Retours de MON organisation uniquement — jamais ceux d'une autre.
+
+    Correctif (Phase 1, AUDIT_BACKEND_2026-08-23.md, Axe B) : le commentaire
+    de section ci-dessus affirme un accès réservé aux administrateurs
+    depuis le Lot 10, mais la route utilisait `get_current_user` — tout
+    membre ordinaire pouvait donc lire les retours de ses collègues.
+    Aucun IDOR cross-tenant (le filtre `organization_id` était déjà
+    correct), seulement un rôle mal appliqué."""
     entries = (
         db.query(Feedback)
-        .filter(Feedback.organization_id == current_user.organization_id)
+        .filter(Feedback.organization_id == owner.organization_id)
         .order_by(Feedback.created_at.desc())
         .limit(200)
         .all()

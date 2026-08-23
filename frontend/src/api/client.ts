@@ -22,17 +22,33 @@ export function apiUrl(path: string): string {
 }
 
 const TOKEN_KEY = "datalab_token";
+// Jeton de rafraîchissement (Phase 1, AUDIT_BACKEND_2026-08-23.md §A.1) —
+// le jeton d'accès est volontairement court (20 min côté backend,
+// api/core/security.py) : sans ce second jeton et le renouvellement
+// transparent ci-dessous, l'utilisateur serait déconnecté toutes les 20
+// minutes.
+const REFRESH_TOKEN_KEY = "datalab_refresh_token";
 
 export function getToken(): string | null {
   return localStorage.getItem(TOKEN_KEY);
 }
 
-export function setToken(token: string): void {
-  localStorage.setItem(TOKEN_KEY, token);
+export function getRefreshToken(): string | null {
+  return localStorage.getItem(REFRESH_TOKEN_KEY);
 }
 
-export function clearToken(): void {
+/** Stocke le COUPLE de jetons — le backend est rotatif (chaque appel à
+ * `/auth/refresh` invalide l'ancien refresh token et en émet un nouveau) :
+ * ne jamais persister l'un sans l'autre, sous peine de garder un refresh
+ * token déjà révoqué en mémoire locale. */
+export function setTokens(accessToken: string, refreshToken: string): void {
+  localStorage.setItem(TOKEN_KEY, accessToken);
+  localStorage.setItem(REFRESH_TOKEN_KEY, refreshToken);
+}
+
+export function clearTokens(): void {
   localStorage.removeItem(TOKEN_KEY);
+  localStorage.removeItem(REFRESH_TOKEN_KEY);
 }
 
 /** Erreur API typée — porte le code métier ({code, message}) renvoyé par le backend
@@ -73,10 +89,64 @@ export function shouldRedirectToLogin(pathname: string): boolean {
  * par `requestForm()`, qui n'appelle pas ce helper (et ne renvoie de toute
  * façon jamais 401 — identifiants incorrects = 400, voir routers/auth.py). */
 export function handleUnauthorized(): void {
-  clearToken();
+  clearTokens();
   if (typeof window !== "undefined" && shouldRedirectToLogin(window.location.pathname)) {
     window.location.href = "/login?expired=1";
   }
+}
+
+/** Renouvellement transparent (Phase 1, AUDIT_BACKEND_2026-08-23.md §A.1) —
+ * appelé UNE fois par le premier 401 rencontré ; toute requête qui échoue en
+ * 401 pendant qu'un rafraîchissement est déjà en cours attend la MÊME
+ * promesse (`refreshingPromise`) plutôt que de déclencher son propre appel à
+ * `/auth/refresh` — sans ce partage, un écran qui déclenche 5 requêtes en
+ * parallèle à l'expiration du jeton consommerait le refresh token rotatif
+ * une fois puis échouerait 4 fois (rotation à usage unique côté backend).
+ * Retourne le nouveau jeton d'accès, ou `null` si le refresh token est lui
+ * aussi absent/expiré/révoqué (session réellement terminée). */
+let refreshingPromise: Promise<string | null> | null = null;
+
+async function tryRefreshAccessToken(): Promise<string | null> {
+  const refreshToken = getRefreshToken();
+  if (!refreshToken) return null;
+  if (refreshingPromise) return refreshingPromise;
+
+  refreshingPromise = (async () => {
+    try {
+      const res = await fetch(apiUrl("/auth/refresh"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ refresh_token: refreshToken }),
+      });
+      if (!res.ok) return null;
+      const data = (await res.json()) as TokenResponse;
+      setTokens(data.access_token, data.refresh_token);
+      return data.access_token;
+    } catch {
+      return null;
+    } finally {
+      refreshingPromise = null;
+    }
+  })();
+  return refreshingPromise;
+}
+
+/** Exécute `perform` (un fetch déjà construit avec le jeton d'accès courant),
+ * et si la réponse est 401, tente UN renouvellement puis rejoue `perform`
+ * avec le nouveau jeton. `perform` reçoit le jeton à utiliser pour que
+ * l'appelant reconstruise ses en-têtes/`Authorization` avec la valeur
+ * fraîche — jamais la même closure figée sur l'ancien jeton. Centralisé ici
+ * plutôt que dupliqué dans `request`/`uploadFiles`/`uploadFileWithFields`/
+ * `downloadModelExport`, qui faisaient chacun leur propre `fetch` direct. */
+async function withAuthRetry(perform: (token: string | null) => Promise<Response>): Promise<Response> {
+  const res = await perform(getToken());
+  if (res.status !== 401) return res;
+  const newToken = await tryRefreshAccessToken();
+  if (!newToken) {
+    handleUnauthorized();
+    return res;
+  }
+  return perform(newToken);
 }
 
 async function extractError(res: Response): Promise<ApiError> {
@@ -95,19 +165,20 @@ async function extractError(res: Response): Promise<ApiError> {
   return new ApiError(res.status, message, code);
 }
 
-/** Requêtes JSON classiques (GET/POST/PATCH avec corps JSON), token Bearer injecté
- * automatiquement s'il est présent. */
+/** Requêtes JSON classiques (GET/POST/PATCH avec corps JSON), token Bearer
+ * injecté automatiquement s'il est présent. Un 401 déclenche UN
+ * renouvellement transparent (voir `withAuthRetry`) avant d'abandonner. */
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const token = getToken();
-  const res = await fetch(apiUrl(path), {
-    ...options,
-    headers: {
-      "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...options.headers,
-    },
-  });
-  if (res.status === 401) handleUnauthorized();
+  const res = await withAuthRetry((token) =>
+    fetch(apiUrl(path), {
+      ...options,
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...options.headers,
+      },
+    }),
+  );
   if (!res.ok) throw await extractError(res);
   if (res.status === 204) return undefined as T;
   return res.json() as Promise<T>;
@@ -120,11 +191,9 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
  * clustering/réduction de dimension/anomalies/vision) — même logique,
  * jamais dupliquée à chaque domaine. */
 async function downloadModelExport(path: string, suggestedFilename: string): Promise<void> {
-  const token = getToken();
-  const res = await fetch(apiUrl(path), {
-    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-  });
-  if (res.status === 401) handleUnauthorized();
+  const res = await withAuthRetry((token) =>
+    fetch(apiUrl(path), { headers: token ? { Authorization: `Bearer ${token}` } : undefined }),
+  );
   if (!res.ok) throw await extractError(res);
   const blob = await res.blob();
   const disposition = res.headers.get("content-disposition") ?? "";
@@ -163,7 +232,6 @@ async function uploadFile<T>(path: string, file: File): Promise<T> {
  * dossier (`api.visionDatasets.uploadFolder`, chemins relatifs portés par
  * `webkitRelativePath`, voir VisionDatasets.tsx). */
 async function uploadFiles<T>(path: string, files: File[]): Promise<T> {
-  const token = getToken();
   const formData = new FormData();
   for (const file of files) {
     // 3ᵉ argument (filename) explicite : pour un import de dossier,
@@ -172,12 +240,13 @@ async function uploadFiles<T>(path: string, files: File[]): Promise<T> {
     // de classes que le backend a besoin de voir.
     formData.append("files", file, file.webkitRelativePath || file.name);
   }
-  const res = await fetch(apiUrl(path), {
-    method: "POST",
-    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-    body: formData,
-  });
-  if (res.status === 401) handleUnauthorized();
+  const res = await withAuthRetry((token) =>
+    fetch(apiUrl(path), {
+      method: "POST",
+      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      body: formData,
+    }),
+  );
   if (!res.ok) throw await extractError(res);
   return res.json() as Promise<T>;
 }
@@ -186,16 +255,16 @@ async function uploadFiles<T>(path: string, files: File[]): Promise<T> {
  * Grad-CAM, `POST /vision/classification/jobs/{id}/explain`) — même
  * contrainte Content-Type que `uploadFile`. */
 async function uploadFileWithFields<T>(path: string, file: File, fields: Record<string, string>): Promise<T> {
-  const token = getToken();
   const formData = new FormData();
   formData.append("file", file);
   for (const [key, value] of Object.entries(fields)) formData.append(key, value);
-  const res = await fetch(apiUrl(path), {
-    method: "POST",
-    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-    body: formData,
-  });
-  if (res.status === 401) handleUnauthorized();
+  const res = await withAuthRetry((token) =>
+    fetch(apiUrl(path), {
+      method: "POST",
+      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      body: formData,
+    }),
+  );
   if (!res.ok) throw await extractError(res);
   return res.json() as Promise<T>;
 }
@@ -212,6 +281,7 @@ export interface HealthStatus {
 
 export interface TokenResponse {
   access_token: string;
+  refresh_token: string;
   token_type: string;
   role: "owner" | "member";
   nom: string;
@@ -1255,7 +1325,15 @@ export const api = {
       request<UserProfile>("/auth/me", { method: "PATCH", body: JSON.stringify(data) }),
     changePassword: (data: ChangePasswordPayload) =>
       request<void>("/auth/me/password", { method: "PATCH", body: JSON.stringify(data) }),
-    logout: () => request<{ message: string }>("/auth/logout", { method: "POST" }),
+    // Envoie le refresh token pour qu'il soit révoqué lui aussi (Phase 1,
+    // AUDIT_BACKEND_2026-08-23.md §A.2) — sans lui, seul le jeton access de
+    // CETTE requête serait révoqué, le refresh resté valide permettrait de
+    // regénérer un accès juste après.
+    logout: () =>
+      request<void>("/auth/logout", {
+        method: "POST",
+        body: JSON.stringify({ refresh_token: getRefreshToken() }),
+      }),
   },
 
   users: {
