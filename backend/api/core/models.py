@@ -73,6 +73,39 @@ class User(Base):
         return self.organization.name
 
 
+class PasswordResetToken(Base):
+    """Jeton de réinitialisation de mot de passe (Phase 1B,
+    AUDIT_BACKEND_2026-08-23.md) — table dédiée plutôt que des colonnes sur
+    `User` : conserve l'historique (audit) et permet d'invalider EN BLOC
+    tous les jetons non utilisés d'un compte (voir
+    `domains/auth/router.py::_issue_password_reset_token`). Repris de CIAM
+    (`E:\\concrete-ai-platform`), mécanisme déjà éprouvé — voir le journal
+    pour les points corrigés par rapport à cette référence.
+
+    `token_hash` : SHA-256 du jeton — le jeton en clair n'est JAMAIS stocké,
+    ni journalisé, ni renvoyé par l'API ; il n'existe que dans le lien
+    envoyé par e-mail (voir `api/core/mailer.py`)."""
+
+    __tablename__ = "password_reset_tokens"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    used_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    # IP du demandeur (Phase 1B, point 6 — « dire à l'utilisateur ce qui
+    # s'est passé ») : incluse dans le mail envoyé, pour qu'un destinataire
+    # qui reçoit un lien non demandé puisse juger si ça lui dit quelque
+    # chose. IP réelle (voir `api/core/rate_limit.py::get_client_ip`), pas
+    # l'IP du conteneur nginx.
+    requested_from_ip: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    user: Mapped["User"] = relationship("User")
+
+
 class Dataset(Base):
     """Un jeu de données tabulaire uploadé — appartient à l'organisation entière
     (pas seulement à qui l'a uploadé), cohérent avec le principe d'équipe partagée."""

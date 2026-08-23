@@ -361,6 +361,12 @@ export interface ChangePasswordPayload {
   new_password_confirm: string;
 }
 
+export interface ResetPasswordPayload {
+  token: string;
+  new_password: string;
+  new_password_confirm: string;
+}
+
 export interface ColumnSchema {
   name: string;
   dtype: string;
@@ -1334,6 +1340,14 @@ export const api = {
         method: "POST",
         body: JSON.stringify({ refresh_token: getRefreshToken() }),
       }),
+    // Phase 1B — réponse 204 identique que l'adresse corresponde à un
+    // compte ou non (voir domains/auth/router.py) : jamais de branchement
+    // différent ici selon le résultat, l'écran appelant affiche toujours
+    // le même message de confirmation.
+    requestPasswordReset: (email: string) =>
+      request<void>("/auth/password-reset/request", { method: "POST", body: JSON.stringify({ email }) }),
+    confirmPasswordReset: (data: ResetPasswordPayload) =>
+      request<void>("/auth/password-reset/confirm", { method: "POST", body: JSON.stringify(data) }),
   },
 
   users: {

@@ -253,6 +253,109 @@ Réutilise les créateurs de zip de test déjà écrits (`_classification_zip_by
 direct depuis les modules de test existants (mode d'import non-package de
 pytest sur ce dépôt, `pythonpath = .`, confirmé dans `pytest.ini`).
 
+## Phase 1B — Réinitialisation de mot de passe
+
+### Décision 10 — Mécanisme repris de CIAM, durci sur les 7 points prévus
+
+`api/core/models.py::PasswordResetToken` (migration `c274f8e19a3b`),
+`api/core/mailer.py`, `domains/auth/router.py` (`POST
+/auth/password-reset/request`/`confirm`) — jeton `secrets.token_urlsafe(32)`
+haché SHA-256, usage unique, un seul actif par compte, réponse `request`
+strictement neutre (204 sans corps, y compris rate-limité), envoi mail en
+tâche de fond (`BackgroundTasks`).
+
+Les 7 durcissements demandés, tous implémentés :
+1. **Révocation de toutes les sessions à la confirmation** —
+   `user.token_valid_after = now()` + `revoke_all_refresh_tokens()`.
+   Impossible chez CIAM (JWT stateless), possible ici grâce au cycle de vie
+   construit en Phase 1.
+2. **Limite par compte en plus de l'IP** — `password_reset_email:<email>`,
+   même réponse neutre dans les deux cas. IP réelle via `get_client_ip`
+   (Phase 1, pas `request.client.host`).
+3. **Journalisé dans `AuditLog`** — `auth.password_reset_requested`,
+   `auth.password_reset_confirmed`, `auth.login`, `auth.logout`,
+   `auth.password_changed` (ces 3 derniers ajoutés au passage, fermant une
+   partie du constat I1 de l'audit Phase 0).
+4. **Purge des jetons expirés** — `_purge_expired_password_reset_tokens`,
+   même patron que `prediction_retention.py` (purge à la demande, pas de
+   scheduler dédié), appelée à chaque `request`.
+5. **Robustesse du mot de passe partagée** — `api/core/password_policy.py`
+   (nouveau, un seul point de vérité), appelée par `RegisterRequest`,
+   `TeamMemberCreate`, `change_own_password`, et `confirm_password_reset` —
+   les 4 chemins où un mot de passe est choisi.
+6. **Mail avec date/IP + second mail de notification** —
+   `send_password_reset_email` inclut l'IP demandeuse ;
+   `send_password_changed_notification_email` (nouveau, absent de CIAM)
+   envoyé après un changement EFFECTIF, qu'il vienne d'une réinitialisation
+   ou d'un changement volontaire (`change_own_password` aussi mis à jour).
+7. **Testé** — `tests/test_password_reset.py` (10 tests), dont
+   `test_request_reset_returns_204_for_known_and_unknown_email_identically`
+   (corps identique) et `test_request_reset_response_time_does_not_leak_account_existence`
+   (ordre de grandeur du temps de réponse, marge ×10 pour rester robuste en
+   CI sans être un test de charge).
+
+**Config** : mêmes noms de variable que CIAM (`SMTP_HOST`/`SMTP_PORT`/
+`SMTP_USER`/`SMTP_PASSWORD`/`PASSWORD_RESET_EXPIRE_MINUTES`) — même bloc
+`.env` valable des deux côtés. Canal optionnel au démarrage ; avertissement
+(pas un hard-fail) si absent en production (`api/main.py::lifespan`) — un
+hard-fail aurait été disproportionné (le reste de l'API n'a besoin d'aucune
+config mail pour fonctionner), mais un silence total aurait été pire qu'un
+avertissement pour un opérateur qui déploie sans y penser.
+`backend/.env.example` mis à jour avec ce bloc — et, au passage, les 19
+autres variables de durcissement Phase 1/1.4 qui manquaient déjà (constat
+D de l'audit Phase 0), toutes documentées avec leur valeur par défaut réelle.
+
+### Décision 11 — Bugs réels trouvés en écrivant les tests (Phase 1B)
+
+Deux bugs distincts, tous deux révélés uniquement par l'exécution réelle de
+`tests/test_password_reset.py`, jamais visibles à la lecture du code :
+
+1. **`NameError: name 'logger' is not defined`** — `domains/auth/router.py`
+   n'avait jamais eu de `logger` défini (le fichier n'en avait pas besoin
+   avant la Phase 1B). Les 3 nouveaux appels `logger.exception`/`logger.info`
+   du bloc réinitialisation levaient une `NameError` **à l'intérieur d'une
+   tâche de fond** — invisible pour l'appelant HTTP (déjà répondu 204), donc
+   silencieuse en usage normal, visible seulement parce que le gestionnaire
+   d'erreur global (Phase 1, Axe E) journalise désormais tout `[UNHANDLED]`.
+   Corrigé (`import logging` + `logger = logging.getLogger("datalab.auth")`).
+2. **`backend/.env` local contient de VRAIS identifiants SMTP Gmail** — la
+   suite de tests a réellement tenté de se connecter à `smtp.gmail.com`
+   (échec d'authentification, mais requête réseau réelle, lente,
+   dépendante d'Internet) parce que `conftest.py` ne surchargeait pas
+   `SMTP_*` comme il le fait déjà pour `DATABASE_URL`/`JWT_SECRET_KEY`.
+   **Une suite de tests ne doit jamais dépendre d'un service tiers réel**,
+   quel que soit le `.env` local du poste qui l'exécute — corrigé en
+   ajoutant `SMTP_HOST`/`SMTP_USER`/`SMTP_PASSWORD` vides à la liste des
+   surcharges de `conftest.py`. Temps d'exécution de la suite passé de
+   159 s à 28 s après ce correctif — mesure directe de l'impact.
+
+Ces deux bugs n'auraient pas été détectables par une revue de code seule
+(le premier ne se déclenche que si l'exception attrapée est réellement
+levée ; le second dépend d'un `.env` local que le code lui-même ne peut
+pas connaître) — confirmation supplémentaire du principe 1 (« rien n'est
+fait tant que ce n'est pas prouvé »).
+
+### Décision 12 — Frontend : 3 écrans + garde-fou de cohérence session
+
+`frontend/src/pages/ForgotPassword.tsx` (nouveau), `ResetPassword.tsx`
+(nouveau), `Profile.tsx::ChangePasswordForm` (modifié) — voir aussi
+`Login.tsx` (lien « Mot de passe oublié ? », bannière `password_changed=1`).
+
+Point non prévu explicitement par la mission mais découlant directement de
+la Phase 1 : après un changement de mot de passe volontaire, le jeton
+access de la session EN COURS est immédiatement invalidé côté serveur
+(`token_valid_after`). Sans action côté client, l'utilisateur resterait sur
+l'écran Profil avec un jeton déjà mort, jusqu'au prochain appel API qui
+échouerait en 401 de façon peu compréhensible. Corrigé : `ChangePasswordForm`
+appelle `logout()` puis redirige vers `/login?password_changed=1`
+immédiatement après un changement réussi — cohérent avec l'avertissement
+affiché avant validation (« toutes vos sessions ouvertes seront fermées, y
+compris celle-ci »), qui serait resté un simple texte sans cette
+conséquence réellement appliquée.
+
+Testé : `npx tsc -b` et `npx eslint` verts (0 erreur, 1 avertissement
+préexistant sans rapport sur `AuthContext.tsx`).
+
 ### Décision 4 — `/feedback` : rôle documenté aligné sur le rôle appliqué (Axe B)
 
 `GET /feedback` passe de `get_current_user` à `require_owner`, conforme au

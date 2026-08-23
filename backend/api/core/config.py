@@ -134,6 +134,32 @@ class Settings(BaseSettings):
     # sensibles saisies dans `input_json`.
     prediction_retention_days: int = 90
 
+    # Réinitialisation de mot de passe (Phase 1B, AUDIT_BACKEND_2026-08-23.md)
+    # — mêmes noms de variable que CIAM (E:\concrete-ai-platform), pour que
+    # le même bloc `.env` fonctionne des deux côtés sans réécriture. Canal
+    # mail OPTIONNEL au démarrage (voir `api/core/mailer.py::mailer_configured`)
+    # : sans configuration SMTP, l'API démarre normalement et
+    # `/auth/password-reset/request` répond toujours 204 en journalisant que
+    # le canal est absent — une plateforme ne refuse pas de démarrer parce
+    # que le serveur de mail manque. En production en revanche, l'absence de
+    # configuration SMTP est un avertissement explicite au démarrage (voir
+    # `api/main.py::lifespan`) : un reset qui répond 204 sans jamais envoyer
+    # de mail est le pire des deux mondes.
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password: str = ""
+    password_reset_expire_minutes: int = 30
+
+    # Durcissement au-delà de CIAM (Phase 1B, point 2 — « ce qu'il faut
+    # faire mieux ») : CIAM limite uniquement par IP (5/heure) — un
+    # attaquant qui change d'IP inonde la boîte mail de la victime. Ajoute
+    # une limite PAR COMPTE (adresse email), même réponse neutre dans les
+    # deux cas (voir domains/auth/router.py).
+    password_reset_rate_limit_max_attempts_per_ip: int = 5
+    password_reset_rate_limit_max_attempts_per_email: int = 3
+    password_reset_rate_limit_window_seconds: int = 3600
+
     # Journalisation
     log_level: str = "INFO"
 

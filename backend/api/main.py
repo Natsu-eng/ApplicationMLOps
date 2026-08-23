@@ -25,16 +25,16 @@ from starlette.responses import JSONResponse
 
 from api.core.config import get_settings
 from api.core.database import check_connection, init_db
+from api.core.mailer import mailer_configured
 from api.core.observability import (
     PrometheusMiddleware,
     RequestIdMiddleware,
     configure_logging,
     metrics_response,
-    request_id_var,
 )
 from domains.anomalies.router import router as anomalies_router
-from domains.auth.router import router as auth_router
 from domains.auth.router import feedback_router, users_router
+from domains.auth.router import router as auth_router
 from domains.clustering.router import router as clustering_router
 from domains.dashboard.router import router as dashboard_router
 from domains.datasets.router import router as datasets_router
@@ -153,6 +153,18 @@ async def lifespan(app: FastAPI):
         init_db()
     except Exception:
         logger.exception("[STARTUP] Initialisation DB échouée — API démarrée en mode dégradé")
+    # Phase 1B (AUDIT_BACKEND_2026-08-23.md) — le canal mail est optionnel
+    # au démarrage (voir api/core/mailer.py::mailer_configured) : une
+    # plateforme ne refuse pas de démarrer parce que le serveur de mail
+    # manque, `/auth/password-reset/request` répond 204 dans tous les cas.
+    # Mais en PRODUCTION, l'absence de configuration SMTP est le pire des
+    # deux mondes (un reset qui répond 204 sans jamais envoyer de mail) —
+    # avertissement explicite, jamais silencieux.
+    if settings.environment == "production" and not mailer_configured():
+        logger.warning(
+            "[STARTUP] Canal mail non configuré (SMTP_HOST/SMTP_USER/SMTP_PASSWORD) — "
+            "la réinitialisation de mot de passe répondra 204 sans jamais envoyer de mail."
+        )
     yield
     logger.info("[SHUTDOWN] Arrêt de l'API")
 
@@ -293,13 +305,36 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     """422 Pydantic — le message par défaut ("Field required", en anglais
     technique) n'est ni en français ni actionnable. Reformule un résumé
     lisible ; le détail champ par champ reste disponible sous `errors` pour
-    le débogage frontend, sans être LE message affiché à l'utilisateur."""
-    fields = ", ".join(".".join(str(p) for p in err["loc"][1:]) for err in exc.errors()) or "champ(s) invalide(s)"
+    le débogage frontend, sans être LE message affiché à l'utilisateur.
+
+    Cas particulier — un seul champ en échec, de type `value_error` (levé
+    par un `@model_validator` métier, ex. `_check_passwords`, règle de
+    robustesse de mot de passe) : ces validateurs écrivent déjà un message
+    français actionnable via `raise ValueError(...)` — le reformuler en
+    résumé générique ("vérifiez password") ferait perdre l'information utile
+    à l'utilisateur. On le réutilise tel quel dans ce cas précis."""
+    errors = exc.errors()
+    if len(errors) == 1 and errors[0]["type"] == "value_error":
+        # Pydantic préfixe "Value error, " au message levé par le validateur.
+        message = str(errors[0]["msg"]).removeprefix("Value error, ")
+    else:
+        fields = ", ".join(".".join(str(p) for p in err["loc"][1:]) for err in errors) or "champ(s) invalide(s)"
+        message = f"Requête invalide : vérifiez {fields}."
+    # Bug réel trouvé en écrivant les tests de la Phase 1B
+    # (test_password_policy.py::test_register_rejects_common_password) —
+    # pydantic met l'exception Python elle-même dans `err["ctx"]["error"]`
+    # pour un `value_error` (ex. le ValueError levé par
+    # `validate_password_strength`) : non sérialisable en JSON tel quel,
+    # `JSONResponse` levait `TypeError` AVANT même de pouvoir répondre 422 —
+    # un 500 masquait silencieusement le vrai code d'erreur. `ctx` n'est de
+    # toute façon utile qu'au débogage humain, jamais consommé par le
+    # frontend (voir `frontend/src/api/client.ts::extractError`).
+    safe_errors = [{k: v for k, v in err.items() if k != "ctx"} for err in errors]
     body = {
         "code": "VALIDATION_ECHOUEE",
-        "message": f"Requête invalide : vérifiez {fields}.",
+        "message": message,
         "request_id": _request_id(request),
-        "errors": exc.errors(),
+        "errors": safe_errors,
     }
     return JSONResponse(status_code=422, content={"detail": body})
 

@@ -22,6 +22,17 @@ from sqlalchemy.pool import NullPool
 _TEST_DB_PATH = Path(tempfile.gettempdir()) / "datalab_test.db"
 os.environ["DATABASE_URL"] = f"sqlite:///{_TEST_DB_PATH}"
 os.environ["JWT_SECRET_KEY"] = "test-secret-key-not-for-production"
+# Bug réel trouvé en écrivant les tests de la Phase 1B
+# (test_password_reset.py) — `backend/.env` local contient de VRAIES
+# identifiants SMTP (Gmail, pour tester la fonctionnalité manuellement).
+# Sans cette surcharge, la suite de tests déclenchait de véritables
+# tentatives de connexion à smtp.gmail.com (échouées, mais lentes et
+# dépendantes du réseau) à chaque test qui déclenche l'envoi d'un mail en
+# tâche de fond — une suite de tests ne doit JAMAIS dépendre d'un service
+# tiers réel, quel que soit le `.env` local du poste qui l'exécute.
+os.environ["SMTP_HOST"] = ""
+os.environ["SMTP_USER"] = ""
+os.environ["SMTP_PASSWORD"] = ""
 
 from api.core import models  # noqa: E402,F401 — enregistre les tables sur Base.metadata
 from api.core.database import Base, get_db  # noqa: E402

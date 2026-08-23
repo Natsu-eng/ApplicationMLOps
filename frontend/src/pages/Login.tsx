@@ -15,6 +15,11 @@ export default function Login() {
   // handleUnauthorized() (api/client.ts) lors d'une redirection sur 401,
   // jamais par un lien direct construit par l'utilisateur.
   const sessionExpired = searchParams.get("expired") === "1";
+  // Phase 1B — posé par Profile.tsx::ChangePasswordForm après un
+  // changement de mot de passe réussi (le backend révoque alors toutes les
+  // sessions, y compris la session courante) : message positif, pas un
+  // avertissement — ce n'est pas une erreur.
+  const passwordChanged = searchParams.get("password_changed") === "1";
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -58,6 +63,12 @@ export default function Login() {
                 </p>
               )}
 
+              {passwordChanged && (
+                <p className="text-sm text-success bg-success/10 border border-success/20 rounded-lg px-3 py-2">
+                  Mot de passe modifié — reconnectez-vous avec votre nouveau mot de passe.
+                </p>
+              )}
+
               <div>
                 <label htmlFor="email" className="block text-sm text-muted-foreground mb-1">
                   Email
@@ -73,9 +84,14 @@ export default function Login() {
               </div>
 
               <div>
-                <label htmlFor="password" className="block text-sm text-muted-foreground mb-1">
-                  Mot de passe
-                </label>
+                <div className="flex items-center justify-between mb-1">
+                  <label htmlFor="password" className="block text-sm text-muted-foreground">
+                    Mot de passe
+                  </label>
+                  <Link to="/forgot-password" className="text-sm text-primary hover:text-primary/80 font-medium">
+                    Mot de passe oublié ?
+                  </Link>
+                </div>
                 <Input
                   id="password"
                   type="password"

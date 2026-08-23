@@ -28,13 +28,6 @@ from api.core.rate_limit import rate_limit_dependency
 from api.core.storage import delete_vision_dataset_dir, vision_dataset_dir
 from domains.auth.router import get_current_user
 from domains.shared.audit import log_action
-from domains.vision.shared import (
-    ANOMALY_IMAGE_SIZE,
-    AUGMENTATION_PRESET_IDS,
-    IMAGE_SIZE as CLASSIFICATION_IMAGE_SIZE,
-    augmentation_transforms,
-    recommend_augmentation_preset,
-)
 from domains.vision.datasets.service import (
     UnsupportedFileType,
     VisionDatasetError,
@@ -43,6 +36,15 @@ from domains.vision.datasets.service import (
     validate_archive_extension,
 )
 from domains.vision.localization import encode_image_png
+from domains.vision.shared import (
+    ANOMALY_IMAGE_SIZE,
+    AUGMENTATION_PRESET_IDS,
+    augmentation_transforms,
+    recommend_augmentation_preset,
+)
+from domains.vision.shared import (
+    IMAGE_SIZE as CLASSIFICATION_IMAGE_SIZE,
+)
 
 logger = logging.getLogger("datalab.vision_datasets")
 router = APIRouter(prefix="/vision/datasets", tags=["vision"])

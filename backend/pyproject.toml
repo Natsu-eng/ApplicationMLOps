@@ -1,0 +1,34 @@
+[tool.ruff]
+target-version = "py312"
+line-length = 120
+
+[tool.ruff.lint]
+# Base par défaut (E/F) + quelques familles utiles (bugbear, simplify,
+# imports) sans réécrire le style déjà établi dans tout le dépôt (Optional[X]/
+# List[X] partout, jamais X | None / list[X] — les règles "UP*" de
+# modernisation typographique produiraient des centaines d'alertes sur du
+# code existant fonctionnel, sans bug réel derrière). Introduit en Phase 1
+# (AUDIT_BACKEND_2026-08-23.md, porte de qualité) : première configuration
+# ruff de ce dépôt, jamais lancé avant (confirmé par l'audit, Axe J).
+select = ["E", "F", "I", "SIM", "B"]
+ignore = [
+    # FastAPI : Depends()/File()/Query() en valeur par défaut d'argument est
+    # le pattern officiel du framework, pas un bug — B008 est un faux positif
+    # systématique sur toute route FastAPI de ce dépôt.
+    "B008",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["E501"]
+
+[tool.mypy]
+python_version = "3.12"
+ignore_missing_imports = true
+# Strict progressif (Phase 1) : le code existant n'a jamais été typé pour
+# mypy (aucune configuration avant ce fichier) — un mode strict d'emblée
+# produirait des milliers d'erreurs sans rapport avec ce chantier. Vérifie
+# la cohérence structurelle sans exiger une annotation de type sur chaque
+# fonction déjà existante.
+check_untyped_defs = true
+warn_redundant_casts = true
+warn_unused_ignores = true

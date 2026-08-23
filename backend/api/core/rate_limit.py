@@ -28,7 +28,7 @@ def _trusted_proxy_networks() -> List["ipaddress._BaseNetwork"]:
     (une fois par worker gunicorn, la config ne change jamais en cours de
     vie du process)."""
     raw = get_settings().trusted_proxy_cidrs
-    networks = []
+    networks: List["ipaddress._BaseNetwork"] = []
     for chunk in raw.split(","):
         chunk = chunk.strip()
         if not chunk:
@@ -99,7 +99,10 @@ def is_rate_limited(
       down ⇒ lève `RateLimitBackendUnavailable`, jamais confondu avec une
       limite réellement atteinte (voir la classe ci-dessus)."""
     try:
-        count = redis_conn.incr(key)
+        # Le stub redis-py type `.incr()` en `Awaitable[Any] | Any` (couvre
+        # aussi le client asynchrone) — client toujours synchrone ici
+        # (`Redis.from_url`, api/core/job_queue.py).
+        count: int = redis_conn.incr(key)  # type: ignore[assignment]
         if count == 1:
             redis_conn.expire(key, window_seconds)
         return count > max_attempts
@@ -138,20 +141,22 @@ def rate_limit_dependency(
     `is_rate_limited`."""
 
     def _dependency(request: Request) -> None:
-        from api.core.job_queue import redis_conn  # import local — évite un cycle avec job_queue au chargement du module
+        from api.core.job_queue import (
+            redis_conn,  # import local — évite un cycle avec job_queue au chargement du module
+        )
 
         client_ip = get_client_ip(request)
         key = f"rate_limit:{action}:{client_ip}"
         try:
             limited = is_rate_limited(redis_conn, key, max_attempts, window_seconds, fail_open=fail_open)
-        except RateLimitBackendUnavailable:
+        except RateLimitBackendUnavailable as exc:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail={
                     "code": "LIMITE_INDISPONIBLE",
                     "message": "Service momentanément indisponible — réessayez dans quelques instants.",
                 },
-            )
+            ) from exc
         if limited:
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,

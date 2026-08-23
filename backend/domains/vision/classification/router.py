@@ -32,7 +32,7 @@ from sqlalchemy.orm import Session, joinedload
 from api.core.config import get_settings
 from api.core.database import SessionLocal, get_db
 from api.core.job_queue import vision_queue
-from api.core.models import User, VisionClassificationJob, VisionClassificationModel, VisionDataset
+from api.core.models import User, VisionClassificationJob, VisionDataset
 from api.core.pagination import paginate_by_id
 from api.core.rate_limit import rate_limit_dependency
 from domains.auth.router import get_current_user
@@ -41,9 +41,9 @@ from domains.shared.job_events import stream_job_updates
 from domains.shared.job_lifecycle import ACTIVE_STATUSES, CANCELLED_MESSAGE, try_cancel_rq_job
 from domains.shared.job_quota import ALL_JOB_MODELS, raise_if_quota_exceeded
 from domains.shared.job_watchdog import reconcile_stale_jobs
-from domains.vision.classification.services.registry import CLASSIFICATION_BACKBONE_REGISTRY, DEFAULT_BACKBONE_ID
 from domains.vision.classification.services.engine import AUGMENTATION_PRESET_IDS, DEFAULT_AUGMENTATION_PRESET
 from domains.vision.classification.services.gradcam import GradCamError, explain_classification_prediction
+from domains.vision.classification.services.registry import CLASSIFICATION_BACKBONE_REGISTRY, DEFAULT_BACKBONE_ID
 
 router = APIRouter(prefix="/vision/classification", tags=["vision"])
 _settings = get_settings()

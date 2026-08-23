@@ -71,7 +71,11 @@ def get_refresh_jti_owner(redis_conn: Redis, jti: str) -> Optional[int]:
     if raw is None:
         return None
     try:
-        return int(raw)
+        # Le stub redis-py type `.get()` en `Awaitable[Any] | Any` pour
+        # couvrir aussi le client asynchrone — ce projet n'utilise que le
+        # client synchrone (`Redis.from_url`, api/core/job_queue.py),
+        # `raw` est donc toujours `bytes` en pratique à ce point.
+        return int(raw)  # type: ignore[arg-type]
     except (TypeError, ValueError):
         return None
 
@@ -92,7 +96,7 @@ def revoke_all_refresh_tokens(redis_conn: Redis, user_id: int) -> None:
     complémentaires et doivent être appelés ensemble par l'appelant."""
     try:
         members = redis_conn.smembers(f"{_REFRESH_SET_PREFIX}{user_id}")
-        for jti in members:
+        for jti in members:  # type: ignore[union-attr]  # client synchrone — voir get_refresh_jti_owner ci-dessus
             jti_str = jti.decode("utf-8") if isinstance(jti, bytes) else jti
             redis_conn.delete(f"{_REFRESH_JTI_PREFIX}{jti_str}")
         redis_conn.delete(f"{_REFRESH_SET_PREFIX}{user_id}")
