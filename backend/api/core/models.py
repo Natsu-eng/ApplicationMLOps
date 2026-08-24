@@ -191,6 +191,12 @@ class TrainingJob(Base):
     progress_updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     rq_job_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    # Phase 3 (AUDIT_BACKEND_2026-08-23.md, Axe I) -- correle ce job a la
+    # requete HTTP qui l'a cree (voir api/core/observability.py::request_id_var),
+    # pour que les logs du worker RQ (process separe, voir workers/run_worker.py)
+    # portent le meme request_id que les logs de l'API -- un incident peut
+    # etre suivi de bout en bout, pas seulement cote API.
+    request_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
     started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
@@ -422,6 +428,13 @@ class AuditLog(Base):
     # pour rester lisible même après suppression de la ressource elle-même
     # (le nom d'un dataset supprimé ne serait plus consultable autrement).
     details_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # Phase 3 (AUDIT_BACKEND_2026-08-23.md, Axe I) — corrèle cette entrée à la
+    # requête HTTP qui l'a produite (voir api/core/observability.py, même
+    # colonne que sur les 6 modèles de job) — auto-rempli par
+    # domains/shared/audit.py::log_action, jamais passé explicitement par
+    # les appelants (aucun des 16+ sites d'appel existants n'a besoin de
+    # changer).
+    request_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
 
     organization: Mapped["Organization"] = relationship("Organization")
@@ -463,6 +476,12 @@ class ClusteringJob(Base):
     progress_updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     rq_job_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    # Phase 3 (AUDIT_BACKEND_2026-08-23.md, Axe I) -- correle ce job a la
+    # requete HTTP qui l'a cree (voir api/core/observability.py::request_id_var),
+    # pour que les logs du worker RQ (process separe, voir workers/run_worker.py)
+    # portent le meme request_id que les logs de l'API -- un incident peut
+    # etre suivi de bout en bout, pas seulement cote API.
+    request_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
     started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
@@ -571,6 +590,12 @@ class DimensionalityJob(Base):
     progress_updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     rq_job_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    # Phase 3 (AUDIT_BACKEND_2026-08-23.md, Axe I) -- correle ce job a la
+    # requete HTTP qui l'a cree (voir api/core/observability.py::request_id_var),
+    # pour que les logs du worker RQ (process separe, voir workers/run_worker.py)
+    # portent le meme request_id que les logs de l'API -- un incident peut
+    # etre suivi de bout en bout, pas seulement cote API.
+    request_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
     started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
@@ -670,6 +695,12 @@ class AnomalyJob(Base):
     progress_updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     rq_job_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    # Phase 3 (AUDIT_BACKEND_2026-08-23.md, Axe I) -- correle ce job a la
+    # requete HTTP qui l'a cree (voir api/core/observability.py::request_id_var),
+    # pour que les logs du worker RQ (process separe, voir workers/run_worker.py)
+    # portent le meme request_id que les logs de l'API -- un incident peut
+    # etre suivi de bout en bout, pas seulement cote API.
+    request_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
     started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
@@ -803,6 +834,12 @@ class VisionClassificationJob(Base):
     progress_updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     rq_job_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    # Phase 3 (AUDIT_BACKEND_2026-08-23.md, Axe I) -- correle ce job a la
+    # requete HTTP qui l'a cree (voir api/core/observability.py::request_id_var),
+    # pour que les logs du worker RQ (process separe, voir workers/run_worker.py)
+    # portent le meme request_id que les logs de l'API -- un incident peut
+    # etre suivi de bout en bout, pas seulement cote API.
+    request_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
     started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
@@ -883,6 +920,12 @@ class VisionAnomalyJob(Base):
     progress_updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     rq_job_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    # Phase 3 (AUDIT_BACKEND_2026-08-23.md, Axe I) -- correle ce job a la
+    # requete HTTP qui l'a cree (voir api/core/observability.py::request_id_var),
+    # pour que les logs du worker RQ (process separe, voir workers/run_worker.py)
+    # portent le meme request_id que les logs de l'API -- un incident peut
+    # etre suivi de bout en bout, pas seulement cote API.
+    request_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
     started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)

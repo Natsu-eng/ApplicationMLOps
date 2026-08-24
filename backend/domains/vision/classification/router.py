@@ -290,11 +290,16 @@ def create_vision_classification_job(
         created_by_id=current_user.id,
         config_json=json.dumps(config),
         status="queued",
+        request_id=request.state.request_id,
     )
     db.add(job)
     db.commit()
     db.refresh(job)
     remember_idempotent_job_id(redis_conn, current_user.organization_id, request, job.id)
+    log_action(
+        db, current_user.organization_id, current_user.id, "vision_classification_job.created",
+        target_type="vision_classification_job", target_id=job.id,
+    )
 
     from domains.vision.classification.worker import run_vision_classification_job
 

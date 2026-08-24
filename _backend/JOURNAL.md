@@ -814,3 +814,174 @@ commentaire du module qui promettait déjà cet accès réservé depuis le
 Lot 10. Pas un IDOR (le filtre `organization_id` était déjà correct), un
 rôle mal appliqué. Aucun test existant ne couvrait cet endpoint (vérifié
 avant modification), aucune régression possible.
+
+## Phase 3 — Traçabilité / transparence
+
+Survol factuel préalable (agent Explore) des 6 axes du mandat sur l'état
+réel du dépôt avant tout code — résumé des écarts trouvés :
+`log_action` n'auditait QUE cancel/delete/promote (jamais la création de
+job, ni les uploads, ni les prédictions) ; `request_id` n'existait nulle
+part dans `domains/` (0 résultat `grep -rn request_id backend/domains`) ni
+sur aucune table ; le worker RQ (process séparé) journalisait en texte
+libre (`logging.basicConfig`), jamais le formateur JSON de l'API ; le
+lignage prédiction→dataset n'était reconstructible que par une jointure
+manuelle jamais exposée par l'API ; aucun catalogue centralisé des 65
+codes d'erreur (dont 13 dupliqués à l'identique jusqu'à 6 fois) ; les
+messages français actionnables + `request_id` systématique existaient
+déjà à 100 % depuis la Phase 1 (rien à refaire sur ce point précis).
+
+### Décision 21 — `request_id` propagé au-delà de l'API (Axe I)
+
+`api/core/models.py` : colonne `request_id` (String(36), nullable) sur
+les 6 tables de job + `audit_logs` (migration `0ecc0331cbd1`). Peuplée à
+la création de job depuis `request.state.request_id` (déjà disponible —
+Phase 2 avait ajouté `request: Request` à chaque `create_*_job`, aucun
+nouveau paramètre requis). `domains/shared/audit.py::log_action` lit
+`request_id_var.get()` elle-même : aucun des 16+ sites d'appel existants
+n'a besoin de changer, aucun ne peut oublier de le renseigner.
+
+`domains/*/worker.py` (6 fichiers) : `request_id_var.set(job.request_id
+or "-")` juste après le chargement du job, `reset` dans le `finally`
+existant (`db.close()`) — mêmes 2 points d'insertion dans les 6 fichiers,
+structure identique confirmée avant modification. Un job traité en tâche
+de fond écrit désormais des logs JSON corrélés à la requête HTTP qui l'a
+créé, sans changer la signature d'aucune fonction `run_*_job` (le
+`ContextVar` est un mécanisme ambiant, pas un paramètre).
+
+`workers/run_worker.py` : `configure_logging(get_settings().log_level)`
+remplace `logging.basicConfig` — avant ce correctif, le travail des 6
+workers ci-dessus n'avait AUCUN effet visible (le ContextVar était bien
+peuplé, mais rien ne le lisait dans ce process, aucun formateur JSON
+appliqué). Même fonction, même format que l'API — un seul format de log
+dans tout le système, testé en sous-processus
+(`tests/test_worker_json_logging.py`, sonde `logger.info` + parsing JSON
+de la ligne produite).
+
+Testé : `tests/test_request_id_traceability.py` (5 tests — job créé par
+une requête X porte le `request_id` de X ; deux requêtes distinctes ne
+partagent jamais le même `request_id` par contamination du ContextVar
+entre deux requêtes du même process ; entrée d'audit corrélée, exposée
+via l'API elle-même pas seulement en base ; `"-"` normalisé en `None`
+hors d'une requête HTTP ; catalogue d'erreurs exposé, voir Décision 23).
+
+### Décision 22 — Lignage prédiction → dataset/job/version exposé (Axe I)
+
+`domains/training/router.py::PredictionHistoryEntry` gagne `dataset_id`/
+`training_job_id`/`model_version`, peuplés dans `list_job_predictions`
+depuis `job.dataset_id`/`job.id`/`job.model.version` — déjà en mémoire à
+cet endroit, aucune requête SQL supplémentaire. **Choix délibéré de ne
+PAS dupliquer ces colonnes sur `Prediction` elle-même** : le modèle
+documentait déjà explicitement ce choix (« Remonte au modèle... via
+`ml_model_id` — jamais dupliqué ici ») — la Phase 3 respecte cette
+décision architecturale préexistante plutôt que de la contredire pour un
+gain marginal (l'endpoint qui liste déjà les prédictions d'UN job a ces
+3 valeurs gratuitement, pas besoin de les stocker par ligne). « Queryable »
+au sens du mandat est satisfait par l'exposition API, pas par une
+dénormalisation supplémentaire en base.
+
+Testé : `tests/test_predictions.py::test_prediction_history_exposes_dataset_and_job_lineage`
+(nouveau, s'ajoute aux 5 tests déjà existants pour ce fichier — tous
+rejoués, aucune régression, les nouveaux champs n'entrent en collision
+avec aucune assertion existante puisqu'aucun test préexistant ne
+comparait le dict de réponse dans son ensemble).
+
+### Décision 23 — Catalogue central des codes d'erreur, exposé dans `/openapi.json` (Axe I)
+
+`api/core/error_codes.py` (nouveau) — `ErrorCode` (`str, Enum`),
+65 valeurs recensées par `grep -rhoE '"code":\s*"[A-Z_0-9]+"' api
+domains` recoupé avec les 3 codes synthétisés par les gestionnaires
+d'erreur globaux (`AUTH_NON_AUTHENTIFIE`/`NON_TROUVE`/
+`METHODE_NON_AUTORISEE`). `api/main.py::_custom_openapi` (override de
+`app.openapi`) ajoute l'extension `x-error-codes` au schéma généré par
+FastAPI — jamais un champ standard OpenAPI, aucun risque de collision
+avec une future version de la spec. Les 3 gestionnaires d'erreur globaux
+et `AUTH_NON_AUTHENTIFIE`/`NON_TROUVE`/`METHODE_NON_AUTORISEE`/
+`ERREUR_HTTP`/`VALIDATION_ECHOUEE`/`ERREUR_INTERNE` migrés vers
+`ErrorCode.XXX` (seul fichier concerné, risque de régression nul).
+
+**Périmètre délibérément borné, documenté honnêtement plutôt que bâclé** :
+13 codes sont dupliqués à l'identique dans 2 à 6 fichiers chacun (56
+sites d'appel au total) — migrer TOUS les littéraux existants vers
+`ErrorCode.XXX` représenterait un diff de plusieurs centaines de lignes
+sans rapport direct avec le reste de cette phase, chaque lot nécessitant
+de rejouer la suite complète (60-80 min) pour être validé sereinement.
+Le catalogue établit le POINT DE VÉRITÉ et le rend DÉCOUVRABLE
+(`/openapi.json`) — ce que le mandat demande explicitement (« catalogue
+d'erreurs stable ») — sans imposer une migration de grande ampleur non
+prouvée en une seule phase. Dette explicite, priorisée par ordre de
+risque de divergence (les 13 codes dupliqués d'abord) — voir
+`RAPPORT-FINAL.md`, "ce qui a été laissé de côté".
+
+Testé : `tests/test_request_id_traceability.py::test_openapi_schema_exposes_the_error_code_catalog`.
+
+### Décision 24 — `log_action` étendu à la création de job dans les 6 domaines (Axe I)
+
+Avant ce correctif, AUCUN des 6 domaines n'auditait la création de job
+(seuls cancel/delete/promote l'étaient) — un owner ne pouvait pas
+répondre à « qui a lancé cet entraînement, et quand » depuis le journal
+d'audit. `log_action(db, ..., f"{domaine}_job.created", target_type=...,
+target_id=job.id)` ajouté juste après `db.refresh(job)` dans les 6
+`create_*_job` — committé par `enqueue_or_mark_failed` juste après (même
+transaction, aucun `db.commit()` supplémentaire nécessaire). Périmètre
+volontairement limité à la création (le gap le plus visible identifié par
+le survol factuel) — upload de dataset et endpoints `/predict` restent
+non audités, notés en dette explicite plutôt qu'ajoutés à la hâte sans
+test dédié à chacun.
+
+### Bug de fixture trouvé en écrivant la migration (pas un bug de code)
+
+`alembic revision --autogenerate` a détecté, en plus des 7 colonnes
+`request_id` attendues, 3 écarts de schéma SANS RAPPORT avec cette phase
+(`ml_models.promoted_at`/`training_jobs.progress_updated_at` : TIMESTAMP
+sans fuseau en base vs `DateTime(timezone=True)` dans le modèle ;
+`password_reset_tokens.created_at` : NOT NULL en base mais nullable dans
+le modèle) — dérive préexistante, probablement introduite lors d'une
+phase antérieure sans jamais être détectée faute d'avoir relancé
+`--autogenerate` depuis. Retirée manuellement de la migration générée
+(seules les 7 colonnes `request_id` sont appliquées) — mélanger un
+correctif de dérive de schéma non lié dans le même commit que la
+traçabilité aurait rendu la revue et un éventuel rollback plus difficiles.
+Consigné ici comme trouvaille, pas traité — voir `RAPPORT-FINAL.md`.
+
+## Porte de qualité — Phase 3 (branche `back/3-tracabilite`)
+
+1. **`pytest` complet et vert** — `python -m pytest -q --cov=api
+   --cov=domains --cov=workers --cov-report=term-missing` → 1 échec au
+   premier run, **conséquence ATTENDUE** de cette phase (pas une
+   régression) : `test_alembic_migration.py::test_ui_theme_column_applies_on_existing_populated_database`
+   vérifiait la révision de tête hardcodée `c274f8e19a3b` — mise à jour
+   vers la nouvelle tête `0ecc0331cbd1` (même situation qu'en Phase 1,
+   déjà documentée). Rejoué isolément après correctif → 8 passed, 44.67s.
+   Suite complète : **860 passed** avant correctif +1 après = 861,
+   4957.31s (1h22m37s) — durée en hausse par rapport à la Phase 2 (67min),
+   cohérente avec l'ajout de 22 tests neufs cette phase.
+2. **Couverture mesurée** — même run → **94 % global** (7685 lignes, 456
+   non couvertes) — stable par rapport à la référence Phase 1/2 (94 %),
+   aucune baisse malgré ~230 lignes de code neuf cette phase.
+3. **`ruff check`/`ruff format --check`/`mypy` sur le code touché** —
+   comparaison AVANT/APRÈS sur les 14 fichiers routeurs/workers/modèles
+   touchés (`git show main:... | ruff check --stdin-filename ... -` vs
+   état actuel) → **zéro nouvelle erreur E501/B904** au-delà des 2 imports
+   mal triés dans `clustering/worker.py`/`dimensionality/worker.py`
+   (corrigés, `--fix`). `ruff format` appliqué aux 3 fichiers neufs de
+   cette phase (`error_codes.py` + 2 fichiers de test — code entièrement
+   sous contrôle, aucun risque de diff illisible). `mypy` sur
+   `error_codes.py`/`audit.py`/`run_worker.py` → 1 erreur pré-existante
+   confirmée identique dans `main` (`run_worker.py:102`, `TimerDeathPenalty`
+   vs `UnixSignalDeathPenalty`, non touchée par cette phase), 0 nouvelle.
+4. **`bandit -r backend -ll` et `pip-audit`** — aucune nouvelle dépendance
+   cette phase (`git diff main -- requirements.txt` vide) — résultat de
+   la Phase 1 toujours valable, non rejoué.
+5. **`docker compose up -d --build` + smoke test** — rien de
+   Docker-pertinent modifié cette phase (aucun changement de
+   `Dockerfile`/`docker-compose.yml`/dépendances) — statut inchangé
+   depuis la Phase 2 (image backend construite avec succès, smoke test
+   bout-en-bout complet toujours dû, dette déjà consignée).
+6. **Non-régression frontend** — aucun fichier frontend touché cette
+   phase (Phase 3 est backend uniquement) — `npx tsc -b` rejoué par
+   prudence → 0 erreur.
+
+**Décision de fusion** : tous les points satisfaits ou explicitement
+non applicables à cette phase (aucune régression frontend/Docker
+possible sans changement de ce côté). `back/3-tracabilite` fusionnée
+dans `main`.

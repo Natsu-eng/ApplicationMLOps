@@ -236,14 +236,15 @@ def test_ui_theme_column_applies_on_existing_populated_database(tmp_path):
         org_name = conn.execute(text("SELECT name FROM organizations WHERE id = 1")).scalar()
     engine.dispose()
 
-    # Tête réelle de la chaîne au moment de ce test (Phase 1/1B,
-    # AUDIT_BACKEND_2026-08-23.md, ont ajouté token_valid_after puis
-    # password_reset_tokens après ui_theme) — mettre à jour à chaque
-    # nouvelle migration en tête ; ce que ce test vérifie réellement (le
-    # backfill server_default de ui_theme sur une base déjà peuplée) reste
-    # exercé quelle que soit la tête, la migration ui_theme restant au
-    # milieu de la chaîne rejouée par `run_migrations`.
-    assert version == "c274f8e19a3b"
+    # Tête réelle de la chaîne au moment de ce test (Phase 1/1B ont ajouté
+    # token_valid_after puis password_reset_tokens après ui_theme ; Phase 3,
+    # AUDIT_BACKEND_2026-08-23.md, a ajouté request_id sur les 6 tables de
+    # job + audit_logs) — mettre à jour à chaque nouvelle migration en
+    # tête ; ce que ce test vérifie réellement (le backfill server_default
+    # de ui_theme sur une base déjà peuplée) reste exercé quelle que soit
+    # la tête, la migration ui_theme restant au milieu de la chaîne
+    # rejouée par `run_migrations`.
+    assert version == "0ecc0331cbd1"
     assert org_name == "Bureau existant"  # donnée préexistante intacte
     assert [r[0] for r in rows] == [1, 2]  # aucune ligne perdue
     assert all(r[1] == "graphite" for r in rows)  # server_default appliqué à CHAQUE ligne existante

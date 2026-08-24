@@ -331,3 +331,48 @@ autre, ou si un fichier référence encore un ancien chemin plat
 `backend/workers/run_worker.py` reste hors de `domains/` : point d'entrée
 RQ générique (sélection de file via `RQ_QUEUES`), aucun import de
 domaine — voir §2 ci-dessus.
+
+## 12. Consolidation backend (2026-08-23 →) — sécurité, fiabilité, traçabilité
+
+Chantier mené sur `AUDIT_BACKEND_2026-08-23.md`, une branche par phase
+(`back/<n>-<slug>`), décisions numérotées dans `_backend/JOURNAL.md` —
+détail complet là-bas, ici seulement la vue d'ensemble architecturale.
+
+**Phase 1 (sécurité)** — `api/core/token_store.py` (révocation Redis des
+jetons par `jti`), `api/core/rate_limit.py::get_client_ip` (IP réelle
+derrière un reverse proxy, jamais `request.client.host` directement),
+`api/core/password_policy.py` (règle de robustesse partagée, un seul
+point de vérité pour les 4 chemins où un mot de passe est choisi),
+`api/core/mailer.py` (SMTP stdlib, réinitialisation de mot de passe —
+mécanisme repris de CIAM, durci sur 7 points, voir JOURNAL Phase 1B).
+`api/main.py` : `SecurityHeadersMiddleware`, CSP stricte, 3 gestionnaires
+d'erreur globaux qui unifient l'enveloppe `{"code","message","request_id"}`
+sur CHAQUE réponse d'erreur (HTTPException, 422 Pydantic, 500 non géré).
+
+**Phase 2 (fiabilité)** — `domains/shared/job_creation.py` (idempotence
+`Idempotency-Key`, échec d'enfilage RQ traité dans la même transaction que
+la création — jamais de job `"queued"` orphelin), `domains/shared/
+job_watchdog.py` étendu aux jobs `"queued"` perdus (délai de grâce
+identique au cas `"running"`), `stop_grace_period` Docker aligné sur
+`job_timeout` (arrêt propre du worker), `pool_size`/`max_overflow`/
+`statement_timeout` explicites sur PostgreSQL (`api/core/database.py`).
+
+**Phase 3 (traçabilité)** — `api/core/error_codes.py` (catalogue central
+des codes d'erreur, exposé dans `/openapi.json` via l'extension
+`x-error-codes`) — ne remplace pas encore tous les littéraux existants
+dans les routers (dette explicite, voir JOURNAL). `request_id`
+(`api/core/observability.py::request_id_var`) propagé au-delà de l'API :
+colonne sur les 6 tables de job (peuplée à la création depuis
+`request.state.request_id`) et sur `AuditLog` (peuplée automatiquement
+par `domains/shared/audit.py::log_action`, aucun site d'appel modifié) —
+un job traité en tâche de fond par le worker RQ (process séparé) écrit
+désormais des logs JSON corrélés à la requête HTTP qui l'a créé.
+`workers/run_worker.py` utilise maintenant `configure_logging` (même
+formateur JSON que l'API, plus de `logging.basicConfig` texte libre
+indépendant). Lignage prédiction → dataset/job/version exposé directement
+par `GET /training/jobs/{id}/predictions` (`PredictionHistoryEntry.
+dataset_id`/`training_job_id`/`model_version`), sans dupliquer ces
+colonnes sur `Prediction` elle-même (toujours une jointure via
+`ml_model_id`, choix déjà documenté dans le modèle). `log_action` étendu
+à la création de job dans les 6 domaines (avant, seuls `cancel`/`delete`
+étaient audités).

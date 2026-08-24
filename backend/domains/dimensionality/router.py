@@ -253,11 +253,16 @@ def create_dimensionality_job(
         feature_columns_json=json.dumps(body.feature_columns),
         config_json=json.dumps(config),
         status="queued",
+        request_id=request.state.request_id,
     )
     db.add(job)
     db.commit()
     db.refresh(job)
     remember_idempotent_job_id(redis_conn, current_user.organization_id, request, job.id)
+    log_action(
+        db, current_user.organization_id, current_user.id, "dimensionality_job.created",
+        target_type="dimensionality_job", target_id=job.id,
+    )
 
     from domains.dimensionality.worker import run_dimensionality_job
 
