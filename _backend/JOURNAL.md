@@ -1303,3 +1303,53 @@ Voir `RAPPORT-FINAL.md`, "ce qui a été laissé de côté".
 
 **Décision de fusion** : tous les points satisfaits. `back/6-frontend`
 fusionnée dans `main`.
+
+## Phase 7 — Nettoyage du dépôt (audit seul, aucune suppression)
+
+Mandat explicite : « preuve requise avant toute suppression » (graphe
+d'import, recherche textuelle incluant CI/Dockerfiles/scripts, tests
+verts avant/après, smoke test Docker avant/après, une suppression par
+commit thématique) — et « en cas de doute, lister dans une section "à
+confirmer" plutôt que supprimer ».
+
+**Constat 1** : `backend/services/__pycache__/` — 37 fichiers `.pyc`
+résiduels d'avant le Lot 8 (monolithe modulaire), déjà identifiés comme
+morts par l'audit Phase 0. **Vérifié : `git ls-files backend/services/`
+retourne 0 résultat — ce répertoire n'est PAS suivi par git**, présent
+uniquement sur ce poste de développement (cache Python local). Sa
+suppression n'a donc aucun effet sur le dépôt lui-même (rien à committer,
+rien qui affecterait un autre poste) — hors périmètre d'un « nettoyage du
+dépôt », qui ne concerne que ce que git suit. Non traité davantage.
+
+**Constat 2** : recherche de fichiers suivis par git avec des motifs
+habituels de code mort (`*.bak`, `*_old.*`, `*_legacy.*`, `*deprecated*`)
+sur l'ensemble du dépôt (`git ls-files | grep -iE ...`) → **0 résultat** —
+cohérent avec le nettoyage déjà effectué au Lot 11 (« Supprime l'ancienne
+application Streamlit/computer-vision », commit `e905f2c`, et « fin de la
+mission de refonte visuelle », merge `4ab47db`) : ce dépôt ne porte pas de
+litière évidente à cette date.
+
+**Constat 3 — tentative d'audit du frontend, résultat négatif documenté
+honnêtement** : un script heuristique (grep du nom de base de chaque
+fichier source dans tous les autres fichiers) a été essayé pour repérer
+des composants/pages jamais référencés. **Résultat inexploitable** : il
+signale comme « possiblement orphelins » des pages manifestement actives
+et routées (`Login.tsx`, `Dashboard.tsx`, `Training.tsx`...) — la
+recherche textuelle naïve ne résout pas les imports relatifs/alias
+correctement. Confirme QUE ce travail nécessite un vrai outil d'analyse
+de graphe d'imports (`ts-prune` ou équivalent, absent de ce dépôt —
+l'introduire serait une nouvelle dépendance de développement sans
+justification écrite préparée pour cette session) plutôt qu'une
+heuristique de circonstance. **Aucune suppression tentée sur la base de ce
+résultat non fiable** — exactement le principe du mandat (« en cas de
+doute, lister, ne pas supprimer »).
+
+**Conclusion de cette phase** : aucune suppression sûre et prouvée
+identifiée dans le temps disponible de cette session. Un vrai passage de
+nettoyage frontend/backend nécessiterait `ts-prune`/équivalent (à
+introduire avec sa justification écrite) et une revue plus longue que ce
+que la contrainte de rythme de cette session permet — dette explicite,
+reportée avec sa méthode déjà identifiée (pas seulement « à refaire »).
+Aucune branche `back/7-*` fusionnée (rien à committer — le seul
+changement local, `backend/services/__pycache__/`, n'est pas suivi par
+git, sans effet sur le dépôt).
