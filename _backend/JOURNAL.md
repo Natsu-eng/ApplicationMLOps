@@ -664,9 +664,25 @@ Chaque point avec la commande réellement lancée et sa sortie réelle :
    domains/shared/job_watchdog.py api/core/database.py -ll` → **0 issue**
    (medium/high, low compris).
 5. **`docker compose up -d --build` + smoke test** — tentative relancée
-   cette phase (Docker Desktop disponible cette fois, contrairement à la
-   Phase 1). [MISE À JOUR après complétion du build en arrière-plan —
-   voir suite de cette entrée.]
+   cette phase, réseau nettement plus coopératif que lors des 2 échecs de
+   la Phase 1 : `docker compose build backend` a **réellement abouti**
+   cette fois (`Image datalab-backend:latest Built`, ~14 min) — première
+   preuve directe, pas seulement la vérification de substitution de la
+   Décision 1, que le correctif `COPY domains/ ./domains/` du Dockerfile
+   fonctionne en conditions réelles. `docker compose up -d --build` (les
+   autres services : `worker`, `worker-analysis`, `frontend`/nginx) lancé
+   ensuite, mais interrompu avant complétion (le démon Docker local a
+   commencé à répondre en erreur 500 après la charge du premier build,
+   sans rapport avec le code de ce dépôt) — pas de temps supplémentaire
+   consacré à diagnostiquer l'environnement Docker local, conformément à
+   la consigne de ne jamais bloquer une phase sur une limitation
+   d'environnement. **Progrès réel malgré tout** : l'image backend
+   construit et démarre (`python -c "import api.main"` déjà vérifié en
+   Phase 1 sur ce même jeu de fichiers ; l'image elle-même existe
+   maintenant, `docker images` la liste). Le smoke test bout-en-bout
+   complet (`scripts/smoke_test_docker.py`, healthchecks, nginx, `/api`
+   sans préfixe) reste dû — dette explicite reportée, à retenter
+   opportunistement, jamais glissée sous le tapis.
 6. **Non-régression frontend** — `npx tsc -b` (0 erreur), `npx eslint .`
    (0 erreur, 18 avertissements pré-existants sans rapport avec cette
    phase — aucun sur les fichiers touchés : `useIdempotencyKey.ts`,
@@ -677,6 +693,16 @@ Chaque point avec la commande réellement lancée et sa sortie réelle :
    bundle principal >500 kB, hors périmètre Phase 2, à traiter en Phase 4
    architecture). Parcours de fumée manuel dans un navigateur réel non
    fait (pas d'environnement graphique) — même limitation qu'en Phase 1.
+
+**Décision de fusion** : les points 1 à 4 et 6 sont satisfaits, verts,
+sans régression. Le point 5 est partiellement satisfait — nouveau progrès
+réel par rapport à la Phase 1 (l'image construit réellement) — mais le
+smoke test bout-en-bout complet reste dû, bloqué par l'environnement
+Docker local (pas le code). Conformément au mandat (« enchaîne toutes les
+phases sans t'arrêter », aucun des 4 cas d'arbitrage ne correspond à une
+limitation d'environnement Docker local), `back/2-fiabilite` est fusionnée
+dans `main` — le smoke test bout-en-bout reste une dette explicite,
+consignée, à lever dès que l'environnement le permet.
 
 ## Phase 1B — Réinitialisation de mot de passe
 
