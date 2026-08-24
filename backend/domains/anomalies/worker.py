@@ -16,6 +16,7 @@ import joblib
 
 from api.core.database import SessionLocal
 from api.core.models import AnomalyJob, AnomalyModel, AnomalyObservationRecord, Dataset
+from api.core.observability import request_id_var
 from api.core.storage import anomaly_model_file_path
 from domains.anomalies.services.engine import AnomalyConfig, train_and_evaluate_anomalies
 from domains.shared.dataset_io import read_dataset_dataframe
@@ -53,11 +54,13 @@ def _make_progress_callback(db, job: AnomalyJob):
 def run_anomaly_job(job_id: int) -> None:
     """Point d'entrée RQ — enfilé par `POST /anomalies/jobs`."""
     db = SessionLocal()
+    request_id_token = request_id_var.set("-")
     try:
         job = db.query(AnomalyJob).filter(AnomalyJob.id == job_id).first()
         if job is None:
             logger.error("[Anomaly] Job %s introuvable", job_id)
             return
+        request_id_var.set(job.request_id or "-")
 
         job.status = "running"
         job.started_at = datetime.now(timezone.utc)
@@ -145,4 +148,5 @@ def run_anomaly_job(job_id: int) -> None:
             logger.error("[Anomaly] Job %s échoué : %s\n%s", job_id, exc, traceback.format_exc())
 
     finally:
+        request_id_var.reset(request_id_token)
         db.close()

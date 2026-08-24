@@ -38,11 +38,20 @@ import logging
 import os
 import sys
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-)
+from api.core.config import get_settings
+from api.core.observability import configure_logging
+
+# Phase 3 (AUDIT_BACKEND_2026-08-23.md, Axe I) — avant ce correctif, ce
+# process appelait `logging.basicConfig` avec un format texte libre,
+# indépendant de `api/core/observability.py::configure_logging` (JSON,
+# `request_id` corrélé) utilisé côté API : les logs du worker RQ étaient
+# illisibles par un collecteur JSON (ELK, Loki...) et jamais corrélables à
+# la requête HTTP d'origine, même quand `domains/*/worker.py` peuplait
+# déjà le ContextVar `request_id_var` (`configure_logging` est ce qui lit
+# ce ContextVar pour l'écrire dans chaque ligne — sans lui, le travail des
+# workers n'avait aucun effet visible). Même fonction, même format, que
+# le process API — un seul format de log dans tout le système.
+configure_logging(get_settings().log_level)
 logger = logging.getLogger("datalab.worker")
 
 

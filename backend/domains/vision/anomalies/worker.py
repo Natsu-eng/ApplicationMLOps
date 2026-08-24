@@ -16,6 +16,7 @@ import torch
 
 from api.core.database import SessionLocal
 from api.core.models import VisionAnomalyExampleRecord, VisionAnomalyJob, VisionAnomalyModel, VisionDataset
+from api.core.observability import request_id_var
 from api.core.storage import vision_anomaly_model_file_path
 from domains.shared.ml_preprocessing import TrainingAbortedError
 from domains.vision.anomalies.services.engine import AnomalyVisionConfig, train_and_evaluate_anomaly_vision
@@ -52,11 +53,13 @@ def _make_progress_callback(db, job: VisionAnomalyJob):
 def run_vision_anomaly_job(job_id: int) -> None:
     """Point d'entrée RQ — enfilé par `POST /vision/anomalies/jobs`."""
     db = SessionLocal()
+    request_id_token = request_id_var.set("-")
     try:
         job = db.query(VisionAnomalyJob).filter(VisionAnomalyJob.id == job_id).first()
         if job is None:
             logger.error("[VisionAnomaly] Job %s introuvable", job_id)
             return
+        request_id_var.set(job.request_id or "-")
 
         job.status = "running"
         job.started_at = datetime.now(timezone.utc)
@@ -142,4 +145,5 @@ def run_vision_anomaly_job(job_id: int) -> None:
             logger.error("[VisionAnomaly] Job %s échoué : %s\n%s", job_id, exc, traceback.format_exc())
 
     finally:
+        request_id_var.reset(request_id_token)
         db.close()

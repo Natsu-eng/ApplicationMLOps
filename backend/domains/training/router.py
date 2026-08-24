@@ -341,13 +341,25 @@ class PredictionResponse(BaseModel):
 class PredictionHistoryEntry(BaseModel):
     """Une prédiction passée (Lot 5, correctif I2) — mêmes champs que
     `PredictionResponse`, jamais `explanation` (jamais persistée, voir
-    `api/core/models.py::Prediction`)."""
+    `api/core/models.py::Prediction`).
+
+    `dataset_id`/`training_job_id`/`model_version` (Phase 3,
+    AUDIT_BACKEND_2026-08-23.md, Axe I) — lignage prédiction → dataset
+    directement exposé plutôt que seulement reconstructible par une
+    jointure manuelle (`Prediction.ml_model_id → MLModel.dataset_id`/
+    `training_job_id`) : ce sont les MÊMES colonnes que celles déjà lues
+    sur `job`/`job.model` pour répondre à cet endpoint, jamais dupliquées
+    en base sur `Prediction` elle-même (le modèle documente déjà ce choix
+    délibéré — un seul point de vérité, `MLModel`)."""
     id: int
     input: dict[str, Any]
     prediction: Any
     probabilities: Optional[dict[str, float]] = None
     interval: Optional[dict[str, float]] = None
     requested_by: Optional[str] = None
+    dataset_id: int
+    training_job_id: int
+    model_version: int
     created_at: datetime
 
 
@@ -662,11 +674,21 @@ def create_training_job(
         config_json=json.dumps(config),
         feature_engineering_json=feature_engineering_json,
         status="queued",
+        request_id=request.state.request_id,
     )
     db.add(job)
     db.commit()
     db.refresh(job)
     remember_idempotent_job_id(redis_conn, current_user.organization_id, request, job.id)
+    # Phase 3 (AUDIT_BACKEND_2026-08-23.md, Axe I) — la création de job
+    # n'était auditée dans AUCUN des 6 domaines avant ce correctif (seuls
+    # `cancel`/`delete` l'étaient) : un owner ne pouvait pas répondre à
+    # "qui a lancé cet entraînement, et quand" depuis le journal d'audit.
+    # Committé par `enqueue_or_mark_failed` juste après (même transaction).
+    log_action(
+        db, current_user.organization_id, current_user.id, "training_job.created",
+        target_type="training_job", target_id=job.id,
+    )
 
     from domains.training.worker import run_training_job
 
@@ -1223,6 +1245,9 @@ def list_job_predictions(
             probabilities=output.get("probabilities"),
             interval=output.get("interval"),
             requested_by=row.requested_by.nom if row.requested_by else None,
+            dataset_id=job.dataset_id,
+            training_job_id=job.id,
+            model_version=job.model.version,
             created_at=row.created_at,
         ))
     return PredictionHistoryResponse(entries=entries)

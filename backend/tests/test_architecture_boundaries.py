@@ -105,6 +105,30 @@ _LEGACY_PREFIXES = ("services.", "workers.training_worker", "workers.clustering_
                     "api.routers.")
 
 
+def test_run_worker_has_no_domain_import():
+    """Phase 4 (AUDIT_BACKEND_2026-08-23.md, Axe H) — `workers/run_worker.py`
+    est documenté (ARCHITECTURE.md §11) comme un point d'entrée RQ
+    générique, SANS import de domaine (la sélection de file se fait par
+    nom via `RQ_QUEUES`, jamais par import direct d'un `worker.py` de
+    domaine) — les imports de `domains.*.worker` ont lieu à l'intérieur
+    des routers eux-mêmes (`from domains.training.worker import
+    run_training_job`, différé jusqu'au moment de l'enfilage), jamais ici.
+    Un import de domaine ajouté par erreur à ce fichier romprait le
+    découplage documenté sans qu'aucun autre garde-fou de ce module ne le
+    détecte (il ne scanne que `domains/`, jamais `workers/`)."""
+    path = BACKEND_ROOT / "workers" / "run_worker.py"
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    violations = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module and node.module.startswith("domains."):
+            violations.append(f"from {node.module} import ...")
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name.startswith("domains."):
+                    violations.append(f"import {alias.name}")
+    assert not violations, "workers/run_worker.py importe un domaine :\n" + "\n".join(violations)
+
+
 def test_no_file_references_pre_lot8_flat_paths():
     violations = []
     for path in BACKEND_ROOT.rglob("*.py"):

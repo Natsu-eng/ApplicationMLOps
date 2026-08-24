@@ -821,6 +821,11 @@ class AuditLogEntry(BaseModel):
     target_id: Optional[int] = None
     details: Optional[dict] = None
     actor_name: Optional[str] = None
+    # Phase 3 (AUDIT_BACKEND_2026-08-23.md, Axe I) — permet à un owner qui
+    # investigue un incident de retrouver TOUTES les entrées d'audit
+    # produites par la même requête HTTP (rare mais réel : un rollback
+    # partiel, ou une action qui en déclenche une autre côté serveur).
+    request_id: Optional[str] = None
     created_at: datetime
 
 
@@ -849,6 +854,7 @@ def list_audit_log(
             target_id=e.target_id,
             details=json.loads(e.details_json) if e.details_json else None,
             actor_name=e.actor.nom if e.actor else None,
+            request_id=e.request_id,
             created_at=e.created_at,
         )
         for e in entries

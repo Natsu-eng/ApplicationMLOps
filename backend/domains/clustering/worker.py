@@ -19,7 +19,8 @@ from pathlib import Path
 import joblib
 
 from api.core.database import SessionLocal
-from api.core.models import ClusterCandidateRecord, ClusterModel, ClusteringJob, Dataset
+from api.core.models import ClusterCandidateRecord, ClusteringJob, ClusterModel, Dataset
+from api.core.observability import request_id_var
 from api.core.storage import cluster_model_file_path
 from domains.clustering.services.engine import ClusteringConfig, train_and_evaluate_clustering
 from domains.shared.dataset_io import read_dataset_dataframe
@@ -61,11 +62,13 @@ def _make_progress_callback(db, job: ClusteringJob):
 def run_clustering_job(job_id: int) -> None:
     """Point d'entrée RQ — enfilé par `POST /clustering/jobs`."""
     db = SessionLocal()
+    request_id_token = request_id_var.set("-")
     try:
         job = db.query(ClusteringJob).filter(ClusteringJob.id == job_id).first()
         if job is None:
             logger.error("[Clustering] Job %s introuvable", job_id)
             return
+        request_id_var.set(job.request_id or "-")
 
         job.status = "running"
         job.started_at = datetime.now(timezone.utc)
@@ -168,4 +171,5 @@ def run_clustering_job(job_id: int) -> None:
             logger.error("[Clustering] Job %s échoué : %s\n%s", job_id, exc, traceback.format_exc())
 
     finally:
+        request_id_var.reset(request_id_token)
         db.close()

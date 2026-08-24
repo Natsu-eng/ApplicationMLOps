@@ -25,6 +25,7 @@ from starlette.responses import JSONResponse
 
 from api.core.config import get_settings
 from api.core.database import check_connection, init_db
+from api.core.error_codes import ERROR_CODE_DESCRIPTIONS, ErrorCode
 from api.core.mailer import mailer_configured
 from api.core.observability import (
     PrometheusMiddleware,
@@ -243,6 +244,33 @@ app.include_router(vision_anomalies_router, prefix="/api")
 app.include_router(dashboard_router, prefix="/api")
 
 
+# Phase 3 (AUDIT_BACKEND_2026-08-23.md, Axe I, §5) — avant ce correctif,
+# les 65 codes d'erreur (`ErrorCode`, voir api/core/error_codes.py)
+# n'apparaissaient nulle part dans `/openapi.json` malgré l'enveloppe
+# `{"code","message","request_id"}` systématique sur CHAQUE réponse
+# d'erreur (voir les 3 gestionnaires globaux ci-dessous) — un intégrateur
+# tiers ne pouvait découvrir la liste des codes possibles qu'en lisant le
+# code source Python. `custom_openapi` mémorise le schéma généré (FastAPI
+# le calcule une seule fois puis le met en cache lui-même via
+# `app.openapi_schema`, comportement standard) et y ajoute une extension
+# `x-error-codes` — jamais un champ standard OpenAPI, donc sans risque de
+# collision avec un futur champ officiel de la spec.
+def _custom_openapi() -> dict:
+    if app.openapi_schema:
+        return app.openapi_schema
+    from fastapi.openapi.utils import get_openapi
+
+    schema = get_openapi(title=app.title, version=app.version, description=app.description, routes=app.routes)
+    schema["x-error-codes"] = {
+        code.value: ERROR_CODE_DESCRIPTIONS.get(code, "") for code in ErrorCode
+    }
+    app.openapi_schema = schema
+    return app.openapi_schema
+
+
+app.openapi = _custom_openapi  # type: ignore[method-assign]
+
+
 @app.get("/api/health", tags=["système"])
 def health() -> dict:
     """Healthcheck — utilisé par Docker/Railway et par le frontend au démarrage."""
@@ -288,9 +316,11 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException) 
         # par OAuth2PasswordBearer, "Not Found" par le routeur Starlette
         # lui-même) — jamais renvoyée telle quelle, toujours reformulée en
         # français avec un code stable dérivé du statut.
-        code = {401: "AUTH_NON_AUTHENTIFIE", 404: "NON_TROUVE", 405: "METHODE_NON_AUTORISEE"}.get(
-            exc.status_code, "ERREUR_HTTP"
-        )
+        code = {
+            401: ErrorCode.AUTH_NON_AUTHENTIFIE,
+            404: ErrorCode.NON_TROUVE,
+            405: ErrorCode.METHODE_NON_AUTORISEE,
+        }.get(exc.status_code, ErrorCode.ERREUR_HTTP)
         message = {
             401: "Authentification requise.",
             404: "Ressource introuvable.",
@@ -331,7 +361,7 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     # frontend (voir `frontend/src/api/client.ts::extractError`).
     safe_errors = [{k: v for k, v in err.items() if k != "ctx"} for err in errors]
     body = {
-        "code": "VALIDATION_ECHOUEE",
+        "code": ErrorCode.VALIDATION_ECHOUEE,
         "message": message,
         "request_id": _request_id(request),
         "errors": safe_errors,
@@ -350,7 +380,7 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
     corrélés par `request_id`, voir observability.py)."""
     logger.exception("[UNHANDLED] %s %s", request.method, request.url.path)
     body = {
-        "code": "ERREUR_INTERNE",
+        "code": ErrorCode.ERREUR_INTERNE,
         "message": "Une erreur inattendue est survenue. Réessayez ; si le problème persiste, "
         f"contactez le support avec la référence {_request_id(request)}.",
         "request_id": _request_id(request),

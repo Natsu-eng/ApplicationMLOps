@@ -117,6 +117,22 @@ def test_successful_prediction_is_persisted_and_listed(client, db_session):
     assert entry["requested_by"] == "Owner"
 
 
+def test_prediction_history_exposes_dataset_and_job_lineage(client, db_session):
+    """Phase 3 (AUDIT_BACKEND_2026-08-23.md, Axe I) — avant ce correctif,
+    retrouver le dataset/job d'origine d'une prédiction exigeait une
+    jointure manuelle (`Prediction.ml_model_id -> MLModel.dataset_id`/
+    `training_job_id`), jamais exposée par l'API elle-même."""
+    headers = _register(client)
+    job = _train_and_persist_model(db_session, organization_id=1)
+
+    client.post(f"/api/training/jobs/{job.id}/predict", headers=headers, json={"data": {"x1": 50, "x2": 20}})
+
+    entries = client.get(f"/api/training/jobs/{job.id}/predictions", headers=headers).json()["entries"]
+    assert entries[0]["dataset_id"] == job.dataset_id
+    assert entries[0]["training_job_id"] == job.id
+    assert entries[0]["model_version"] == job.model.version
+
+
 def test_failed_prediction_is_not_persisted(client, db_session):
     headers = _register(client)
     job = _train_and_persist_model(db_session, organization_id=1)

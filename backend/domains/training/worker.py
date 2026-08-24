@@ -18,6 +18,7 @@ import joblib
 
 from api.core.database import SessionLocal
 from api.core.models import Dataset, MLModel, ModelCandidate, TrainingJob
+from api.core.observability import request_id_var
 from api.core.storage import model_file_path
 from domains.shared.dataset_io import read_dataset_dataframe
 from domains.shared.feature_engineering import FeatureEngineeringSpecError, apply_upstream_feature_engineering
@@ -70,11 +71,16 @@ def run_training_job(job_id: int) -> None:
     """Point d'entrée RQ — enfilé par `POST /training/jobs`
     (voir api/routers/training.py)."""
     db = SessionLocal()
+    request_id_token = request_id_var.set("-")
     try:
         job = db.query(TrainingJob).filter(TrainingJob.id == job_id).first()
         if job is None:
             logger.error("[Training] Job %s introuvable", job_id)
             return
+        # Phase 3 (AUDIT_BACKEND_2026-08-23.md, Axe I) — corrèle les logs de
+        # ce job (process worker séparé) à la requête HTTP qui l'a créé, via
+        # le même ContextVar que côté API (`JsonFormatter` le lit déjà).
+        request_id_var.set(job.request_id or "-")
 
         job.status = "running"
         job.started_at = datetime.now(timezone.utc)
@@ -243,4 +249,5 @@ def run_training_job(job_id: int) -> None:
             logger.error("[Training] Job %s échoué : %s\n%s", job_id, exc, traceback.format_exc())
 
     finally:
+        request_id_var.reset(request_id_token)
         db.close()
