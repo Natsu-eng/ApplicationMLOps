@@ -237,6 +237,48 @@ def run_migrations(db_url: str | None = None) -> None:
         target_engine.dispose()
 
 
+# État réel de la migration au démarrage — consommé par `/api/health`
+# (api/main.py) pour que le healthcheck reflète le schéma, pas seulement la
+# joignabilité de la base. Voir `schema_ready()` ci-dessous.
+#
+# Défaut OPTIMISTE ("ok": True), pas pessimiste — bug réel trouvé en
+# testant : `tests/conftest.py` crée le schéma de test directement
+# (`Base.metadata.create_all()`), jamais via `init_db()`/`run_migrations()`
+# (la suite de tests n'utilise pas le cycle de vie `lifespan()` de l'appli
+# — `TestClient(app)` sans `with`, voir `conftest.py::client`). Avec un
+# défaut à `False`, TOUT test qui interroge `/api/health` sans passer par
+# `lifespan()` le recevait comme "schéma périmé" alors que le schéma est
+# réellement prêt — `tests/test_database_pool_and_timeout.py::
+# test_sqlite_engine_has_no_statement_timeout_option` échouait (503 au lieu
+# de 200 attendu). Le défaut optimiste ne réintroduit PAS le bug #2 :
+# en production, `lifespan()` appelle TOUJOURS `init_db()` sans condition,
+# et son `except` écrase ce défaut par `False` dès qu'une migration échoue
+# réellement — le défaut n'est lu que dans la fenêtre où `init_db()` n'a
+# jamais été appelée du tout (tests hors lifespan, ou requête arrivée avant
+# la fin du démarrage), jamais dans le scénario du bug #2 lui-même.
+_MIGRATION_STATE: dict[str, object] = {"ok": True, "error": None}
+
+
+def schema_ready() -> tuple[bool, str | None]:
+    """(migrations appliquées avec succès, message d'erreur sinon).
+
+    REVUE POST-PHASE 5 — c'est le mécanisme qui a rendu le bug #2 silencieux.
+    `backend/Dockerfile` ne copiait ni `alembic.ini` ni `alembic/` ; une fois
+    le bug #1 corrigé, plus AUCUNE migration ne s'appliquait en production, et
+    personne ne le voyait : `lifespan()` avalait l'exception, et `/api/health`
+    répondait `{"status": "ok", "database": "up"}` parce que `check_connection`
+    ne teste que `SELECT 1` — or la base était joignable, c'est son SCHÉMA qui
+    était périmé. Docker marquait donc le conteneur sain, l'orchestrateur y
+    envoyait du trafic, et les utilisateurs recevaient des 500 sur tout
+    endpoint touchant une colonne récente.
+
+    Le Dockerfile est corrigé, mais la cause du silence ne l'était pas : toute
+    autre panne de migration (révision absente, verrou, droits insuffisants)
+    reproduirait exactement le même scénario. Un healthcheck qui répond « ok »
+    alors que le schéma est périmé est pire que pas de healthcheck du tout."""
+    return bool(_MIGRATION_STATE["ok"]), _MIGRATION_STATE["error"]  # type: ignore[return-value]
+
+
 def init_db() -> None:
     """Crée/met à jour le schéma via Alembic (voir `run_migrations()`)."""
     # Import local (et non en tête de module) pour éviter l'import circulaire :
@@ -247,7 +289,17 @@ def init_db() -> None:
     # enregistrées avant toute opération de schéma.
     from api.core import models  # noqa: F401
 
-    run_migrations()
+    try:
+        run_migrations()
+    except Exception as exc:
+        # On enregistre l'échec AVANT de relever : `lifespan()` décide ensuite
+        # de refuser le démarrage (production) ou de continuer en mode dégradé
+        # (développement), mais dans les deux cas `/api/health` doit le dire.
+        _MIGRATION_STATE["ok"] = False
+        _MIGRATION_STATE["error"] = f"{type(exc).__name__}: {exc}"
+        raise
+    _MIGRATION_STATE["ok"] = True
+    _MIGRATION_STATE["error"] = None
     logger.info("[DB] Prête (%s)", "SQLite" if _is_sqlite else "PostgreSQL")
 
 

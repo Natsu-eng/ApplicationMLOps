@@ -15,7 +15,7 @@ from __future__ import annotations
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Response, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -24,7 +24,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from api.core.config import get_settings
-from api.core.database import check_connection, init_db
+from api.core.database import check_connection, init_db, schema_ready
 from api.core.error_codes import ERROR_CODE_DESCRIPTIONS, ErrorCode
 from api.core.mailer import mailer_configured
 from api.core.observability import (
@@ -145,15 +145,30 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 async def lifespan(app: FastAPI):
     """Initialisation au démarrage.
 
-    Un échec d'initialisation DB ne doit jamais empêcher l'API de répondre :
-    on le journalise et l'API démarre en mode dégradé (le healthcheck le
-    reflète). Voir ARCHITECTURE.md, même choix que CIAM pour les modules
-    optionnels.
+    REVUE POST-PHASE 5 — le mode dégradé silencieux est ce qui a rendu le
+    bug #2 invisible (Dockerfile ne copiait pas `alembic/` : plus aucune
+    migration appliquée en production, `/api/health` répondant « ok »). Deux
+    corrections, sans renoncer au confort de développement :
+
+    - **En production, on refuse de démarrer.** Une API qui sert un schéma
+      périmé rend des 500 sur les endpoints récents tout en se déclarant
+      saine ; l'orchestrateur bascule alors le trafic vers un conteneur
+      cassé. Échouer au démarrage est plus sûr : le déploiement s'arrête et
+      l'ancienne version, elle, fonctionne toujours.
+    - **Hors production, on continue en mode dégradé** (démarrer sans base
+      reste utile en local), mais `/api/health` le dit et répond 503 —
+      jamais un « ok » qui ment.
     """
     try:
         init_db()
     except Exception:
-        logger.exception("[STARTUP] Initialisation DB échouée — API démarrée en mode dégradé")
+        if settings.environment == "production":
+            logger.exception(
+                "[STARTUP] Migration de la base échouée — démarrage REFUSÉ en production. "
+                "Un schéma périmé servirait des 500 en se déclarant sain."
+            )
+            raise
+        logger.exception("[STARTUP] Initialisation DB échouée — API démarrée en mode dégradé (hors production)")
     # Phase 1B (AUDIT_BACKEND_2026-08-23.md) — le canal mail est optionnel
     # au démarrage (voir api/core/mailer.py::mailer_configured) : une
     # plateforme ne refuse pas de démarrer parce que le serveur de mail
@@ -272,15 +287,36 @@ app.openapi = _custom_openapi  # type: ignore[method-assign]
 
 
 @app.get("/api/health", tags=["système"])
-def health() -> dict:
-    """Healthcheck — utilisé par Docker/Railway et par le frontend au démarrage."""
-    return {
-        "status": "ok",
+def health(response: Response) -> dict:
+    """Healthcheck — utilisé par Docker/Railway et par le frontend au démarrage.
+
+    Répond **503** dès qu'un composant essentiel est en défaut, pour que le
+    `HEALTHCHECK` Docker et l'orchestrateur échouent réellement. Un 200
+    inconditionnel transformait ce healthcheck en décoration : c'est ainsi
+    que le bug #2 (aucune migration appliquée) est passé inaperçu.
+
+    `database` teste la joignabilité (`SELECT 1`) ; `schema` teste que les
+    migrations se sont appliquées. Les deux sont nécessaires et distincts :
+    une base parfaitement joignable dont le schéma est périmé est le cas qui
+    a réellement cassé la production."""
+    db_up = check_connection()
+    schema_ok, schema_error = schema_ready()
+    healthy = db_up and schema_ok
+    if not healthy:
+        response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+    payload = {
+        "status": "ok" if healthy else "degraded",
         "app": settings.app_name,
         "version": settings.app_version,
         "environment": settings.environment,
-        "database": "up" if check_connection() else "down",
+        "database": "up" if db_up else "down",
+        "schema": "ready" if schema_ok else "stale",
     }
+    if schema_error and not _IS_PROD:
+        # Le détail de l'erreur aide au diagnostic local ; en production il
+        # resterait une divulgation gratuite sur un endpoint non authentifié.
+        payload["schema_error"] = schema_error
+    return payload
 
 
 @app.get("/metrics", tags=["système"])

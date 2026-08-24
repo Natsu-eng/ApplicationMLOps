@@ -1376,3 +1376,61 @@ porte de qualité de chaque phase, jamais supposé) ; 2 bugs de déploiement
 critiques préexistants corrigés (Dockerfile — `domains/` puis
 `alembic.ini`/`alembic/`), tous deux invisibles avant ce chantier faute
 d'un smoke test Docker exécuté systématiquement.
+
+## Post-Phase 8 — Le healthcheck mentait sur l'état réel du schéma
+
+### Décision 31 — `/api/health` reflète désormais le schéma, pas seulement la joignabilité DB
+
+Revue amorcée par la Décision 26 (Phase 5, `alembic.ini`/`alembic/` jamais
+copiés dans l'image) : ce bug rendait `/api/health` **silencieusement
+trompeur**. `check_connection()` ne teste qu'un `SELECT 1` — la base
+répondait, donc `/api/health` renvoyait `{"status": "ok", "database":
+"up"}` en 200, alors que le SCHÉMA était périmé (aucune migration
+appliquée). Docker marquait le conteneur sain, un orchestrateur y aurait
+envoyé du trafic, et chaque endpoint touchant une colonne récente aurait
+rendu un 500 malgré un healthcheck vert — le pire scénario, pire que pas
+de healthcheck du tout.
+
+**Corrigé** (`api/core/database.py::schema_ready`/`_MIGRATION_STATE`,
+`api/main.py::health`) :
+- `init_db()` enregistre désormais si `run_migrations()` a réussi ou non.
+- En **production**, `lifespan()` refuse maintenant de démarrer si les
+  migrations échouent (`raise` au lieu d'avaler l'exception) — un
+  déploiement qui casse s'arrête net, plutôt que de servir un schéma
+  périmé en se déclarant sain.
+- Hors production, le mode dégradé (démarrer quand même) est conservé
+  (utile en local sans base), mais `/api/health` répond désormais **503**
+  avec `"schema": "stale"`, jamais un 200 qui ment. Le détail de l'erreur
+  n'est inclus que hors production (jamais de divulgation gratuite sur un
+  endpoint non authentifié).
+- Nouveau test dédié : `tests/test_health_reflects_schema.py` (4 cas —
+  schéma prêt, schéma périmé, base injoignable, détail masqué en
+  production).
+
+**Bug réel trouvé en vérifiant ce correctif avant de le fusionner**
+(revue demandée explicitement par l'opérateur avant tout push) :
+`_MIGRATION_STATE` par défaut à `{"ok": False}` faisait échouer
+`tests/test_database_pool_and_timeout.py::
+test_sqlite_engine_has_no_statement_timeout_option` (503 reçu au lieu de
+200 attendu) — `tests/conftest.py` crée le schéma de test directement
+(`Base.metadata.create_all()`), jamais via `init_db()`/`lifespan()` (le
+`client` partagé du dépôt est un `TestClient(app)` sans `with`, qui ne
+déclenche jamais le cycle de vie ASGI) : le schéma de test est réellement
+prêt, mais rien ne le signalait à `_MIGRATION_STATE`. Corrigé en
+inversant le défaut à `{"ok": True}` (optimiste) — **ne réintroduit pas
+le bug d'origine** : en production, `lifespan()` appelle TOUJOURS
+`init_db()` sans condition, et son `except` écrase ce défaut par `False`
+dès qu'une migration échoue réellement ; le défaut n'est lu que dans la
+fenêtre où `init_db()` n'a jamais été appelée du tout (suite de tests
+hors cycle de vie ASGI, ou requête arrivée avant la fin du démarrage),
+jamais dans le scénario du bug qui a motivé ce correctif. Vérifié : les
+20 tests touchant `/api/health` (dont les 4 nouveaux) passent, puis
+suite complète rejouée avant fusion (voir porte de qualité ci-dessous).
+
+**Porte de qualité** : `ruff check`/`mypy` sur les 2 fichiers touchés → 0
+nouvelle erreur (comparé à `main` : mêmes 70 erreurs mypy pré-existantes,
+toutes dans des fichiers tiers suivis par import, aucune dans
+`database.py`/`main.py` eux-mêmes). Suite complète backend rejouée avant
+fusion (résultat consigné avec le commit). Frontend non touché par ce
+correctif — `tsc`/`eslint`/`vitest`/`build`/contraste revalidés par
+prudence, tous verts.
