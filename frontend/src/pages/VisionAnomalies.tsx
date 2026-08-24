@@ -35,8 +35,8 @@ import {
   Fact,
   SplitRatioControl,
   StepContent,
-  StepperNav,
 } from "../components/vision/VisionWizard";
+import { WizardStepper } from "../components/ui/WizardStepper";
 import { useConfirmAction } from "../hooks/useConfirmAction";
 import { useIdempotencyKey } from "../hooks/useIdempotencyKey";
 import { CHART_GRID_STROKE, CHART_SERIES_COLORS, CHART_TICK_STYLE_SM, CHART_TOOLTIP_STYLE } from "../theme/charts";
@@ -362,7 +362,7 @@ function AnomalyVisionForm({ onJobCreated }: { onJobCreated: (job: VisionAnomaly
 
   return (
     <form onSubmit={handleSubmit}>
-      <StepperNav steps={STEP_LABELS} activeStep={activeStep} maxReachedStep={maxReachedStep} onSelect={goToStep} />
+      <WizardStepper steps={STEP_LABELS} activeStep={activeStep} maxReachedStep={maxReachedStep} onSelect={goToStep} />
 
       <Card className="p-5 mt-4">
         {activeStep === 1 && (

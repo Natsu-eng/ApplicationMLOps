@@ -49,7 +49,7 @@ import { Skeleton, SkeletonGroup } from "../components/ui/Skeleton";
 import { ProgressBar, IndeterminateProgressBar } from "../components/ui/ProgressBar";
 import { Segmented } from "../components/ui/Segmented";
 import { Alert } from "../components/ui/Alert";
-import { Stepper } from "../components/ui/Stepper";
+import { WizardStepper } from "../components/ui/WizardStepper";
 import { Popover } from "../components/ui/Popover";
 import { Breadcrumb } from "../components/ui/Breadcrumb";
 import { useToast } from "../components/ui/Toast";
@@ -764,7 +764,7 @@ function StepperSection() {
   return (
     <Section title="Fil d'étapes" description="Assistant multi-écrans (entraînement, wizard Vision).">
       <Card>
-        <Stepper
+        <WizardStepper
           ariaLabel="Étapes de démonstration"
           activeStep={active}
           maxReachedStep={3}

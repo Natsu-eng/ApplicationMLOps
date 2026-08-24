@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { AlertCircle, Ban, BrainCircuit, Check, ChevronLeft, ChevronRight, Loader2, PlayCircle, RotateCcw, Target, Trash2 } from "lucide-react";
+import { AlertCircle, Ban, BrainCircuit, ChevronLeft, ChevronRight, Loader2, PlayCircle, RotateCcw, Target, Trash2 } from "lucide-react";
 import {
   ApiError,
   api,
@@ -27,6 +27,7 @@ import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
 import { PageHeader } from "../components/ui/PageHeader";
 import { Select } from "../components/ui/Select";
+import { WizardStepper } from "../components/ui/WizardStepper";
 import { useConfirmAction } from "../hooks/useConfirmAction";
 import { useIdempotencyKey } from "../hooks/useIdempotencyKey";
 import { formatDateTime, formatDuration } from "../utils/format";
@@ -648,7 +649,7 @@ function TrainingForm({
 
   return (
     <form onSubmit={handleSubmit}>
-      <StepperNav steps={STEP_LABELS} activeStep={activeStep} maxReachedStep={maxReachedStep} onSelect={goToStep} />
+      <WizardStepper steps={STEP_LABELS} activeStep={activeStep} maxReachedStep={maxReachedStep} onSelect={goToStep} />
 
       <Card className="p-5 mt-4">
         {activeStep === 1 && (
@@ -926,103 +927,9 @@ function TrainingForm({
   );
 }
 
-/** Wizard horizontal — pastilles numérotées reliées par des chevrons,
- * navigables (une étape déjà atteinte reste cliquable, jamais celles pas
- * encore vues).
- *
- * Passe à la ligne plutôt que de défiler (retour utilisateur, trouvé en
- * revue directe du navigateur) : la version précédente utilisait
- * `overflow-x-auto` avec deux flèches de défilement. Résultat constaté en
- * navigateur à 1568 px — largeur d'un poste de travail ordinaire — une
- * barre de défilement native visible sous les pastilles et la 5ᵉ étape
- * coupée hors champ. Les deux flèches consommaient elles-mêmes de la
- * largeur et aggravaient le débordement qu'elles étaient censées
- * compenser. `flex-wrap` supprime la barre, la troncature et les flèches
- * d'un coup : sur un écran étroit les pastilles passent simplement à la
- * ligne, ce qui reste lisible là où un défilement horizontal est toujours
- * une gêne (aucune indication qu'il y a quelque chose de plus à droite).
- *
- * Sous `sm`, seul le libellé de l'étape COURANTE est affiché — les autres se
- * réduisent à leur numéro, pour tenir sur une ou deux lignes à 375 px au lieu
- * de cinq. `aria-label` porte toujours le libellé complet, donc rien n'est
- * perdu pour un lecteur d'écran. */
-function StepperNav({
-  steps,
-  activeStep,
-  maxReachedStep,
-  onSelect,
-}: {
-  steps: { number: number; label: string }[];
-  activeStep: number;
-  maxReachedStep: number;
-  onSelect: (step: number) => void;
-}) {
-  return (
-    <nav aria-label="Étapes de l'entraînement" className="flex flex-wrap items-center gap-x-2 gap-y-2 py-1">
-      {steps.map((step, i) => (
-        <div key={step.number} className="flex items-center gap-2">
-          <StepPill
-            number={step.number}
-            label={step.label}
-            state={step.number < activeStep ? "done" : step.number === activeStep ? "current" : "pending"}
-            current={step.number === activeStep}
-            disabled={step.number > maxReachedStep}
-            onClick={() => onSelect(step.number)}
-          />
-          {i < steps.length - 1 && <ChevronRight size={14} className="text-muted-foreground/50 flex-shrink-0" />}
-        </div>
-      ))}
-    </nav>
-  );
-}
-
-function StepPill({
-  number,
-  label,
-  state,
-  current,
-  disabled,
-  onClick,
-}: {
-  number: number;
-  label: string;
-  state: "done" | "current" | "pending";
-  /** Étape en cours — seule dont le libellé reste visible sous `sm`. */
-  current: boolean;
-  disabled: boolean;
-  onClick: () => void;
-}) {
-  const pillStyle = {
-    done: "border-success/30 bg-success/10 text-success",
-    current: "border-primary/30 bg-primary/10 text-primary",
-    pending: "border-border text-muted-foreground",
-  }[state];
-  // `bg-card`/`text-primary-foreground` plutôt que `bg-white`/`text-white` en
-  // dur (retour utilisateur, trouvé en revue directe — bug de mode sombre) :
-  // `bg-white` produisait une pastille blanche vive sur fond sombre pour les
-  // étapes non atteintes — les tokens, eux, suivent le thème clair/sombre.
-  const circleStyle = {
-    done: "bg-success text-primary-foreground",
-    current: "bg-primary text-primary-foreground",
-    pending: "bg-card border border-input text-muted-foreground",
-  }[state];
-
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      aria-current={current ? "step" : undefined}
-      aria-label={`Étape ${number} : ${label}`}
-      className={`flex items-center gap-2 rounded-full border pl-1.5 pr-2 sm:pr-3 py-1.5 text-sm font-medium whitespace-nowrap transition-colors disabled:cursor-not-allowed ${pillStyle}`}
-    >
-      <span className={`h-5 w-5 rounded-full flex items-center justify-center text-overline flex-shrink-0 ${circleStyle}`}>
-        {state === "done" ? <Check size={12} strokeWidth={3} /> : number}
-      </span>
-      <span className={current ? "" : "hidden sm:inline"}>{label}</span>
-    </button>
-  );
-}
+// Barre d'étapes : voir components/ui/WizardStepper.tsx (partagée avec les
+// wizards Vision — avant cette refonte, dupliquée ici à l'identique malgré
+// une note dans VisionWizard.tsx affirmant l'avoir déjà extraite).
 
 /** Contenu d'une étape du wizard — titre + description en langage clair,
  * puis les champs propres à l'étape. */

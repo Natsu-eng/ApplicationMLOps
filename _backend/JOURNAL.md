@@ -1434,3 +1434,42 @@ toutes dans des fichiers tiers suivis par import, aucune dans
 fusion (résultat consigné avec le commit). Frontend non touché par ce
 correctif — `tsc`/`eslint`/`vitest`/`build`/contraste revalidés par
 prudence, tous verts.
+
+### Décision 32 — `redis_conn` sans timeout de connexion : `/login` restait bloqué de longues secondes quand Redis était injoignable
+
+Signalé directement par l'opérateur en usage réel (poste de dev,
+`uvicorn --reload` + `npm run dev`, Redis non démarré) : l'écran de
+connexion restait bloqué sur "Connexion…" un long moment avant de
+répondre. Cause : `api/core/job_queue.py::redis_conn = Redis.from_url(...)`
+ne configurait aucun `socket_connect_timeout` — la poignée de main TCP
+initiale bloquait indéfiniment quand Redis est injoignable, bornée
+seulement par le comportement par défaut de la pile TCP du système
+d'exploitation (souvent 20 s ou plus sous Windows). `is_rate_limited()`
+(Phase 1, §4) est bien "échec ouvert" pour `/login` — mais n'échoue
+"ouvert" qu'APRÈS l'expiration de cette tentative de connexion, jamais
+avant : le principe d'échec ouvert était correct, son exécution ne
+l'était pas.
+
+**Corrigé** : `Redis.from_url(_settings.redis_url, socket_connect_timeout=3)`
+— un seul client Redis partagé par tout le dépôt (`grep -rn
+"Redis.from_url\|redis.Redis(" api domains` confirme un seul site de
+création), donc ce correctif s'applique globalement (rate-limiting,
+révocation de jeton, idempotence, file RQ) en une seule ligne.
+**Volontairement PAS** de `socket_timeout` (délai de lecture/écriture
+APRÈS connexion) : `workers/run_worker.py` (`SimpleWorker`) dépend d'un
+`BLPOP` bloquant pour attendre un nouveau job sans repolling actif — un
+délai de lecture court casserait cette attente légitime et ferait
+paraître Redis "en panne" à chaque worker inactif entre deux jobs. Seule
+la phase de CONNEXION est bornée, jamais les opérations normales une fois
+connecté.
+
+Testé (`tests/test_redis_connect_timeout.py`, nouveau) : connexion à une
+adresse non routée (`10.255.255.1`, ne répond jamais — contrairement à un
+port fermé sur `localhost`, refusé quasi instantanément quel que soit le
+timeout configuré, qui n'aurait rien prouvé) échoue désormais en moins de
+8 s (marge large autour du timeout configuré de 3 s), au lieu des 20 s+
+observés avant ce correctif ; second test verrouille directement la
+configuration du client partagé de l'app pour qu'une régression future
+(retrait accidentel du paramètre) casse ce test précisément, pas
+seulement le principe général. `tests/test_rate_limit_fail_mode.py`
+(non-régression du mode échec ouvert/fermé) rejoué avec succès.

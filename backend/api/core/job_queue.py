@@ -38,7 +38,27 @@ from api.core.config import get_settings
 
 _settings = get_settings()
 
-redis_conn = Redis.from_url(_settings.redis_url)
+# Bug réel signalé par l'opérateur (retour direct, poste de dev sans Redis
+# démarré) — `Redis.from_url()` sans timeout explicite laisse la
+# CONNEXION (poignée de main TCP initiale) bloquer indéfiniment quand
+# Redis est injoignable, bornée uniquement par le comportement par défaut
+# de la pile TCP du système d'exploitation (souvent 20 s ou plus sous
+# Windows). Concrètement observé sur `/login` : `is_rate_limited()`
+# (`api/core/rate_limit.py`) est bien "échec ouvert" (Phase 1, §4) — mais
+# n'échoue "ouvert" qu'APRÈS que la tentative de connexion ait fini par
+# expirer, donc l'utilisateur voit "Connexion…" bloqué de longues
+# secondes avant que la page ne réponde enfin.
+#
+# `socket_connect_timeout` seul (jamais `socket_timeout`) : borne
+# UNIQUEMENT la poignée de main TCP initiale, à 3 s (largement suffisant
+# pour un Redis local ou dans le même réseau Docker — jamais atteint en
+# usage normal). `socket_timeout` (délai de lecture/écriture APRÈS
+# connexion) n'est volontairement PAS touché ici : RQ (`Worker.work()`,
+# `workers/run_worker.py`) dépend d'un `BLPOP` bloquant pour attendre un
+# nouveau job sans repolling actif — lui imposer un timeout de lecture
+# court casserait cette attente légitime et ferait paraître Redis "en
+# panne" à chaque worker inactif entre deux jobs.
+redis_conn = Redis.from_url(_settings.redis_url, socket_connect_timeout=3)
 
 # Timeout généreux (30 min) : un entraînement à 3 modèles × recherche Optuna
 # peut prendre du temps sur une machine sans GPU dédié. Vision (torch,

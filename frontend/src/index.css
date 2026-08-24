@@ -112,6 +112,13 @@
   --color-accent-2: var(--s2);
   --color-accent-3: var(--s3);
   --color-accent-4: var(--s4);
+  /* Encres de série — pour du TEXTE portant une couleur d'identité.
+     --color-accent-N reste réservé aux marques de graphique (seuil 3:1) ;
+     --color-accent-N-ink atteint 4,5:1 sur les trois fonds des 5 thèmes. */
+  --color-accent-1-ink: var(--s1-ink);
+  --color-accent-2-ink: var(--s2-ink);
+  --color-accent-3-ink: var(--s3-ink);
+  --color-accent-4-ink: var(--s4-ink);
 
   --color-chart-1: var(--s1);
   --color-chart-2: var(--s2);
@@ -236,6 +243,32 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .toast-enter { animation: none; }
 }
+
+/* Barre d'actions groupées (BulkActionBar.tsx) — même motif que le toast
+   ci-dessus (keyframe dédiée + garde prefers-reduced-motion), glissement
+   depuis le bas plutôt que depuis le haut : la barre est ancrée en bas de
+   l'écran, cohérent avec sa position finale. */
+@keyframes bulk-bar-enter {
+  from { opacity: 0; transform: translate(-50%, 8px); }
+  to { opacity: 1; transform: translate(-50%, 0); }
+}
+.bulk-bar-enter { animation: bulk-bar-enter 0.2s ease-out backwards; }
+@media (prefers-reduced-motion: reduce) {
+  .bulk-bar-enter { animation: none; }
+}
+
+/* Défilement horizontal sans barre visible (WizardStepper.tsx) — le
+   défilement reste pleinement fonctionnel (clavier, molette, tactile),
+   seule l'indication visuelle disparaît. Utilisé UNIQUEMENT en secours sur
+   un conteneur trop étroit pour tenir sur une ligne (le cas normal) : un
+   retour utilisateur explicite avait déjà rejeté une barre de défilement
+   visible ici par le passé (jugée disgracieuse sur une barre d'étapes),
+   remplacée alors par un `flex-wrap` qui créait à son tour une pastille
+   isolée mal alignée sur la ligne suivante — corrigé par une ligne connectée
+   qui se compresse (jamais de retour à la ligne) plutôt que par l'un ou
+   l'autre défaut. */
+.no-scrollbar { scrollbar-width: none; -ms-overflow-style: none; }
+.no-scrollbar::-webkit-scrollbar { display: none; }
 
 /* Barre de progression indéterminée (ProgressBar.tsx) — bande qui glisse de
    gauche à droite, seule animation d'entrée du Lot 2 dépassant les 200ms

@@ -1,4 +1,4 @@
-import { Check, ChevronRight, ImageOff } from "lucide-react";
+import { ImageOff } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { ApiError, api, type AugmentationPreset, type AugmentationPreviewResult } from "../../api/client";
 import { Badge } from "../ui/Badge";
@@ -13,87 +13,10 @@ export const AUGMENTATION_PRESET_INFO: Record<AugmentationPreset, { label: strin
   forte: { label: "Forte", description: "Standard, en plus marqué, + décalage et mise à l'échelle aléatoires." },
 };
 
-/** Wizard horizontal partagé par les deux modules Vision (classification,
- * Lot 6A correctif I10 ; anomalies, même lot) — pastilles numérotées
- * reliées par des chevrons, navigables (une étape déjà atteinte reste
- * cliquable, jamais celles pas encore vues). `flex-wrap` plutôt qu'un
- * défilement horizontal + flèches : jamais de contenu tronqué/caché sur
- * petit écran, les pastilles passent simplement à la ligne suivante.
- * Extrait de VisionClassification.tsx (auparavant dupliqué en germe pour
- * VisionAnomalies.tsx) pour que les deux wizards restent visuellement et
- * comportementalement identiques par construction, pas par discipline. */
-export function StepperNav({
-  steps,
-  activeStep,
-  maxReachedStep,
-  onSelect,
-}: {
-  steps: { number: number; label: string }[];
-  activeStep: number;
-  maxReachedStep: number;
-  onSelect: (step: number) => void;
-}) {
-  return (
-    <nav aria-label="Étapes de l'entraînement" className="flex flex-wrap items-center gap-2">
-      {steps.map((step, i) => (
-        <div key={step.number} className="flex items-center gap-2">
-          <StepPill
-            number={step.number}
-            label={step.label}
-            state={step.number < activeStep ? "done" : step.number === activeStep ? "current" : "pending"}
-            current={step.number === activeStep}
-            disabled={step.number > maxReachedStep}
-            onClick={() => onSelect(step.number)}
-          />
-          {i < steps.length - 1 && <ChevronRight size={14} className="text-muted-foreground/50 flex-shrink-0" aria-hidden="true" />}
-        </div>
-      ))}
-    </nav>
-  );
-}
-
-function StepPill({
-  number,
-  label,
-  state,
-  current,
-  disabled,
-  onClick,
-}: {
-  number: number;
-  label: string;
-  state: "done" | "current" | "pending";
-  current: boolean;
-  disabled: boolean;
-  onClick: () => void;
-}) {
-  const pillStyle = {
-    done: "border-success/30 bg-success/10 text-success",
-    current: "border-primary/30 bg-primary/10 text-primary",
-    pending: "border-border text-muted-foreground",
-  }[state];
-  const circleStyle = {
-    done: "bg-success text-primary-foreground",
-    current: "bg-primary text-primary-foreground",
-    pending: "bg-card border border-input text-muted-foreground",
-  }[state];
-
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      aria-current={current ? "step" : undefined}
-      aria-label={label}
-      className={`flex items-center gap-2 rounded-full border pl-1.5 pr-3 py-1.5 text-sm font-medium whitespace-nowrap transition-colors disabled:cursor-not-allowed ${pillStyle}`}
-    >
-      <span className={`h-5 w-5 rounded-full flex items-center justify-center text-xs font-semibold flex-shrink-0 ${circleStyle}`}>
-        {state === "done" ? <Check size={12} strokeWidth={3} /> : number}
-      </span>
-      <span className={current ? "" : "hidden sm:inline"}>{label}</span>
-    </button>
-  );
-}
+// Barre d'étapes : voir components/ui/WizardStepper.tsx — partagée avec
+// Training.tsx (avant cette refonte, ce fichier avait déjà sa propre copie
+// pour les 2 wizards Vision, malgré le commentaire ci-dessus revendiquant
+// l'avoir "extrait" — l'extraction ne couvrait que 2 des 3 wizards).
 
 /** Contenu d'une étape du wizard — titre + description en langage clair,
  * puis les champs propres à l'étape. */
