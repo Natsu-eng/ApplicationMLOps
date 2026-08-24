@@ -368,6 +368,316 @@ pause, dont aucun ne correspond à une limitation réseau locale),
 `back/1-securite` est fusionnée dans `main` — le smoke test Docker réel
 reste une dette explicite, à lever dès que possible, pas un point ignoré.
 
+## Phase 2 — Fiabilité
+
+### Décision 13 — Sauvegarde/restauration vérifiée pour de vrai (pas seulement le script)
+
+`tests/test_backup_restore.py` existait déjà (Lot 1.2) mais n'avait jamais
+été exécuté avec un vrai PostgreSQL dans une session de ce chantier — un
+PostgreSQL 17 local (`pg_isready` confirmé) était disponible sur ce poste.
+Exécuté réellement : cycle complet peuplement → sauvegarde → suppression du
+schéma (simule une perte réelle) → restauration → vérification des données
+— **2 tests verts, 12.71s**. C'est la preuve exigée par la mission (« un
+script de sauvegarde jamais restauré ne compte pas »), obtenue sans
+développement supplémentaire — seulement en la faisant tourner.
+
+### Décision 14 — Bornes du pool de connexions + `statement_timeout` (Axe F.7/F.8)
+
+`api/core/database.py` — `pool_size=10`/`max_overflow=5` explicites
+(défauts SQLAlchemy 5+10=15 jamais choisis délibérément), `statement_timeout=30000`
+(30s) via `connect_args={"options": "-c statement_timeout=..."}`, Postgres
+uniquement (SQLite n'a pas cette notion). Testé contre un VRAI PostgreSQL
+(`tests/test_database_pool_and_timeout.py`, sous-process — même technique
+que `test_database_startup.py`) : le réglage est bien appliqué (`SHOW
+statement_timeout` → "30s") ET agit réellement (`pg_sleep(2)` avec un
+timeout resserré à 200ms pour le test → `psycopg2.errors.QueryCanceled`
+confirmé par le TYPE de l'exception, jamais le texte du message — **bug
+réel trouvé en testant** : le serveur PostgreSQL local répond en français
+("annulation de la requête..."), un premier test qui cherchait la phrase
+anglaise "statement timeout" échouait alors que le mécanisme fonctionnait
+correctement. Leçon : ne jamais faire dépendre une assertion du texte d'un
+message d'erreur localisé par un composant tiers.
+
+### Décision 15 — Idempotence de création de job + échec propre à l'enfilage (Axe F.4/F.5)
+
+`domains/shared/job_creation.py` (nouveau) — deux fonctions partagées par
+les 6 domaines à job (training/clustering/dimensionality/anomalies/vision
+classification/vision anomalies), câblées à l'identique dans chacun :
+- `resolve_idempotent_job_id`/`remember_idempotent_job_id` : en-tête
+  `Idempotency-Key` optionnel, fourni par le CLIENT (jamais généré côté
+  serveur), mémorisé 10 min dans Redis, scopé par organisation (testé :
+  la même clé utilisée par deux organisations différentes ne fait jamais
+  fuiter un job de l'une vers l'autre).
+- `enqueue_or_mark_failed` : ne laisse plus JAMAIS un job `"queued"` avec
+  `rq_job_id=NULL` orphelin si Redis tombe entre le commit de création et
+  l'enfilage (F5) — le job est marqué `"failed"` dans la même requête, le
+  client reçoit un 503 `FILE_INDISPONIBLE` explicite plutôt qu'un 201
+  mensonger.
+
+**Bug réel trouvé en testant** (`test_training_api.py::test_rerun_creates_a_new_job_with_the_same_configuration`,
+suite complète) : les 6 endpoints `POST /jobs/{id}/rerun` appellent
+`create_<domaine>_job` directement comme une fonction Python (pas une
+vraie requête HTTP — réutilise la validation complète plutôt que la
+dupliquer, motif déjà en place avant cette phase). L'ajout du paramètre
+`request: Request` à `create_training_job` a désaligné cet appel
+positionnel : `current_user` (un `User`) atterrissait dans le paramètre
+`request`, et `db` (une `Session`) dans `current_user` —
+`AttributeError: 'Session' object has no attribute 'organization_id'`.
+Corrigé dans les 6 domaines : les 6 `rerun_*` acceptent maintenant
+`request` et le transmettent, et les 6 appels utilisent désormais des
+arguments NOMMÉS (`create_training_job(body=..., request=..., ...)`) —
+pas seulement pour corriger ce cas précis, mais pour qu'un futur paramètre
+ajouté à une de ces 6 fonctions ne puisse plus jamais se désaligner
+silencieusement de la même façon.
+
+Testé : `tests/test_job_creation_reliability.py` (6 tests, domaine
+`training` comme référence — même principe que
+`test_idor_regression.py` : les 6 domaines délèguent aux 2 mêmes
+fonctions partagées, un test par domaine n'apporterait pas de garantie
+supplémentaire) + suite complète des 6 domaines rejouée après le correctif
+du bug ci-dessus (142 tests verts, 464s).
+
+Frontend : `hooks/useIdempotencyKey.ts` (nouveau) — clé générée une fois
+par tentative de soumission (`useRef`, pas régénérée à chaque rendu),
+réinitialisée après un succès. Câblé dans les 6 écrans de création de job
+(`Training.tsx`, `Clustering.tsx`, `DimensionalityReduction.tsx`,
+`AnomalyDetection.tsx`, `VisionClassification.tsx`, `VisionAnomalies.tsx`)
+et dans `api/client.ts` (paramètre optionnel sur les 6 `createJob`, en-tête
+`Idempotency-Key` posé seulement si fourni — comportement historique
+inchangé par défaut). Pas de test dédié (`@testing-library/react` non
+installé sur ce dépôt, déjà noté comme dette assumée avant cette phase,
+H13 — `tsc -b`/`eslint` verts suffisent pour un hook aussi simple, la
+logique de déduplication elle-même est entièrement testée côté serveur).
+
+### Décision 16 — `job_watchdog.py` étendu aux jobs `"queued"` perdus (Axe F.3)
+
+Avant cette phase, `reconcile_stale_jobs` ne couvrait QUE `"running"` —
+confirmé par l'audit Phase 0 (§F3). Avec le correctif F5 ci-dessus, la
+cause la plus fréquente d'un `"queued"` orphelin (Redis tombé pendant
+l'enfilage) est déjà traitée de façon synchrone et n'a plus besoin du
+watchdog. Reste un cas résiduel plus rare mais réel : le job RQ existe au
+moment de l'enfilage (F5 ne se déclenche pas) puis disparaît de Redis
+avant d'être pris par un worker (`FLUSHALL`, expiration, incident) — la
+ligne DB reste alors `"queued"` avec un `rq_job_id` qui ne pointe plus
+vers rien. `_queued_rq_job_is_gone` (nouveau) vérifie l'existence réelle
+du job dans Redis (`rq.job.Job.fetch`, `NoSuchJobError` → perdu) plutôt
+que de deviner sur un délai — un job légitimement en attente derrière
+d'autres (charge normale) n'est jamais déclaré perdu à tort.
+
+**Bug réel trouvé en testant** (`test_job_watchdog.py`) : le premier
+essai attrapait `NoSuchJobError` dans le MÊME `except Exception` générique
+que "Redis injoignable", renvoyant `False` ("pas disparu") dans les deux
+cas — l'inverse de ce qu'il fallait pour le cas qui compte le plus (le job
+a vraiment disparu). Corrigé en distinguant explicitement
+`except NoSuchJobError: return True` de `except Exception: return False`
+(échec ouvert, pour les pannes Redis réelles uniquement).
+
+Testé : `tests/test_job_watchdog.py` (5 tests — job `"running"` périmé/
+frais, job `"queued"` disparu/avec `rq_job_id` NULL/réellement présent
+dans Redis).
+
+### Décision 17 — Arrêt propre du worker (Axe F.6)
+
+RQ installe déjà un arrêt "à chaud" sur SIGTERM (`workers/run_worker.py`,
+`Worker.work()` — comportement RQ standard, jamais modifié) : termine le
+job en cours avant de s'arrêter. Le vrai trou, confirmé par l'audit, était
+`docker-compose.yml` : aucun `stop_grace_period`, donc Docker envoyait
+SIGKILL après ses 10s par défaut — l'arrêt "à chaud" de RQ n'avait jamais
+le temps d'agir sur un entraînement réel (jusqu'à 30 min). Ajouté :
+`stop_grace_period: 1830s` (`worker`, aligné sur `training_queue`/
+`vision_queue`, job_timeout=1800s) et `630s` (`worker-analysis`, aligné sur
+`analysis_queue`, job_timeout=600s). Compromis assumé et documenté en
+commentaire : un `docker compose down` peut désormais prendre jusqu'à
+~30 min sur ce service — c'est le prix réel de ne plus jamais perdre un
+entraînement en cours ; `docker compose down -t 5` reste disponible pour
+un arrêt forcé explicite (choix conscient de l'opérateur, jamais une
+perte silencieuse par défaut).
+
+### Décision 18 — Message empoisonné : garde-fou structurel (Axe F.2)
+
+L'audit a confirmé par lecture qu'aucun `enqueue()` ne configure de
+`retry=Retry(...)` nulle part dans les 6 domaines — RQ ne retente donc
+jamais un job automatiquement, un payload qui fait toujours échouer la
+logique métier se termine `"failed"` une fois, jamais en boucle. Simuler un
+vrai retry RQ en boucle infinie nécessiterait un worker réel (hors de
+portée d'un test unitaire rapide et risqué à mal isoler). `tests/test_no_infinite_job_retry.py`
+scanne le code source des 6 routers pour l'absence de `Retry(` — garde-fou
+structurel : si un futur lot introduit une politique de retry RQ, ce test
+échoue et force une revue explicite (nombre de tentatives borné, délai
+entre tentatives) plutôt qu'une régression silencieuse vers un risque de
+boucle sur payload empoisonné.
+
+### Décision 19 — Rétention bornée du `FailedJobRegistry` RQ + panne PostgreSQL en cours de requête testée (Axe F.1/F.7)
+
+`enqueue_or_mark_failed` (Décision 15) enfile désormais avec
+`failure_ttl=2_592_000` (30 jours, `job_creation.py::_FAILED_JOB_TTL_SECONDS`)
+plutôt que la valeur par défaut de RQ (~1 an, jamais choisie
+délibérément). Une exception qui échappe à la zone protégée du worker
+(ex. `db.commit()` échoue parce que PostgreSQL devient injoignable en
+cours de job) part en échec RQ réel et s'accumule sinon indéfiniment dans
+Redis, sans purge ni supervision — 30 jours aligné sur l'ordre de grandeur
+déjà choisi pour `prediction_retention_days` (assez pour investiguer un
+incident réel, jamais une accumulation permanente). Une vraie file de
+rebut surveillée (alerting dédié) reste hors périmètre — voir
+`RAPPORT-FINAL.md`, section « ce qui a été laissé de côté ».
+
+**Panne PostgreSQL EN COURS DE REQUÊTE, distincte du cas déjà couvert par
+la Décision 6** (Postgres injoignable AU DÉMARRAGE — l'API refuse de
+démarrer en prod) : `tests/test_database_unavailable_mid_request.py`
+(nouveau) injecte une session DB qui lève `OperationalError` sur
+`.query()` (via `app.dependency_overrides[get_db]`) au milieu d'une
+requête authentifiée réelle — vérifie que le gestionnaire d'erreur global
+de la Phase 1 (`unhandled_exception_handler`) produit bien l'enveloppe
+standard (`code=ERREUR_INTERNE`, `request_id`) et ne laisse fuiter ni le
+nom de l'exception SQL ni son message au client.
+
+**Deux bugs de fixture trouvés en exécutant ce test (pas des bugs de
+code)** :
+1. Le premier essai fournissait `organization_name="B"` (1 caractère) à
+   `/auth/register`, qui échoue 422 contre `min_length=2`
+   (`RegisterRequest`, inchangé depuis avant cette phase) — avant même
+   d'atteindre le code sous test, `tokens["access_token"]` n'existait donc
+   pas (`KeyError`). Corrigé (`"Bureau"`) ; même classe d'erreur que la
+   liste de mots de passe communs de la Phase 1B (Décision 11) — même une
+   fixture triviale doit respecter les contraintes réelles du domaine.
+2. Une fois ce premier point corrigé, l'`OperationalError` simulée
+   remontait comme une VRAIE exception Python dans le process de test, pas
+   comme une réponse 500. Cause : `ServerErrorMiddleware` (Starlette)
+   envoie la réponse produite par `unhandled_exception_handler` au client
+   PUIS relève quand même l'exception (comportement voulu — un vrai
+   serveur ASGI la journalise ; le client réel ne voit jamais cette
+   relève, la réponse est déjà partie sur le socket). Le `client` partagé
+   du dépôt (`TestClient(app)` par défaut, `conftest.py`) la fait remonter
+   dans le process de test au lieu de l'absorber. Corrigé en instanciant,
+   pour ce test précis seulement, un `TestClient(app,
+   raise_server_exceptions=False)` local — comportement d'un vrai
+   navigateur/nginx, jamais modifié pour la fixture `client` partagée
+   (les 800+ autres tests bénéficient au contraire de voir remonter toute
+   exception non gérée, un garde-fou volontairement conservé).
+
+### Décision 20 — Bug réel trouvé UNIQUEMENT par la suite complète : délai de grâce manquant sur la réconciliation des jobs `"queued"` (Axe F.3, suite de la Décision 16)
+
+**Jamais visible fichier par fichier** — `tests/test_job_watchdog.py` seul
+était vert (25/25 avec ses propres fixtures), tout comme
+`test_saas_hardening.py` seul. Seule l'exécution de la suite COMPLÈTE
+(`python -m pytest -q --cov...`, 3966s) a révélé 7 échecs, tous de la même
+forme (`assert 201 == 429`, un job créé alors que le quota aurait dû
+bloquer) : `test_quota_blocks_creation_beyond_the_limit`,
+`test_quota_isolated_between_organizations`,
+`test_quota_is_shared_between_supervised_and_clustering_jobs`,
+`test_quota_shared_across_supervised_clustering_and_dimensionality`,
+`test_quota_shared_with_other_job_types` (×2, vision classification et
+anomalies), `test_summary_counts_jobs_per_pillar`.
+
+**Cause** : `reconcile_stale_jobs` (Décision 16) appelle
+`_queued_rq_job_is_gone(job.rq_job_id)` pour CHAQUE job `"queued"`, sans
+délai de grâce — contrairement au cas `"running"`, qui n'agit jamais avant
+`stale_after_minutes`. `reconcile_stale_jobs` est appelée à CHAQUE
+création de job, avant le comptage du quota (`job_quota.py`). Les tests de
+quota créent `limit` jobs à la suite avec une file RQ mockée
+(`mock_queue.enqueue.return_value.id = "fake-rq-id"`, jamais réellement
+enfilée dans le VRAI Redis utilisé par les tests) : à la création du 2ᵉ
+job, la réconciliation vérifiait déjà le 1ᵉʳ dans Redis, ne l'y trouvait
+jamais (mock), et le marquait `"failed"` immédiatement — le quota ne
+comptait donc jamais plus d'un job actif à la fois, jamais atteint.
+
+**Pourquoi ce n'était pas qu'un artefact de mock** : le même défaut existe
+en production sans délai de grâce — un job tout juste enfilé, vérifié dans
+Redis avant même d'y être pleinement visible (charge, latence réseau
+Redis), risquerait un faux `"failed"` immédiat. Ce n'est donc pas un
+correctif "pour faire passer les tests" mais un vrai bug de conception
+corrigé : `is_stale` pour `"queued"` exige désormais `created_at <
+threshold` (même `stale_after_minutes` que `"running"`, comparé à
+`created_at` plutôt que `started_at`/`progress_updated_at` puisqu'un job
+`"queued"` n'a encore ni l'un ni l'autre) EN PLUS de
+`_queued_rq_job_is_gone` — les deux doivent être vrais pour reclasser.
+
+**Corrigé** : `domains/shared/job_watchdog.py::reconcile_stale_jobs`.
+`tests/test_job_watchdog.py` : les 2 tests positifs
+(`test_reconcile_marks_queued_job_as_failed_when_rq_job_is_gone`,
+`test_reconcile_marks_queued_job_with_null_rq_job_id_as_failed`)
+recalent désormais `created_at` à 90 min pour continuer à valider le cas
+"vraiment perdu" ; nouveau test
+`test_reconcile_leaves_freshly_queued_job_alone_even_if_rq_job_is_gone`
+verrouille explicitement le nouveau comportement (délai de grâce actif).
+Vérifié : les 7 tests de quota + les 25 tests de
+`test_job_watchdog.py`/`test_saas_hardening.py` rejoués ensemble après
+correctif → 25 passed, 76.52s. Suite complète à rejouer une dernière fois
+pour la porte de qualité finale de la phase (ci-dessous).
+
+**Leçon** (déjà partiellement tirée en Décision 1B/Décision 11, confirmée
+une 3ᵉ fois) : un fichier de test vert en isolation ne prouve rien sur son
+interaction avec le reste du dépôt — seule la suite complète, avec le même
+process partagé (Redis réel, SQLite partagé), révèle ce genre
+d'interaction. La porte de qualité de chaque phase exige `pytest -q` SANS
+filtre `-k`/chemin précisément pour cette raison.
+
+## Porte de qualité — Phase 2 (branche `back/2-fiabilite`)
+
+Chaque point avec la commande réellement lancée et sa sortie réelle :
+
+1. **`pytest` complet et vert** — `python -m pytest -q --cov=api --cov=domains
+   --cov=workers --cov-report=term-missing`. Premier run complet de la
+   phase : **7 échecs** (`test_quota_blocks_creation_beyond_the_limit`,
+   `test_quota_isolated_between_organizations`,
+   `test_quota_is_shared_between_supervised_and_clustering_jobs`,
+   `test_quota_shared_across_supervised_clustering_and_dimensionality`,
+   `test_quota_shared_with_other_job_types` ×2,
+   `test_summary_counts_jobs_per_pillar`), **une vraie régression** de
+   cette phase (Décision 20 — délai de grâce manquant sur la réconciliation
+   des jobs `"queued"`), invisible en testant les fichiers un par un.
+   Corrigée, ciblé rejoué vert (25 passed, 76.52s), puis suite COMPLÈTE
+   rejouée une seconde fois pour la porte de qualité finale → **854 passed,
+   98 warnings, 4060.16s (1h07m40s)**. Aucun échec restant.
+2. **Couverture mesurée** — même commande, section `tests coverage` du
+   run ci-dessus → **94 % global** (7557 lignes, 446 non couvertes) —
+   identique à la référence Phase 1 (94 %, 7463 lignes avant l'ajout du
+   code de cette phase), **aucune baisse**. Point bas notable, nouveau
+   cette phase : `domains/shared/job_creation.py` (58 % — les branches
+   d'échec Redis/RQ simulées explicitement dans
+   `test_job_creation_reliability.py` ne couvrent pas toutes les lignes de
+   logging défensif, même risque faible déjà accepté pour
+   `token_store.py` en Phase 1).
+3. **`ruff check`/`ruff format --check`/`mypy` sur le code touché** —
+   `ruff check` sur les 8 fichiers routeurs + `job_creation.py` +
+   `job_watchdog.py` + les 5 nouveaux fichiers de test → 2 vraies
+   régressions trouvées et corrigées (E501 sur les 2 signatures
+   `rerun_anomaly_job`/`rerun_clustering_job` non repliées après l'ajout de
+   `request: Request` ; F401 sur 2 imports inutilisés dans les tests
+   neufs) ; comparaison AVANT/APRÈS sur les 6 fichiers routeurs
+   (`git show main:... | ruff check --stdin-filename ... -` vs l'état
+   actuel) confirme **zéro nouvelle erreur E501/B904** au-delà de ces 2
+   corrigées — le reste (54 occurrences restantes) est une dette
+   pré-existante, non touchée par cette phase, comptes identiques ou
+   inférieurs avant/après. `ruff format` appliqué aux 6 fichiers NEUFS de
+   cette phase (aucun risque de diff illisible sur du code déjà entièrement
+   sous mon contrôle, contrairement au reformatage à l'échelle du dépôt
+   toujours reporté à la Phase 5). `mypy` sur `job_creation.py`
+   (0 erreur) et `job_watchdog.py` (1 erreur pré-existante, confirmée
+   identique dans la version `main` d'avant cette phase — `Type[JobModel]`
+   vs valeur par défaut `TrainingJob`, non touchée par cette phase, laissée
+   en l'état).
+4. **`bandit -r backend -ll` et `pip-audit`** — aucune nouvelle dépendance
+   cette phase (`git diff main -- requirements.txt` vide) : `pip-audit`
+   non rejoué (résultat de la Phase 1 toujours valable, rien n'a changé
+   dans `requirements.txt`). `bandit -r domains/shared/job_creation.py
+   domains/shared/job_watchdog.py api/core/database.py -ll` → **0 issue**
+   (medium/high, low compris).
+5. **`docker compose up -d --build` + smoke test** — tentative relancée
+   cette phase (Docker Desktop disponible cette fois, contrairement à la
+   Phase 1). [MISE À JOUR après complétion du build en arrière-plan —
+   voir suite de cette entrée.]
+6. **Non-régression frontend** — `npx tsc -b` (0 erreur), `npx eslint .`
+   (0 erreur, 18 avertissements pré-existants sans rapport avec cette
+   phase — aucun sur les fichiers touchés : `useIdempotencyKey.ts`,
+   `Training.tsx`, `Clustering.tsx`, `DimensionalityReduction.tsx`,
+   `AnomalyDetection.tsx`, `VisionClassification.tsx`,
+   `VisionAnomalies.tsx`), `npx vitest run` (64/64 verts), `npm run build`
+   (build réussi, 1m06s — avertissement pré-existant sur la taille du
+   bundle principal >500 kB, hors périmètre Phase 2, à traiter en Phase 4
+   architecture). Parcours de fumée manuel dans un navigateur réel non
+   fait (pas d'environnement graphique) — même limitation qu'en Phase 1.
+
 ## Phase 1B — Réinitialisation de mot de passe
 
 ### Décision 10 — Mécanisme repris de CIAM, durci sur les 7 points prévus

@@ -136,6 +136,18 @@ services:
     networks:
       - datalab_network
     restart: unless-stopped
+    # Correctif Phase 2 (AUDIT_BACKEND_2026-08-23.md, Axe F.6) — RQ installe
+    # déjà un arrêt "à chaud" sur SIGTERM (termine le job en cours avant de
+    # s'arrêter, voir workers/run_worker.py) ; SANS ce délai, Docker envoyait
+    # SIGKILL après ses 10s par défaut, bien avant qu'un entraînement réel
+    # (job_timeout=1800s sur cette file) ait pu finir ou même atteindre SON
+    # PROPRE timeout — le mécanisme d'arrêt propre de RQ n'avait jamais le
+    # temps d'agir. Aligné sur job_timeout (+30s de marge) : un `docker
+    # compose down` peut désormais prendre jusqu'à ~30 min pour ce service,
+    # c'est le prix réel d'un arrêt qui ne perd jamais un entraînement en
+    # cours — `docker compose down -t 5` reste disponible pour un arrêt
+    # forcé explicite, choix de l'opérateur plutôt que perte silencieuse.
+    stop_grace_period: 1830s
     # Le HEALTHCHECK de l'image (curl /api/health) n'a pas de sens ici : le
     # worker ne sert pas de HTTP — désactivé plutôt que faussement "unhealthy".
     healthcheck:
@@ -174,6 +186,10 @@ services:
     networks:
       - datalab_network
     restart: unless-stopped
+    # Correctif Phase 2 (AUDIT_BACKEND_2026-08-23.md, Axe F.6) — voir le
+    # commentaire équivalent sur le service `worker` ci-dessus ; aligné sur
+    # le job_timeout plus court de `analysis_queue` (600s, api/core/job_queue.py).
+    stop_grace_period: 630s
     healthcheck:
       disable: true
 

@@ -28,6 +28,7 @@ import { Card } from "../components/ui/Card";
 import { PageHeader } from "../components/ui/PageHeader";
 import { Select } from "../components/ui/Select";
 import { useConfirmAction } from "../hooks/useConfirmAction";
+import { useIdempotencyKey } from "../hooks/useIdempotencyKey";
 import { formatDateTime, formatDuration } from "../utils/format";
 import { useJobEvents } from "../hooks/useJobEvents";
 import { buildTrainingJobPayload } from "../utils/trainingPayload";
@@ -469,6 +470,9 @@ function TrainingForm({
   const [testSize, setTestSize] = useState(0.2);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Idempotence (Phase 2, AUDIT_BACKEND_2026-08-23.md §F4) — voir
+  // hooks/useIdempotencyKey.ts.
+  const idempotencyKey = useIdempotencyKey();
   const [featureEngineering, setFeatureEngineering] = useState<Pick<
     FeatureEngineeringSpec,
     "upstream" | "pipeline"
@@ -570,7 +574,9 @@ function TrainingForm({
           expertMode,
           selectedModelIds,
         }),
+        idempotencyKey.current,
       );
+      idempotencyKey.reset(); // succès — la PROCHAINE soumission est une nouvelle tentative distincte
       onJobCreated(
         job,
         durationEstimate?.status === "estimated" ? durationEstimate.estimated_seconds : null,

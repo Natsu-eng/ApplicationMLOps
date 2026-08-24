@@ -15,21 +15,22 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import joinedload
 
 from api.core.config import get_settings
 from api.core.database import SessionLocal, get_db
-from api.core.job_queue import analysis_queue
-from api.core.models import ClusterCandidateRecord, ClusterModel, ClusteringJob, Dataset, User
+from api.core.job_queue import analysis_queue, redis_conn
+from api.core.models import ClusterCandidateRecord, ClusteringJob, Dataset, User
 from api.core.pagination import paginate_by_id
 from domains.auth.router import get_current_user
-from domains.shared.audit import log_action
 from domains.clustering.services.inference import ClusterInferenceError, assign_cluster
 from domains.clustering.services.registry import CLUSTER_REGISTRY, DEFAULT_ALGORITHM_IDS
+from domains.shared.audit import log_action
 from domains.shared.dataset_io import DatasetParsingError, read_dataset_dataframe
+from domains.shared.job_creation import enqueue_or_mark_failed, remember_idempotent_job_id, resolve_idempotent_job_id
 from domains.shared.job_events import stream_job_updates
 from domains.shared.job_lifecycle import ACTIVE_STATUSES, CANCELLED_MESSAGE, try_cancel_rq_job
 from domains.shared.job_quota import ALL_JOB_MODELS, raise_if_quota_exceeded
@@ -185,9 +186,23 @@ def get_algorithms_catalog(current_user: User = Depends(get_current_user)):
 @router.post("/jobs", response_model=ClusteringJobSummary, status_code=status.HTTP_201_CREATED)
 def create_clustering_job(
     body: ClusteringJobCreate,
+    request: Request,
     current_user: User = Depends(get_current_user),
     db=Depends(get_db),
 ):
+    # Idempotence (Phase 2, AUDIT_BACKEND_2026-08-23.md §F4) — voir
+    # domains/training/router.py::create_training_job pour la justification
+    # complète, appliquée à l'identique ici.
+    existing_job_id = resolve_idempotent_job_id(redis_conn, current_user.organization_id, request)
+    if existing_job_id is not None:
+        existing = (
+            db.query(ClusteringJob)
+            .filter(ClusteringJob.id == existing_job_id, ClusteringJob.organization_id == current_user.organization_id)
+            .first()
+        )
+        if existing is not None:
+            return to_summary(existing)
+
     # Réconciliation des jobs orphelins (H2) — AVANT le comptage du quota,
     # même mécanisme que le supervisé (services/job_watchdog.py, généralisé
     # pour ce lot).
@@ -271,13 +286,11 @@ def create_clustering_job(
     db.add(job)
     db.commit()
     db.refresh(job)
+    remember_idempotent_job_id(redis_conn, current_user.organization_id, request, job.id)
 
     from domains.clustering.worker import run_clustering_job
 
-    rq_job = analysis_queue.enqueue(run_clustering_job, job.id, job_timeout=600)
-    job.rq_job_id = rq_job.id
-    db.commit()
-    db.refresh(job)
+    enqueue_or_mark_failed(db, job, analysis_queue, run_clustering_job, 600)
 
     return to_summary(job)
 
@@ -467,7 +480,9 @@ def cancel_clustering_job(job_id: int, current_user: User = Depends(get_current_
 
 
 @router.post("/jobs/{job_id}/rerun", response_model=ClusteringJobSummary, status_code=status.HTTP_201_CREATED)
-def rerun_clustering_job(job_id: int, current_user: User = Depends(get_current_user), db=Depends(get_db)):
+def rerun_clustering_job(
+    job_id: int, request: Request, current_user: User = Depends(get_current_user), db=Depends(get_db)
+):
     """Relance un clustering avec EXACTEMENT la même configuration (Lot 7,
     §J.2) — réutilise la validation complète de `POST /jobs`."""
     job = _get_org_job(job_id, current_user, db)
@@ -478,7 +493,10 @@ def rerun_clustering_job(job_id: int, current_user: User = Depends(get_current_u
         seed=config.get("seed"),
         algorithm_ids=config.get("algorithm_ids"),
     )
-    return create_clustering_job(body, current_user, db)
+    # Arguments nommés (Phase 2, AUDIT_BACKEND_2026-08-23.md) — voir
+    # domains/training/router.py::rerun_training_job pour le bug réel que
+    # cela corrige (désalignement positionnel silencieux).
+    return create_clustering_job(body=body, request=request, current_user=current_user, db=db)
 
 
 @router.delete("/jobs/{job_id}", status_code=status.HTTP_204_NO_CONTENT)

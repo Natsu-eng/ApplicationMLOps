@@ -38,6 +38,7 @@ import {
   StepperNav,
 } from "../components/vision/VisionWizard";
 import { useConfirmAction } from "../hooks/useConfirmAction";
+import { useIdempotencyKey } from "../hooks/useIdempotencyKey";
 import { CHART_GRID_STROKE, CHART_SERIES_COLORS, CHART_TICK_STYLE_SM, CHART_TOOLTIP_STYLE } from "../theme/charts";
 
 /** Étapes du wizard (Lot 6A) — parité avec VisionClassification.tsx : même
@@ -296,6 +297,8 @@ function AnomalyVisionForm({ onJobCreated }: { onJobCreated: (job: VisionAnomaly
   const [valRatio, setValRatio] = useState(0.15);
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  // Idempotence (Phase 2, AUDIT_BACKEND_2026-08-23.md §F4).
+  const idempotencyKey = useIdempotencyKey();
 
   const [activeStep, setActiveStep] = useState(1);
   const [maxReachedStep, setMaxReachedStep] = useState(1);
@@ -332,16 +335,20 @@ function AnomalyVisionForm({ onJobCreated }: { onJobCreated: (job: VisionAnomaly
     setError(null);
     setIsSubmitting(true);
     try {
-      const job = await api.visionAnomalies.createJob({
-        vision_dataset_id: datasetId,
-        model_id: modelId,
-        num_epochs: numEpochs,
-        batch_size: batchSize,
-        learning_rate: learningRate,
-        mask_percentile: maskPercentile,
-        augmentation_preset: augmentationPreset,
-        val_ratio: valRatio,
-      });
+      const job = await api.visionAnomalies.createJob(
+        {
+          vision_dataset_id: datasetId,
+          model_id: modelId,
+          num_epochs: numEpochs,
+          batch_size: batchSize,
+          learning_rate: learningRate,
+          mask_percentile: maskPercentile,
+          augmentation_preset: augmentationPreset,
+          val_ratio: valRatio,
+        },
+        idempotencyKey.current,
+      );
+      idempotencyKey.reset();
       onJobCreated(job);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Impossible de lancer l'entraînement");
