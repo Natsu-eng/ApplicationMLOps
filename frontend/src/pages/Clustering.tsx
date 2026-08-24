@@ -44,6 +44,7 @@ import { ModelExportActions } from "../components/ui/ModelExportActions";
 import { DataQualityWarnings } from "../components/training/DataQualityWarnings";
 import { useJobEvents } from "../hooks/useJobEvents";
 import { useConfirmAction } from "../hooks/useConfirmAction";
+import { useIdempotencyKey } from "../hooks/useIdempotencyKey";
 import { CHART_SERIES_COLORS } from "../theme/charts";
 import {
   assessSilhouetteQuality,
@@ -307,6 +308,8 @@ function ClusteringForm({
   const [selectedFeatures, setSelectedFeatures] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  // Idempotence (Phase 2, AUDIT_BACKEND_2026-08-23.md §F4).
+  const idempotencyKey = useIdempotencyKey();
 
   async function handleDatasetChange(id: string) {
     setError(null);
@@ -353,10 +356,14 @@ function ClusteringForm({
     setError(null);
     setIsSubmitting(true);
     try {
-      const job = await api.clustering.createJob({
-        dataset_id: datasetId,
-        feature_columns: Array.from(selectedFeatures),
-      });
+      const job = await api.clustering.createJob(
+        {
+          dataset_id: datasetId,
+          feature_columns: Array.from(selectedFeatures),
+        },
+        idempotencyKey.current,
+      );
+      idempotencyKey.reset();
       onJobCreated(job);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Impossible de lancer le clustering");

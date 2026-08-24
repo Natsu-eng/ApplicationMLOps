@@ -34,6 +34,7 @@ import { Table, type TableColumn } from "../components/ui/Table";
 import { Tabs } from "../components/ui/Tabs";
 import { ModelExportActions } from "../components/ui/ModelExportActions";
 import { useConfirmAction } from "../hooks/useConfirmAction";
+import { useIdempotencyKey } from "../hooks/useIdempotencyKey";
 import { CHART_GRID_STROKE, CHART_SERIES_COLORS, CHART_TICK_STYLE, CHART_TOOLTIP_STYLE } from "../theme/charts";
 import { binIndexForValue, computeQuantileEdges, formatBinLabel } from "../utils/quantileBins";
 import { DataQualityWarnings } from "../components/training/DataQualityWarnings";
@@ -305,6 +306,8 @@ function DimensionalityForm({
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [prefillApplied, setPrefillApplied] = useState(false);
+  // Idempotence (Phase 2, AUDIT_BACKEND_2026-08-23.md §F4).
+  const idempotencyKey = useIdempotencyKey();
 
   useEffect(() => {
     api.dimensionality
@@ -373,11 +376,15 @@ function DimensionalityForm({
     setError(null);
     setIsSubmitting(true);
     try {
-      const job = await api.dimensionality.createJob({
-        dataset_id: datasetId,
-        feature_columns: Array.from(selectedFeatures),
-        algorithm_id: algorithmId,
-      });
+      const job = await api.dimensionality.createJob(
+        {
+          dataset_id: datasetId,
+          feature_columns: Array.from(selectedFeatures),
+          algorithm_id: algorithmId,
+        },
+        idempotencyKey.current,
+      );
+      idempotencyKey.reset();
       onJobCreated(job);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Impossible de lancer le calcul");

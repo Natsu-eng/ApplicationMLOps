@@ -54,10 +54,36 @@ if _is_sqlite:
     if _sqlite_path not in ("", ":memory:"):
         Path(_sqlite_path).resolve().parent.mkdir(parents=True, exist_ok=True)
 
+# Correctif Phase 2 (AUDIT_BACKEND_2026-08-23.md, Axe F.8/F.7) — deux trous
+# jamais comblés avant cette phase :
+# - Pool non dimensionné (défauts SQLAlchemy 5+10=15) face à la topologie
+#   réelle : 2 workers gunicorn (chacun jusqu'à 40 requêtes bloquantes
+#   simultanées via le threadpool AnyIO) + jusqu'à 3 process RQ
+#   (`worker`×2, `worker-analysis`×1, docker-compose.yml). Un pool trop
+#   petit relativement au parallélisme HTTP réel fait attendre les requêtes
+#   `pool_timeout` (30s par défaut) avant un `TimeoutError` sous charge.
+#   `pool_size`/`max_overflow` explicites, dimensionnés pour ce process
+#   (chaque process a SON propre moteur/pool — le total ci-dessous est par
+#   process, pas partagé) : reste sous le `max_connections=100` de
+#   `postgres:15-alpine` même au scaling documenté dans docker-compose.yml
+#   (`--scale worker=3 --scale worker-analysis=2`).
+# - Aucun `statement_timeout` : une requête bloquée (verrou, scan complet)
+#   pouvait occuper une connexion indéfiniment, aggravant l'épuisement du
+#   pool ci-dessus. 30s : largement au-dessus de toute requête CRUD/agrégation
+#   légitime de ce projet (aucun calcul ML ne passe par SQL — tout est fait
+#   côté Python après lecture), assez court pour libérer une connexion
+#   bloquée avant qu'elle n'affame les autres requêtes.
+_STATEMENT_TIMEOUT_MS = 30_000
+
 engine = create_engine(
     _db_url,
-    connect_args={"check_same_thread": False} if _is_sqlite else {},
+    connect_args=(
+        {"check_same_thread": False}
+        if _is_sqlite
+        else {"options": f"-c statement_timeout={_STATEMENT_TIMEOUT_MS}"}
+    ),
     pool_pre_ping=not _is_sqlite,
+    **({} if _is_sqlite else {"pool_size": 10, "max_overflow": 5}),
 )
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 

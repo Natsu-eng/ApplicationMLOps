@@ -27,6 +27,7 @@ import { Table, type TableColumn } from "../components/ui/Table";
 import { Tabs } from "../components/ui/Tabs";
 import { ModelExportActions } from "../components/ui/ModelExportActions";
 import { useConfirmAction } from "../hooks/useConfirmAction";
+import { useIdempotencyKey } from "../hooks/useIdempotencyKey";
 import { CHART_COLOR_PRIMARY, CHART_GRID_STROKE, CHART_TICK_STYLE_SM, CHART_TOOLTIP_STYLE } from "../theme/charts";
 import { DataQualityWarnings } from "../components/training/DataQualityWarnings";
 import { useJobEvents } from "../hooks/useJobEvents";
@@ -325,6 +326,8 @@ function AnomalyForm({
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [prefillApplied, setPrefillApplied] = useState(false);
+  // Idempotence (Phase 2, AUDIT_BACKEND_2026-08-23.md §F4).
+  const idempotencyKey = useIdempotencyKey();
 
   const handleDatasetChange = useCallback(async (id: string, preselect?: Set<string>) => {
     setError(null);
@@ -382,12 +385,16 @@ function AnomalyForm({
     setError(null);
     setIsSubmitting(true);
     try {
-      const job = await api.anomalies.createJob({
-        dataset_id: datasetId,
-        feature_columns: Array.from(selectedFeatures),
-        top_n: topN,
-        contamination: contaminationPct !== null ? contaminationPct / 100 : undefined,
-      });
+      const job = await api.anomalies.createJob(
+        {
+          dataset_id: datasetId,
+          feature_columns: Array.from(selectedFeatures),
+          top_n: topN,
+          contamination: contaminationPct !== null ? contaminationPct / 100 : undefined,
+        },
+        idempotencyKey.current,
+      );
+      idempotencyKey.reset();
       onJobCreated(job);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Impossible de lancer la détection");

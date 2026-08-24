@@ -16,20 +16,21 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import joinedload
 
 from api.core.config import get_settings
 from api.core.database import SessionLocal, get_db
-from api.core.job_queue import analysis_queue
+from api.core.job_queue import analysis_queue, redis_conn
 from api.core.models import AnomalyJob, AnomalyObservationRecord, Dataset, User
 from api.core.pagination import paginate_by_id
-from domains.auth.router import get_current_user
 from domains.anomalies.services.engine import DEFAULT_TOP_N, MAX_TOP_N
+from domains.auth.router import get_current_user
 from domains.shared.audit import log_action
 from domains.shared.dataset_io import DatasetParsingError, read_dataset_dataframe
+from domains.shared.job_creation import enqueue_or_mark_failed, remember_idempotent_job_id, resolve_idempotent_job_id
 from domains.shared.job_events import stream_job_updates
 from domains.shared.job_lifecycle import ACTIVE_STATUSES, CANCELLED_MESSAGE, try_cancel_rq_job
 from domains.shared.job_quota import ALL_JOB_MODELS, raise_if_quota_exceeded
@@ -141,9 +142,22 @@ def to_summary(job: AnomalyJob) -> AnomalyJobSummary:
 @router.post("/jobs", response_model=AnomalyJobSummary, status_code=status.HTTP_201_CREATED)
 def create_anomaly_job(
     body: AnomalyJobCreate,
+    request: Request,
     current_user: User = Depends(get_current_user),
     db=Depends(get_db),
 ):
+    # Idempotence (Phase 2, AUDIT_BACKEND_2026-08-23.md §F4) — voir
+    # domains/training/router.py::create_training_job pour la justification.
+    existing_job_id = resolve_idempotent_job_id(redis_conn, current_user.organization_id, request)
+    if existing_job_id is not None:
+        existing = (
+            db.query(AnomalyJob)
+            .filter(AnomalyJob.id == existing_job_id, AnomalyJob.organization_id == current_user.organization_id)
+            .first()
+        )
+        if existing is not None:
+            return to_summary(existing)
+
     reconcile_stale_jobs(db, current_user.organization_id, _settings.stale_job_timeout_minutes, model=AnomalyJob)
 
     raise_if_quota_exceeded(
@@ -207,13 +221,11 @@ def create_anomaly_job(
     db.add(job)
     db.commit()
     db.refresh(job)
+    remember_idempotent_job_id(redis_conn, current_user.organization_id, request, job.id)
 
     from domains.anomalies.worker import run_anomaly_job
 
-    rq_job = analysis_queue.enqueue(run_anomaly_job, job.id, job_timeout=600)
-    job.rq_job_id = rq_job.id
-    db.commit()
-    db.refresh(job)
+    enqueue_or_mark_failed(db, job, analysis_queue, run_anomaly_job, 600)
 
     return to_summary(job)
 
@@ -377,7 +389,9 @@ def cancel_anomaly_job(job_id: int, current_user: User = Depends(get_current_use
 
 
 @router.post("/jobs/{job_id}/rerun", response_model=AnomalyJobSummary, status_code=status.HTTP_201_CREATED)
-def rerun_anomaly_job(job_id: int, current_user: User = Depends(get_current_user), db=Depends(get_db)):
+def rerun_anomaly_job(
+    job_id: int, request: Request, current_user: User = Depends(get_current_user), db=Depends(get_db)
+):
     """Relance une détection d'anomalies avec EXACTEMENT la même
     configuration (Lot 7, §J.2) — réutilise la validation complète de
     `POST /jobs`."""
@@ -391,7 +405,10 @@ def rerun_anomaly_job(job_id: int, current_user: User = Depends(get_current_user
         seed=config.get("seed"),
         contamination=contamination if isinstance(contamination, (int, float)) else None,
     )
-    return create_anomaly_job(body, current_user, db)
+    # Arguments nommés (Phase 2, AUDIT_BACKEND_2026-08-23.md) — voir
+    # domains/training/router.py::rerun_training_job pour le bug réel que
+    # cela corrige.
+    return create_anomaly_job(body=body, request=request, current_user=current_user, db=db)
 
 
 @router.delete("/jobs/{job_id}", status_code=status.HTTP_204_NO_CONTENT)

@@ -13,31 +13,32 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session, joinedload
 
 from api.core.config import get_settings
 from api.core.database import SessionLocal, get_db
-from api.core.job_queue import training_queue
+from api.core.job_queue import redis_conn, training_queue
 from api.core.models import AuditLog, Dataset, MLModel, ModelCandidate, Prediction, TrainingJob, User
 from api.core.pagination import paginate_by_id
 from domains.auth.router import get_current_user
 from domains.shared.audit import log_action
 from domains.shared.dataset_io import DatasetParsingError, read_dataset_dataframe
 from domains.shared.feature_engineering import CURRENT_SPEC_VERSION
-from domains.shared.job_quota import ALL_JOB_MODELS, raise_if_quota_exceeded
-from domains.shared.job_watchdog import reconcile_stale_jobs
-from domains.training.services.inference import predict_one
-from domains.shared.model_bundle import InferenceError, load_bundle
-from domains.training.services.prediction_retention import purge_old_predictions
-from domains.training.services.registry import MODEL_REGISTRY
-from domains.training.services.duration_estimate import estimate_training_duration
+from domains.shared.job_creation import enqueue_or_mark_failed, remember_idempotent_job_id, resolve_idempotent_job_id
 from domains.shared.job_events import stream_job_updates
 from domains.shared.job_lifecycle import ACTIVE_STATUSES, CANCELLED_MESSAGE, try_cancel_rq_job
+from domains.shared.job_quota import ALL_JOB_MODELS, raise_if_quota_exceeded
+from domains.shared.job_watchdog import reconcile_stale_jobs
 from domains.shared.ml_task import detect_task_type
+from domains.shared.model_bundle import InferenceError, load_bundle
+from domains.training.services.duration_estimate import estimate_training_duration
 from domains.training.services.engine import selection_metric_label
+from domains.training.services.inference import predict_one
+from domains.training.services.prediction_retention import purge_old_predictions
+from domains.training.services.registry import MODEL_REGISTRY
 from domains.training.services.verdict import compute_verdict
 
 _KNOWN_UPSTREAM_TYPES = {"datetime_decompose", "ratio", "numeric_coerce"}
@@ -519,9 +520,27 @@ def get_duration_estimate(
 @router.post("/jobs", response_model=TrainingJobSummary, status_code=status.HTTP_201_CREATED)
 def create_training_job(
     body: TrainingJobCreate,
+    request: Request,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    # Idempotence (Phase 2, AUDIT_BACKEND_2026-08-23.md §F4) — un double-clic
+    # ou une requête retentée après un timeout réseau (le serveur avait
+    # pourtant déjà traité la première) créait deux jobs identiques,
+    # consommant deux fois le quota. `Idempotency-Key` optionnel, fourni par
+    # le client (frontend/src/api/client.ts) : si déjà vue pour cette
+    # organisation, renvoie le job déjà créé plutôt que d'en créer un
+    # nouveau.
+    existing_job_id = resolve_idempotent_job_id(redis_conn, current_user.organization_id, request)
+    if existing_job_id is not None:
+        existing = (
+            db.query(TrainingJob)
+            .filter(TrainingJob.id == existing_job_id, TrainingJob.organization_id == current_user.organization_id)
+            .first()
+        )
+        if existing is not None:
+            return to_summary(existing)
+
     # Réconciliation des jobs orphelins (H2, AUDIT_ROADMAP.md) — AVANT le
     # comptage du quota ci-dessous : un job "running" dont le worker a
     # crashé ne doit jamais bloquer indéfiniment un slot de quota.
@@ -647,13 +666,13 @@ def create_training_job(
     db.add(job)
     db.commit()
     db.refresh(job)
+    remember_idempotent_job_id(redis_conn, current_user.organization_id, request, job.id)
 
     from domains.training.worker import run_training_job
 
-    rq_job = training_queue.enqueue(run_training_job, job.id, job_timeout=1800)
-    job.rq_job_id = rq_job.id
-    db.commit()
-    db.refresh(job)
+    # F5 — n'enfile jamais un job qui resterait "queued" pour toujours si
+    # Redis tombe à cet instant précis (voir domains/shared/job_creation.py).
+    enqueue_or_mark_failed(db, job, training_queue, run_training_job, 1800)
 
     return to_summary(job)
 
@@ -1234,7 +1253,9 @@ def cancel_training_job(job_id: int, current_user: User = Depends(get_current_us
 
 
 @router.post("/jobs/{job_id}/rerun", response_model=TrainingJobSummary, status_code=status.HTTP_201_CREATED)
-def rerun_training_job(job_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+def rerun_training_job(
+    job_id: int, request: Request, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)
+):
     """Relance un entraînement avec EXACTEMENT la même configuration (Lot 7,
     §J.2) — le geste le plus fréquent en pratique, jusqu'ici impossible sans
     tout ressaisir. Reconstruit le corps de `POST /jobs` depuis le job
@@ -1259,7 +1280,15 @@ def rerun_training_job(job_id: int, current_user: User = Depends(get_current_use
         feature_engineering=FeatureEngineeringConfig(upstream=fe["upstream"], pipeline=fe["pipeline"]) if fe else None,
         class_rebalancing=config.get("class_rebalancing", False),
     )
-    return create_training_job(body, current_user, db)
+    # Bug réel trouvé en testant (Phase 2, AUDIT_BACKEND_2026-08-23.md) —
+    # `create_training_job` a gagné un paramètre `request` en Phase 2
+    # (idempotence) ; cet appel direct (pas une vraie requête HTTP, un
+    # simple appel Python réutilisant la validation complète) le construisait
+    # positionnellement et s'est silencieusement désaligné. Arguments
+    # nommés désormais, pour qu'un futur paramètre ajouté à
+    # `create_training_job` ne puisse plus jamais se glisser au mauvais
+    # endroit ici.
+    return create_training_job(body=body, request=request, current_user=current_user, db=db)
 
 
 @router.delete("/jobs/{job_id}", status_code=status.HTTP_204_NO_CONTENT)

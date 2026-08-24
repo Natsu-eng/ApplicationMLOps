@@ -21,6 +21,19 @@ export function apiUrl(path: string): string {
   return `${BASE_URL}${API_PREFIX}${path}`;
 }
 
+/** Idempotence de création de job (Phase 2, AUDIT_BACKEND_2026-08-23.md
+ * §F4) — un double-clic ou une requête retentée après un timeout réseau ne
+ * doit jamais créer deux jobs identiques. Le composant appelant génère la
+ * clé UNE fois par tentative de soumission (voir
+ * `hooks/useIdempotencyKey.ts`) et la réutilise tant que la tentative n'a
+ * pas abouti — jamais générée ici, qui serait rappelé à chaque fetch et
+ * annulerait la protection. `undefined` = pas de déduplication demandée
+ * (comportement historique, toujours valide pour les appels qui n'en ont
+ * pas besoin). */
+function idempotencyKeyHeader(key?: string): Record<string, string> | undefined {
+  return key ? { "Idempotency-Key": key } : undefined;
+}
+
 const TOKEN_KEY = "datalab_token";
 // Jeton de rafraîchissement (Phase 1, AUDIT_BACKEND_2026-08-23.md §A.1) —
 // le jeton d'accès est volontairement court (20 min côté backend,
@@ -1414,10 +1427,11 @@ export const api = {
   },
 
   training: {
-    createJob: (data: TrainingJobCreatePayload) =>
+    createJob: (data: TrainingJobCreatePayload, idempotencyKey?: string) =>
       request<TrainingJobSummary>("/training/jobs", {
         method: "POST",
         body: JSON.stringify(data),
+        headers: idempotencyKeyHeader(idempotencyKey),
       }),
     modelsCatalog: () => request<{ models: ModelCatalogEntry[] }>("/training/models-catalog"),
     estimateDuration: (datasetId: number, nModels: number, optunaTrials: number, cvFolds: number) =>
@@ -1453,10 +1467,11 @@ export const api = {
 
   clustering: {
     algorithmsCatalog: () => request<{ algorithms: AlgorithmCatalogEntry[] }>("/clustering/algorithms-catalog"),
-    createJob: (data: ClusteringJobCreatePayload) =>
+    createJob: (data: ClusteringJobCreatePayload, idempotencyKey?: string) =>
       request<ClusteringJobSummary>("/clustering/jobs", {
         method: "POST",
         body: JSON.stringify(data),
+        headers: idempotencyKeyHeader(idempotencyKey),
       }),
     listJobs: () => request<ClusteringJobSummary[]>("/clustering/jobs"),
     getJob: (id: number) => request<ClusteringJobSummary>(`/clustering/jobs/${id}`),
@@ -1475,10 +1490,11 @@ export const api = {
 
   dimensionality: {
     algorithmsCatalog: () => request<{ algorithms: AlgorithmCatalogEntry[] }>("/dimensionality/algorithms-catalog"),
-    createJob: (data: DimensionalityJobCreatePayload) =>
+    createJob: (data: DimensionalityJobCreatePayload, idempotencyKey?: string) =>
       request<DimensionalityJobSummary>("/dimensionality/jobs", {
         method: "POST",
         body: JSON.stringify(data),
+        headers: idempotencyKeyHeader(idempotencyKey),
       }),
     listJobs: () => request<DimensionalityJobSummary[]>("/dimensionality/jobs"),
     getJob: (id: number) => request<DimensionalityJobSummary>(`/dimensionality/jobs/${id}`),
@@ -1493,10 +1509,11 @@ export const api = {
   },
 
   anomalies: {
-    createJob: (data: AnomalyJobCreatePayload) =>
+    createJob: (data: AnomalyJobCreatePayload, idempotencyKey?: string) =>
       request<AnomalyJobSummary>("/anomalies/jobs", {
         method: "POST",
         body: JSON.stringify(data),
+        headers: idempotencyKeyHeader(idempotencyKey),
       }),
     listJobs: () => request<AnomalyJobSummary[]>("/anomalies/jobs"),
     getJob: (id: number) => request<AnomalyJobSummary>(`/anomalies/jobs/${id}`),
@@ -1528,10 +1545,11 @@ export const api = {
 
   visionClassification: {
     backbones: () => request<VisionBackbone[]>("/vision/classification/backbones"),
-    createJob: (data: VisionClassificationJobCreatePayload) =>
+    createJob: (data: VisionClassificationJobCreatePayload, idempotencyKey?: string) =>
       request<VisionClassificationJobSummary>("/vision/classification/jobs", {
         method: "POST",
         body: JSON.stringify(data),
+        headers: idempotencyKeyHeader(idempotencyKey),
       }),
     listJobs: () => request<VisionClassificationJobSummary[]>("/vision/classification/jobs"),
     getJob: (id: number) => request<VisionClassificationJobSummary>(`/vision/classification/jobs/${id}`),
@@ -1553,10 +1571,11 @@ export const api = {
 
   visionAnomalies: {
     models: () => request<VisionAnomalyModelOption[]>("/vision/anomalies/models"),
-    createJob: (data: VisionAnomalyJobCreatePayload) =>
+    createJob: (data: VisionAnomalyJobCreatePayload, idempotencyKey?: string) =>
       request<VisionAnomalyJobSummary>("/vision/anomalies/jobs", {
         method: "POST",
         body: JSON.stringify(data),
+        headers: idempotencyKeyHeader(idempotencyKey),
       }),
     listJobs: () => request<VisionAnomalyJobSummary[]>("/vision/anomalies/jobs"),
     getJob: (id: number) => request<VisionAnomalyJobSummary>(`/vision/anomalies/jobs/${id}`),

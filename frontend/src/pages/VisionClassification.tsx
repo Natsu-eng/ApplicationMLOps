@@ -53,6 +53,7 @@ import {
   StepperNav,
 } from "../components/vision/VisionWizard";
 import { useConfirmAction } from "../hooks/useConfirmAction";
+import { useIdempotencyKey } from "../hooks/useIdempotencyKey";
 import { CHART_GRID_STROKE, CHART_SERIES_COLORS, CHART_TICK_STYLE_SM, CHART_TOOLTIP_STYLE } from "../theme/charts";
 
 /** Étapes du wizard horizontal (Lot 6A, correctif I10) — porte le pattern
@@ -319,6 +320,8 @@ function ClassificationForm({ onJobCreated }: { onJobCreated: (job: VisionClassi
 
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  // Idempotence (Phase 2, AUDIT_BACKEND_2026-08-23.md §F4).
+  const idempotencyKey = useIdempotencyKey();
 
   const [activeStep, setActiveStep] = useState(1);
   const [maxReachedStep, setMaxReachedStep] = useState(1);
@@ -363,22 +366,26 @@ function ClassificationForm({ onJobCreated }: { onJobCreated: (job: VisionClassi
     setError(null);
     setIsSubmitting(true);
     try {
-      const job = await api.visionClassification.createJob({
-        vision_dataset_id: datasetId,
-        backbone_id: backboneId,
-        num_epochs: numEpochs,
-        batch_size: batchSize,
-        learning_rate: learningRate,
-        dropout_rate: dropoutRate,
-        freeze_backbone: freezeBackbone,
-        unfreeze_after_epoch: unfreezeAfterEpoch === "" ? null : unfreezeAfterEpoch,
-        class_weighting: classWeighting,
-        early_stopping_patience: earlyStoppingPatience === "" ? null : earlyStoppingPatience,
-        use_lr_scheduler: useLrScheduler,
-        augmentation_preset: augmentationPreset,
-        val_ratio: valRatio,
-        test_ratio: testRatio,
-      });
+      const job = await api.visionClassification.createJob(
+        {
+          vision_dataset_id: datasetId,
+          backbone_id: backboneId,
+          num_epochs: numEpochs,
+          batch_size: batchSize,
+          learning_rate: learningRate,
+          dropout_rate: dropoutRate,
+          freeze_backbone: freezeBackbone,
+          unfreeze_after_epoch: unfreezeAfterEpoch === "" ? null : unfreezeAfterEpoch,
+          class_weighting: classWeighting,
+          early_stopping_patience: earlyStoppingPatience === "" ? null : earlyStoppingPatience,
+          use_lr_scheduler: useLrScheduler,
+          augmentation_preset: augmentationPreset,
+          val_ratio: valRatio,
+          test_ratio: testRatio,
+        },
+        idempotencyKey.current,
+      );
+      idempotencyKey.reset();
       onJobCreated(job);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Impossible de lancer l'entraînement");
