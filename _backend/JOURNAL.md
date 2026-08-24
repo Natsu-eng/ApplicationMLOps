@@ -1353,3 +1353,26 @@ reportée avec sa méthode déjà identifiée (pas seulement « à refaire »).
 Aucune branche `back/7-*` fusionnée (rien à committer — le seul
 changement local, `backend/services/__pycache__/`, n'est pas suivi par
 git, sans effet sur le dépôt).
+
+## Phase 8 — Rapport final
+
+`RAPPORT-FINAL.md` (nouveau, racine de `_backend/`) — synthèse des 8
+phases : trouvé/corrigé/mesuré avec chiffres avant/après, décisions
+solo numérotées avec leur raison, ce qui a été délibérément laissé de
+côté (vérifié contre le code), ce qui a été approximé, travail restant
+classé par sévérité (aucun 🔴, 3 🟠, 5 🟡, 3 🔵), ce qui n'a pas pu être
+vérifié. Aucune section vide — chacune contient des éléments concrets,
+vérifiables, avec référence à la décision/commande source dans ce
+journal.
+
+**Bilan chiffré du chantier complet** : 8 phases, 30 décisions numérotées,
+12 bugs réels trouvés en exécutant (jamais en relisant) le code, suite
+backend passée de ~525 tests jamais mesurés en couverture à 863 tests
+avec un gate de couverture à 94 % en CI, suite frontend de 64 à 68 tests,
+CI durcie de 2 jobs (backend, frontend) + 1 smoke test à 5 jobs (+
+secret-scan, migration-on-populated-db, + pip-audit/bandit/Trivy/SBOM
+intégrés). Aucune régression fonctionnelle introduite (vérifié par la
+porte de qualité de chaque phase, jamais supposé) ; 2 bugs de déploiement
+critiques préexistants corrigés (Dockerfile — `domains/` puis
+`alembic.ini`/`alembic/`), tous deux invisibles avant ce chantier faute
+d'un smoke test Docker exécuté systématiquement.
