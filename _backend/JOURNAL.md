@@ -1058,3 +1058,177 @@ committer) :
 5. Modernisation SQLAlchemy/Pydantic (idiomes `Mapped`/`mapped_column`
    déjà utilisés partout depuis le début — à vérifier s'il reste des
    `Column`/`declarative_base()` legacy ; Pydantic v2 déjà en place).
+
+## Phase 5 — Supply chain / CI
+
+### Décision 26 — Bug réel trouvé en revue Dockerfile : `alembic.ini`/`alembic/` jamais copiés (Axe J)
+
+**Le bug le plus sévère trouvé depuis la Décision 1** (Phase 1,
+`domains/` jamais copié) — et MASQUÉ par lui jusqu'à cette phase.
+`api/core/database.py::init_db()` (appelée par `api/main.py::lifespan` à
+CHAQUE démarrage) appelle `run_migrations()`, qui a besoin de
+`alembic.ini` + `alembic/` (`env.py`, `versions/*.py`) — ni l'un ni
+l'autre n'était copié dans `backend/Dockerfile`. Avant la Décision 1,
+l'image ne démarrait même pas (`ModuleNotFoundError` sur `domains`) : ce
+second bug n'était jamais atteint. Une fois la Décision 1 corrigée
+(Phase 1), l'image démarre — et rencontre CE bug : `lifespan()` capture
+l'exception dans un `try/except` qui journalise et démarre quand même en
+mode dégradé (comportement voulu pour une panne DB transitoire, PAS pour
+un fichier structurellement absent de l'image) — **en production, aucune
+migration n'aurait jamais été appliquée, silencieusement, à chaque
+déploiement**, jusqu'à ce que quelqu'un remarque qu'une table/colonne
+récente n'existe pas.
+
+**Trouvé comment** : revue du Dockerfile pendant la préparation du
+container-hardening de cette phase — pas par hasard, par la même
+discipline que la Décision 1 (vérifier ce qu'un `COPY` inclut RÉELLEMENT
+contre ce que le code exécuté au démarrage requiert RÉELLEMENT).
+
+**Corrigé** : `COPY alembic.ini .` + `COPY alembic/ ./alembic/` ajoutés.
+**Vérifié par simulation** (Docker Desktop indisponible sur ce poste au
+moment du correctif — même limitation que la Décision 1, mêmes
+techniques de preuve) : reproduction exacte de l'ancien jeu de fichiers
+copiés (`api/`, `domains/`, `workers/`, sans `alembic.ini`/`alembic/`)
+dans un répertoire temporaire, `init_db()` appelée avec ce jeu →
+`alembic.util.exc.CommandError: Path doesn't exist: .../alembic` —
+confirme le bug tel que diagnostiqué. Avec le jeu corrigé (+ `alembic.ini`/
+`alembic/`) → `init_db()` réussit, les 11 migrations s'appliquent. **Bug
+plus sévère que la Décision 1** : celui-là empêchait totalement le
+démarrage (visible immédiatement, alerte évidente) ; celui-ci laisse
+l'API démarrer et RÉPONDRE (`GET /api/health` → 200, `"database": "up"`
+même — la connexion fonctionne, seul le schéma n'est jamais mis à jour)
+— silencieux jusqu'à ce qu'un endpoint touche une colonne manquante.
+
+**Garde-fou ajouté** — `tests/test_dockerfile_copies_required_files.py`
+(nouveau) : vérifie par lecture directe du texte du Dockerfile que les 3
+lignes `COPY` critiques (`domains/`, `alembic.ini`, `alembic/`) sont
+présentes — n'empêchera plus jamais ce type de régression de passer
+inaperçu, quelle que soit la cause (refactor du Dockerfile, copier-coller
+malheureux).
+
+### Décision 27 — CI durcie : pip-audit, bandit, secrets, couverture-gate, scan d'image, SBOM, migration sur base peuplée (Axe J)
+
+`.github/workflows/ci.yml` — 5 ajouts, aucun nouvel outil sans
+justification (principe du mandat) :
+
+1. **`--cov-fail-under=94`** sur le step `pytest` existant — la référence
+   94 % établie en Phase 1 et maintenue stable 3 phases de suite devient
+   désormais un GATE, pas seulement un chiffre suivi manuellement dans ce
+   journal. Une régression de couverture fait échouer la CI.
+2. **`pip-audit`** (nouveau step, job `backend`) — jamais lancé en CI
+   avant cette phase (seulement en local, à la demande). Les 6
+   vulnérabilités déjà évaluées individuellement en Phase 1 (Décision «
+   porte de qualité », point 4 — `python-dotenv` symlink jamais utilisé,
+   `pyarrow` R-only, `scikit-learn` TfidfVectorizer jamais utilisé,
+   `lightgbm` RCE via désérialisation non fiable jamais exposée,
+   `pytest` dev-only, `ecdsa` jamais utilisé — HS256 exclusivement) sont
+   ignorées explicitement PAR IDENTIFIANT (`--ignore-vuln PYSEC-...`),
+   jamais par nom de paquet (empêcherait de détecter une NOUVELLE
+   vulnérabilité sur le même paquet) — toute autre vulnérabilité fait
+   échouer la CI.
+3. **`bandit -r api domains -ll`** (nouveau step, job `backend`) — même
+   commande que celle déjà utilisée en local à chaque phase précédente,
+   jamais automatisée jusqu'ici.
+4. **`secret-scan`** (nouveau job, `gitleaks/gitleaks-action@v2`) —
+   `fetch-depth: 0` (tout l'historique git, pas seulement HEAD) : un
+   secret commité puis retiré dans un commit suivant reste exploitable
+   par quiconque clone le dépôt, un scan du seul HEAD le manquerait.
+5. **`migration-on-populated-db`** (nouveau job, service PostgreSQL réel)
+   — voir Décision 28.
+6. **Scan d'image Trivy + SBOM CycloneDX** (job `smoke`, avant le
+   démarrage de la stack) — `severity: CRITICAL,HIGH`,
+   `ignore-unfixed: true` (même principe que le point 2 : jamais un gate
+   qui bloque sur une CVE sans correctif publié, donc non actionnable).
+   Le SBOM est publié comme artefact CI téléchargeable (`actions/
+   upload-artifact`), pas seulement généré et jeté.
+
+**Container hardening déjà en place, vérifié plutôt que supposé** (lecture
+du Dockerfile) : utilisateur non-root (`appuser`, uid 1000), pas de
+paquets superflus au-delà des dépendances de build, `HEALTHCHECK` défini.
+Rien à ajouter sur ce point précis cette phase, au-delà de la Décision 26.
+
+### Décision 28 — Preuve de migration sur base peuplée contre un VRAI PostgreSQL, en CI (Axe J)
+
+`tests/test_alembic_migration.py::test_ui_theme_column_applies_on_existing_populated_database`
+prouve déjà ce comportement (Lot 1.1) — **mais uniquement contre SQLite**
+(le job `backend` de la CI ne démarre jamais de service Postgres,
+`conftest.py` réécrit `DATABASE_URL` vers SQLite avant tout import). C'est
+précisément l'écart SQLite/Postgres qui a déjà causé un incident réel sur
+ce dépôt (`alembic stamp head` sur une base peuplée a un jour cassé
+`GET /vision/anomalies/jobs`, voir Décision 1 de ce journal) — un DDL
+correct sur SQLite peut se comporter différemment sur PostgreSQL.
+
+`backend/scripts/verify_migration_on_populated_db.py` (nouveau) : migre
+une base Postgres neuve jusqu'à la révision juste avant la tête actuelle,
+peuple 4 tables avec de VRAIES lignes (organisation, utilisateur, dataset,
+job d'entraînement), migre jusqu'à `head`, vérifie qu'aucune ligne n'a été
+perdue et que les nouvelles colonnes ont la valeur attendue (`NULL`,
+jamais rétro-appliquée). Câblé dans un nouveau job CI dédié
+(`migration-on-populated-db`, service `postgres:15-alpine`) — installe
+UNIQUEMENT `alembic`/`sqlalchemy`/`psycopg2-binary`/`pydantic[-settings]`
+(jamais tout `requirements.txt`, même principe que le job `smoke` pour
+`httpx` : ce script n'exerce aucune logique ML).
+
+**Vérifié réellement, pas seulement écrit** : exécuté 2 fois contre le
+VRAI PostgreSQL local (schéma isolé `migration_ci_test` sur la base
+`datalab` déjà existante — `CREATEDB` non accordé à l'utilisateur
+applicatif, un schéma isolé y substitue sans droits supplémentaires), la
+seconde fois depuis un venv neuf n'installant QUE les 5 paquets listés
+dans le step CI — preuve que la liste de dépendances minimale du job CI
+est suffisante, pas une supposition. **Bug réel trouvé en testant** : la
+première tentative avec un `DATABASE_URL` contenant `?options=-csearch_
+path%3D...` levait `ValueError: invalid interpolation syntax` — `Config.
+set_main_option` (Alembic) passe par `ConfigParser`, qui interprète `%`
+comme un début d'interpolation. Corrigé en doublant le `%` UNIQUEMENT
+pour l'appel à `_alembic_config` (`db_url.replace("%", "%%")`), jamais
+pour `create_engine` (SQLAlchemy pur, qui a besoin de l'URL non modifiée)
+— les deux chemins de connexion coexistent dans le même script, condition
+qui n'existait dans aucun test préexistant du dépôt (d'où ce bug neuf,
+jamais rencontré avant cette phase).
+
+## Porte de qualité — Phase 5 (branche `back/5-supply-chain`)
+
+1. **`pytest` complet et vert** — `python -m pytest -q --cov=api --cov=domains
+   --cov=workers --cov-report=term-missing` (avec le nouveau test
+   `test_dockerfile_copies_required_files.py` inclus) → **863 passed**,
+   4200.19s (1h10m00s) — **zéro échec au premier run**, pour la première
+   fois depuis le début de ce chantier (Phases 1-4 avaient toutes eu au
+   moins un échec attendu, conséquence directe de la phase, corrigé avant
+   la porte de qualité).
+2. **Couverture mesurée** — même run → **94 % global** (7685 lignes, 447
+   non couvertes) — stable, **désormais un gate CI**
+   (`--cov-fail-under=94`, Décision 27), pas seulement un chiffre suivi
+   manuellement dans ce journal comme depuis la Phase 1.
+3. **`ruff check`/`ruff format --check`/`mypy`** sur les 2 fichiers neufs
+   (`scripts/verify_migration_on_populated_db.py`,
+   `tests/test_dockerfile_copies_required_files.py`) — 0 erreur ruff, 0
+   erreur mypy, `ruff format` appliqué (code neuf, aucun risque de diff
+   illisible).
+4. **`bandit`/`pip-audit`** — désormais automatisés en CI (Décision 27),
+   rejoués localement une dernière fois pour confirmer : 6 vulnérabilités
+   connues, toutes déjà justifiées (Phase 1) et couvertes par
+   `--ignore-vuln` en CI ; aucune nouvelle dépendance introduite cette
+   phase (`scripts/verify_migration_on_populated_db.py` n'utilise que des
+   dépendances déjà présentes dans `requirements.txt`).
+5. **`docker compose up -d --build` + smoke test** — non retenté cette
+   phase (Docker Desktop redevenu indisponible sur ce poste après le
+   succès partiel de la Phase 2 — voir Décision 26 pour la méthode de
+   vérification de substitution utilisée à la place). Le job CI `smoke`
+   (GitHub Actions, environnement Linux propre) reste la preuve
+   bout-en-bout de référence — désormais enrichi du scan Trivy + SBOM
+   (Décision 27), jamais exécuté localement faute d'environnement Docker
+   disponible cette phase.
+6. **Non-régression frontend** — aucun fichier frontend touché cette
+   phase ; `npx tsc -b` + `npm run build` rejoués par prudence → 0 erreur,
+   build réussi (1m13s, même avertissement pré-existant sur la taille du
+   bundle, hors périmètre).
+
+**Décision de fusion** : tous les points satisfaits, aucun échec au
+premier run de la suite complète (une première depuis le début de ce
+chantier). Le point 5 (smoke test Docker local) reste non concluant pour
+la même raison qu'en Phase 2/3 (environnement Docker local instable) mais
+le job CI `smoke` (GitHub Actions) prend le relais avec une couverture
+supplémentaire (Trivy, SBOM) jamais disponible en local jusqu'ici — pas
+une régression de rigueur, un déplacement vers l'environnement où cette
+preuve compte le plus (celui qui bloquera réellement une fusion de PR).
+`back/5-supply-chain` fusionnée dans `main`.

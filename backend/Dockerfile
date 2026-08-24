@@ -26,6 +26,19 @@ RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
 COPY api/ ./api/
 COPY domains/ ./domains/
 COPY workers/ ./workers/
+# Phase 5 (AUDIT_BACKEND_2026-08-23.md, Axe J) -- jamais copies avant ce
+# correctif : api/core/database.py::init_db() (appele au demarrage par
+# api/main.py::lifespan) appelle run_migrations(), qui a besoin
+# d'alembic.ini + alembic/ (env.py, versions/*.py) pour fonctionner.
+# Masque jusqu'ici par le bug plus severe de la Decision 1 (domains/ non
+# copie -- l'import de l'app echouait avant meme d'atteindre ce code) --
+# une fois ce premier bug corrige en Phase 1, ce second bug devenait
+# atteignable : en production, CHAQUE demarrage aurait execute init_db()
+# dans son bloc try/except (voir lifespan()), qui journalise l'echec et
+# demarre quand meme en mode degrade -- silencieusement, aucune migration
+# n'aurait jamais ete appliquee sur une vraie base de production.
+COPY alembic.ini .
+COPY alembic/ ./alembic/
 
 RUN mkdir -p database logs storage/datasets storage/models && \
     useradd -m -u 1000 -s /bin/bash appuser && \

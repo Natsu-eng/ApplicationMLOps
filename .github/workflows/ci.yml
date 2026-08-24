@@ -59,11 +59,104 @@ jobs:
           pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: pytest
+      - name: pytest (couverture -- echoue si < 94%, reference Phase 1/2/3)
         working-directory: backend
         env:
           REDIS_URL: redis://localhost:6379/0
-        run: pytest
+        run: pytest --cov=api --cov=domains --cov=workers --cov-report=term-missing --cov-fail-under=94
+
+      # Phase 5 (AUDIT_BACKEND_2026-08-23.md, Axe J) -- jamais lance en CI
+      # avant ce correctif (seulement en local, a la demande, pendant les
+      # phases precedentes). Les 6 vulnerabilites ignorees ci-dessous sont
+      # deja evaluees individuellement dans _backend/JOURNAL.md (Phase 1,
+      # "porte de qualite", point 4) -- aucune n'a de chemin d'exploitation
+      # dans l'usage reel de ce depot (dependances jamais appelees, ou
+      # fonctionnalite absente). Toute AUTRE vulnerabilite (nouvelle
+      # dependance, nouvelle CVE sur une dependance existante) fait echouer
+      # ce step -- jamais un `|| true` qui rendrait le gate decoratif.
+      - name: pip-audit (dependances vulnerables connues)
+        working-directory: backend
+        run: |
+          pip install pip-audit
+          pip-audit -r requirements.txt --desc \
+            --ignore-vuln PYSEC-2026-2270 \
+            --ignore-vuln PYSEC-2024-161 \
+            --ignore-vuln PYSEC-2024-110 \
+            --ignore-vuln PYSEC-2024-231 \
+            --ignore-vuln PYSEC-2026-1845 \
+            --ignore-vuln PYSEC-2026-1325
+
+      - name: bandit (analyse statique de securite)
+        working-directory: backend
+        run: |
+          pip install bandit
+          bandit -r api domains -ll
+
+  # Phase 5 (AUDIT_BACKEND_2026-08-23.md, Axe J) -- detection de secrets
+  # commites par erreur (cle API, mot de passe, jeton) -- jamais verifie en
+  # CI avant ce correctif. `fetch-depth: 0` (tout l'historique, pas
+  # seulement le dernier commit) : un secret commite puis "retire" dans un
+  # commit suivant reste dans l'historique git, exploitable par quiconque
+  # clone le depot -- un scan superficiel du seul HEAD le manquerait.
+  secret-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Phase 5 -- preuve qu'une migration Alembic ne perd ni ne corrompt des
+  # donnees EXISTANTES sur un vrai PostgreSQL (jamais verifie qu'en local,
+  # a la demande) -- voir scripts/verify_migration_on_populated_db.py pour
+  # le raisonnement complet. `tests/test_alembic_migration.py` prouve deja
+  # ce comportement mais UNIQUEMENT contre SQLite (aucun service Postgres
+  # demarre pour le job `backend` ci-dessus) -- c'est justement l'ecart
+  # SQLite/Postgres qui a deja cause un incident reel sur ce depot
+  # (`alembic stamp head` sur une base peuplee, voir Decision 1 du
+  # JOURNAL).
+  migration-on-populated-db:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: datalab
+          POSTGRES_PASSWORD: datalab_ci_password
+          POSTGRES_DB: datalab_migration_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U datalab -d datalab_migration_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: backend/requirements.txt
+
+      # Seules alembic/sqlalchemy/psycopg2 sont nécessaires pour ce script
+      # (pas de logique métier ML exercée) — jamais le reste de
+      # requirements.txt (torch/shap/lightgbm...), même principe que le job
+      # `smoke` pour httpx.
+      - name: Installer les dépendances de migration
+        working-directory: backend
+        run: pip install alembic==1.19.1 sqlalchemy==2.0.49 psycopg2-binary==2.9.11 pydantic-settings==2.10.1 pydantic==2.13.3
+
+      - name: Migration sur base peuplée (preuve, pas une supposition)
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql://datalab:datalab_ci_password@localhost:5432/datalab_migration_test
+          ENVIRONMENT: development
+          JWT_SECRET_KEY: cle-de-test-ci-jamais-utilisee-en-production
+        run: python -m scripts.verify_migration_on_populated_db
 
   frontend:
     runs-on: ubuntu-latest
@@ -133,8 +226,43 @@ jobs:
           cp .env.example .env
           cp backend/.env.example backend/.env
 
-      - name: Construire et démarrer la stack Docker complète
-        run: docker compose up -d --build
+      - name: Construire les images (avant démarrage -- pour le scan ci-dessous)
+        run: docker compose build
+
+      # Phase 5 (AUDIT_BACKEND_2026-08-23.md, Axe J) -- jamais scannée avant
+      # ce correctif. `exit-code: 1` fait échouer le job sur toute
+      # vulnérabilité CRITICAL/HIGH avec un correctif disponible
+      # (`--ignore-unfixed` : une CVE sans correctif publié n'est pas
+      # actionnable, même logique que les 6 vulnérabilités Python ignorées
+      # dans le job `backend` ci-dessus -- jamais un gate qui bloque sur
+      # l'improuvable).
+      - name: Scanner l'image backend (Trivy)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: "datalab-backend:latest"
+          severity: "CRITICAL,HIGH"
+          ignore-unfixed: true
+          exit-code: "1"
+
+      # SBOM (Software Bill of Materials, format CycloneDX) -- inventaire
+      # complet des dépendances de l'image backend, publié comme artefact
+      # CI : permet de répondre rapidement à "sommes-nous affectés par la
+      # CVE X" sans reconstruire l'image pour l'inspecter.
+      - name: Générer le SBOM de l'image backend
+        uses: anchore/sbom-action@v0
+        with:
+          image: "datalab-backend:latest"
+          format: cyclonedx-json
+          output-file: sbom-backend.cyclonedx.json
+
+      - name: Publier le SBOM
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-backend
+          path: sbom-backend.cyclonedx.json
+
+      - name: Démarrer la stack Docker complète
+        run: docker compose up -d
 
       - uses: actions/setup-python@v5
         with:
