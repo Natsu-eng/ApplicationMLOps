@@ -689,7 +689,7 @@ function DimensionalityResultView({ jobId }: { jobId: number }) {
         ) : (
           <ResponsiveContainer width="100%" height={360}>
             <ScatterChart margin={{ top: 10, right: 10, bottom: 10, left: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke={CHART_GRID_STROKE} />
+              <CartesianGrid stroke={CHART_GRID_STROKE} />
               <XAxis type="number" dataKey="x" tick={CHART_TICK_STYLE} name="Axe 1" />
               <YAxis type="number" dataKey="y" tick={CHART_TICK_STYLE} name="Axe 2" />
               <RechartsTooltip {...CHART_TOOLTIP_STYLE} cursor={{ strokeDasharray: "3 3" }} />

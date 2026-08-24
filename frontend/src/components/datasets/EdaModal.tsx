@@ -355,7 +355,7 @@ export default function EdaModal({ dataset, onClose }: { dataset: DatasetSummary
                           </p>
                           <ResponsiveContainer width="100%" height={180}>
                             <ScatterChart margin={{ left: 0, right: 12, bottom: 8 }}>
-                              <CartesianGrid strokeDasharray="3 3" stroke={CHART_GRID_STROKE} />
+                              <CartesianGrid stroke={CHART_GRID_STROKE} />
                               <XAxis
                                 type="number"
                                 dataKey="x"
@@ -395,7 +395,7 @@ export default function EdaModal({ dataset, onClose }: { dataset: DatasetSummary
                   />
                   <ResponsiveContainer width="100%" height={Math.max(80, missingData.length * 28)}>
                     <BarChart data={missingData} layout="vertical" margin={{ left: 8 }}>
-                      <CartesianGrid strokeDasharray="3 3" stroke={CHART_GRID_STROKE} horizontal={false} />
+                      <CartesianGrid stroke={CHART_GRID_STROKE} horizontal={false} />
                       <XAxis type="number" domain={[0, 100]} tick={CHART_TICK_STYLE} unit="%" />
                       <YAxis type="category" dataKey="name" width={100} tick={CHART_TICK_STYLE_MUTED} />
                       <RechartsTooltip {...CHART_TOOLTIP_STYLE} formatter={(v) => `${Number(v).toFixed(1)} %`} />
@@ -434,7 +434,7 @@ export default function EdaModal({ dataset, onClose }: { dataset: DatasetSummary
                 {histogramData.length > 0 && (
                   <ResponsiveContainer width="100%" height={220}>
                     <BarChart data={histogramData} margin={{ left: 0, bottom: 8 }}>
-                      <CartesianGrid strokeDasharray="3 3" stroke={CHART_GRID_STROKE} vertical={false} />
+                      <CartesianGrid stroke={CHART_GRID_STROKE} vertical={false} />
                       <XAxis
                         dataKey="name"
                         tick={CHART_TICK_STYLE_SM}
@@ -497,7 +497,7 @@ export default function EdaModal({ dataset, onClose }: { dataset: DatasetSummary
                   />
                   <ResponsiveContainer width="100%" height={200}>
                     <BarChart data={targetDistributionData} margin={{ left: 0 }}>
-                      <CartesianGrid strokeDasharray="3 3" stroke={CHART_GRID_STROKE} vertical={false} />
+                      <CartesianGrid stroke={CHART_GRID_STROKE} vertical={false} />
                       <XAxis dataKey="name" tick={CHART_TICK_STYLE_SM} angle={-30} textAnchor="end" height={50} />
                       <YAxis tick={CHART_TICK_STYLE} allowDecimals={false} />
                       <RechartsTooltip {...CHART_TOOLTIP_STYLE} />

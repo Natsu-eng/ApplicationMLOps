@@ -759,7 +759,7 @@ function ClassificationResultView({ jobId, datasetId }: { jobId: number; dataset
             <SectionHeader icon={Sparkles} color="blue" label="Courbes d'apprentissage" />
             <ResponsiveContainer width="100%" height={220}>
               <LineChart data={historyData} margin={{ top: 8, right: 8, bottom: 8, left: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke={CHART_GRID_STROKE} vertical={false} />
+                <CartesianGrid stroke={CHART_GRID_STROKE} vertical={false} />
                 <XAxis dataKey="epoch" tick={CHART_TICK_STYLE_SM} label={{ value: "Époque", position: "insideBottom", offset: -2 }} />
                 <YAxis tick={CHART_TICK_STYLE_SM} />
                 <RechartsTooltip {...CHART_TOOLTIP_STYLE} />

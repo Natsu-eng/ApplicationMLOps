@@ -124,7 +124,7 @@ export function ShapBeeswarmChart({ beeswarm }: { beeswarm: ShapBeeswarm }) {
       )}
       <ResponsiveContainer width="100%" height={Math.max(180, featureOrder.length * 34)}>
         <ScatterChart margin={{ left: 8, right: 12, top: 8, bottom: 8 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke={CHART_GRID_STROKE} horizontal={false} />
+          <CartesianGrid stroke={CHART_GRID_STROKE} horizontal={false} />
           <XAxis
             type="number"
             dataKey="x"
@@ -179,7 +179,7 @@ export function PermutationImportanceChart({ features }: { features: Permutation
   return (
     <ResponsiveContainer width="100%" height={Math.max(160, data.length * 32)}>
       <BarChart data={data} layout="vertical" margin={{ left: 8, right: 24, top: 8, bottom: 8 }}>
-        <CartesianGrid strokeDasharray="3 3" stroke={CHART_GRID_STROKE} horizontal={false} />
+        <CartesianGrid stroke={CHART_GRID_STROKE} horizontal={false} />
         <XAxis
           type="number"
           tick={CHART_TICK_STYLE}

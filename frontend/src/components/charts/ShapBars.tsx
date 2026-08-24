@@ -29,7 +29,7 @@ export function ShapBars({ data }: { data: ShapBarDatum[] }) {
     >
       <ResponsiveContainer width="100%" height={Math.max(160, sorted.length * 28)}>
         <BarChart data={sorted} layout="vertical" margin={{ left: 8, right: 24 }} accessibilityLayer={false}>
-          <CartesianGrid strokeDasharray="3 3" stroke={CHART_GRID_STROKE} horizontal={false} />
+          <CartesianGrid stroke={CHART_GRID_STROKE} horizontal={false} />
           <XAxis type="number" tick={CHART_TICK_STYLE} />
           <YAxis type="category" dataKey="feature" width={120} tick={CHART_TICK_STYLE} />
           <RechartsTooltip {...CHART_TOOLTIP_STYLE} formatter={(v) => Number(v).toFixed(4)} />

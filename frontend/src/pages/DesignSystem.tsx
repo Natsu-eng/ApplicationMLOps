@@ -582,7 +582,7 @@ function ChartSection() {
           <SectionHeader icon={Sparkles} color="blue" label="Avec légende isolable" />
           <ResponsiveContainer width="100%" height={CHART_HEIGHT_SM}>
             <LineChart data={data} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke={CHART_GRID_STROKE} vertical={false} />
+              <CartesianGrid stroke={CHART_GRID_STROKE} vertical={false} />
               <XAxis dataKey="epoch" tick={CHART_TICK_STYLE} />
               <YAxis tick={CHART_TICK_STYLE} />
               <RechartsTooltip {...CHART_TOOLTIP_STYLE} />

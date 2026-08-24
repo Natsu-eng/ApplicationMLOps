@@ -33,7 +33,7 @@ export function ScatterPredVsReal({ points, unit = "" }: { points: ScatterPredVs
     >
       <ResponsiveContainer width="100%" height={260}>
         <ScatterChart margin={{ left: 0, right: 12, bottom: 8 }} accessibilityLayer={false}>
-          <CartesianGrid strokeDasharray="3 3" stroke={CHART_GRID_STROKE} />
+          <CartesianGrid stroke={CHART_GRID_STROKE} />
           <XAxis type="number" dataKey="actual" domain={bounds} tick={CHART_TICK_STYLE} label={{ value: `Valeur réelle${unit ? ` (${unit})` : ""}`, position: "insideBottom", offset: -5, ...CHART_TICK_STYLE }} />
           <YAxis type="number" dataKey="predicted" domain={bounds} tick={CHART_TICK_STYLE} label={{ value: "Valeur prédite", angle: -90, position: "insideLeft", ...CHART_TICK_STYLE }} />
           <RechartsTooltip {...CHART_TOOLTIP_STYLE} formatter={(v) => Number(v).toFixed(3)} />

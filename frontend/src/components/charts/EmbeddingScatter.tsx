@@ -24,7 +24,7 @@ export function EmbeddingScatter({ points, groups }: { points: EmbeddingPoint[];
     >
       <ResponsiveContainer width="100%" height={320}>
         <ScatterChart margin={{ left: 0, right: 12, bottom: 8 }} accessibilityLayer={false}>
-          <CartesianGrid strokeDasharray="3 3" stroke={CHART_GRID_STROKE} />
+          <CartesianGrid stroke={CHART_GRID_STROKE} />
           <XAxis type="number" dataKey="x" tick={CHART_TICK_STYLE} name="x" />
           <YAxis type="number" dataKey="y" tick={CHART_TICK_STYLE} name="y" />
           <ZAxis range={[40, 40]} />

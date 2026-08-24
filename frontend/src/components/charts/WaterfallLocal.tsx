@@ -39,7 +39,7 @@ export function WaterfallLocal({ baseValue, steps, finalLabel = "Prédiction" }:
     >
       <ResponsiveContainer width="100%" height={Math.max(180, bars.length * 30)}>
         <BarChart data={bars} layout="vertical" margin={{ left: 8, right: 40 }} accessibilityLayer={false}>
-          <CartesianGrid strokeDasharray="3 3" stroke={CHART_GRID_STROKE} horizontal={false} />
+          <CartesianGrid stroke={CHART_GRID_STROKE} horizontal={false} />
           <XAxis type="number" tick={CHART_TICK_STYLE} />
           <YAxis type="category" dataKey="label" width={130} tick={CHART_TICK_STYLE} />
           <RechartsTooltip {...CHART_TOOLTIP_STYLE} formatter={(_v, _name, entry) => (entry.payload as (typeof bars)[number]).raw.toFixed(3)} />

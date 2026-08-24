@@ -33,7 +33,7 @@ export function DensityOverlap({
     >
       <ResponsiveContainer width="100%" height={240}>
         <AreaChart data={points} margin={{ left: 0, right: 12 }} accessibilityLayer={false}>
-          <CartesianGrid strokeDasharray="3 3" stroke={CHART_GRID_STROKE} />
+          <CartesianGrid stroke={CHART_GRID_STROKE} />
           <XAxis type="number" dataKey="x" tick={CHART_TICK_STYLE} label={{ value: "Score", position: "insideBottom", offset: -5, ...CHART_TICK_STYLE }} />
           <YAxis type="number" tick={CHART_TICK_STYLE} label={{ value: "Densité", angle: -90, position: "insideLeft", ...CHART_TICK_STYLE }} />
           <RechartsTooltip {...CHART_TOOLTIP_STYLE} formatter={(v) => Number(v).toFixed(4)} />

@@ -90,7 +90,7 @@ function ClassificationCharts({ evaluation }: { evaluation: ModelEvaluation }) {
           )}
           <ResponsiveContainer width="100%" height={240}>
             <LineChart margin={{ left: 0, right: 12 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke={CHART_GRID_STROKE} />
+              <CartesianGrid stroke={CHART_GRID_STROKE} />
               <XAxis
                 type="number"
                 dataKey="x"
@@ -146,7 +146,7 @@ function ClassificationCharts({ evaluation }: { evaluation: ModelEvaluation }) {
           )}
           <ResponsiveContainer width="100%" height={240}>
             <LineChart margin={{ left: 0, right: 12 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke={CHART_GRID_STROKE} />
+              <CartesianGrid stroke={CHART_GRID_STROKE} />
               <XAxis
                 type="number"
                 dataKey="x"
@@ -209,7 +209,7 @@ function RegressionCharts({ evaluation }: { evaluation: ModelEvaluation }) {
         />
         <ResponsiveContainer width="100%" height={240}>
           <ScatterChart margin={{ left: 0, right: 12, bottom: 8 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke={CHART_GRID_STROKE} />
+            <CartesianGrid stroke={CHART_GRID_STROKE} />
             <XAxis
               type="number"
               dataKey="actual"
@@ -244,7 +244,7 @@ function RegressionCharts({ evaluation }: { evaluation: ModelEvaluation }) {
         />
         <ResponsiveContainer width="100%" height={220}>
           <ScatterChart margin={{ left: 0, right: 12, bottom: 8 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke={CHART_GRID_STROKE} />
+            <CartesianGrid stroke={CHART_GRID_STROKE} />
             <XAxis
               type="number"
               dataKey="predicted"

@@ -47,7 +47,7 @@ export function RocPr({ series }: { series: RocPrSeries[] }) {
       {manyClasses && <p className="text-caption text-muted-foreground mb-1">Survolez ou cliquez une classe dans la légende pour l'isoler.</p>}
       <ResponsiveContainer width="100%" height={240}>
         <LineChart margin={{ left: 0, right: 12 }} accessibilityLayer={false}>
-          <CartesianGrid strokeDasharray="3 3" stroke={CHART_GRID_STROKE} />
+          <CartesianGrid stroke={CHART_GRID_STROKE} />
           <XAxis type="number" dataKey="x" domain={[0, 1]} tick={CHART_TICK_STYLE} label={{ value: rocDomainLabel.x, position: "insideBottom", offset: -5, ...CHART_TICK_STYLE }} />
           <YAxis type="number" domain={[0, 1]} tick={CHART_TICK_STYLE} label={{ value: rocDomainLabel.y, angle: -90, position: "insideLeft", ...CHART_TICK_STYLE }} />
           <RechartsTooltip {...CHART_TOOLTIP_STYLE} formatter={(v) => Number(v).toFixed(3)} />

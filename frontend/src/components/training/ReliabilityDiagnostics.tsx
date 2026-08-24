@@ -37,7 +37,7 @@ export function CalibrationChart({ calibration }: { calibration: Calibration }) 
       )}
       <ResponsiveContainer width="100%" height={240}>
         <LineChart margin={{ left: 0, right: 12 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke={CHART_GRID_STROKE} />
+          <CartesianGrid stroke={CHART_GRID_STROKE} />
           <XAxis
             type="number"
             dataKey="x"
@@ -97,7 +97,7 @@ export function LearningCurveChart({ data }: { data: LearningCurveData }) {
   return (
     <ResponsiveContainer width="100%" height={240}>
       <LineChart data={points} margin={{ left: 0, right: 12 }}>
-        <CartesianGrid strokeDasharray="3 3" stroke={CHART_GRID_STROKE} />
+        <CartesianGrid stroke={CHART_GRID_STROKE} />
         <XAxis
           type="number"
           dataKey="size"

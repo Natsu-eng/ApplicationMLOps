@@ -751,7 +751,7 @@ function AnomalyResultView({ jobId, featureColumns }: { jobId: number; featureCo
             />
             <ResponsiveContainer width="100%" height={220}>
               <BarChart data={histogramData} margin={{ top: 8, right: 8, bottom: 40, left: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke={CHART_GRID_STROKE} vertical={false} />
+                <CartesianGrid stroke={CHART_GRID_STROKE} vertical={false} />
                 <XAxis
                   dataKey="range"
                   tick={CHART_TICK_STYLE_SM}

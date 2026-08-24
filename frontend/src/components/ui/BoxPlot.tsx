@@ -144,7 +144,7 @@ export function BoxPlotChart({
   return (
     <ResponsiveContainer width="100%" height={height}>
       <ComposedChart data={chartData} margin={{ left: 0, right: 12, bottom: 8 }}>
-        <CartesianGrid strokeDasharray="3 3" stroke={CHART_GRID_STROKE} vertical={false} />
+        <CartesianGrid stroke={CHART_GRID_STROKE} vertical={false} />
         <XAxis dataKey="name" tick={CHART_TICK_STYLE} />
         <YAxis
           domain={[lo - margin, hi + margin]}
