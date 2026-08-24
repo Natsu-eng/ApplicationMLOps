@@ -24,6 +24,17 @@ export function JobStatusBadge({ status }: { status: TrainingJobSummary["status"
           En cours
         </Badge>
       );
+    case "cancelled":
+      // Bug réel trouvé en revue (Lot bulk-select/cohérence) — ce cas
+      // n'était jamais géré, un job "cancelled" retombait dans le `default`
+      // ci-dessous et s'affichait "En file", identique à un job réellement
+      // en attente : trompeur pour un utilisateur qui a explicitement
+      // annulé un job (rien n'indique que l'annulation a bien eu lieu).
+      return (
+        <Badge variant="neutral" dot>
+          Annulé
+        </Badge>
+      );
     default:
       return (
         <Badge variant="neutral" dot>

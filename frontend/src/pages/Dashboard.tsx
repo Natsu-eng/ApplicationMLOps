@@ -31,6 +31,8 @@ import { PageHeader } from "../components/ui/PageHeader";
 import { DatasetStatusBadge, JobStatusBadge } from "../components/ui/StatusBadge";
 import { useConfirmAction } from "../hooks/useConfirmAction";
 import { formatDateTime, formatPercent } from "../utils/format";
+import { JOB_KIND_REMOVE, type JobKind as ActivityKind } from "../utils/jobKinds";
+import { PillarDistributionBars, StatusBreakdownChart } from "../components/dashboard/ActivityBreakdown";
 
 /** Salutation contextuelle à l'heure réelle du navigateur — jamais un texte
  * figé. Trois tranches (retour utilisateur explicite : deux ne suffisaient
@@ -42,8 +44,6 @@ function greeting(hour: number): string {
   if (hour >= 12 && hour < 18) return "Bon après-midi";
   return "Bonsoir";
 }
-
-type ActivityKind = "supervised" | "clustering" | "dimensionality" | "anomalies" | "vision_classification" | "vision_anomalies";
 
 interface ActivityItem {
   kind: ActivityKind;
@@ -98,7 +98,12 @@ export default function Dashboard() {
   const [summaryError, setSummaryError] = useState<string | null>(null);
   const [summaryErrorRef, setSummaryErrorRef] = useState<string | undefined>(undefined);
   const [viewingJob, setViewingJob] = useState<TrainingJobSummary | null>(null);
-  const confirmDeleteJob = useConfirmAction<number>();
+  // Clé composite "type-id" (pas seulement l'id) — Lot bulk-select/cohérence :
+  // les 6 tables de job ont chacune leur propre espace d'id, un `TrainingJob`
+  // #5 et un `ClusteringJob` #5 peuvent coexister ; une clé bâtie sur le
+  // seul id armerait par erreur la confirmation d'un job en cliquant sur un
+  // AUTRE de même id mais de type différent.
+  const confirmDeleteJob = useConfirmAction<string>();
 
   // Résultat "deep-linkable" (AUDIT_ROADMAP.md, H20/D12) — `?job=<id>`
   // synchronise l'URL avec la modale ouverte, dans les deux sens.
@@ -139,9 +144,9 @@ export default function Dashboard() {
     loadSummary();
   }, [loadSummary]);
 
-  async function handleDeleteJob(id: number) {
+  async function handleDeleteJob(kind: ActivityKind, id: number) {
     try {
-      await api.training.remove(id);
+      await JOB_KIND_REMOVE[kind](id);
       loadSummary();
     } catch {
       // best-effort — la liste se resynchronisera au prochain chargement
@@ -150,7 +155,13 @@ export default function Dashboard() {
 
   const totalJobsCount = summary ? summary.supervised_count + summary.unsupervised_count + summary.vision_count : undefined;
 
-  const activity = useMemo<ActivityItem[]>(() => {
+  // Non tronqué à 6 (contrairement à `activity` ci-dessous, réservé à
+  // l'affichage de la liste "Dernière activité") — sert de base au
+  // graphique de répartition des statuts, qui a besoin de tout
+  // l'échantillon réellement chargé (jusqu'à 36, 6 par pilier) pour rester
+  // représentatif plutôt que de ne refléter que les 6 tout derniers, tous
+  // piliers confondus.
+  const allRecentItems = useMemo<ActivityItem[]>(() => {
     if (!summary) return [];
     const items: ActivityItem[] = [];
     summary.recent_supervised.forEach((j) =>
@@ -236,8 +247,16 @@ export default function Dashboard() {
       }),
     );
     items.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-    return items.slice(0, 6);
+    return items;
   }, [summary]);
+
+  const activity = useMemo(() => allRecentItems.slice(0, 6), [allRecentItems]);
+
+  const statusCounts = useMemo(() => {
+    const counts: Partial<Record<JobStatus, number>> = {};
+    for (const item of allRecentItems) counts[item.status] = (counts[item.status] ?? 0) + 1;
+    return counts;
+  }, [allRecentItems]);
 
   const recentDatasets = summary?.recent_datasets ?? [];
 
@@ -277,6 +296,30 @@ export default function Dashboard() {
         <StatTile icon={Activity} label="En cours" value={summary?.active_count} color="neutral" delayMs={120} />
         <StatTile icon={Users} label="Membres de l'équipe" value={summary?.members_count} color="neutral" delayMs={180} />
       </StatTileRow>
+
+      {/* Vue d'ensemble visuelle (Lot dashboard-dynamique) — avant ce
+          correctif, le tableau de bord n'affichait que des compteurs
+          (StatTile) et des listes, jamais un graphique, malgré une
+          bibliothèque de graphes déjà construite et recharts déjà présent
+          dans le projet. Données réellement disponibles uniquement (voir
+          ActivityBreakdown.tsx) — jamais une tendance temporelle inventée,
+          le backend ne renvoie pas de comptage jour par jour. */}
+      {summary && (summary.datasets_count > 0 || summary.supervised_count + summary.unsupervised_count + summary.vision_count > 0) && (
+        <div className="grid gap-6 lg:grid-cols-2 mb-6">
+          <Card className="p-5">
+            <h2 className="text-h3 text-foreground mb-4">Statuts de l'activité récente</h2>
+            <StatusBreakdownChart statusCounts={statusCounts} />
+          </Card>
+          <Card className="p-5">
+            <h2 className="text-h3 text-foreground mb-4">Répartition par pilier</h2>
+            <PillarDistributionBars
+              supervised={summary.supervised_count}
+              unsupervised={summary.unsupervised_count}
+              vision={summary.vision_count}
+            />
+          </Card>
+        </div>
+      )}
 
       <div className="grid gap-6 lg:grid-cols-2 mb-10">
         <Card className="p-5">
@@ -348,18 +391,46 @@ export default function Dashboard() {
                     <JobStatusBadge status={item.status} />
                   </>
                 );
-                const rowContent = (
-                  <>
-                    {leftContent}
-                    <div className="flex items-center gap-2 flex-shrink-0">{headlineAndStatus}</div>
-                  </>
+                // Clé composite (voir la déclaration de `confirmDeleteJob`
+                // ci-dessus) — même bouton, même comportement, pour les 6
+                // types de job : avant ce correctif, seul "supervised"
+                // pouvait être supprimé depuis cette liste (retour
+                // utilisateur direct — "je supprime un clustering raté
+                // depuis le tableau de bord, pourquoi pas les autres ?").
+                const deleteKey = `${item.kind}-${item.id}`;
+                const pendingDelete = confirmDeleteJob.isPending(deleteKey);
+                const deleteButton = (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      // `preventDefault` ET `stopPropagation` (pas l'un
+                      // sans l'autre) : ce bouton est parfois imbriqué dans
+                      // un <Link> (piliers non-supervisés/vision) —
+                      // `stopPropagation` seul empêcherait le gestionnaire
+                      // React du Link de s'exécuter, mais l'action NATIVE
+                      // de navigation de la balise <a> se déclencherait
+                      // quand même sans `preventDefault`.
+                      e.preventDefault();
+                      e.stopPropagation();
+                      confirmDeleteJob.trigger(deleteKey, () => handleDeleteJob(item.kind, item.id));
+                    }}
+                    onMouseLeave={confirmDeleteJob.reset}
+                    aria-label={pendingDelete ? "Confirmer la suppression" : "Supprimer cette analyse"}
+                    title={pendingDelete ? "Cliquer à nouveau pour confirmer" : "Supprimer cette analyse"}
+                    className={`flex-shrink-0 h-7 w-7 flex items-center justify-center rounded-md transition-colors ${
+                      pendingDelete
+                        ? "text-destructive bg-destructive/15"
+                        : "text-muted-foreground/50 hover:text-destructive hover:bg-destructive/10"
+                    }`}
+                  >
+                    <Trash2 size={13} />
+                  </button>
                 );
 
                 if (item.kind === "supervised") {
-                  const pendingDelete = confirmDeleteJob.isPending(item.id);
                   return (
                     <li
-                      key={`supervised-${item.id}`}
+                      key={deleteKey}
                       onClick={() => isCompleted && item.raw && openJob(item.raw)}
                       className={`group py-2.5 flex items-center justify-between gap-3 ${
                         isCompleted ? "cursor-pointer hover:bg-muted/50 -mx-1 px-1 rounded-lg transition-colors" : ""
@@ -368,39 +439,33 @@ export default function Dashboard() {
                       {leftContent}
                       <div className="flex items-center gap-2 flex-shrink-0">
                         {headlineAndStatus}
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            confirmDeleteJob.trigger(item.id, () => handleDeleteJob(item.id));
-                          }}
-                          onMouseLeave={confirmDeleteJob.reset}
-                          aria-label={pendingDelete ? "Confirmer la suppression" : "Supprimer cet entraînement"}
-                          title={pendingDelete ? "Cliquer à nouveau pour confirmer" : "Supprimer cet entraînement"}
-                          className={`flex-shrink-0 h-7 w-7 flex items-center justify-center rounded-md transition-colors ${
-                            pendingDelete
-                              ? "text-destructive bg-destructive/15"
-                              : "text-muted-foreground/50 hover:text-destructive hover:bg-destructive/10"
-                          }`}
-                        >
-                          <Trash2 size={13} />
-                        </button>
+                        {deleteButton}
                       </div>
                     </li>
                   );
                 }
 
+                const rowContentWithDelete = (
+                  <>
+                    {leftContent}
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      {headlineAndStatus}
+                      {deleteButton}
+                    </div>
+                  </>
+                );
+
                 return (
-                  <li key={`${item.kind}-${item.id}`}>
+                  <li key={deleteKey}>
                     {isCompleted ? (
                       <Link
                         to={item.href}
                         className="py-2.5 flex items-center justify-between gap-3 -mx-1 px-1 rounded-lg hover:bg-muted/50 transition-colors"
                       >
-                        {rowContent}
+                        {rowContentWithDelete}
                       </Link>
                     ) : (
-                      <div className="py-2.5 flex items-center justify-between gap-3">{rowContent}</div>
+                      <div className="py-2.5 flex items-center justify-between gap-3">{rowContentWithDelete}</div>
                     )}
                   </li>
                 );

@@ -1,13 +1,21 @@
-import { useState, type FormEvent } from "react";
-import { Sparkles, Wand2 } from "lucide-react";
-import { ApiError, api, type FeatureSchemaEntry, type PredictionResult, type TaskType } from "../../api/client";
+import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { History, Sparkles, Wand2 } from "lucide-react";
+import {
+  ApiError,
+  api,
+  type FeatureSchemaEntry,
+  type PredictionHistoryEntry,
+  type PredictionResult,
+  type TaskType,
+} from "../../api/client";
 import { Button } from "../ui/Button";
 import { Card } from "../ui/Card";
 import { accentSurfaceClass } from "../ui/ColorIconBadge";
 import { Input } from "../ui/Input";
 import { SectionHeader } from "../ui/SectionHeader";
+import { Table, type TableColumn } from "../ui/Table";
 import { LocalExplanationPanel } from "./LocalExplanation";
-import { formatMetricValue } from "../../utils/format";
+import { formatDateTime, formatMetricValue } from "../../utils/format";
 
 function isNumericDtype(dtype: string): boolean {
   return dtype.startsWith("int") || dtype.startsWith("float");
@@ -29,6 +37,24 @@ export default function PredictionForm({
   const [result, setResult] = useState<PredictionResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [history, setHistory] = useState<PredictionHistoryEntry[] | null>(null);
+  const [showHistory, setShowHistory] = useState(false);
+
+  // Chargé à la demande (repli), pas au montage — un modèle sans jamais
+  // avoir servi de prédiction n'a pas besoin de cet appel (Lot lignage des
+  // prédictions, voir GET /training/jobs/{id}/predictions, backend Phase 3).
+  const loadHistory = useCallback(async () => {
+    try {
+      const { entries } = await api.training.predictions(jobId);
+      setHistory(entries);
+    } catch {
+      setHistory([]);
+    }
+  }, [jobId]);
+
+  useEffect(() => {
+    if (showHistory && history === null) loadHistory();
+  }, [showHistory, history, loadHistory]);
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
@@ -42,12 +68,43 @@ export default function PredictionForm({
         data[field.name] = isNumericDtype(field.dtype) ? Number(raw) : raw;
       }
       setResult(await api.training.predict(jobId, data));
+      // Rafraîchit l'historique s'il est déjà ouvert — sinon `loadHistory`
+      // se déclenchera de toute façon à la prochaine ouverture (toujours à
+      // jour, jamais besoin de forcer l'ouverture pour ça).
+      if (showHistory) loadHistory();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Prédiction impossible");
     } finally {
       setIsSubmitting(false);
     }
   }
+
+  const historyColumns: TableColumn<PredictionHistoryEntry>[] = [
+    {
+      key: "created_at",
+      header: "Date",
+      render: (e) => formatDateTime(e.created_at),
+      className: "text-muted-foreground",
+    },
+    {
+      key: "prediction",
+      header: taskType === "regression" ? "Valeur prédite" : "Classe prédite",
+      render: (e) => (typeof e.prediction === "number" ? formatMetricValue(e.prediction) : String(e.prediction)),
+    },
+    {
+      key: "model_version",
+      header: "Version",
+      align: "right",
+      render: (e) => `v${e.model_version}`,
+      className: "text-muted-foreground",
+    },
+    {
+      key: "requested_by",
+      header: "Demandé par",
+      render: (e) => e.requested_by ?? "—",
+      className: "text-muted-foreground",
+    },
+  ];
 
   if (featureSchema.length === 0) return null;
 
@@ -138,6 +195,31 @@ export default function PredictionForm({
           <LocalExplanationPanel explanation={result.explanation} />
         </div>
       )}
+
+      <div className="mt-4 pt-4 border-t border-border/60">
+        <button
+          type="button"
+          onClick={() => setShowHistory((v) => !v)}
+          className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+        >
+          <History size={13} aria-hidden="true" />
+          {showHistory ? "Masquer l'historique des prédictions" : "Voir l'historique des prédictions"}
+        </button>
+
+        {showHistory && (
+          <div className="mt-3">
+            <Table
+              columns={historyColumns}
+              rows={history ?? []}
+              rowKey={(e) => e.id}
+              loading={history === null}
+              pageSize={10}
+              caption="Historique des prédictions demandées sur ce modèle"
+              emptyMessage="Aucune prédiction demandée sur ce modèle pour l'instant."
+            />
+          </div>
+        )}
+      </div>
     </Card>
   );
 }

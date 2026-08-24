@@ -3,13 +3,16 @@ import { AlertCircle, Database, Images, Trash2, UploadCloud } from "lucide-react
 import { ApiError, api, type VisionDatasetDetail, type VisionDatasetSummary } from "../api/client";
 import AppShell from "../components/AppShell";
 import { pillarColor } from "../config/pillars";
+import { BulkActionBar } from "../components/ui/BulkActionBar";
 import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
 import { PageHeader } from "../components/ui/PageHeader";
 import { DatasetStatusBadge } from "../components/ui/StatusBadge";
 import { Table, type TableColumn } from "../components/ui/Table";
 import { useConfirmAction } from "../hooks/useConfirmAction";
+import { useToast } from "../components/ui/Toast";
 import { VisionDatasetExplorer } from "../components/vision/VisionDatasetExplorer";
+import { runBulkDelete } from "../utils/bulkDelete";
 import { formatDateTime } from "../utils/format";
 
 // "mvtec_ad" reste la valeur technique stockée en base (structure_type,
@@ -40,6 +43,10 @@ export default function VisionDatasets() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
   const confirmDelete = useConfirmAction<number>();
+  const [selectedKeys, setSelectedKeys] = useState<Set<string | number>>(new Set());
+  const [bulkDeleting, setBulkDeleting] = useState(false);
+  const bulkConfirm = useConfirmAction<"bulk">();
+  const toast = useToast();
 
   const load = useCallback(() => {
     api.visionDatasets
@@ -112,6 +119,27 @@ export default function VisionDatasets() {
     load();
   }
 
+  async function handleBulkDelete() {
+    if (selectedKeys.size === 0) return;
+    setBulkDeleting(true);
+    try {
+      const { succeeded, failed } = await runBulkDelete(Array.from(selectedKeys), (id) => api.visionDatasets.remove(id as number));
+      if (failed === 0) {
+        toast.push({ variant: "success", title: `${succeeded} dataset${succeeded > 1 ? "s" : ""} supprimé${succeeded > 1 ? "s" : ""}` });
+      } else {
+        toast.push({
+          variant: succeeded === 0 ? "danger" : "warning",
+          title: succeeded === 0 ? "Échec de la suppression" : "Suppression partielle",
+          description: `${succeeded} réussie${succeeded > 1 ? "s" : ""}, ${failed} échouée${failed > 1 ? "s" : ""}.`,
+        });
+      }
+    } finally {
+      setBulkDeleting(false);
+      setSelectedKeys(new Set());
+      load();
+    }
+  }
+
   async function handleExplore(id: number) {
     try {
       setExploring(await api.visionDatasets.get(id));
@@ -154,13 +182,13 @@ export default function VisionDatasets() {
             onMouseLeave={confirmDelete.reset}
             aria-label={confirmDelete.isPending(d.id) ? "Confirmer la suppression" : "Supprimer ce dataset"}
             title={confirmDelete.isPending(d.id) ? "Cliquer à nouveau pour confirmer" : "Supprimer ce dataset"}
-            className={`p-1.5 rounded-md transition-colors ${
+            className={`h-7 w-7 flex items-center justify-center rounded-md transition-colors ${
               confirmDelete.isPending(d.id)
-                ? "text-destructive bg-destructive/15"
+                ? "text-destructive bg-destructive/15 ring-2 ring-destructive/60"
                 : "text-muted-foreground/60 hover:text-destructive hover:bg-destructive/10"
             }`}
           >
-            <Trash2 size={13} />
+            <Trash2 size={14} />
           </button>
         </div>
       ),
@@ -225,10 +253,30 @@ export default function VisionDatasets() {
           <p className="text-sm text-muted-foreground">Aucun dataset d'images importé pour l'instant.</p>
         </Card>
       ) : (
-        <Table columns={columns} rows={datasets} rowKey={(d) => d.id} />
+        <Table
+          columns={columns}
+          rows={datasets}
+          rowKey={(d) => d.id}
+          selectable
+          selectedKeys={selectedKeys}
+          onSelectionChange={setSelectedKeys}
+        />
       )}
 
       {exploring && <VisionDatasetExplorer dataset={exploring} onClose={() => setExploring(null)} />}
+
+      <BulkActionBar count={selectedKeys.size} onClear={() => setSelectedKeys(new Set())}>
+        <Button
+          variant="destructive"
+          size="sm"
+          loading={bulkDeleting}
+          onClick={() => bulkConfirm.trigger("bulk", handleBulkDelete)}
+          onMouseLeave={bulkConfirm.reset}
+        >
+          <Trash2 size={14} aria-hidden="true" />
+          {bulkConfirm.isPending("bulk") ? "Confirmer la suppression ?" : "Supprimer"}
+        </Button>
+      </BulkActionBar>
     </AppShell>
   );
 }

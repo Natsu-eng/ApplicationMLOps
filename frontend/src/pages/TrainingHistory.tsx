@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { Award, BrainCircuit, GitCompareArrows, History, Search } from "lucide-react";
+import { Award, BrainCircuit, GitCompareArrows, History, Search, Trash2 } from "lucide-react";
 import {
   ApiError,
   api,
@@ -12,6 +12,7 @@ import {
 import AppShell from "../components/AppShell";
 import { pillarColor } from "../config/pillars";
 import { Badge } from "../components/ui/Badge";
+import { BulkActionBar } from "../components/ui/BulkActionBar";
 import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
 import { ColorIconBadge, accentColorForId } from "../components/ui/ColorIconBadge";
@@ -21,6 +22,9 @@ import { Select } from "../components/ui/Select";
 import { SectionHeader } from "../components/ui/SectionHeader";
 import { JobStatusBadge } from "../components/ui/StatusBadge";
 import { Table, type TableColumn } from "../components/ui/Table";
+import { useConfirmAction } from "../hooks/useConfirmAction";
+import { useToast } from "../components/ui/Toast";
+import { runBulkDelete } from "../utils/bulkDelete";
 import { formatDateTime, formatMetricLabel, formatMetricValue } from "../utils/format";
 
 const STATUS_FILTER_OPTIONS: { value: JobStatus | "all"; label: string }[] = [
@@ -67,6 +71,9 @@ export default function TrainingHistory() {
   const [registryError, setRegistryError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<JobStatus | "all">("all");
+  const [bulkDeleting, setBulkDeleting] = useState(false);
+  const bulkConfirm = useConfirmAction<"bulk">();
+  const toast = useToast();
 
   const load = useCallback(() => {
     api.training
@@ -103,6 +110,28 @@ export default function TrainingHistory() {
       setCompareError(err instanceof ApiError ? err.message : "Comparaison impossible");
     } finally {
       setComparing(false);
+    }
+  }
+
+  async function handleBulkDelete() {
+    if (selected.size === 0) return;
+    setBulkDeleting(true);
+    try {
+      const { succeeded, failed } = await runBulkDelete(Array.from(selected), (id) => api.training.remove(id));
+      if (failed === 0) {
+        toast.push({ variant: "success", title: `${succeeded} entraînement${succeeded > 1 ? "s" : ""} supprimé${succeeded > 1 ? "s" : ""}` });
+      } else {
+        toast.push({
+          variant: succeeded === 0 ? "danger" : "warning",
+          title: succeeded === 0 ? "Échec de la suppression" : "Suppression partielle",
+          description: `${succeeded} réussie${succeeded > 1 ? "s" : ""}, ${failed} échouée${failed > 1 ? "s" : ""}.`,
+        });
+      }
+    } finally {
+      setBulkDeleting(false);
+      setSelected(new Set());
+      setComparison(null);
+      load();
     }
   }
 
@@ -298,6 +327,19 @@ export default function TrainingHistory() {
           }
         />
       </Card>
+
+      <BulkActionBar count={selected.size} onClear={() => setSelected(new Set())}>
+        <Button
+          variant="destructive"
+          size="sm"
+          loading={bulkDeleting}
+          onClick={() => bulkConfirm.trigger("bulk", handleBulkDelete)}
+          onMouseLeave={bulkConfirm.reset}
+        >
+          <Trash2 size={14} aria-hidden="true" />
+          {bulkConfirm.isPending("bulk") ? "Confirmer la suppression ?" : "Supprimer"}
+        </Button>
+      </BulkActionBar>
 
       {compareError && <p className="text-sm text-destructive mb-4">{compareError}</p>}
 

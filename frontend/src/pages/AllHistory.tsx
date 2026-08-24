@@ -9,10 +9,13 @@ import {
   Search,
   Shapes,
   Sparkles,
+  Trash2,
   type LucideIcon,
 } from "lucide-react";
 import { api, type JobStatus } from "../api/client";
 import AppShell from "../components/AppShell";
+import { BulkActionBar } from "../components/ui/BulkActionBar";
+import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
 import { ColorIconBadge, type AccentColor } from "../components/ui/ColorIconBadge";
 import { ErrorNote } from "../components/ui/ErrorNote";
@@ -21,9 +24,11 @@ import { PageHeader } from "../components/ui/PageHeader";
 import { Select } from "../components/ui/Select";
 import { JobStatusBadge } from "../components/ui/StatusBadge";
 import { Table, type TableColumn } from "../components/ui/Table";
+import { useConfirmAction } from "../hooks/useConfirmAction";
+import { useToast } from "../components/ui/Toast";
+import { runBulkDelete } from "../utils/bulkDelete";
 import { formatDateTime, formatPercent } from "../utils/format";
-
-type JobKind = "supervised" | "clustering" | "dimensionality" | "anomalies" | "vision_classification" | "vision_anomalies";
+import { JOB_KIND_REMOVE, type JobKind } from "../utils/jobKinds";
 
 interface HistoryEntry {
   key: string;
@@ -82,6 +87,10 @@ export default function AllHistory() {
   const [statusFilter, setStatusFilter] = useState<JobStatus | "all">("all");
   const [authorFilter, setAuthorFilter] = useState("all");
   const [periodFilter, setPeriodFilter] = useState("all");
+  const [selectedKeys, setSelectedKeys] = useState<Set<string | number>>(new Set());
+  const [bulkDeleting, setBulkDeleting] = useState(false);
+  const bulkConfirm = useConfirmAction<"bulk">();
+  const toast = useToast();
 
   const load = useCallback(async () => {
     const [supervised, clustering, dimensionality, anomalies, visionClassification, visionAnomalies] = await Promise.allSettled([
@@ -211,6 +220,32 @@ export default function AllHistory() {
   useEffect(() => {
     load();
   }, [load]);
+
+  async function handleBulkDelete() {
+    if (!rows) return;
+    const selected = rows.filter((r) => selectedKeys.has(r.key));
+    if (selected.length === 0) return;
+    setBulkDeleting(true);
+    try {
+      const { succeeded, failed } = await runBulkDelete(selected, (r) => JOB_KIND_REMOVE[r.kind](r.id));
+      if (failed === 0) {
+        toast.push({
+          variant: "success",
+          title: `${succeeded} analyse${succeeded > 1 ? "s" : ""} supprimée${succeeded > 1 ? "s" : ""}`,
+        });
+      } else {
+        toast.push({
+          variant: succeeded === 0 ? "danger" : "warning",
+          title: succeeded === 0 ? "Échec de la suppression" : "Suppression partielle",
+          description: `${succeeded} réussie${succeeded > 1 ? "s" : ""}, ${failed} échouée${failed > 1 ? "s" : ""}.`,
+        });
+      }
+    } finally {
+      setBulkDeleting(false);
+      setSelectedKeys(new Set());
+      load();
+    }
+  }
 
   const authors = useMemo(() => {
     if (!rows) return [];
@@ -371,8 +406,24 @@ export default function AllHistory() {
           loading={rows === null}
           pageSize={20}
           emptyMessage={rows && rows.length > 0 ? "Aucune analyse ne correspond à ces filtres." : "Aucune analyse pour l'instant."}
+          selectable
+          selectedKeys={selectedKeys}
+          onSelectionChange={setSelectedKeys}
         />
       </Card>
+
+      <BulkActionBar count={selectedKeys.size} onClear={() => setSelectedKeys(new Set())}>
+        <Button
+          variant="destructive"
+          size="sm"
+          loading={bulkDeleting}
+          onClick={() => bulkConfirm.trigger("bulk", handleBulkDelete)}
+          onMouseLeave={bulkConfirm.reset}
+        >
+          <Trash2 size={14} aria-hidden="true" />
+          {bulkConfirm.isPending("bulk") ? "Confirmer la suppression ?" : "Supprimer"}
+        </Button>
+      </BulkActionBar>
     </AppShell>
   );
 }

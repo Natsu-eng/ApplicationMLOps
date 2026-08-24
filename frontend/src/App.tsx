@@ -1,31 +1,44 @@
+import { lazy, Suspense } from "react";
 import { Navigate, Route, BrowserRouter as Router, Routes } from "react-router-dom";
 import ProtectedRoute from "./components/ProtectedRoute";
 import { AuthProvider, useAuth } from "./contexts/AuthContext";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import { ToastProvider } from "./components/ui/Toast";
 import { CommandPalette } from "./components/ui/CommandPalette";
-import Aide from "./pages/Aide";
-import AllHistory from "./pages/AllHistory";
-import AnomalyDetection from "./pages/AnomalyDetection";
-import Clustering from "./pages/Clustering";
-import Dashboard from "./pages/Dashboard";
-import Datasets from "./pages/Datasets";
-import DesignSystem from "./pages/DesignSystem";
-import DimensionalityReduction from "./pages/DimensionalityReduction";
-import ForgotPassword from "./pages/ForgotPassword";
-import Login from "./pages/Login";
-import Onboarding from "./pages/Onboarding";
-import Orientation from "./pages/Orientation";
-import Profile from "./pages/Profile";
-import Register from "./pages/Register";
-import ResetPassword from "./pages/ResetPassword";
-import Training from "./pages/Training";
-import TrainingHistory from "./pages/TrainingHistory";
-import UnsupervisedHistory from "./pages/UnsupervisedHistory";
-import VisionAnomalies from "./pages/VisionAnomalies";
-import VisionClassification from "./pages/VisionClassification";
-import VisionDatasets from "./pages/VisionDatasets";
-import VisionHistory from "./pages/VisionHistory";
+import { ErrorBoundary } from "./components/ErrorBoundary";
+import { RouteFallback } from "./components/RouteFallback";
+
+// Découpage par route (Lot dashboard-dynamique/modernité) — avant ce
+// correctif, les 24 pages étaient importées statiquement en tête de
+// fichier : un seul chunk JS de 1,15+ Mo minifié (confirmé par
+// `npm run build`, avertissement Vite explicite), téléchargé et parsé en
+// entier avant même d'afficher l'écran de connexion. `React.lazy` scinde
+// chaque page en son propre chunk, chargé à la demande — un visiteur non
+// connecté ne télécharge jamais le code des 6 piliers ML, et `/design`
+// (page de style guide interne, jamais liée depuis la navigation) ne
+// pèse plus jamais sur le chargement initial de personne.
+const Aide = lazy(() => import("./pages/Aide"));
+const AllHistory = lazy(() => import("./pages/AllHistory"));
+const AnomalyDetection = lazy(() => import("./pages/AnomalyDetection"));
+const Clustering = lazy(() => import("./pages/Clustering"));
+const Dashboard = lazy(() => import("./pages/Dashboard"));
+const Datasets = lazy(() => import("./pages/Datasets"));
+const DesignSystem = lazy(() => import("./pages/DesignSystem"));
+const DimensionalityReduction = lazy(() => import("./pages/DimensionalityReduction"));
+const ForgotPassword = lazy(() => import("./pages/ForgotPassword"));
+const Login = lazy(() => import("./pages/Login"));
+const Onboarding = lazy(() => import("./pages/Onboarding"));
+const Orientation = lazy(() => import("./pages/Orientation"));
+const Profile = lazy(() => import("./pages/Profile"));
+const Register = lazy(() => import("./pages/Register"));
+const ResetPassword = lazy(() => import("./pages/ResetPassword"));
+const Training = lazy(() => import("./pages/Training"));
+const TrainingHistory = lazy(() => import("./pages/TrainingHistory"));
+const UnsupervisedHistory = lazy(() => import("./pages/UnsupervisedHistory"));
+const VisionAnomalies = lazy(() => import("./pages/VisionAnomalies"));
+const VisionClassification = lazy(() => import("./pages/VisionClassification"));
+const VisionDatasets = lazy(() => import("./pages/VisionDatasets"));
+const VisionHistory = lazy(() => import("./pages/VisionHistory"));
 
 /** Palette de commandes globale (⌘K) — n'a de sens que pour un utilisateur
  * connecté (les destinations sont toutes des routes protégées) : montée
@@ -44,6 +57,8 @@ export default function App() {
         <ToastProvider>
         <Router>
           <GlobalCommandPalette />
+          <ErrorBoundary>
+          <Suspense fallback={<RouteFallback />}>
           <Routes>
             <Route path="/login" element={<Login />} />
             <Route path="/register" element={<Register />} />
@@ -211,6 +226,8 @@ export default function App() {
             />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
+          </Suspense>
+          </ErrorBoundary>
         </Router>
         </ToastProvider>
       </AuthProvider>

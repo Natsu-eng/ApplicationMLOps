@@ -1193,6 +1193,23 @@ export interface LearningCurveData {
 // Lot 9 — registre de modèles versionné.
 export type ModelStage = "staging" | "production" | null;
 
+/** Une version passée d'un "problème" (même dataset + même cible) — Lot 5
+ * backend (correctif P1), `GET /training/jobs/{id}/model/versions` : sans
+ * appelant frontend jusqu'ici malgré un rollback déjà entièrement supporté
+ * côté backend (repromouvoir `job_id` en "production" démet automatiquement
+ * la version courante — même mécanisme que `promoteModel`, aucun endpoint
+ * séparé nécessaire pour "revenir en arrière"). */
+export interface ModelVersionEntry {
+  job_id: number;
+  model_id: number;
+  version: number;
+  algorithm: string;
+  stage: ModelStage;
+  promoted_at: string | null;
+  created_at: string;
+  headline_metric: HeadlineMetric | null;
+}
+
 export interface ModelRegistryEntry {
   job_id: number;
   model_id: number;
@@ -1326,6 +1343,24 @@ export interface PredictionResult {
   probabilities?: Record<string, number>;
   interval?: PredictionInterval;
   explanation?: LocalExplanation;
+}
+
+/** Une prédiction passée, avec son lignage (Phase 3 backend,
+ * AUDIT_BACKEND_2026-08-23.md, Axe I) — `GET /training/jobs/{id}/predictions`
+ * n'avait jusqu'ici AUCUN appelant côté frontend malgré une persistance
+ * complète côté backend (entrée, sortie, dataset/job/version d'origine) :
+ * chaque prédiction disparaissait de l'écran sitôt la réponse affichée. */
+export interface PredictionHistoryEntry {
+  id: number;
+  input: Record<string, unknown>;
+  prediction: number | string;
+  probabilities?: Record<string, number>;
+  interval?: PredictionInterval;
+  requested_by?: string;
+  dataset_id: number;
+  training_job_id: number;
+  model_version: number;
+  created_at: string;
 }
 
 // Lot 4 (correctif I3, AUDIT_DATALAB_2026-08-16.md §C.2.4) — remplace les 8
@@ -1478,6 +1513,8 @@ export const api = {
         method: "POST",
         body: JSON.stringify({ data }),
       }),
+    predictions: (jobId: number, limit = 50) =>
+      request<{ entries: PredictionHistoryEntry[] }>(`/training/jobs/${jobId}/predictions?limit=${limit}`),
     cancel: (id: number) => request<TrainingJobSummary>(`/training/jobs/${id}/cancel`, { method: "POST" }),
     rerun: (id: number) => request<TrainingJobSummary>(`/training/jobs/${id}/rerun`, { method: "POST" }),
     remove: (id: number) => request<void>(`/training/jobs/${id}`, { method: "DELETE" }),
@@ -1488,6 +1525,7 @@ export const api = {
         body: JSON.stringify({ stage: stageValue }),
       }),
     registry: () => request<ModelRegistryResponse>("/training/models/registry"),
+    modelVersions: (jobId: number) => request<{ entries: ModelVersionEntry[] }>(`/training/jobs/${jobId}/model/versions`),
     exportModel: (jobId: number, suggestedFilename?: string) =>
       downloadModelExport(`/training/jobs/${jobId}/model/export`, suggestedFilename ?? `modele_job${jobId}.joblib`),
   },

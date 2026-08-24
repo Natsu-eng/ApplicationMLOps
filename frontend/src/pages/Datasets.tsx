@@ -6,6 +6,7 @@ import AppShell from "../components/AppShell";
 import { pillarColor } from "../config/pillars";
 import EdaModal from "../components/datasets/EdaModal";
 import { Badge } from "../components/ui/Badge";
+import { BulkActionBar } from "../components/ui/BulkActionBar";
 import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
 import { ColorIconBadge, accentColorForId } from "../components/ui/ColorIconBadge";
@@ -13,6 +14,8 @@ import { Modal } from "../components/ui/Modal";
 import { PageHeader } from "../components/ui/PageHeader";
 import { DatasetStatusBadge } from "../components/ui/StatusBadge";
 import { useConfirmAction } from "../hooks/useConfirmAction";
+import { useToast } from "../components/ui/Toast";
+import { runBulkDelete } from "../utils/bulkDelete";
 import { formatDate, formatFileSize } from "../utils/format";
 
 const ACCEPTED_EXTENSIONS = ".csv,.parquet,.xlsx,.xls,.json";
@@ -25,6 +28,40 @@ export default function Datasets() {
   const [previewing, setPreviewing] = useState<DatasetSummary | null>(null);
   const [exploring, setExploring] = useState<DatasetSummary | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [bulkDeleting, setBulkDeleting] = useState(false);
+  const bulkConfirm = useConfirmAction<"bulk">();
+  const toast = useToast();
+
+  function toggleSelect(id: number) {
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  async function handleBulkDelete() {
+    if (selectedIds.size === 0) return;
+    setBulkDeleting(true);
+    try {
+      const { succeeded, failed } = await runBulkDelete(Array.from(selectedIds), (id) => api.datasets.remove(id));
+      if (failed === 0) {
+        toast.push({ variant: "success", title: `${succeeded} dataset${succeeded > 1 ? "s" : ""} supprimé${succeeded > 1 ? "s" : ""}` });
+      } else {
+        toast.push({
+          variant: succeeded === 0 ? "danger" : "warning",
+          title: succeeded === 0 ? "Échec de la suppression" : "Suppression partielle",
+          description: `${succeeded} réussie${succeeded > 1 ? "s" : ""}, ${failed} échouée${failed > 1 ? "s" : ""}.`,
+        });
+      }
+    } finally {
+      setBulkDeleting(false);
+      setSelectedIds(new Set());
+      load();
+    }
+  }
 
   // Deep-linking (AUDIT_ROADMAP.md, H20/D12) — `?preview=<id>` /
   // `?explore=<id>` synchronisent l'URL avec la modale ouverte, dans les
@@ -195,6 +232,8 @@ export default function Datasets() {
               onPreview={() => openPreview(dataset)}
               onExplore={() => openExplore(dataset)}
               onDelete={() => handleDelete(dataset.id)}
+              selected={selectedIds.has(dataset.id)}
+              onToggleSelect={() => toggleSelect(dataset.id)}
             />
           ))}
         </div>
@@ -202,6 +241,19 @@ export default function Datasets() {
 
       {previewing && <PreviewModal dataset={previewing} onClose={closePreview} />}
       {exploring && <EdaModal dataset={exploring} onClose={closeExplore} />}
+
+      <BulkActionBar count={selectedIds.size} onClear={() => setSelectedIds(new Set())}>
+        <Button
+          variant="destructive"
+          size="sm"
+          loading={bulkDeleting}
+          onClick={() => bulkConfirm.trigger("bulk", handleBulkDelete)}
+          onMouseLeave={bulkConfirm.reset}
+        >
+          <Trash2 size={14} aria-hidden="true" />
+          {bulkConfirm.isPending("bulk") ? "Confirmer la suppression ?" : "Supprimer"}
+        </Button>
+      </BulkActionBar>
     </AppShell>
   );
 }
@@ -211,11 +263,15 @@ function DatasetCard({
   onPreview,
   onExplore,
   onDelete,
+  selected,
+  onToggleSelect,
 }: {
   dataset: DatasetSummary;
   onPreview: () => void;
   onExplore: () => void;
   onDelete: () => void;
+  selected: boolean;
+  onToggleSelect: () => void;
 }) {
   // Couleur décorative par IDENTITÉ (pas par statut) — revenu en arrière sur
   // retour utilisateur direct : la quasi-totalité des datasets sont "Prêt"
@@ -251,10 +307,21 @@ function DatasetCard({
   }
 
   return (
-    <Card interactive className="group overflow-hidden flex flex-col">
+    <Card
+      interactive
+      className={`group overflow-hidden flex flex-col ${selected ? "bg-primary/[0.06]" : ""}`}
+      style={selected ? { boxShadow: "inset 3px 0 0 var(--accent)" } : undefined}
+    >
       <div className="p-5 flex flex-col flex-1">
         <div className="flex items-start justify-between gap-2 mb-3">
           <div className="flex items-start gap-3 min-w-0">
+            <input
+              type="checkbox"
+              aria-label={`Sélectionner ${dataset.name}`}
+              checked={selected}
+              onChange={onToggleSelect}
+              className="rounded border-input flex-shrink-0 mt-2"
+            />
             <ColorIconBadge icon={FileSpreadsheet} color={color} size="sm" />
             <div className="min-w-0">
               <p className="text-sm font-medium text-foreground truncate" title={dataset.name}>

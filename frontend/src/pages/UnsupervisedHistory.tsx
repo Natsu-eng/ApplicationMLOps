@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
-import { AlertTriangle, History, ScatterChart, Shapes } from "lucide-react";
+import { AlertTriangle, History, ScatterChart, Shapes, Trash2 } from "lucide-react";
 import {
   ApiError,
   api,
@@ -10,11 +10,16 @@ import {
 } from "../api/client";
 import AppShell from "../components/AppShell";
 import { pillarColor } from "../config/pillars";
+import { BulkActionBar } from "../components/ui/BulkActionBar";
+import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
 import { ColorIconBadge, accentColorForId } from "../components/ui/ColorIconBadge";
 import { PageHeader } from "../components/ui/PageHeader";
 import { JobStatusBadge } from "../components/ui/StatusBadge";
 import { Tabs, type TabItem } from "../components/ui/Tabs";
+import { useConfirmAction } from "../hooks/useConfirmAction";
+import { useToast } from "../components/ui/Toast";
+import { runBulkDelete } from "../utils/bulkDelete";
 import { formatDateTime, formatPercent } from "../utils/format";
 
 type ModuleId = "clustering" | "dimensionality" | "anomalies";
@@ -29,6 +34,12 @@ const MODULE_ROUTES: Record<ModuleId, string> = {
   clustering: "/clustering",
   dimensionality: "/reduction-dimension",
   anomalies: "/anomalies",
+};
+
+const MODULE_REMOVE: Record<ModuleId, (id: number) => Promise<void>> = {
+  clustering: api.clustering.remove,
+  dimensionality: api.dimensionality.remove,
+  anomalies: api.anomalies.remove,
 };
 
 /** Historique du pilier ML non supervisé — jusqu'ici absent : Clustering.tsx/
@@ -48,6 +59,49 @@ export default function UnsupervisedHistory() {
   const [clusteringError, setClusteringError] = useState<string | null>(null);
   const [dimensionalityError, setDimensionalityError] = useState<string | null>(null);
   const [anomalyError, setAnomalyError] = useState<string | null>(null);
+  // Une seule sélection active à la fois — vidée au changement d'onglet
+  // (Lot bulk-select) : les 3 modules ont des espaces d'id indépendants,
+  // conserver une sélection en changeant d'onglet risquerait de supprimer
+  // le mauvais type de job par confusion.
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [bulkDeleting, setBulkDeleting] = useState(false);
+  const bulkConfirm = useConfirmAction<"bulk">();
+  const toast = useToast();
+
+  function changeModule(next: ModuleId) {
+    setActive(next);
+    setSelected(new Set());
+  }
+
+  function toggleSelect(id: number) {
+    setSelected((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  async function handleBulkDelete() {
+    if (selected.size === 0) return;
+    setBulkDeleting(true);
+    try {
+      const { succeeded, failed } = await runBulkDelete(Array.from(selected), (id) => MODULE_REMOVE[active](id));
+      if (failed === 0) {
+        toast.push({ variant: "success", title: `${succeeded} élément${succeeded > 1 ? "s" : ""} supprimé${succeeded > 1 ? "s" : ""}` });
+      } else {
+        toast.push({
+          variant: succeeded === 0 ? "danger" : "warning",
+          title: succeeded === 0 ? "Échec de la suppression" : "Suppression partielle",
+          description: `${succeeded} réussie${succeeded > 1 ? "s" : ""}, ${failed} échouée${failed > 1 ? "s" : ""}.`,
+        });
+      }
+    } finally {
+      setBulkDeleting(false);
+      setSelected(new Set());
+      load();
+    }
+  }
 
   const load = useCallback(() => {
     api.clustering
@@ -85,26 +139,46 @@ export default function UnsupervisedHistory() {
       />
 
       <div className="mb-5">
-        <Tabs items={MODULE_TABS} active={active} onChange={setActive} />
+        <Tabs items={MODULE_TABS} active={active} onChange={changeModule} />
       </div>
 
       <Card className="p-5">
         {active === "clustering" && (
-          <ClusteringHistoryList jobs={clusteringJobs} error={clusteringError} count={counts.clustering} />
+          <ClusteringHistoryList jobs={clusteringJobs} error={clusteringError} count={counts.clustering} selected={selected} onToggleSelect={toggleSelect} />
         )}
         {active === "dimensionality" && (
-          <DimensionalityHistoryList jobs={dimensionalityJobs} error={dimensionalityError} count={counts.dimensionality} />
+          <DimensionalityHistoryList jobs={dimensionalityJobs} error={dimensionalityError} count={counts.dimensionality} selected={selected} onToggleSelect={toggleSelect} />
         )}
         {active === "anomalies" && (
-          <AnomalyHistoryList jobs={anomalyJobs} error={anomalyError} count={counts.anomalies} />
+          <AnomalyHistoryList jobs={anomalyJobs} error={anomalyError} count={counts.anomalies} selected={selected} onToggleSelect={toggleSelect} />
         )}
       </Card>
+
+      <BulkActionBar count={selected.size} onClear={() => setSelected(new Set())}>
+        <Button
+          variant="destructive"
+          size="sm"
+          loading={bulkDeleting}
+          onClick={() => bulkConfirm.trigger("bulk", handleBulkDelete)}
+          onMouseLeave={bulkConfirm.reset}
+        >
+          <Trash2 size={14} aria-hidden="true" />
+          {bulkConfirm.isPending("bulk") ? "Confirmer la suppression ?" : "Supprimer"}
+        </Button>
+      </BulkActionBar>
     </AppShell>
   );
 }
 
 /** Ligne générique — même structure visuelle pour les 3 listes, contenu au
- * centre libre (résumé propre à chaque module). */
+ * centre libre (résumé propre à chaque module).
+ *
+ * `id`/`selected`/`onToggleSelect` (Lot bulk-select) optionnels — la case à
+ * cocher est un ÉLÉMENT FRÈRE du `<Link>`, jamais imbriquée dedans : un
+ * `<input>` à l'intérieur d'un `<a>` reçoit quand même le clic de
+ * navigation par bouillonnement (bubbling) vers l'ancre parente, il aurait
+ * fallu un `preventDefault`/`stopPropagation` fragile plutôt qu'une
+ * structure qui rend le problème impossible par construction. */
 function HistoryRow({
   to,
   icon,
@@ -113,6 +187,9 @@ function HistoryRow({
   secondary,
   status,
   right,
+  id,
+  selected,
+  onToggleSelect,
 }: {
   to: string;
   icon: typeof Shapes;
@@ -121,22 +198,33 @@ function HistoryRow({
   secondary: string;
   status: string;
   right?: ReactNode;
+  id?: number;
+  selected?: boolean;
+  onToggleSelect?: (id: number) => void;
 }) {
   return (
-    <Link
-      to={to}
-      className="flex items-center gap-3 py-2.5 px-2 -mx-2 rounded-lg hover:bg-muted/60 transition-colors"
-    >
-      <ColorIconBadge icon={icon} color={accentColorForId(colorSeed)} size="sm" />
-      <div className="min-w-0 flex-1">
-        <p className="text-sm text-foreground truncate">{primary}</p>
-        <p className="text-xs text-muted-foreground truncate">{secondary}</p>
-      </div>
-      <div className="flex items-center gap-2 flex-shrink-0">
-        {right}
-        <JobStatusBadge status={status as ClusteringJobSummary["status"]} />
-      </div>
-    </Link>
+    <div className="flex items-center gap-1 py-2.5 px-2 -mx-2 rounded-lg hover:bg-muted/60 transition-colors">
+      {id !== undefined && onToggleSelect && (
+        <input
+          type="checkbox"
+          aria-label={`Sélectionner ${primary}`}
+          checked={selected ?? false}
+          onChange={() => onToggleSelect(id)}
+          className="rounded border-input flex-shrink-0 mr-1.5"
+        />
+      )}
+      <Link to={to} className="flex items-center gap-3 flex-1 min-w-0">
+        <ColorIconBadge icon={icon} color={accentColorForId(colorSeed)} size="sm" />
+        <div className="min-w-0 flex-1">
+          <p className="text-sm text-foreground truncate">{primary}</p>
+          <p className="text-xs text-muted-foreground truncate">{secondary}</p>
+        </div>
+        <div className="flex items-center gap-2 flex-shrink-0">
+          {right}
+          <JobStatusBadge status={status as ClusteringJobSummary["status"]} />
+        </div>
+      </Link>
+    </div>
   );
 }
 
@@ -153,15 +241,22 @@ function renderPlaceholder(jobs: unknown[] | null, error: string | null, emptyLa
   return null;
 }
 
+interface SelectionProps {
+  selected: Set<number>;
+  onToggleSelect: (id: number) => void;
+}
+
 function ClusteringHistoryList({
   jobs,
   error,
   count,
+  selected,
+  onToggleSelect,
 }: {
   jobs: ClusteringJobSummary[] | null;
   error: string | null;
   count: number | null;
-}) {
+} & SelectionProps) {
   const placeholder = renderPlaceholder(jobs, error, "Aucun clustering pour l'instant.");
   if (placeholder) return placeholder;
   return (
@@ -173,6 +268,9 @@ function ClusteringHistoryList({
         {jobs!.map((job) => (
           <li key={job.id}>
             <HistoryRow
+              id={job.id}
+              selected={selected.has(job.id)}
+              onToggleSelect={onToggleSelect}
               to={`${MODULE_ROUTES.clustering}?job=${job.id}`}
               icon={Shapes}
               colorSeed={job.id}
@@ -198,11 +296,13 @@ function DimensionalityHistoryList({
   jobs,
   error,
   count,
+  selected,
+  onToggleSelect,
 }: {
   jobs: DimensionalityJobSummary[] | null;
   error: string | null;
   count: number | null;
-}) {
+} & SelectionProps) {
   const placeholder = renderPlaceholder(jobs, error, "Aucune réduction de dimension pour l'instant.");
   if (placeholder) return placeholder;
   return (
@@ -214,6 +314,9 @@ function DimensionalityHistoryList({
         {jobs!.map((job) => (
           <li key={job.id}>
             <HistoryRow
+              id={job.id}
+              selected={selected.has(job.id)}
+              onToggleSelect={onToggleSelect}
               to={`${MODULE_ROUTES.dimensionality}?job=${job.id}`}
               icon={ScatterChart}
               colorSeed={job.id}
@@ -239,11 +342,13 @@ function AnomalyHistoryList({
   jobs,
   error,
   count,
+  selected,
+  onToggleSelect,
 }: {
   jobs: AnomalyJobSummary[] | null;
   error: string | null;
   count: number | null;
-}) {
+} & SelectionProps) {
   const placeholder = renderPlaceholder(jobs, error, "Aucune détection d'anomalies pour l'instant.");
   if (placeholder) return placeholder;
   return (
@@ -255,6 +360,9 @@ function AnomalyHistoryList({
         {jobs!.map((job) => (
           <li key={job.id}>
             <HistoryRow
+              id={job.id}
+              selected={selected.has(job.id)}
+              onToggleSelect={onToggleSelect}
               to={`${MODULE_ROUTES.anomalies}?job=${job.id}`}
               icon={AlertTriangle}
               colorSeed={job.id}

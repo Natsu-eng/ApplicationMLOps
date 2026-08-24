@@ -8,6 +8,7 @@ import {
   type MLModelDetail,
   type ModelCandidate,
   type ModelStage,
+  type ModelVersionEntry,
   type TrainingJobSummary,
 } from "../../api/client";
 import { Badge } from "../ui/Badge";
@@ -18,7 +19,7 @@ import { Modal } from "../ui/Modal";
 import { LabelWithHelp } from "../ui/Tooltip";
 import { SectionHeader } from "../ui/SectionHeader";
 import { Tabs } from "../ui/Tabs";
-import { formatMetricValue, formatPercent } from "../../utils/format";
+import { formatDateTime, formatMetricValue, formatPercent } from "../../utils/format";
 import { clampUnitScore } from "../../utils/cvScore";
 import EvaluationCharts from "./EvaluationCharts";
 import { ShapBeeswarmChart, PermutationImportanceChart } from "./GlobalExplainability";
@@ -501,6 +502,104 @@ function ModelRegistryControls({
   );
 }
 
+/** Historique des versions du "problème" (même dataset + même cible) avec
+ * rollback (Lot lignage/versions, `GET /training/jobs/{id}/model/versions`)
+ * — endpoint backend construit et testé depuis le Lot 5 (correctif P1),
+ * sans AUCUN appelant frontend jusqu'ici : un utilisateur ne pouvait ni
+ * voir qu'un problème avait plusieurs versions entraînées, ni revenir à
+ * une version antérieure sans en connaître le `job_id` par cœur.
+ *
+ * "Rollback" = repromouvoir une version antérieure en production — RÉUTILISE
+ * `api.training.promoteModel` (déjà appelé par `ModelRegistryControls`
+ * ci-dessus), jamais un second mécanisme : le backend documente
+ * explicitement qu'aucun endpoint dédié n'existe, la promotion normale
+ * suffit (elle démet automatiquement la version alors en production). */
+function ModelVersionHistory({ jobId }: { jobId: number }) {
+  const [versions, setVersions] = useState<ModelVersionEntry[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busyJobId, setBusyJobId] = useState<number | null>(null);
+
+  useEffect(() => {
+    api.training
+      .modelVersions(jobId)
+      .then((r) => setVersions(r.entries))
+      .catch((err) => setError(err instanceof ApiError ? err.message : "Historique des versions indisponible"));
+  }, [jobId]);
+
+  async function handlePromote(targetJobId: number) {
+    setBusyJobId(targetJobId);
+    setError(null);
+    try {
+      await api.training.promoteModel(targetJobId, "production");
+      const { entries } = await api.training.modelVersions(jobId);
+      setVersions(entries);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Promotion impossible");
+    } finally {
+      setBusyJobId(null);
+    }
+  }
+
+  // Une seule version (ce job) : rien à comparer, pas de rollback possible
+  // — la carte n'ajoute aucune information par rapport à "Registre de
+  // modèles" ci-dessus dans ce cas, jamais affichée pour rester silencieuse
+  // plutôt que de montrer un tableau à une seule ligne sans action utile.
+  if (versions !== null && versions.length <= 1) return null;
+
+  return (
+    <Card className={`p-5 ${accentSurfaceClass("blue")}`}>
+      <SectionHeader
+        icon={History}
+        color="blue"
+        label="Versions de ce problème"
+        help="Chaque nouvel entraînement sur le même dataset et la même cible crée une nouvelle version — jamais un remplacement silencieux. Promouvoir une version antérieure en production revient en arrière (rollback) sans perdre les autres."
+      />
+      {error && <p className="text-xs text-destructive mb-3">{error}</p>}
+      {versions === null ? (
+        <p className="text-sm text-muted-foreground">Chargement…</p>
+      ) : (
+        <ul className="divide-y divide-border">
+          {versions.map((v) => {
+            const isCurrent = v.job_id === jobId;
+            const stageLabel = v.stage === "production" ? "Production" : v.stage === "staging" ? "Validation" : null;
+            const stageVariant = v.stage === "production" ? "success" : "warning";
+            return (
+              <li key={v.model_id} className="py-2.5 flex items-center gap-3 flex-wrap">
+                <span className="text-sm font-medium text-foreground w-14 flex-shrink-0">v{v.version}</span>
+                <span className="text-xs text-muted-foreground flex-1 min-w-0 truncate">
+                  {v.algorithm} · {formatDateTime(v.created_at)}
+                  {isCurrent && " · ce résultat"}
+                </span>
+                {v.headline_metric && v.headline_metric.value !== null && (
+                  <span className="text-xs text-muted-foreground tabular-nums">
+                    {v.headline_metric.name} = {v.headline_metric.value.toFixed(3)}
+                  </span>
+                )}
+                {stageLabel && (
+                  <Badge variant={stageVariant} dot>
+                    {stageLabel}
+                  </Badge>
+                )}
+                {v.stage !== "production" && (
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    disabled={busyJobId !== null}
+                    loading={busyJobId === v.job_id}
+                    onClick={() => handlePromote(v.job_id)}
+                  >
+                    Promouvoir en production
+                  </Button>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </Card>
+  );
+}
+
 /** Traçabilité (Lot 9, Traçabilité.html) — versions des librairies ML au
  * moment de l'entraînement, déjà calculées et persistées côté serveur
  * (`services/engine.py::_training_environment_versions`, commenté "Lot
@@ -779,6 +878,8 @@ export function ModelResultView({ job }: { job: TrainingJobSummary }) {
           {activeTab === "details" && (
             <div className="space-y-5">
               <ModelRegistryControls model={model} jobId={job.id} onUpdate={setModel} />
+
+              <ModelVersionHistory jobId={job.id} />
 
               <FeatureEngineeringSummary spec={model.feature_engineering} />
 
