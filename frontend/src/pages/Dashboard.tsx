@@ -17,7 +17,7 @@ import {
   Users,
   type LucideIcon,
 } from "lucide-react";
-import { ApiError, api, type DashboardSummary, type JobStatus, type TrainingJobSummary } from "../api/client";
+import { ApiError, api, apiErrorReference, type DashboardSummary, type JobStatus, type TrainingJobSummary } from "../api/client";
 import { useAuth } from "../contexts/AuthContext";
 import AppShell from "../components/AppShell";
 import { pillarColor } from "../config/pillars";
@@ -96,6 +96,7 @@ export default function Dashboard() {
   // serveur) l'emporte largement pour la page la plus visitée du produit.
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [summaryError, setSummaryError] = useState<string | null>(null);
+  const [summaryErrorRef, setSummaryErrorRef] = useState<string | undefined>(undefined);
   const [viewingJob, setViewingJob] = useState<TrainingJobSummary | null>(null);
   const confirmDeleteJob = useConfirmAction<number>();
 
@@ -127,8 +128,10 @@ export default function Dashboard() {
     try {
       setSummary(await api.dashboard.summary());
       setSummaryError(null);
+      setSummaryErrorRef(undefined);
     } catch (err) {
       setSummaryError(err instanceof ApiError ? err.message : "Impossible de charger le tableau de bord");
+      setSummaryErrorRef(apiErrorReference(err));
     }
   }, []);
 
@@ -293,7 +296,7 @@ export default function Dashboard() {
           </div>
 
           {summaryError ? (
-            <ErrorNote message={summaryError} />
+            <ErrorNote message={summaryError} reference={summaryErrorRef} />
           ) : !summary ? (
             <p className="text-sm text-muted-foreground">Chargement…</p>
           ) : activity.length === 0 ? (
@@ -415,7 +418,7 @@ export default function Dashboard() {
           </div>
 
           {summaryError ? (
-            <ErrorNote message={summaryError} />
+            <ErrorNote message={summaryError} reference={summaryErrorRef} />
           ) : !summary ? (
             <p className="text-sm text-muted-foreground">Chargement…</p>
           ) : recentDatasets.length === 0 ? (

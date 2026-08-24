@@ -65,22 +65,48 @@ export function clearTokens(): void {
 }
 
 /** Erreur API typée — porte le code métier ({code, message}) renvoyé par le backend
- * quand il existe, pour permettre un affichage précis côté UI. */
+ * quand il existe, pour permettre un affichage précis côté UI.
+ *
+ * `requestId` (Phase 6, AUDIT_BACKEND_2026-08-23.md, Axe I) — le backend
+ * inclut désormais `request_id` dans CHAQUE réponse d'erreur (Phase 1,
+ * `api/main.py`, les 3 gestionnaires globaux) ; jamais capturé côté
+ * frontend avant ce correctif. Voir `apiErrorReference()` ci-dessous pour
+ * l'afficher de façon cohérente. */
 export class ApiError extends Error {
   status: number;
   code?: string;
+  requestId?: string;
 
-  constructor(status: number, message: string, code?: string) {
+  constructor(status: number, message: string, code?: string, requestId?: string) {
     super(message);
     this.name = "ApiError";
     this.status = status;
     this.code = code;
+    this.requestId = requestId;
   }
 }
 
 interface ErrorDetail {
   code?: string;
   message?: string;
+  request_id?: string;
+}
+
+/** Référence courte à afficher sous un message d'erreur serveur (5xx) —
+ * jamais pour un 4xx (dataset introuvable, quota atteint...) : ces
+ * erreurs sont déjà explicites, une référence de support n'y ajoute rien
+ * et alourdirait l'UI. Cohérent avec le message généré côté backend pour
+ * un 500 non prévu (`ERREUR_INTERNE`, `api/main.py`), qui inclut déjà la
+ * même référence dans son propre texte. Établi ici comme utilitaire
+ * partagé (Phase 6) — pas encore adopté site par site dans chaque page
+ * (des dizaines de sites `catch (err) { setError(err.message) }`, un
+ * remplacement systématique sortirait du périmètre de cette phase, voir
+ * _backend/JOURNAL.md) : nouvelle infrastructure disponible, migration
+ * progressive documentée comme dette explicite. */
+export function apiErrorReference(err: unknown): string | undefined {
+  if (!(err instanceof ApiError)) return undefined;
+  if (err.status < 500 || !err.requestId) return undefined;
+  return `réf. ${err.requestId}`;
 }
 
 /** Décision pure — testable sans `window` (Lot 0.3, correctif C5,
@@ -175,7 +201,8 @@ async function extractError(res: Response): Promise<ApiError> {
       ? detail
       : (detail?.message ?? `Erreur ${res.status}`);
   const code = typeof detail === "object" ? detail?.code : undefined;
-  return new ApiError(res.status, message, code);
+  const requestId = typeof detail === "object" ? detail?.request_id : undefined;
+  return new ApiError(res.status, message, code, requestId);
 }
 
 /** Requêtes JSON classiques (GET/POST/PATCH avec corps JSON), token Bearer

@@ -1232,3 +1232,74 @@ supplémentaire (Trivy, SBOM) jamais disponible en local jusqu'ici — pas
 une régression de rigueur, un déplacement vers l'environnement où cette
 preuve compte le plus (celui qui bloquera réellement une fusion de PR).
 `back/5-supply-chain` fusionnée dans `main`.
+
+## Phase 6 — Consolidation frontend (périmètre volontairement réduit)
+
+### Décision 29 — `request_id` affiché côté frontend pour les erreurs serveur, adoption partielle assumée
+
+Le backend inclut `request_id` dans CHAQUE réponse d'erreur depuis la
+Phase 1 (`api/main.py`) — jamais capturé côté frontend
+(`ApiError`/`extractError`, `frontend/src/api/client.ts`) jusqu'à cette
+phase, alors que le mandat nomme explicitement « request_id affiché dans
+les erreurs » comme livrable de Phase 6.
+
+**Infrastructure ajoutée** : `ApiError.requestId` (capturé dans
+`extractError`), `apiErrorReference(err)` (nouveau, `client.ts`) —
+n'affiche une référence que pour une erreur SERVEUR (5xx) avec un
+`request_id` présent, jamais pour une erreur métier déjà explicite (404
+dataset introuvable, 429 quota atteint, 422 validation) : ces erreurs
+n'ont pas besoin d'une référence de support, en ajouter une alourdirait
+l'UI sans valeur. `ErrorNote.tsx` (composant partagé) gagne une prop
+`reference?: string` optionnelle, rétrocompatible (tout appelant qui ne
+la passe pas garde le comportement inchangé).
+
+**Adoption délibérément partielle, décidée seule** : câblée dans UN site
+représentatif (`Dashboard.tsx::summaryError`, la page la plus visitée du
+produit) pour prouver le mécanisme de bout en bout — testé
+(`client.test.ts`, 4 cas : 5xx+request_id affiché, 4xx jamais affiché,
+5xx sans request_id jamais affiché, non-`ApiError` jamais affiché).
+`ErrorNote` est aussi utilisé dans `Profile.tsx` (5 sites) et
+`AllHistory.tsx` (1 site) — non migrés cette phase. **Raison** : chaque
+site suit le même patron mécanique (`err instanceof ApiError ?
+err.message : "repli"` → ajouter une variable d'état jumelle +
+`apiErrorReference(err)`), sans risque de conception, mais migrer les 6
+sites restants sous la pression de temps de cette session (l'opérateur a
+demandé à deux reprises de ne pas laisser une étape s'éterniser)
+transformerait un changement propre et vérifié en une série de petites
+modifications répétitives moins soigneusement vérifiées chacune.
+L'infrastructure est en place, testée, prouvée sur un cas réel — la
+migration des 6 sites restants est mécanique et sans risque de
+conception, laissée en dette explicite plutôt que bâclée.
+
+### Décision 30 — Dead code / états de chargement cohérents : non traités cette phase, périmètre assumé
+
+Le mandat de Phase 6 couvre aussi le retrait de code mort et
+l'harmonisation des états de chargement/erreur à travers l'application.
+**Non traités cette phase** — une revue sérieuse de code mort
+nécessiterait un outil d'analyse de graphe d'import dédié (`ts-prune` ou
+équivalent, absent de ce dépôt — l'introduire serait une nouvelle
+dépendance sans justification écrite préparée) ou une revue manuelle
+fichier par fichier de ~150 fichiers frontend, disproportionnée par
+rapport au temps disponible dans cette session. L'harmonisation des états
+de chargement à travers ~20 pages est un chantier de la même ampleur que
+la scission des gros fichiers backend reportée en Phase 4 — même
+raisonnement, même décision : dette documentée plutôt que travail bâclé.
+Voir `RAPPORT-FINAL.md`, "ce qui a été laissé de côté".
+
+## Porte de qualité — Phase 6 (branche `back/6-frontend`)
+
+1. **`npx tsc -b`** — 0 erreur.
+2. **`npx eslint`** sur les fichiers touchés (`client.ts`, `client.test.ts`,
+   `ErrorNote.tsx`, `Dashboard.tsx`) — 0 erreur, 0 nouvel avertissement.
+3. **`npx vitest run`** — 68/68 verts (dont les 4 nouveaux tests
+   `apiErrorReference`).
+4. **`node scripts/check-contrast.mjs`** — vert, aucune régression WCAG
+   sur les 5 thèmes (le nouveau `<span>` de référence dans `ErrorNote`
+   utilise `text-destructive`/`opacity-70`, déjà couvert par la palette
+   validée — pas une nouvelle combinaison texte/fond).
+5. **`npm run build`** — réussi, 30.52s (même avertissement pré-existant
+   sur la taille du bundle, hors périmètre Phase 6).
+6. **Backend inchangé cette phase** — aucun test backend à rejouer.
+
+**Décision de fusion** : tous les points satisfaits. `back/6-frontend`
+fusionnée dans `main`.
