@@ -13,7 +13,7 @@ from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
 
 import domains.training.services.engine as ml_training_module
-from domains.shared.ml_preprocessing import split_dataset
+from domains.shared.ml_preprocessing import TrainingAbortedError, split_dataset
 from domains.training.services.registry import MODEL_REGISTRY
 from domains.training.services.engine import (
     TrainingConfig,
@@ -890,6 +890,57 @@ def test_model_ids_empty_after_filtering_falls_back_to_default_subset(monkeypatc
     assert set(called_ids) == expected_ids
 
 
+def test_one_failing_model_does_not_abort_the_whole_job(monkeypatch):
+    """Bug réel trouvé en production (retour direct, `adult.csv`, plusieurs
+    jobs) : avant ce correctif, un modèle en échec (à l'époque GaussianNB +
+    sortie sparse, corrigé séparément — voir `test_naive_bayes_handles_
+    sparse_categorical_preprocessing_output`) faisait planter TOUT le job, y
+    compris les candidats DÉJÀ optimisés avec succès (observé en réel : un
+    CatBoost à 0,929 de score, jeté avec le job entier parce que le modèle
+    suivant du catalogue levait une exception non rattrapée). Un modèle en
+    échec ne doit priver l'utilisateur QUE de ce modèle-là."""
+    original = ml_training_module._optimize_one_model
+
+    def _flaky(spec, *args, **kwargs):
+        if spec.id == "extra_trees":
+            raise RuntimeError("panne simulée d'un modèle du catalogue")
+        return original(spec, *args, **kwargs)
+
+    monkeypatch.setattr(ml_training_module, "_optimize_one_model", _flaky)
+
+    df = _make_regression_df()
+    split = split_dataset(df, "cible", ["x1", "x2"], "regression", None, 0.2, 42)
+    config = TrainingConfig(optuna_trials=3, cv_folds=3, model_ids=["extra_trees", "linear_reg"])
+
+    result = train_and_evaluate(split, "regression", config, lambda s, p: None)
+
+    # extra_trees a échoué (simulé) mais linear_reg a quand même produit un
+    # résultat exploitable — le job n'est pas mort avec lui.
+    assert result.algorithm != "Arbres extrêmement aléatoires (Extra Trees)"
+    assert result.metrics["cv_score"] is not None
+
+
+def test_all_models_failing_raises_a_clear_actionable_error(monkeypatch):
+    """Cas limite du correctif ci-dessus : si VRAIMENT tous les modèles du
+    catalogue échouent, le job doit échouer avec un message clair et
+    actionnable, jamais un job "réussi" sans aucun candidat (aurait fait
+    planter la sélection du gagnant, `max(candidates, ...)`, avec une
+    erreur Python opaque — `ValueError: max() arg is an empty sequence`,
+    jamais montrée telle quelle à l'utilisateur)."""
+
+    def _always_fails(spec, *args, **kwargs):
+        raise RuntimeError("panne simulée")
+
+    monkeypatch.setattr(ml_training_module, "_optimize_one_model", _always_fails)
+
+    df = _make_regression_df()
+    split = split_dataset(df, "cible", ["x1", "x2"], "regression", None, 0.2, 42)
+    config = TrainingConfig(optuna_trials=3, cv_folds=3, model_ids=["extra_trees"])
+
+    with pytest.raises(TrainingAbortedError):
+        train_and_evaluate(split, "regression", config, lambda s, p: None)
+
+
 # ── Lot déséquilibre — rééquilibrage des classes par sample_weight ──────────
 
 
@@ -1199,6 +1250,28 @@ def test_high_cardinality_categorical_trains_without_densifying(monkeypatch):
     assert calls["count"] == 0, "todense() appelé — une matrice a été densifiée inutilement (régression du fix)"
     assert result.algorithm  # l'entraînement a bien produit un résultat exploitable
     assert len(result.shap_summary) > 0  # SHAP calculé malgré l'entrée sparse (TreeExplainer)
+
+
+def test_naive_bayes_handles_sparse_categorical_preprocessing_output():
+    """Bug réel trouvé en production (retour direct, `adult.csv` en mode
+    expert) : GaussianNB plantait systématiquement dès qu'une colonne
+    catégorielle était présente dans les variables (`TypeError: A sparse
+    matrix was passed, but dense data is required`) — c'est-à-dire
+    quasiment toujours en usage réel, puisque le préprocesseur produit du
+    sparse dès qu'un one-hot est présent (voir la même colonne
+    quasi-identifiant que `_make_high_cardinality_df` ci-dessus, réutilisée
+    ici — elle déclenche exactement la même sortie sparse). Corrigé par
+    `ModelSpec.requires_dense_input` + `engine.py::_to_dense`, appliqué à
+    la fois pendant la recherche Optuna ET au fit final (deux sites
+    distincts, voir engine.py)."""
+    df = _make_high_cardinality_df()
+    split = split_dataset(df, "cible", ["identifiant", "x1", "x2"], "classification", None, 0.2, 42)
+    config = TrainingConfig(optuna_trials=3, cv_folds=3, model_ids=["naive_bayes"])
+
+    result = train_and_evaluate(split, "classification", config, lambda s, p: None)
+
+    assert result.algorithm == "Naive Bayes gaussien"
+    assert result.metrics["cv_score"] is not None
 
 
 def test_high_cardinality_regression_with_cqr_trains_without_densifying(monkeypatch):

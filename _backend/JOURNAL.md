@@ -1473,3 +1473,56 @@ configuration du client partagé de l'app pour qu'une régression future
 (retrait accidentel du paramètre) casse ce test précisément, pas
 seulement le principe général. `tests/test_rate_limit_fail_mode.py`
 (non-régression du mode échec ouvert/fermé) rejoué avec succès.
+
+### Décision 33 — GaussianNB plantait sur toute donnée catégorielle (sparse), et un seul modèle en échec faisait perdre TOUT le job
+
+Signalé directement par l'opérateur en usage réel (`adult.csv`, mode
+expert — logs worker complets fournis). Deux bugs distincts, révélés par
+la même trace :
+
+**Bug 1 — `TypeError: A sparse matrix was passed, but dense data is
+required`** : GaussianNB (Naive Bayes gaussien, disponible en mode
+expert) ne supporte pas les matrices creuses. Le préprocesseur partagé
+(`domains/shared/ml_preprocessing.py::build_preprocessor`) produit du
+sparse dès qu'une colonne catégorielle existe (one-hot) — documenté et
+voulu pour le catalogue par défaut (LightGBM/XGBoost/CatBoost/
+RandomForest, qui acceptent tous le sparse nativement), mais jamais
+vérifié pour GaussianNB, un modèle hors catalogue par défaut ajouté plus
+tard sans reprendre cette hypothèse.
+
+**Corrigé** : `ModelSpec.requires_dense_input: bool = False`
+(`registry.py`, `True` uniquement pour `naive_bayes`) + `engine.py::
+_to_dense` (densifie seulement si nécessaire, `hasattr(X, "toarray")`),
+inséré comme étape de pipeline conditionnelle à la fois pendant la
+recherche Optuna (`_optimize_one_model::objective`) ET au fit final
+(`train_and_evaluate`) — les deux endroits où GaussianNB touche des
+données prétraitées.
+
+**Bug 2 — bien plus grave** : la trace a révélé qu'AUCUNE isolation
+n'existait entre les modèles du catalogue — le job 58 avait déjà obtenu
+CatBoost à 0,929 de score CV avant que GaussianNB (essai suivant) ne lève
+une exception non rattrapée, faisant planter `train_and_evaluate` en
+bloc et perdre le résultat CatBoost déjà acquis. Un modèle en échec ne
+doit priver l'utilisateur QUE de ce modèle-là.
+
+**Corrigé** : la boucle `for spec in catalog` (`train_and_evaluate`)
+capture désormais toute exception d'un modèle, la journalise, et continue
+avec le reste du catalogue — sauf `TrainingAbortedError` (diagnostic déjà
+précis et actionnable, ex. classe absente d'un fold, qui affecterait de
+toute façon TOUS les modèles puisqu'ils partagent le même `cv` et les
+mêmes données : propagée telle quelle, jamais masquée). Si VRAIMENT tous
+les modèles échouent, un `TrainingAbortedError` explicite et actionnable
+est levé plutôt qu'un crash Python opaque sur `max()` d'une liste vide.
+
+**Testé** (`tests/test_ml_training.py`, 3 nouveaux tests) :
+`test_naive_bayes_handles_sparse_categorical_preprocessing_output`
+(reproduit le bug 1 avec la colonne quasi-identifiant déjà utilisée par
+`_make_high_cardinality_df`, qui déclenche la même sortie sparse) ;
+`test_one_failing_model_does_not_abort_the_whole_job` (un modèle simulé
+en échec n'empêche pas un autre de produire un résultat exploitable) ;
+`test_all_models_failing_raises_a_clear_actionable_error` (cas limite —
+tous les modèles échouent, message clair plutôt qu'un crash opaque).
+Suite complète `test_ml_training.py` (53 tests, entraînements réels, pas
+mockés) rejouée après correctif → 53 passed, 1045.54s. `ruff check`/`mypy`
+sur les 2 fichiers touchés → 0 nouvelle erreur (comparé à `main`, mêmes
+comptes exacts qu'avant, uniquement des lignes décalées par les ajouts).

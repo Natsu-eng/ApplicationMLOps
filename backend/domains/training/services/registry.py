@@ -69,6 +69,15 @@ class ModelSpec:
     # KNN n'a aucune notion de pondération d'échantillon (vote par plus proches
     # voisins) : False pour lui uniquement (voir `services/ml_training.py`).
     supports_rebalancing: bool
+    # Bug réel trouvé en production (retour direct, adult.csv en mode expert) —
+    # GaussianNB (seul modèle concerné) ne supporte PAS les matrices creuses
+    # (sklearn lève un TypeError net) : le préprocesseur produit du sparse dès
+    # qu'un one-hot est présent (voir engine.py, docstring du module), ce qui
+    # cassait tout essai Optuna de ce modèle. Défaut à False : les 8 autres
+    # modèles du catalogue acceptent le sparse nativement (vérifié
+    # empiriquement) — ne pas densifier pour eux reste la bonne valeur par
+    # défaut (mémoire).
+    requires_dense_input: bool = False
 
 
 # ── Famille arbres/ensembles — LightGBM / XGBoost / CatBoost ──────────────
@@ -333,6 +342,7 @@ MODEL_REGISTRY: dict[str, ModelSpec] = {
         explainer_kind="kernel",
         is_default=False,
         supports_rebalancing=True,
+        requires_dense_input=True,
     ),
 }
 

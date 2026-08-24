@@ -91,7 +91,7 @@ from sklearn.model_selection import (
     train_test_split,
 )
 from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import LabelEncoder, label_binarize
+from sklearn.preprocessing import FunctionTransformer, LabelEncoder, label_binarize
 from sklearn.utils.class_weight import compute_sample_weight
 
 from domains.training.services.explainability import build_explainer, shap_values_per_class
@@ -256,6 +256,16 @@ def _classification_selection_score(estimator, X, y) -> float:
     return float(accuracy_score(y_arr, estimator.predict(X)))
 
 
+def _to_dense(X: Any) -> Any:
+    """Densifie UNIQUEMENT si nécessaire — pas-à-travers si `X` est déjà un
+    tableau dense (ex. rejoué sur un batch qui, par hasard, ne contenait
+    aucune colonne one-hotée). Utilisé exclusivement pour les modèles
+    `ModelSpec.requires_dense_input=True` (GaussianNB, seul cas actuel) —
+    voir docstring du module sur la préservation du sparse pour tout le
+    reste du catalogue."""
+    return X.toarray() if hasattr(X, "toarray") else X
+
+
 def _optimize_one_model(
     spec: ModelSpec,
     X_raw: pd.DataFrame,
@@ -321,7 +331,17 @@ def _optimize_one_model(
     def objective(trial: optuna.Trial) -> float:
         params = spec.hyperparameter_space(trial)
         model = spec.build_estimator(task_type, config.seed, params, False)
-        pipeline = Pipeline([("preprocess", clone(preprocessor_template)), ("model", model)])
+        steps = [("preprocess", clone(preprocessor_template))]
+        if spec.requires_dense_input:
+            # Bug réel trouvé en production (adult.csv, mode expert) —
+            # GaussianNB reçoit ici la sortie sparse du préprocesseur (one-hot
+            # présent dès qu'une colonne catégorielle existe) et lève un
+            # TypeError net ("A sparse matrix was passed, but dense data is
+            # required") sur CHAQUE fold, faisant échouer `cross_validate` en
+            # bloc (voir _to_dense, et ModelSpec.requires_dense_input).
+            steps.append(("densify", FunctionTransformer(_to_dense, accept_sparse=True)))
+        steps.append(("model", model))
+        pipeline = Pipeline(steps)
         cv_results = cross_validate(
             pipeline, X_raw, y, cv=cv, groups=groups, scoring=scoring, n_jobs=1, fit_params=fit_params
         )
@@ -1069,13 +1089,41 @@ def train_and_evaluate(
         algo_name = spec.label(task_type)
         base = 5 + i * span_per_model
         progress_cb(f"Optimisation {algo_name}", base)
-        opt = _optimize_one_model(
-            spec, split.X_train, y_train, task_type, cv, split.groups_train,
-            preprocessor_template, config, progress_cb, base, span_per_model,
-            sample_weight=sample_weight,
-        )
+        # Bug réel trouvé en production (adult.csv, mode expert, plusieurs
+        # jobs) : avant ce correctif, un seul modèle en échec (ex. GaussianNB
+        # incompatible sparse, voir `_to_dense` ci-dessus) faisait planter TOUT
+        # le job — y compris les candidats DÉJÀ optimisés avec succès (un
+        # CatBoost à 0,929 de score jeté avec le job entier parce que le
+        # modèle suivant dans le catalogue a levé une exception). Un modèle en
+        # échec ne doit priver l'utilisateur QUE de ce modèle-là, jamais des
+        # autres qui ont fonctionné — même principe que le reste du projet
+        # (une panne annexe ne doit jamais aggraver son propre rayon
+        # d'impact, voir domains/shared/job_creation.py).
+        try:
+            opt = _optimize_one_model(
+                spec, split.X_train, y_train, task_type, cv, split.groups_train,
+                preprocessor_template, config, progress_cb, base, span_per_model,
+                sample_weight=sample_weight,
+            )
+        except TrainingAbortedError:
+            # Diagnostic déjà précis et actionnable (ex. classe absente d'un
+            # fold) — affecterait de toute façon TOUS les modèles du
+            # catalogue (même `cv`, mêmes données), donc jamais utile de
+            # continuer à essayer les suivants. Propagé tel quel, jamais
+            # remplacé par le message générique "aucun modèle n'a pu être
+            # entraîné" ci-dessous, moins précis.
+            raise
+        except Exception:
+            logger.error("[Training] %s — échec de la recherche d'hyperparamètres, ignoré", algo_name, exc_info=True)
+            continue
         candidates.append((algo_name, spec, opt))
         logger.info("[Training] %s — score CV = %.4f", algo_name, opt.cv_score)
+
+    if not candidates:
+        raise TrainingAbortedError(
+            "Aucun des modèles sélectionnés n'a pu être entraîné avec succès sur ce jeu de données. "
+            "Essayez de retirer les modèles les plus sensibles (mode expert) ou vérifiez la qualité des données."
+        )
 
     # Sélection sur la CV, jamais sur le test (voir docstring du module).
     # `winning_spec` conservé pour router l'explainer SHAP sur la bonne
@@ -1121,6 +1169,14 @@ def train_and_evaluate(
     X_train_proc = preprocessor.fit_transform(split.X_train)
     X_test_proc = preprocessor.transform(split.X_test)
     feature_names = list(preprocessor.get_feature_names_out())
+    # `winning_spec.requires_dense_input` (GaussianNB, seul cas actuel — voir
+    # `_to_dense`/le même correctif dans `_optimize_one_model` ci-dessus) :
+    # le fit final doit densifier exactement comme chaque fold de la
+    # recherche, sinon un GaussianNB gagnant planterait ici même après avoir
+    # réussi sa recherche d'hyperparamètres.
+    if winning_spec.requires_dense_input:
+        X_train_proc = _to_dense(X_train_proc)
+        X_test_proc = _to_dense(X_test_proc)
     # Même règle que pendant la recherche Optuna : pondération appliquée
     # uniquement si demandée ET supportée par le modèle gagnant (`winning_spec`,
     # voir `ml_registry.py`) — sinon fit standard, silencieusement, jamais
