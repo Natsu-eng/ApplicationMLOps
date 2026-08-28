@@ -42,8 +42,33 @@ MAX_SELECTABLE_NOISE_RATIO = 0.5
 # Forest/LOF, eux, restent efficaces à bien plus grande échelle). Sans ce
 # plafond, un dataset volumineux pouvait déclencher un MemoryError en cours
 # de job (Lot 6B, §F.2 — transparence d'échantillonnage manquante).
+#
+# Retour utilisateur direct : "l'entreprise vient avec 50 000 lignes, la
+# plateforme n'en traite que 5 000 (10 %), est-ce que ça généralise ?" — sur
+# le plan statistique pur la réponse est oui (un tirage aléatoire simple de
+# 5 000 lignes donne une précision quasi identique à 50 %/80 % : l'erreur
+# d'estimation dépend de la taille ABSOLUE de l'échantillon, pas de la
+# fraction couverte, tant que n reste petit devant N — Cochran, théorie de
+# l'échantillonnage). Le vrai facteur limitant n'est donc pas la précision
+# mais le coût mémoire des algorithmes O(n²) du registre (hiérarchique
+# TOUJOURS, DBSCAN potentiellement selon la dimensionnalité post-encodage).
+# D'où un plafond DIFFÉRENCIÉ : généreux si la comparaison ne porte que sur
+# les algorithmes de partitionnement (KMeans/MiniBatchKMeans, coût quasi
+# linéaire — voir `_effective_row_cap`), conservateur dès que hiérarchique
+# ou DBSCAN sont sélectionnés.
 MAX_ROWS_FOR_CLUSTERING = 5000
+MAX_ROWS_FOR_CLUSTERING_LINEAR_ONLY = 20_000
+_LINEAR_ONLY_ALGORITHM_IDS = {"kmeans", "minibatch_kmeans"}
 _ROW_INDEX_COLUMN = "__cl_row_index__"
+
+
+def _effective_row_cap(algorithm_ids: list[str] | None) -> int:
+    """Plafond de lignes appliqué à ce job — voir le commentaire de
+    `MAX_ROWS_FOR_CLUSTERING` ci-dessus. `None`/vide = registre par défaut,
+    qui inclut hiérarchique -> plafond conservateur."""
+    if algorithm_ids and set(algorithm_ids) <= _LINEAR_ONLY_ALGORITHM_IDS:
+        return MAX_ROWS_FOR_CLUSTERING_LINEAR_ONLY
+    return MAX_ROWS_FOR_CLUSTERING
 
 # Indicateur de stabilité de k (Lot 6B, §F.2) — par SOUS-ÉCHANTILLONNAGE
 # (family-agnostic, contrairement à une comparaison multi-seed qui n'aurait
@@ -404,8 +429,9 @@ def train_and_evaluate_clustering(
     # dataset, sans avertissement préalable à l'utilisateur.
     X_indexed = X.reset_index(drop=True).copy()
     X_indexed[_ROW_INDEX_COLUMN] = np.arange(n_samples_total)
-    sampled_flag = n_samples_total > MAX_ROWS_FOR_CLUSTERING
-    X_sampled = sample_if_large(X_indexed, MAX_ROWS_FOR_CLUSTERING, config.seed)
+    row_cap = _effective_row_cap(config.algorithm_ids)
+    sampled_flag = n_samples_total > row_cap
+    X_sampled = sample_if_large(X_indexed, row_cap, config.seed)
     X_used = X_sampled.drop(columns=[_ROW_INDEX_COLUMN]).reset_index(drop=True)
     n_samples_used = int(len(X_used))
 
@@ -581,6 +607,13 @@ def train_and_evaluate_clustering(
         "n_samples_total": n_samples_total,
         "n_samples_used": n_samples_used,
         "sampled": sampled_flag,
+        # Transparence sur LE plafond réellement appliqué à ce job (voir
+        # `_effective_row_cap`) — permet au frontend d'expliquer PLUTÔT que
+        # "échantillonnage" en général, POURQUOI ce chiffre précis (registre
+        # par défaut avec hiérarchique -> conservateur, ou partitionnement
+        # seul -> plafond plus généreux).
+        "row_cap": row_cap,
+        "row_cap_linear_only": row_cap == MAX_ROWS_FOR_CLUSTERING_LINEAR_ONLY,
         "silhouette": winner["silhouette"],
         "davies_bouldin": winner["davies_bouldin"],
         "calinski_harabasz": winner["calinski_harabasz"],

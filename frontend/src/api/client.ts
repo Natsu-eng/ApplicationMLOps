@@ -1563,6 +1563,12 @@ export const api = {
     rerun: (id: number) => request<ClusteringJobSummary>(`/clustering/jobs/${id}/rerun`, { method: "POST" }),
     remove: (id: number) => request<void>(`/clustering/jobs/${id}`, { method: "DELETE" }),
     exportModel: (id: number) => downloadModelExport(`/clustering/jobs/${id}/model/export`, `clustering_job${id}.joblib`),
+    // Assigne un cluster à CHAQUE ligne du dataset d'origine (retour
+    // utilisateur direct : "l'entreprise a 50 000 lignes, la plateforme
+    // n'en clusterise que 5 000, comment couvrir le reste ?") — jamais
+    // seulement l'échantillon effectivement utilisé à l'entraînement.
+    exportAssignments: (id: number) =>
+      downloadModelExport(`/clustering/jobs/${id}/assignments/export`, `clustering_assignations_job${id}.csv`),
   },
 
   dimensionality: {

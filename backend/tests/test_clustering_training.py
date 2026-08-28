@@ -9,8 +9,11 @@ from domains.clustering.services import engine as clustering_training
 from domains.clustering.services.registry import CLUSTER_REGISTRY
 from domains.clustering.services.engine import (
     ClusteringConfig,
+    MAX_ROWS_FOR_CLUSTERING,
+    MAX_ROWS_FOR_CLUSTERING_LINEAR_ONLY,
     MAX_SELECTABLE_NOISE_RATIO,
     _attach_composite_rank,
+    _effective_row_cap,
     _rank_candidates_with_noise_budget,
     train_and_evaluate_clustering,
 )
@@ -366,3 +369,45 @@ def test_stability_ari_is_none_below_minimum_rows(monkeypatch):
     df = _make_three_blobs_df()
     result = train_and_evaluate_clustering(df, ClusteringConfig(seed=42), _NOOP)
     assert result.model_card["stability_ari"] is None
+
+
+# ── Plafond de lignes différencié par famille d'algorithme (retour
+# utilisateur direct : "l'entreprise a 50 000 lignes, la plateforme n'en
+# traite que 5 000 (10 %), est-ce que ça généralise ?" — voir le
+# commentaire de MAX_ROWS_FOR_CLUSTERING dans engine.py pour l'analyse
+# complète) ───────────────────────────────────────────────────────────────
+
+
+def test_effective_row_cap_is_conservative_by_default():
+    """Mode guidé (`algorithm_ids=None`) : le sous-ensemble par défaut
+    inclut le hiérarchique (O(n²)) -> plafond conservateur."""
+    assert _effective_row_cap(None) == MAX_ROWS_FOR_CLUSTERING
+
+
+def test_effective_row_cap_is_conservative_when_hierarchical_selected():
+    assert _effective_row_cap(["kmeans", "hierarchical"]) == MAX_ROWS_FOR_CLUSTERING
+
+
+def test_effective_row_cap_is_conservative_when_dbscan_selected():
+    assert _effective_row_cap(["dbscan"]) == MAX_ROWS_FOR_CLUSTERING
+
+
+def test_effective_row_cap_is_generous_when_only_linear_algorithms_selected():
+    """KMeans/MiniBatchKMeans seuls : coût quasi linéaire, pas de risque
+    mémoire O(n²) -> plafond plus généreux, moins d'échantillonnage."""
+    assert _effective_row_cap(["kmeans"]) == MAX_ROWS_FOR_CLUSTERING_LINEAR_ONLY
+    assert _effective_row_cap(["minibatch_kmeans"]) == MAX_ROWS_FOR_CLUSTERING_LINEAR_ONLY
+    assert _effective_row_cap(["kmeans", "minibatch_kmeans"]) == MAX_ROWS_FOR_CLUSTERING_LINEAR_ONLY
+
+
+def test_model_card_exposes_the_row_cap_actually_applied():
+    """Transparence (Lot 6B, §F.2) : le frontend doit pouvoir expliquer
+    POURQUOI ce chiffre précis, pas juste afficher `sampled: true`."""
+    df = _make_three_blobs_df()
+    result = train_and_evaluate_clustering(df, ClusteringConfig(seed=42, algorithm_ids=["kmeans"]), _NOOP)
+    assert result.model_card["row_cap"] == MAX_ROWS_FOR_CLUSTERING_LINEAR_ONLY
+    assert result.model_card["row_cap_linear_only"] is True
+
+    result_default = train_and_evaluate_clustering(df, ClusteringConfig(seed=42), _NOOP)
+    assert result_default.model_card["row_cap"] == MAX_ROWS_FOR_CLUSTERING
+    assert result_default.model_card["row_cap_linear_only"] is False

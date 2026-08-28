@@ -10,6 +10,7 @@ ML dans la requête HTTP. Router DÉDIÉ, jamais fusionné dans
 """
 from __future__ import annotations
 
+import io
 import json
 from datetime import datetime, timezone
 from pathlib import Path
@@ -26,7 +27,7 @@ from api.core.job_queue import analysis_queue, redis_conn
 from api.core.models import ClusterCandidateRecord, ClusteringJob, Dataset, User
 from api.core.pagination import paginate_by_id
 from domains.auth.router import get_current_user
-from domains.clustering.services.inference import ClusterInferenceError, assign_cluster
+from domains.clustering.services.inference import ClusterInferenceError, assign_cluster, assign_clusters_batch
 from domains.clustering.services.registry import CLUSTER_REGISTRY, DEFAULT_ALGORITHM_IDS
 from domains.shared.audit import log_action
 from domains.shared.dataset_io import DatasetParsingError, read_dataset_dataframe
@@ -442,6 +443,59 @@ def predict_cluster(
         )
 
     return ClusterPredictionResponse(**assignment)
+
+
+@router.get("/jobs/{job_id}/assignments/export")
+def export_cluster_assignments(job_id: int, current_user: User = Depends(get_current_user), db=Depends(get_db)):
+    """Assigne un cluster à CHAQUE ligne du dataset d'origine, pas seulement
+    aux lignes effectivement clusterisées à l'entraînement — retour
+    utilisateur direct : "l'entreprise vient avec 50 000 lignes, seules
+    5 000 sont clusterisées (plafond mémoire, voir `MAX_ROWS_FOR_CLUSTERING`
+    dans `services/clustering_training.py`), comment couvrir le reste ?".
+    Applique le modèle déjà entraîné à la totalité du fichier, vectorisé
+    (voir `services/clustering_inference.py::assign_clusters_batch`), jamais
+    un nouveau clustering. `assignment_method` reste visible par ligne dans
+    l'export — jamais un chiffre affiché sans dire comment il a été obtenu."""
+    job = _get_org_job(job_id, current_user, db)
+    if job.result is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"code": "RESULTAT_INDISPONIBLE", "message": "Ce clustering n'a pas encore de résultat"},
+        )
+    if job.dataset is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "DATASET_INTROUVABLE", "message": "Dataset introuvable"},
+        )
+    result = job.result
+    feature_columns = json.loads(result.feature_columns_json)
+
+    try:
+        full_df = read_dataset_dataframe(Path(job.dataset.file_path), Path(job.dataset.file_path).suffix)
+    except DatasetParsingError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"code": "DATASET_LECTURE_ECHEC", "message": str(exc)},
+        ) from exc
+
+    try:
+        bundle = load_bundle(result.file_path)
+    except InferenceError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": "ASSIGNATION_IMPOSSIBLE", "message": str(exc)},
+        ) from exc
+    assigned = assign_clusters_batch(bundle, feature_columns, full_df)
+
+    buffer = io.StringIO()
+    assigned.to_csv(buffer, index=False)
+    buffer.seek(0)
+    filename = f"clustering_assignations_{job.dataset.name.rsplit('.', 1)[0]}_job{job.id}.csv"
+    return StreamingResponse(
+        iter([buffer.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.get("/jobs/{job_id}/candidates", response_model=List[ClusterCandidateOut])

@@ -2,11 +2,14 @@ import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import {
   AlertCircle,
+  AlertTriangle,
   ArrowDown,
   ArrowUp,
   Ban,
   Boxes,
   CircleDashed,
+  Download,
+  Gauge,
   ListChecks,
   Loader2,
   PlayCircle,
@@ -17,10 +20,12 @@ import {
   Target,
   Trash2,
   Trophy,
+  Zap,
 } from "lucide-react";
 import {
   ApiError,
   api,
+  type AlgorithmCatalogEntry,
   type ClusterAssignmentMethod,
   type ClusterCandidate,
   type ClusterPrediction,
@@ -34,6 +39,8 @@ import { pillarColor } from "../config/pillars";
 import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
 import { Input } from "../components/ui/Input";
+import { Badge } from "../components/ui/Badge";
+import { Switch } from "../components/ui/Switch";
 import { accentSurfaceClass, accentValueTextClass, type AccentColor } from "../components/ui/ColorIconBadge";
 import { PageHeader } from "../components/ui/PageHeader";
 import { SectionHeader } from "../components/ui/SectionHeader";
@@ -310,6 +317,48 @@ function ClusteringForm({
   // Idempotence (Phase 2, AUDIT_BACKEND_2026-08-23.md §F4).
   const idempotencyKey = useIdempotencyKey();
 
+  // Mode expert — choix des algorithmes comparés (retour utilisateur direct :
+  // "j'espère que côté interface l'utilisateur a le choix de choisir les
+  // modèles" — jusqu'ici `algorithm_ids` existait déjà côté API mais
+  // n'était exposé nulle part sur cette page). Décochée par défaut : le
+  // comportement historique (sous-ensemble par défaut du registre) ne
+  // change pas pour qui n'ouvre jamais ce panneau.
+  const [expertMode, setExpertMode] = useState(false);
+  const [algorithms, setAlgorithms] = useState<AlgorithmCatalogEntry[]>([]);
+  const [selectedAlgorithmIds, setSelectedAlgorithmIds] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    api.clustering
+      .algorithmsCatalog()
+      .then((res) => {
+        setAlgorithms(res.algorithms);
+        setSelectedAlgorithmIds(new Set(res.algorithms.filter((a) => a.is_default).map((a) => a.id)));
+      })
+      .catch(() => {
+        // Catalogue indisponible : le mode expert reste utilisable en
+        // dégradé (aucun algorithme à cocher) — jamais bloquant pour le
+        // mode guidé, qui n'en dépend pas.
+      });
+  }, []);
+
+  function toggleAlgorithm(id: string) {
+    setSelectedAlgorithmIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  // Même seuil que `engine.py::_LINEAR_ONLY_ALGORITHM_IDS` — coût quasi
+  // linéaire (KMeans/MiniBatchKMeans), sans le risque mémoire O(n²) du
+  // hiérarchique/DBSCAN qui impose le plafond conservateur par défaut.
+  // Affiché ici pour rendre le compromis visible AVANT le lancement, pas
+  // seulement après coup dans le récapitulatif du résultat.
+  const LINEAR_ONLY_ALGORITHM_IDS = new Set(["kmeans", "minibatch_kmeans"]);
+  const unlocksHigherRowCap =
+    expertMode && selectedAlgorithmIds.size > 0 && [...selectedAlgorithmIds].every((id) => LINEAR_ONLY_ALGORITHM_IDS.has(id));
+
   async function handleDatasetChange(id: string) {
     setError(null);
     if (!id) {
@@ -359,6 +408,7 @@ function ClusteringForm({
         {
           dataset_id: datasetId,
           feature_columns: Array.from(selectedFeatures),
+          algorithm_ids: expertMode ? Array.from(selectedAlgorithmIds) : undefined,
         },
         idempotencyKey.current,
       );
@@ -452,6 +502,60 @@ function ClusteringForm({
           </div>
         )}
 
+        <div className="flex items-center justify-between gap-4 pt-1 border-t border-border/60">
+          <div>
+            <p className="text-sm font-medium text-foreground">Mode expert</p>
+            <p className="text-xs text-muted-foreground">
+              Choisissez vous-même les algorithmes comparés, au lieu du sous-ensemble par défaut. Inutile pour un
+              usage courant.
+            </p>
+          </div>
+          <Switch checked={expertMode} onChange={setExpertMode} label="Activer le mode expert" />
+        </div>
+
+        {expertMode && (
+          <div className="space-y-2.5 rounded-lg border border-primary/20 bg-primary/5 p-3.5">
+            <p className="text-sm text-muted-foreground">
+              Algorithmes comparés — {selectedAlgorithmIds.size} sélectionné{selectedAlgorithmIds.size > 1 ? "s" : ""}
+            </p>
+            {algorithms.length === 0 && <p className="text-xs text-muted-foreground">Chargement du catalogue…</p>}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+              {algorithms.map((algo) => {
+                const checked = selectedAlgorithmIds.has(algo.id);
+                const isLinear = LINEAR_ONLY_ALGORITHM_IDS.has(algo.id);
+                return (
+                  <label
+                    key={algo.id}
+                    className={`flex items-center gap-2 text-xs rounded-lg border px-2.5 py-2 cursor-pointer transition-colors ${
+                      checked ? "border-primary/40 bg-primary/10 text-primary" : "border-border bg-card text-foreground/90 hover:border-input"
+                    }`}
+                  >
+                    <input type="checkbox" className="accent-primary" checked={checked} onChange={() => toggleAlgorithm(algo.id)} />
+                    <span className="flex-1 min-w-0">{algo.label}</span>
+                    {isLinear ? (
+                      <Badge variant="success">
+                        <Zap size={10} className="mr-0.5" />
+                        Rapide
+                      </Badge>
+                    ) : (
+                      <Badge variant="neutral">
+                        <AlertTriangle size={10} className="mr-0.5" />
+                        Coûteux
+                      </Badge>
+                    )}
+                  </label>
+                );
+              })}
+            </div>
+            <p className="text-xs text-muted-foreground flex items-start gap-1.5 pt-1">
+              <Gauge size={13} className="flex-shrink-0 mt-0.5" />
+              {unlocksHigherRowCap
+                ? "Sélection limitée à des algorithmes rapides (coût quasi linéaire) : jusqu'à 20 000 lignes traitées sans échantillonnage, contre 5 000 dès qu'hiérarchique ou DBSCAN sont inclus (coût mémoire qui augmente avec le carré du nombre de lignes)."
+                : "Hiérarchique et DBSCAN ont un coût mémoire qui augmente avec le carré du nombre de lignes : le plafond reste à 5 000 lignes traitées (échantillon représentatif, pas d'impact sur la fiabilité statistique). Décochez-les pour monter à 20 000."}
+            </p>
+          </div>
+        )}
+
         {error && (
           <div className="flex items-center gap-2 text-sm text-destructive bg-destructive/10 border border-destructive/20 rounded-lg px-3 py-2">
             <AlertCircle size={15} className="flex-shrink-0" />
@@ -459,7 +563,11 @@ function ClusteringForm({
           </div>
         )}
 
-        <Button type="submit" disabled={!datasetId || selectedFeatures.size === 0 || isSubmitting} className="w-full">
+        <Button
+          type="submit"
+          disabled={!datasetId || selectedFeatures.size === 0 || (expertMode && selectedAlgorithmIds.size === 0) || isSubmitting}
+          className="w-full"
+        >
           {isSubmitting ? "Lancement…" : "Lancer le clustering"}
         </Button>
       </form>
@@ -558,6 +666,25 @@ function ClusteringResultView({ job }: { job: ClusteringJobSummary }) {
   // extends string>`), jamais l'algorithme seul (deux candidats du top 3
   // peuvent partager le même algorithme, ex. K-Means k=2 et k=3).
   const [selectedTopRank, setSelectedTopRank] = useState<string>("1");
+  // Export en lot (retour utilisateur direct : "l'entreprise a 50 000
+  // lignes, la plateforme n'en clusterise que 5 000, comment couvrir le
+  // reste ?") — applique le modèle déjà entraîné à la TOTALITÉ du dataset
+  // d'origine, pas seulement l'échantillon (voir
+  // services/clustering_inference.py::assign_clusters_batch).
+  const [exportingAssignments, setExportingAssignments] = useState(false);
+  const [exportAssignmentsError, setExportAssignmentsError] = useState<string | null>(null);
+
+  async function handleExportAssignments() {
+    setExportingAssignments(true);
+    setExportAssignmentsError(null);
+    try {
+      await api.clustering.exportAssignments(jobId);
+    } catch (err) {
+      setExportAssignmentsError(err instanceof ApiError ? err.message : "Impossible d'exporter les assignations");
+    } finally {
+      setExportingAssignments(false);
+    }
+  }
 
   useEffect(() => {
     api.clustering
@@ -642,25 +769,42 @@ function ClusteringResultView({ job }: { job: ClusteringJobSummary }) {
           </div>
         )}
         {Boolean(result.model_card.sampled) && (
-          <p className="text-xs text-muted-foreground mt-3">
-            Calculé sur un échantillon de {String(result.model_card.n_samples_used)} observations sur{" "}
-            {String(result.model_card.n_samples_total)} au total (dataset volumineux — échantillonnage déterministe,
-            reproductible).
-          </p>
+          <div className="mt-3 pt-3 border-t border-border/60">
+            <p className="text-xs text-muted-foreground">
+              Calculé sur un échantillon de {String(result.model_card.n_samples_used)} observations sur{" "}
+              {String(result.model_card.n_samples_total)} au total — tirage aléatoire déterministe et reproductible.
+              Statistiquement, la précision dépend de la taille de l'échantillon, pas du pourcentage couvert : ce
+              chiffre n'est pas moins fiable qu'un échantillon plus large.{" "}
+              {result.model_card.row_cap_linear_only
+                ? "Plafond relevé à 20 000 lignes ici (algorithmes rapides uniquement, mode expert)."
+                : "Le plafond reste à 5 000 lignes tant qu'un algorithme hiérarchique ou DBSCAN est comparé (coût mémoire qui augmente avec le carré du nombre de lignes) — le mode expert permet de le relever à 20 000 en ne comparant que des algorithmes rapides."}
+            </p>
+            <p className="text-xs text-muted-foreground mt-1.5">
+              Pour un cluster sur chacune de vos {String(result.model_card.n_samples_total)} lignes réelles (pas
+              seulement l'échantillon), exportez les assignations ci-dessous.
+            </p>
+          </div>
         )}
       </Card>
 
-      <ModelExportActions
-        onExportArtifact={() => api.clustering.exportModel(jobId)}
-        exportConfig={{
-          algorithm: result.algorithm,
-          n_clusters: result.n_clusters,
-          feature_columns: job.feature_columns,
-          metrics: result.metrics,
-          model_card: result.model_card,
-        }}
-        configFilename={`clustering_config_job${jobId}.json`}
-      />
+      <div className="flex items-center gap-2 flex-wrap">
+        <ModelExportActions
+          onExportArtifact={() => api.clustering.exportModel(jobId)}
+          exportConfig={{
+            algorithm: result.algorithm,
+            n_clusters: result.n_clusters,
+            feature_columns: job.feature_columns,
+            metrics: result.metrics,
+            model_card: result.model_card,
+          }}
+          configFilename={`clustering_config_job${jobId}.json`}
+        />
+        <Button variant="secondary" size="sm" onClick={handleExportAssignments} loading={exportingAssignments}>
+          <Download size={14} />
+          Exporter les assignations (CSV, toutes les lignes)
+        </Button>
+      </div>
+      {exportAssignmentsError && <p className="text-xs text-destructive">{exportAssignmentsError}</p>}
 
       <Tabs
         items={[

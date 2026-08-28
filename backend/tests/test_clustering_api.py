@@ -155,6 +155,50 @@ def test_predict_endpoint_409_before_completion(client):
     assert resp.json()["detail"]["code"] == "RESULTAT_INDISPONIBLE"
 
 
+def test_export_assignments_covers_every_row_of_the_original_dataset(client, db_session):
+    """Retour utilisateur direct : "l'entreprise a 50 000 lignes, la
+    plateforme n'en clusterise que 5 000, comment couvrir le reste ?" — cet
+    export doit couvrir la TOTALITÉ du dataset d'origine, pas seulement
+    l'échantillon effectivement clusterisé à l'entraînement."""
+    headers = _register(client)
+    dataset = _upload_dataset(client, headers, n=60)
+    job = _create_job(client, headers, dataset["id"], algorithm_ids=["kmeans"]).json()
+
+    run_clustering_job(job["id"])
+    db_session.expire_all()
+
+    resp = client.get(f"/api/clustering/jobs/{job['id']}/assignments/export", headers=headers)
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("text/csv")
+    lines = resp.text.strip().splitlines()
+    header = lines[0].split(",")
+    assert "cluster_id" in header and "is_noise" in header and "assignment_method" in header
+    # En-tête + 60 lignes de données — jamais seulement l'échantillon.
+    assert len(lines) == 61
+    assert all("exact" in line for line in lines[1:])
+
+
+def test_export_assignments_409_before_completion(client):
+    headers = _register(client)
+    dataset = _upload_dataset(client, headers)
+    job = _create_job(client, headers, dataset["id"]).json()
+    resp = client.get(f"/api/clustering/jobs/{job['id']}/assignments/export", headers=headers)
+    assert resp.status_code == 409
+    assert resp.json()["detail"]["code"] == "RESULTAT_INDISPONIBLE"
+
+
+def test_export_assignments_404_for_other_organization(client, db_session):
+    headers_a = _register(client, "a@bureau-a.fr", "Bureau A")
+    dataset_a = _upload_dataset(client, headers_a, "a.csv", n=60)
+    job = _create_job(client, headers_a, dataset_a["id"], algorithm_ids=["kmeans"]).json()
+    run_clustering_job(job["id"])
+    db_session.expire_all()
+
+    headers_b = _register(client, "b@bureau-b.fr", "Bureau B")
+    resp = client.get(f"/api/clustering/jobs/{job['id']}/assignments/export", headers=headers_b)
+    assert resp.status_code == 404
+
+
 def test_delete_job_removes_it_from_history(client):
     headers = _register(client)
     dataset = _upload_dataset(client, headers)

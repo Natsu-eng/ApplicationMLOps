@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from domains.clustering.services.inference import ClusterInferenceError, assign_cluster
+from domains.clustering.services.inference import ClusterInferenceError, assign_cluster, assign_clusters_batch
 from domains.clustering.services.engine import ClusteringConfig, train_and_evaluate_clustering
 
 _NOOP = lambda step, pct: None  # noqa: E731
@@ -75,3 +75,82 @@ def test_bundle_without_assignment_data_degrades_to_unsupported():
     assignment = assign_cluster(legacy_bundle, result.feature_columns, {"x1": 0.0, "x2": 0.0})
     assert assignment["assignment_method"] == "unsupported"
     assert assignment["cluster_id"] is None
+
+
+# ── assign_clusters_batch (retour utilisateur : assigner un cluster à un
+# dataset complet, pas seulement à l'échantillon effectivement clusterisé
+# à l'entraînement — voir domains/clustering/router.py::export_cluster_assignments) ──
+
+
+def test_batch_assignment_kmeans_covers_every_row_exactly():
+    df = _make_three_blobs_df()
+    result = train_and_evaluate_clustering(df, ClusteringConfig(seed=42, algorithm_ids=["kmeans"]), _NOOP)
+    assigned = assign_clusters_batch(result.pipeline_bundle, result.feature_columns, df)
+    assert len(assigned) == len(df)
+    assert (assigned["assignment_method"] == "exact").all()
+    assert assigned["cluster_id"].notna().all()
+    assert assigned["is_noise"].eq(False).all()
+    # Colonnes d'origine préservées (l'utilisateur doit pouvoir rejoindre
+    # l'export à ses données réelles).
+    assert "x1" in assigned.columns and "x2" in assigned.columns
+
+
+def test_batch_assignment_matches_row_by_row_assignment():
+    """La version vectorisée doit produire EXACTEMENT le même résultat que
+    l'assignation ligne par ligne existante — jamais une approximation
+    différente entre les deux chemins."""
+    df = _make_three_blobs_df()
+    result = train_and_evaluate_clustering(df, ClusteringConfig(seed=42, algorithm_ids=["kmeans"]), _NOOP)
+    assigned = assign_clusters_batch(result.pipeline_bundle, result.feature_columns, df)
+    for i in range(0, len(df), 25):
+        row = df.iloc[i]
+        single = assign_cluster(result.pipeline_bundle, result.feature_columns, row.to_dict())
+        assert int(assigned.iloc[i]["cluster_id"]) == single["cluster_id"]
+
+
+def test_batch_assignment_hierarchical_uses_vectorized_centroids():
+    df = _make_three_blobs_df()
+    result = train_and_evaluate_clustering(df, ClusteringConfig(seed=42, algorithm_ids=["hierarchical"]), _NOOP)
+    assigned = assign_clusters_batch(result.pipeline_bundle, result.feature_columns, df)
+    assert (assigned["assignment_method"] == "approximate_centroid").all()
+    assert assigned["cluster_id"].notna().all()
+
+
+def test_batch_assignment_dbscan_flags_far_rows_as_noise():
+    df = _make_three_blobs_df()
+    extra = pd.DataFrame({"x1": [500.0], "x2": [500.0]})
+    df_with_outlier = pd.concat([df, extra], ignore_index=True)
+    result = train_and_evaluate_clustering(df, ClusteringConfig(seed=42, algorithm_ids=["dbscan"]), _NOOP)
+    assigned = assign_clusters_batch(result.pipeline_bundle, result.feature_columns, df_with_outlier)
+    last_row = assigned.iloc[-1]
+    assert last_row["is_noise"] == True  # noqa: E712
+    assert pd.isna(last_row["cluster_id"])
+    assert (assigned["assignment_method"] == "approximate_nearest_core").all()
+
+
+def test_batch_assignment_reports_missing_column_without_crashing():
+    df = _make_three_blobs_df()
+    result = train_and_evaluate_clustering(df, ClusteringConfig(seed=42, algorithm_ids=["kmeans"]), _NOOP)
+    incomplete = df.drop(columns=["x2"])
+    assigned = assign_clusters_batch(result.pipeline_bundle, result.feature_columns, incomplete)
+    assert (assigned["assignment_method"] == "missing_column").all()
+    assert assigned["cluster_id"].isna().all()
+
+
+def test_batch_assignment_reports_missing_values_per_row_not_globally():
+    df = _make_three_blobs_df().copy()
+    df.loc[0, "x2"] = np.nan
+    result = train_and_evaluate_clustering(df.fillna(0), ClusteringConfig(seed=42, algorithm_ids=["kmeans"]), _NOOP)
+    assigned = assign_clusters_batch(result.pipeline_bundle, result.feature_columns, df)
+    assert assigned.iloc[0]["assignment_method"] == "missing_features"
+    assert pd.isna(assigned.iloc[0]["cluster_id"])
+    # Les autres lignes, complètes, restent assignées normalement.
+    assert (assigned.iloc[1:]["assignment_method"] == "exact").all()
+
+
+def test_batch_assignment_on_empty_dataframe_returns_empty_without_crashing():
+    df = _make_three_blobs_df()
+    result = train_and_evaluate_clustering(df, ClusteringConfig(seed=42, algorithm_ids=["kmeans"]), _NOOP)
+    empty = df.iloc[0:0]
+    assigned = assign_clusters_batch(result.pipeline_bundle, result.feature_columns, empty)
+    assert len(assigned) == 0
