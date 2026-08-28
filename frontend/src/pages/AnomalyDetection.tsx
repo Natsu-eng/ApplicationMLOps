@@ -801,6 +801,7 @@ function AnomalyResultView({ jobId, featureColumns }: { jobId: number; featureCo
             rows={observations}
             rowKey={(o) => o.row_index}
             highlightRow={(o) => o.agreement === "both"}
+            pageSize={20}
           />
         )}
       </div>

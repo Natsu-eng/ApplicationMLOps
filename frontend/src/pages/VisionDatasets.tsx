@@ -260,6 +260,7 @@ export default function VisionDatasets() {
           selectable
           selectedKeys={selectedKeys}
           onSelectionChange={setSelectedKeys}
+          pageSize={20}
         />
       )}
 

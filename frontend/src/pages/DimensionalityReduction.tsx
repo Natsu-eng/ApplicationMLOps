@@ -715,6 +715,7 @@ function DimensionalityResultView({ jobId }: { jobId: number }) {
             columns={LOADING_COLUMNS}
             rows={result.loadings.map((l) => ({ feature: l.feature, pc1: l.pc1, pc2: l.pc2 }))}
             rowKey={(r) => r.feature}
+            pageSize={20}
           />
         </div>
       )}
