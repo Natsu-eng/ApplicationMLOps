@@ -104,6 +104,13 @@ class VisionAnomalyResultOut(BaseModel):
     test_f1: float
     confusion_matrix: List[List[int]]
     model_card: dict[str, Any]
+    # Retour utilisateur : "d'autres fonctionnalités modernes que les autres
+    # plateformes n'offrent pas" — None sur les modèles entraînés avant ce
+    # correctif (rétrocompatibilité par absence, même motif que ci-dessus).
+    roc_curves: Optional[dict[str, dict[str, List[float]]]] = None
+    pr_curves: Optional[dict[str, dict[str, List[float]]]] = None
+    score_histogram: Optional[dict[str, Any]] = None
+    category_breakdown: Optional[List[dict[str, Any]]] = None
 
 
 class VisionAnomalyExampleOut(BaseModel):
@@ -357,6 +364,10 @@ def get_vision_anomaly_result(job_id: int, current_user: User = Depends(get_curr
         test_f1=result.test_f1,
         confusion_matrix=json.loads(result.confusion_matrix_json),
         model_card=json.loads(result.model_card_json or "{}"),
+        roc_curves=json.loads(result.roc_curves_json) if result.roc_curves_json else None,
+        pr_curves=json.loads(result.pr_curves_json) if result.pr_curves_json else None,
+        score_histogram=json.loads(result.score_histogram_json) if result.score_histogram_json else None,
+        category_breakdown=json.loads(result.category_breakdown_json) if result.category_breakdown_json else None,
     )
 
 

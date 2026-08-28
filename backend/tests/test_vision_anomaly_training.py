@@ -187,3 +187,71 @@ def test_threshold_is_calibrated_not_a_fixed_percentile(tmp_path):
     result_b = train_and_evaluate_anomaly_vision(tmp_b, config, _noop_progress)
 
     assert result_a.threshold != result_b.threshold
+
+
+# ── Diagnostics supplémentaires (retour utilisateur : "rendre l'onglet
+# anomalies aussi riche/transparent que la classification" + "d'autres
+# fonctionnalités modernes que les autres plateformes n'offrent pas") ────
+
+
+def test_roc_curve_is_computed_on_evaluation_only(tmp_path):
+    _write_mvtec_dataset(
+        tmp_path, n_test_good=MIN_IMAGES_PER_CATEGORY_FOR_CALIBRATION_SPLIT, n_test_defect=MIN_IMAGES_PER_CATEGORY_FOR_CALIBRATION_SPLIT
+    )
+    config = AnomalyVisionConfig(num_epochs=2, batch_size=4)
+
+    result = train_and_evaluate_anomaly_vision(tmp_path, config, _noop_progress)
+
+    assert set(result.roc_curves.keys()) == {"Défaut"}
+    curve = result.roc_curves["Défaut"]
+    assert len(curve["fpr"]) == len(curve["tpr"])
+    assert all(0.0 <= v <= 1.0 for v in curve["fpr"])
+    assert all(0.0 <= v <= 1.0 for v in curve["tpr"])
+    assert set(result.pr_curves.keys()) == {"Défaut"}
+    pr = result.pr_curves["Défaut"]
+    assert len(pr["precision"]) == len(pr["recall"])
+
+
+def test_score_histogram_separates_normal_and_defect_counts(tmp_path):
+    _write_mvtec_dataset(tmp_path)
+    config = AnomalyVisionConfig(num_epochs=2, batch_size=4)
+
+    result = train_and_evaluate_anomaly_vision(tmp_path, config, _noop_progress)
+
+    hist = result.score_histogram
+    assert set(hist.keys()) == {"bin_edges", "normal_counts", "defect_counts"}
+    assert len(hist["bin_edges"]) == len(hist["normal_counts"]) + 1 == len(hist["defect_counts"]) + 1
+    # Chaque image de l'évaluation est comptée exactement une fois, répartie
+    # entre les deux histogrammes selon son label réel.
+    assert sum(hist["normal_counts"]) + sum(hist["defect_counts"]) == result.n_evaluation
+
+
+def test_category_breakdown_covers_every_category_with_full_evaluation_count(tmp_path):
+    """Le taux de détection par catégorie doit porter sur la TOTALITÉ de
+    l'évaluation, pas seulement les `MAX_EXAMPLES` exemples affichés."""
+    _write_mvtec_dataset(tmp_path, n_test_good=10, n_test_defect=10)
+    config = AnomalyVisionConfig(num_epochs=2, batch_size=4)
+
+    result = train_and_evaluate_anomaly_vision(tmp_path, config, _noop_progress)
+
+    categories = {row["category"] for row in result.category_breakdown}
+    assert categories == {"good", "scratch"}
+    total_n = sum(row["n"] for row in result.category_breakdown)
+    assert total_n == result.n_evaluation
+    for row in result.category_breakdown:
+        assert 0.0 <= row["detection_rate"] <= 1.0
+
+
+def test_diagnostics_persisted_even_in_biased_fallback_mode(tmp_path):
+    """Repli biaisé (calibration == évaluation, jeu de test minuscule) : les
+    3 diagnostics doivent quand même être calculés — jamais None/vides sans
+    raison alors que le calcul reste possible sur les mêmes données."""
+    _write_mvtec_dataset(tmp_path, n_test_good=4, n_test_defect=4)
+    config = AnomalyVisionConfig(num_epochs=2, batch_size=4)
+
+    result = train_and_evaluate_anomaly_vision(tmp_path, config, _noop_progress)
+
+    assert result.roc_curves
+    assert result.pr_curves
+    assert result.score_histogram
+    assert result.category_breakdown

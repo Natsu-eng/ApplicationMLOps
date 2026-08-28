@@ -245,7 +245,7 @@ def test_ui_theme_column_applies_on_existing_populated_database(tmp_path):
     # (le backfill server_default de ui_theme sur une base déjà peuplée)
     # reste exercé quelle que soit la tête, la migration ui_theme restant
     # au milieu de la chaîne rejouée par `run_migrations`.
-    assert version == "4e844f4bc4c2"
+    assert version == "2f14f3ff7ff7"
     assert org_name == "Bureau existant"  # donnée préexistante intacte
     assert [r[0] for r in rows] == [1, 2]  # aucune ligne perdue
     assert all(r[1] == "graphite" for r in rows)  # server_default appliqué à CHAQUE ligne existante

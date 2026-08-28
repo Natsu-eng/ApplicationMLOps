@@ -1,7 +1,18 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { AlertCircle, AlertTriangle, Ban, ChevronLeft, ChevronRight, Loader2, PlayCircle, RotateCcw, Sparkles, Target, Trash2 } from "lucide-react";
-import { Line, LineChart, CartesianGrid, ResponsiveContainer, Tooltip as RechartsTooltip, XAxis, YAxis } from "recharts";
+import { Activity, AlertCircle, AlertTriangle, Ban, ChevronLeft, ChevronRight, Loader2, PlayCircle, RotateCcw, Sparkles, Target, Trash2 } from "lucide-react";
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Line,
+  LineChart,
+  ReferenceLine,
+  ResponsiveContainer,
+  Tooltip as RechartsTooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 import {
   ApiError,
   api,
@@ -18,11 +29,12 @@ import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
 import { accentSurfaceClass, accentValueTextClass, type AccentColor } from "../components/ui/ColorIconBadge";
-import { Heatmap } from "../components/ui/Heatmap";
+import EvaluationCharts from "../components/training/EvaluationCharts";
 import { Input } from "../components/ui/Input";
 import { PageHeader } from "../components/ui/PageHeader";
 import { SectionHeader } from "../components/ui/SectionHeader";
 import { Select } from "../components/ui/Select";
+import { Table, type TableColumn } from "../components/ui/Table";
 import { Tabs } from "../components/ui/Tabs";
 import { ModelExportActions } from "../components/ui/ModelExportActions";
 import { VisionDatasetPicker } from "../components/vision/VisionDatasetPicker";
@@ -39,7 +51,13 @@ import {
 import { WizardStepper } from "../components/ui/WizardStepper";
 import { useConfirmAction } from "../hooks/useConfirmAction";
 import { useIdempotencyKey } from "../hooks/useIdempotencyKey";
-import { CHART_GRID_STROKE, CHART_SERIES_COLORS, CHART_TICK_STYLE_SM, CHART_TOOLTIP_STYLE } from "../theme/charts";
+import {
+  CHART_GRID_STROKE,
+  CHART_REFERENCE_STROKE,
+  CHART_SERIES_COLORS,
+  CHART_TICK_STYLE_SM,
+  CHART_TOOLTIP_STYLE,
+} from "../theme/charts";
 
 /** Étapes du wizard (Lot 6A) — parité avec VisionClassification.tsx : même
  * structure à 4 étapes, mêmes composants partagés (VisionWizard.tsx).
@@ -546,7 +564,7 @@ function AnomalyVisionResultView({ jobId, datasetId }: { jobId: number; datasetI
   const [examples, setExamples] = useState<VisionAnomalyExample[]>([]);
   const [examplesError, setExamplesError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<"performance" | "exemples">("performance");
+  const [activeTab, setActiveTab] = useState<"performance" | "diagnostics" | "exemples">("performance");
 
   useEffect(() => {
     api.visionAnomalies
@@ -625,6 +643,7 @@ function AnomalyVisionResultView({ jobId, datasetId }: { jobId: number; datasetI
       <Tabs
         items={[
           { id: "performance" as const, label: "Performance", icon: Sparkles },
+          { id: "diagnostics" as const, label: "Diagnostics", icon: Activity },
           { id: "exemples" as const, label: "Exemples", icon: AlertTriangle },
         ]}
         active={activeTab}
@@ -648,12 +667,25 @@ function AnomalyVisionResultView({ jobId, datasetId }: { jobId: number; datasetI
             </ResponsiveContainer>
           </Card>
 
-          <Card className="p-5">
-            <SectionHeader icon={AlertTriangle} color="rose" label="Matrice de confusion" help="0 = normal, 1 = défaut." />
-            <Heatmap xLabels={["Normal", "Défaut"]} yLabels={["Normal", "Défaut"]} matrix={result.confusion_matrix} variant="sequential" />
-          </Card>
+          {/* Réutilise EvaluationCharts.tsx tel quel (matrice de confusion +
+              ROC + PR) — même composant que la classification et le
+              tabulaire, jamais un second composant de graphique à
+              maintenir en parallèle. roc_curves/pr_curves absents
+              (undefined) sur les modèles entraînés avant ce correctif :
+              EvaluationCharts gère déjà ce cas (voir VisionClassification.tsx). */}
+          <EvaluationCharts
+            taskType="classification"
+            evaluation={{
+              confusion_matrix: result.confusion_matrix,
+              class_names: ["Normal", "Défaut"],
+              roc_curves: result.roc_curves,
+              pr_curves: result.pr_curves,
+            }}
+          />
         </>
       )}
+
+      {activeTab === "diagnostics" && <DiagnosticsTab result={result} />}
 
       {activeTab === "exemples" && (
         <div>
@@ -674,6 +706,94 @@ function AnomalyVisionResultView({ jobId, datasetId }: { jobId: number; datasetI
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+/** Onglet "Diagnostics" (retour utilisateur : "rendre l'onglet anomalies
+ * aussi riche/transparent que la classification" + "d'autres
+ * fonctionnalités modernes que les autres plateformes n'offrent pas") — 2
+ * vues que ni la seule exactitude agrégée ni les exemples un par un ne
+ * donnent : la séparabilité RÉELLE des scores (le modèle distingue-t-il
+ * vraiment les deux populations, ou le seuil est-il un compromis fragile ?)
+ * et la détection par catégorie (un dataset multi-défauts peut cacher un
+ * type de défaut mal détecté derrière une bonne moyenne globale). */
+function DiagnosticsTab({ result }: { result: VisionAnomalyResult }) {
+  const histogram = result.score_histogram;
+  const breakdown = result.category_breakdown;
+
+  const histogramData =
+    histogram && histogram.bin_edges.length > 1
+      ? histogram.bin_edges.slice(0, -1).map((edge, i) => ({
+          binCenter: (edge + histogram.bin_edges[i + 1]) / 2,
+          Normal: histogram.normal_counts[i],
+          Défaut: histogram.defect_counts[i],
+        }))
+      : [];
+
+  const breakdownColumns: TableColumn<{ category: string; n: number; detection_rate: number }>[] = [
+    { key: "category", header: "Catégorie", sortable: true },
+    { key: "n", header: "Images évaluées", align: "right", sortable: true, sortValue: (r) => r.n },
+    {
+      key: "detection_rate",
+      header: "Taux de détection",
+      align: "right",
+      sortable: true,
+      sortValue: (r) => r.detection_rate,
+      render: (r) => `${(r.detection_rate * 100).toFixed(1)} %`,
+    },
+  ];
+
+  return (
+    <div className="space-y-5">
+      <Card className="p-5">
+        <SectionHeader
+          icon={Activity}
+          color="teal"
+          label="Séparabilité des scores d'anomalie"
+          help="Distribution des scores sur le jeu d'évaluation, séparée entre images normales et défectueuses — plus les deux populations sont éloignées l'une de l'autre, plus la détection est fiable. La ligne verticale marque le seuil retenu."
+        />
+        {histogramData.length === 0 ? (
+          <p className="text-xs text-muted-foreground italic">Non disponible pour ce modèle — réentraînez-le pour l'obtenir.</p>
+        ) : (
+          <ResponsiveContainer width="100%" height={240}>
+            <BarChart data={histogramData} margin={{ top: 8, right: 8, bottom: 8, left: 0 }}>
+              <CartesianGrid stroke={CHART_GRID_STROKE} vertical={false} />
+              <XAxis
+                dataKey="binCenter"
+                type="number"
+                tick={CHART_TICK_STYLE_SM}
+                tickFormatter={(v) => Number(v).toFixed(3)}
+                label={{ value: "Score d'anomalie", position: "insideBottom", offset: -2 }}
+              />
+              <YAxis tick={CHART_TICK_STYLE_SM} label={{ value: "Nombre d'images", angle: -90, position: "insideLeft" }} />
+              <RechartsTooltip {...CHART_TOOLTIP_STYLE} labelFormatter={(v) => `Score ≈ ${Number(v).toFixed(3)}`} />
+              <ReferenceLine
+                x={result.threshold}
+                stroke={CHART_REFERENCE_STROKE}
+                strokeDasharray="4 4"
+                label={{ value: "Seuil", position: "top", fontSize: 11 }}
+              />
+              <Bar dataKey="Normal" stackId="a" fill={CHART_SERIES_COLORS[0]} isAnimationActive={false} />
+              <Bar dataKey="Défaut" stackId="a" fill={CHART_SERIES_COLORS[1]} isAnimationActive={false} />
+            </BarChart>
+          </ResponsiveContainer>
+        )}
+      </Card>
+
+      <Card className="p-5">
+        <SectionHeader
+          icon={Target}
+          color="violet"
+          label="Détection par catégorie"
+          help="Taux de détection calculé sur la totalité des images d'évaluation de chaque catégorie, pas seulement les exemples affichés dans l'onglet « Exemples » — un dataset multi-défauts peut cacher un type de défaut mal détecté derrière une bonne moyenne globale."
+        />
+        {!breakdown || breakdown.length === 0 ? (
+          <p className="text-xs text-muted-foreground italic">Non disponible pour ce modèle — réentraînez-le pour l'obtenir.</p>
+        ) : (
+          <Table columns={breakdownColumns} rows={breakdown} rowKey={(r) => r.category} />
+        )}
+      </Card>
     </div>
   );
 }

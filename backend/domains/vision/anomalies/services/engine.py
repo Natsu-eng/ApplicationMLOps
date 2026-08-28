@@ -35,7 +35,15 @@ import numpy as np
 import torch
 import torch.nn as nn
 from PIL import Image
-from sklearn.metrics import confusion_matrix, f1_score, precision_score, recall_score, roc_auc_score, roc_curve
+from sklearn.metrics import (
+    confusion_matrix,
+    f1_score,
+    precision_recall_curve,
+    precision_score,
+    recall_score,
+    roc_auc_score,
+    roc_curve,
+)
 from sklearn.model_selection import train_test_split
 from torch.utils.data import DataLoader, Dataset, Subset
 from torchvision import transforms
@@ -139,6 +147,19 @@ class AnomalyVisionResult:
     examples: list[AnomalyExample]
     model_card: dict[str, Any]
     model_artifact: dict[str, Any] = field(repr=False)
+    # Retour utilisateur : "d'autres fonctionnalités modernes que les autres
+    # plateformes n'offrent pas" — parité EXACTE de forme avec la
+    # classification (`ClassificationResult.roc_curves`/`pr_curves`, une
+    # seule clé "Défaut" ici — classe positive binaire) pour réutiliser
+    # `EvaluationCharts.tsx` tel quel côté frontend, jamais un second
+    # composant de graphique ROC/PR à maintenir en parallèle. + 2
+    # diagnostics propres aux anomalies (séparabilité des scores, détection
+    # par catégorie de défaut). Calculés sur l'ÉVALUATION uniquement, comme
+    # roc_auc/accuracy ci-dessus.
+    roc_curves: dict[str, dict[str, list[float]]] = field(default_factory=dict)
+    pr_curves: dict[str, dict[str, list[float]]] = field(default_factory=dict)
+    score_histogram: dict[str, Any] = field(default_factory=dict)
+    category_breakdown: list[dict[str, Any]] = field(default_factory=list)
 
 
 def _build_transform(augmentation_preset: str = "aucune") -> transforms.Compose:
@@ -192,6 +213,70 @@ def _split_calibration_evaluation(
         indices, test_size=0.5, stratify=categories, random_state=seed
     )
     return sorted(calibration_idx), sorted(evaluation_idx), False
+
+
+def _downsample_curve(x, y, max_points: int = 100) -> tuple[list[float], list[float]]:
+    """Même fonction que `ml_training.py`/`vision_classification_training.py::
+    _downsample_curve` (dupliquée plutôt qu'importée — modules d'entraînement
+    volontairement sans dépendance croisée) : la courbe ROC de sklearn a
+    autant de points que d'échantillons de test, inutile d'en envoyer des
+    milliers pour un graphe qui en affiche une centaine."""
+    if len(x) <= max_points:
+        return [float(v) for v in x], [float(v) for v in y]
+    idx = np.linspace(0, len(x) - 1, max_points).astype(int)
+    return [float(x[i]) for i in idx], [float(y[i]) for i in idx]
+
+
+def _compute_score_histogram(scores: list[float], labels: list[int], n_bins: int = 20) -> dict[str, Any]:
+    """Distribution des scores d'anomalie, séparée par classe réelle (retour
+    utilisateur : "d'autres fonctionnalités modernes que les autres
+    plateformes n'offrent pas") — montre VISUELLEMENT si les images
+    normales et défectueuses forment deux populations bien séparées, et où
+    se situe le seuil retenu par rapport à elles. Toujours calculé sur
+    l'ÉVALUATION (même sous-ensemble que roc_auc/accuracy ci-dessus),
+    jamais la calibration.
+
+    Mêmes bornes (min/max) pour les deux histogrammes — sinon les barres de
+    `normal_counts`/`defect_counts` ne seraient pas comparables sur le même
+    axe côté frontend."""
+    scores_arr = np.asarray(scores)
+    lo, hi = float(scores_arr.min()), float(scores_arr.max())
+    if hi <= lo:  # tous les scores identiques (cas dégénéré) — pas d'histogramme, pas de division par zéro
+        return {"bin_edges": [], "normal_counts": [], "defect_counts": []}
+    edges = np.linspace(lo, hi, n_bins + 1)
+    normal_scores = [s for s, y in zip(scores, labels, strict=True) if y == 0]
+    defect_scores = [s for s, y in zip(scores, labels, strict=True) if y == 1]
+    normal_counts, _ = np.histogram(normal_scores, bins=edges)
+    defect_counts, _ = np.histogram(defect_scores, bins=edges)
+    return {
+        "bin_edges": edges.tolist(),
+        "normal_counts": normal_counts.tolist(),
+        "defect_counts": defect_counts.tolist(),
+    }
+
+
+def _compute_category_breakdown(
+    categories: list[str], true_labels: list[int], predicted_labels: list[int]
+) -> list[dict[str, Any]]:
+    """Taux de détection PAR CATÉGORIE (retour utilisateur : rendre l'onglet
+    anomalies aussi riche/transparent que la classification) — calculé sur
+    la TOTALITÉ de l'évaluation, pas seulement les `MAX_EXAMPLES` exemples
+    affichés dans l'onglet "Exemples". Un dataset multi-défauts (MVTec AD)
+    peut très bien afficher une bonne exactitude globale tout en ratant
+    systématiquement UN type de défaut précis — invisible dans la seule
+    métrique agrégée déjà affichée.
+
+    La catégorie "good" (label toujours 0) donne la spécificité du modèle ;
+    chaque catégorie de défaut (label toujours 1) donne son rappel propre —
+    même calcul dans les deux cas (part des prédictions correctes), le
+    label étant constant au sein d'une catégorie."""
+    by_category: dict[str, list[bool]] = {}
+    for category, true_label, predicted_label in zip(categories, true_labels, predicted_labels, strict=True):
+        by_category.setdefault(category, []).append(true_label == predicted_label)
+    return [
+        {"category": category, "n": len(outcomes), "detection_rate": sum(outcomes) / len(outcomes)}
+        for category, outcomes in sorted(by_category.items())
+    ]
 
 
 class _UnlabeledImageDataset(Dataset):
@@ -361,6 +446,7 @@ def train_and_evaluate_anomaly_vision(
 
     evaluation_scores = [all_scores[i] for i in evaluation_idx]
     evaluation_labels = [all_true_labels[i] for i in evaluation_idx]
+    evaluation_categories = [all_categories[i] for i in evaluation_idx]
     roc_auc = float(roc_auc_score(evaluation_labels, evaluation_scores))
     evaluation_predicted_labels = [1 if s > threshold else 0 for s in evaluation_scores]
     test_accuracy = sum(1 for t, p in zip(evaluation_labels, evaluation_predicted_labels) if t == p) / len(
@@ -369,6 +455,25 @@ def train_and_evaluate_anomaly_vision(
     test_precision = float(precision_score(evaluation_labels, evaluation_predicted_labels, zero_division=0))
     test_recall = float(recall_score(evaluation_labels, evaluation_predicted_labels, zero_division=0))
     test_f1 = float(f1_score(evaluation_labels, evaluation_predicted_labels, zero_division=0))
+
+    # 4 diagnostics supplémentaires (retour utilisateur : "d'autres
+    # fonctionnalités modernes...") — courbes ROC/PR sur l'ÉVALUATION
+    # (distinctes de fpr/tpr ci-dessus, calculées sur la CALIBRATION pour
+    # choisir le seuil — jamais mélangées) + distribution des scores +
+    # détection par catégorie, tous calculés sur l'évaluation uniquement.
+    # "Défaut" = clé unique (classe positive) — même convention que le
+    # binaire côté classification (`class_names[1]`), pour réutiliser
+    # `EvaluationCharts.tsx` sans adaptation.
+    eval_fpr, eval_tpr, _ = roc_curve(evaluation_labels, evaluation_scores)
+    eval_fpr_s, eval_tpr_s = _downsample_curve(eval_fpr, eval_tpr)
+    eval_precision, eval_recall, _ = precision_recall_curve(evaluation_labels, evaluation_scores)
+    eval_precision_s, eval_recall_s = _downsample_curve(eval_precision, eval_recall)
+    result_roc_curves = {"Défaut": {"fpr": eval_fpr_s, "tpr": eval_tpr_s}}
+    result_pr_curves = {"Défaut": {"precision": eval_precision_s, "recall": eval_recall_s}}
+    score_histogram = _compute_score_histogram(evaluation_scores, evaluation_labels)
+    category_breakdown = _compute_category_breakdown(
+        evaluation_categories, evaluation_labels, evaluation_predicted_labels
+    )
     conf_matrix = confusion_matrix(evaluation_labels, evaluation_predicted_labels, labels=[0, 1])
 
     progress_cb("Génération des cartes de localisation", 95)
@@ -461,4 +566,8 @@ def train_and_evaluate_anomaly_vision(
             "threshold": threshold,
             "state_dict": model.state_dict(),
         },
+        roc_curves=result_roc_curves,
+        pr_curves=result_pr_curves,
+        score_histogram=score_histogram,
+        category_breakdown=category_breakdown,
     )

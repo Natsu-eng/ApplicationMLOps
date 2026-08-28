@@ -101,6 +101,13 @@ def test_worker_persists_result_and_examples_on_success(db_session, tmp_path):
     assert result is not None
     assert result.model_id == "conv_autoencoder"
     assert Path(result.file_path).exists()
+    # Retour utilisateur : "d'autres fonctionnalités modernes que les autres
+    # plateformes n'offrent pas" — persistés au même titre que le reste.
+    assert result.roc_curves_json is not None
+    assert result.pr_curves_json is not None
+    assert result.score_histogram_json is not None
+    assert result.category_breakdown_json is not None
+    assert isinstance(json.loads(result.category_breakdown_json), list)
 
     examples = (
         db_session.query(VisionAnomalyExampleRecord)

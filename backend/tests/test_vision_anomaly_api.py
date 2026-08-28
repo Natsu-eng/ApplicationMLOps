@@ -284,6 +284,12 @@ def test_result_and_examples_after_completion(client, db_session):
     assert body["n_test"] == 6
     assert len(body["history"]) == 2
     assert len(body["confusion_matrix"]) == 2
+    # Retour utilisateur : "d'autres fonctionnalités modernes que les autres
+    # plateformes n'offrent pas".
+    assert set(body["roc_curves"].keys()) == {"Défaut"}
+    assert set(body["pr_curves"].keys()) == {"Défaut"}
+    assert set(body["score_histogram"].keys()) == {"bin_edges", "normal_counts", "defect_counts"}
+    assert {row["category"] for row in body["category_breakdown"]} == {"good", "scratch"}
 
     examples_resp = client.get(f"/api/vision/anomalies/jobs/{job['id']}/examples", headers=headers)
     assert examples_resp.status_code == 200

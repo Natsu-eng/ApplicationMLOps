@@ -101,6 +101,10 @@ def run_vision_anomaly_job(job_id: int) -> None:
                 test_f1=result.test_f1,
                 confusion_matrix_json=json.dumps(result.confusion_matrix),
                 model_card_json=json.dumps(result.model_card),
+                roc_curves_json=json.dumps(result.roc_curves) if result.roc_curves else None,
+                pr_curves_json=json.dumps(result.pr_curves) if result.pr_curves else None,
+                score_histogram_json=json.dumps(result.score_histogram) if result.score_histogram else None,
+                category_breakdown_json=json.dumps(result.category_breakdown) if result.category_breakdown else None,
                 file_path=str(artifact_path),
             )
             db.add(vision_model)

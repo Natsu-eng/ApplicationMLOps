@@ -1057,6 +1057,17 @@ export interface VisionAnomalyResult {
   test_f1: number;
   confusion_matrix: number[][];
   model_card: Record<string, unknown>;
+  // Retour utilisateur : "rendre l'onglet anomalies aussi riche/transparent
+  // que la classification" + "d'autres fonctionnalités modernes que les
+  // autres plateformes n'offrent pas" — absents sur les modèles entraînés
+  // avant ce correctif (rétrocompatibilité par absence).
+  // Même forme EXACTE que ClassificationEvaluation.roc_curves/pr_curves
+  // (une seule clé "Défaut", classe positive binaire) pour réutiliser
+  // EvaluationCharts.tsx tel quel.
+  roc_curves?: Record<string, RocCurve>;
+  pr_curves?: Record<string, PrCurve>;
+  score_histogram?: { bin_edges: number[]; normal_counts: number[]; defect_counts: number[] } | null;
+  category_breakdown?: { category: string; n: number; detection_rate: number }[] | null;
 }
 
 export interface VisionAnomalyExample {

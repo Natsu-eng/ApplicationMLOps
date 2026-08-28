@@ -992,6 +992,13 @@ class VisionAnomalyModel(Base):
     test_f1: Mapped[float] = mapped_column(Float, nullable=False)
     confusion_matrix_json: Mapped[str] = mapped_column(Text, nullable=False)
     model_card_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # Retour utilisateur : "d'autres fonctionnalités modernes que les autres
+    # plateformes n'offrent pas" — NULL sur les modèles entraînés avant ce
+    # correctif (rétrocompatibilité par absence, même motif que ci-dessus).
+    roc_curves_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    pr_curves_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    score_histogram_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    category_breakdown_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     file_path: Mapped[str] = mapped_column(String(500), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
 
