@@ -89,10 +89,15 @@ export function assessStabilityQuality(stabilityAri: number | null): QualityAsse
   };
 }
 
-/** Explication de la configuration recommandée : indique le critère de
- * sélection (silhouette) et recoupe avec le classement de la même
- * configuration sur les deux autres métriques parmi les candidats
- * réellement évalués — jamais une affirmation non vérifiée. */
+/** Explication de la configuration recommandée — retour utilisateur direct
+ * (deux cas réels observés : la sélection au seul silhouette élisait une
+ * configuration nettement pire sur les 2 autres métriques pour un gain de
+ * silhouette marginal) : la sélection se fait désormais sur un RANG
+ * COMPOSITE (moyenne des rangs sur silhouette/Davies-Bouldin/Calinski-
+ * Harabasz, voir `domains/clustering/services/engine.py::
+ * _attach_composite_rank`), jamais la silhouette seule. Ce texte décrit
+ * fidèlement ce critère — jamais une affirmation non vérifiée, tout est
+ * recalculé à partir des candidats réellement évalués. */
 export function buildRecommendationExplanation(winner: ClusterCandidate, allCandidates: ClusterCandidate[]): string {
   const valid = allCandidates.filter((c) => c.silhouette !== null);
   const n = valid.length;
@@ -100,25 +105,30 @@ export function buildRecommendationExplanation(winner: ClusterCandidate, allCand
     return "Configuration retenue faute d'autre candidat exploitable dans cette comparaison.";
   }
 
-  const base = `Sélectionnée pour le meilleur score de silhouette (${winner.silhouette.toFixed(3)}) parmi ${n} configuration${n > 1 ? "s" : ""} testée${n > 1 ? "s" : ""}.`;
-  if (n === 1) return base;
-
-  const dbRanked = valid.filter((c) => c.davies_bouldin !== null).sort((a, b) => a.davies_bouldin! - b.davies_bouldin!);
-  const chRanked = valid
-    .filter((c) => c.calinski_harabasz !== null)
-    .sort((a, b) => b.calinski_harabasz! - a.calinski_harabasz!);
-  const dbRank = dbRanked.findIndex((c) => c.rank === winner.rank) + 1;
-  const chRank = chRanked.findIndex((c) => c.rank === winner.rank) + 1;
-
-  if (dbRank === 0 || chRank === 0) return base;
-
-  const topThird = Math.max(1, Math.ceil(Math.max(dbRanked.length, chRanked.length) * 0.3));
-  const corroborated = dbRank <= topThird && chRank <= topThird;
-
-  if (corroborated) {
-    return `${base} Le Davies-Bouldin (rang ${dbRank}/${dbRanked.length}) et le Calinski-Harabasz (rang ${chRank}/${chRanked.length}) confirment ce choix.`;
+  if (n === 1 || winner.composite_rank === null) {
+    return `Seule configuration exploitable parmi ${n} testée${n > 1 ? "s" : ""} (silhouette ${winner.silhouette.toFixed(3)}).`;
   }
-  return `${base} Le Davies-Bouldin (rang ${dbRank}/${dbRanked.length}) et le Calinski-Harabasz (rang ${chRank}/${chRanked.length}) ne placent pas cette configuration en tête sur ces deux critères — à interpréter avec prudence, le score de silhouette reste le critère de sélection retenu.`;
+
+  const parts: string[] = [];
+  if (winner.rank_silhouette !== null) parts.push(`silhouette rang ${winner.rank_silhouette}/${n}`);
+  if (winner.rank_davies_bouldin !== null) parts.push(`Davies-Bouldin rang ${winner.rank_davies_bouldin}/${n}`);
+  if (winner.rank_calinski_harabasz !== null) parts.push(`Calinski-Harabasz rang ${winner.rank_calinski_harabasz}/${n}`);
+
+  const base = `Sélectionnée pour le meilleur compromis sur les 3 métriques de qualité (rang composite ${winner.composite_rank.toFixed(2)}, silhouette ${winner.silhouette.toFixed(3)}) parmi ${n} configurations testées — ${parts.join(", ")}.`;
+
+  // 1ère du classement sur les 3 métriques à la fois : compromis "propre",
+  // rien à nuancer.
+  if (winner.rank_silhouette === 1 && winner.rank_davies_bouldin === 1 && winner.rank_calinski_harabasz === 1) {
+    return `${base} Elle arrive également en tête sur chacune des 3 métriques prise isolément — aucun compromis à faire ici.`;
+  }
+  // Le meilleur silhouette isolé N'EST PAS le gagnant du rang composite —
+  // cas explicitement signalé (c'est exactement le comportement que le
+  // rang composite corrige) pour que l'utilisateur voie l'arbitrage fait.
+  const bestSilhouette = valid.reduce((best, c) => (c.silhouette! > best.silhouette! ? c : best), valid[0]);
+  if (bestSilhouette.rank !== winner.rank) {
+    return `${base} Le meilleur score de silhouette isolé (${bestSilhouette.algorithm}, ${bestSilhouette.silhouette?.toFixed(3)}) a été écarté : il se classe nettement moins bien sur Davies-Bouldin et/ou Calinski-Harabasz — comparez les 3 meilleures configurations en détail avant de vous arrêter à ce choix.`;
+  }
+  return `${base} Elle reste aussi la meilleure sur le seul critère de silhouette.`;
 }
 
 export interface DistributionEntry {

@@ -19,6 +19,12 @@ function candidate(overrides: Partial<ClusterCandidate>): ClusterCandidate {
     noise_ratio: 0,
     is_winner: false,
     rank: 1,
+    rank_silhouette: null,
+    rank_davies_bouldin: null,
+    rank_calinski_harabasz: null,
+    composite_rank: null,
+    cluster_profiles: null,
+    noise_count: null,
     ...overrides,
   };
 }
@@ -70,27 +76,69 @@ describe("assessStabilityQuality", () => {
 });
 
 describe("buildRecommendationExplanation", () => {
-  it("confirme le choix quand les 3 métriques s'accordent", () => {
-    const winner = candidate({ rank: 1, silhouette: 0.9, davies_bouldin: 0.1, calinski_harabasz: 500, is_winner: true });
-    const loser = candidate({ rank: 2, silhouette: 0.4, davies_bouldin: 0.8, calinski_harabasz: 50 });
+  it("confirme le choix quand le gagnant est 1er sur les 3 métriques à la fois", () => {
+    const winner = candidate({
+      rank: 1,
+      silhouette: 0.9,
+      davies_bouldin: 0.1,
+      calinski_harabasz: 500,
+      is_winner: true,
+      rank_silhouette: 1,
+      rank_davies_bouldin: 1,
+      rank_calinski_harabasz: 1,
+      composite_rank: 1.0,
+    });
+    const loser = candidate({
+      rank: 2,
+      silhouette: 0.4,
+      davies_bouldin: 0.8,
+      calinski_harabasz: 50,
+      rank_silhouette: 2,
+      rank_davies_bouldin: 2,
+      rank_calinski_harabasz: 2,
+      composite_rank: 2.0,
+    });
     const text = buildRecommendationExplanation(winner, [winner, loser]);
-    expect(text).toMatch(/confirment ce choix/);
+    expect(text).toMatch(/en tête sur chacune des 3 métriques/);
     expect(text).toContain("0.900");
   });
 
-  it("signale la prudence quand les métriques divergent", () => {
-    // Le gagnant a la meilleure silhouette mais le pire Davies-Bouldin/Calinski-Harabasz.
-    const winner = candidate({ rank: 1, silhouette: 0.9, davies_bouldin: 5.0, calinski_harabasz: 1, is_winner: true });
-    const others = [2, 3, 4, 5].map((rank) => candidate({ rank, silhouette: 0.5, davies_bouldin: 0.2, calinski_harabasz: 200 }));
-    const text = buildRecommendationExplanation(winner, [winner, ...others]);
-    expect(text).toMatch(/à interpréter avec prudence/);
+  it("signale explicitement quand le rang composite écarte le meilleur silhouette isolé", () => {
+    // Retour utilisateur direct (cas réel) : le meilleur silhouette isolé
+    // (rang 1 en silhouette) n'est PAS le gagnant du rang composite —
+    // `winner` (rang composite 1) a un silhouette moins bon mais bien
+    // meilleur sur les 2 autres métriques.
+    const bestSilhouetteButExcluded = candidate({
+      rank: 2,
+      silhouette: 0.9,
+      davies_bouldin: 5.0,
+      calinski_harabasz: 1,
+      rank_silhouette: 1,
+      rank_davies_bouldin: 5,
+      rank_calinski_harabasz: 5,
+      composite_rank: 11 / 3,
+    });
+    const winner = candidate({
+      rank: 1,
+      silhouette: 0.7,
+      davies_bouldin: 0.2,
+      calinski_harabasz: 300,
+      is_winner: true,
+      rank_silhouette: 2,
+      rank_davies_bouldin: 1,
+      rank_calinski_harabasz: 1,
+      composite_rank: 4 / 3,
+    });
+    const text = buildRecommendationExplanation(winner, [winner, bestSilhouetteButExcluded]);
+    expect(text).toMatch(/a été écarté/);
+    expect(text).toContain("0.900");
   });
 
   it("reste correct avec un seul candidat valide", () => {
-    const winner = candidate({ rank: 1, silhouette: 0.6, is_winner: true });
+    const winner = candidate({ rank: 1, silhouette: 0.6, is_winner: true, composite_rank: null });
     const text = buildRecommendationExplanation(winner, [winner]);
     expect(text).toContain("0.600");
-    expect(text).not.toMatch(/confirment|prudence/);
+    expect(text).toMatch(/seule configuration exploitable/i);
   });
 });
 

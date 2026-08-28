@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import logging
 import traceback
+from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -146,6 +147,19 @@ def run_clustering_job(job_id: int) -> None:
                         noise_ratio=candidate.noise_ratio,
                         is_winner=candidate.is_winner,
                         rank=candidate.rank,
+                        rank_silhouette=candidate.rank_silhouette,
+                        rank_davies_bouldin=candidate.rank_davies_bouldin,
+                        rank_calinski_harabasz=candidate.rank_calinski_harabasz,
+                        composite_rank=candidate.composite_rank,
+                        # Top 3 seulement (voir engine.py::TOP_N_WITH_FULL_RESULTS)
+                        # — `None` au-delà, jamais une liste vide qui se
+                        # confondrait avec "calculé, zéro segment".
+                        cluster_profiles_json=(
+                            json.dumps([asdict(p) for p in candidate.cluster_profiles])
+                            if candidate.cluster_profiles is not None
+                            else None
+                        ),
+                        noise_count=candidate.noise_count,
                     )
                 )
 

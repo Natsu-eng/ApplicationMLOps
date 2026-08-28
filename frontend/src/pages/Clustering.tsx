@@ -34,7 +34,7 @@ import { pillarColor } from "../config/pillars";
 import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
 import { Input } from "../components/ui/Input";
-import { ColorIconBadge, accentSurfaceClass, accentValueTextClass, type AccentColor } from "../components/ui/ColorIconBadge";
+import { accentSurfaceClass, accentValueTextClass, type AccentColor } from "../components/ui/ColorIconBadge";
 import { PageHeader } from "../components/ui/PageHeader";
 import { SectionHeader } from "../components/ui/SectionHeader";
 import { Select } from "../components/ui/Select";
@@ -42,6 +42,7 @@ import { Table, type TableColumn } from "../components/ui/Table";
 import { Tabs } from "../components/ui/Tabs";
 import { ModelExportActions } from "../components/ui/ModelExportActions";
 import { DataQualityWarnings } from "../components/training/DataQualityWarnings";
+import { ClusterProfileGrid } from "../components/clustering/ClusterProfileGrid";
 import { useJobEvents } from "../hooks/useJobEvents";
 import { useConfirmAction } from "../hooks/useConfirmAction";
 import { useIdempotencyKey } from "../hooks/useIdempotencyKey";
@@ -65,8 +66,6 @@ function phaseOf(job: ClusteringJobSummary | null): Phase {
   if (job.status === "completed") return "results";
   return job.status === "cancelled" ? "cancelled" : "failed";
 }
-
-const CANDIDATE_COLORS: AccentColor[] = ["rose", "blue", "teal", "amber", "violet"];
 
 /** Pilier ML non supervisé — clustering (Lot 11+). Page unique volontairement
  * plus simple que le wizard supervisé (Training.tsx) : la configuration
@@ -530,6 +529,15 @@ const CANDIDATE_COLUMNS: TableColumn<ClusterCandidate>[] = [
     align: "right",
     render: (c) => (c.noise_ratio > 0 ? `${(c.noise_ratio * 100).toFixed(0)} %` : "—"),
   },
+  {
+    key: "composite_rank",
+    header: "Rang composite ↓",
+    align: "right",
+    sortable: true,
+    sortValue: (c) => c.composite_rank,
+    render: (c) => (c.composite_rank !== null ? c.composite_rank.toFixed(2) : "—"),
+    className: "font-medium",
+  },
 ];
 
 // Palette validée (theme/charts.ts) — jamais une teinte hex ad hoc pour une
@@ -544,6 +552,12 @@ function ClusteringResultView({ job }: { job: ClusteringJobSummary }) {
   const [candidatesError, setCandidatesError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<"comparaison" | "profils" | "assigner">("profils");
+  // Comparaison détaillée du top 3 (retour utilisateur direct : "propose
+  // les 3 meilleurs modèles, résultats propres pour chaque, laisse le
+  // choix à l'utilisateur") — clé = rang (string, contrainte de `Tabs<T
+  // extends string>`), jamais l'algorithme seul (deux candidats du top 3
+  // peuvent partager le même algorithme, ex. K-Means k=2 et k=3).
+  const [selectedTopRank, setSelectedTopRank] = useState<string>("1");
 
   useEffect(() => {
     api.clustering
@@ -560,6 +574,12 @@ function ClusteringResultView({ job }: { job: ClusteringJobSummary }) {
   if (!result) return <p className="text-sm text-muted-foreground text-center">Chargement…</p>;
 
   const winnerCandidate = candidates.find((c) => c.is_winner);
+  // Top 3 avec résultats complets — le backend n'en calcule que 3 (voir
+  // engine.py::TOP_N_WITH_FULL_RESULTS), `cluster_profiles !== null` est
+  // donc un filtre suffisant, jamais un simple `.slice(0, 3)` qui
+  // supposerait un ordre déjà garanti par le backend sans le vérifier ici.
+  const topCandidatesWithProfiles = candidates.filter((c) => c.cluster_profiles !== null);
+  const selectedTopCandidate = topCandidatesWithProfiles.find((c) => String(c.rank) === selectedTopRank);
   const quality = assessSilhouetteQuality(result.metrics.silhouette);
   const stabilityAri = result.model_card.stability_ari;
   const stability = assessStabilityQuality(typeof stabilityAri === "number" ? stabilityAri : null);
@@ -658,14 +678,58 @@ function ClusteringResultView({ job }: { job: ClusteringJobSummary }) {
           <p className="text-sm text-destructive text-center">{candidatesError}</p>
         ) : (
           candidates.length > 0 && (
-            <div>
-              <SectionHeader
-                icon={ListChecks}
-                color="blue"
-                label={`Configurations comparées (${candidates.length})`}
-                help="Plusieurs algorithmes et nombres de groupes sont testés à chaque lancement, classés sur le score de silhouette — jamais un seul essai lancé à l'aveugle. ↑ = plus haut est meilleur, ↓ = plus bas est meilleur."
-              />
-              <Table columns={CANDIDATE_COLUMNS} rows={candidates} rowKey={(c) => `${c.algorithm}-${c.rank}`} highlightRow={(c) => c.is_winner} />
+            <div className="space-y-6">
+              <div>
+                <SectionHeader
+                  icon={ListChecks}
+                  color="blue"
+                  label={`Configurations comparées (${candidates.length})`}
+                  help="Plusieurs algorithmes et nombres de groupes sont testés à chaque lancement, classés sur un rang composite qui combine les 3 métriques de qualité (silhouette, Davies-Bouldin, Calinski-Harabasz) — jamais un seul critère isolé, qui peut sacrifier la compacité des groupes pour un gain marginal ailleurs. ↑ = plus haut est meilleur, ↓ = plus bas est meilleur."
+                />
+                <Table columns={CANDIDATE_COLUMNS} rows={candidates} rowKey={(c) => `${c.algorithm}-${c.rank}`} highlightRow={(c) => c.is_winner} />
+              </div>
+
+              {topCandidatesWithProfiles.length > 1 && (
+                <div>
+                  <SectionHeader
+                    icon={Trophy}
+                    color="violet"
+                    label="Top 3 en détail — comparez avant de choisir"
+                    help="Résultats complets (profils de segments) pour les 3 meilleures configurations. Le classement global retient la 1ʳᵉ, mais rien n'oblige à s'y limiter — un nombre de groupes légèrement différent peut être plus pertinent pour votre usage métier ; comparez, puis relancez cette configuration précise si vous préférez une autre entrée du tableau ci-dessus."
+                  />
+                  <Tabs
+                    items={topCandidatesWithProfiles.map((c) => ({
+                      id: String(c.rank),
+                      label: `#${c.rank} — ${c.algorithm}`,
+                      icon: c.is_winner ? Trophy : Boxes,
+                    }))}
+                    active={selectedTopRank}
+                    onChange={setSelectedTopRank}
+                  />
+                  {selectedTopCandidate?.cluster_profiles && (
+                    <div className="mt-4 space-y-3">
+                      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground bg-muted/50 rounded-lg px-3 py-2">
+                        <span>
+                          Silhouette <strong className="text-foreground tabular-nums">{selectedTopCandidate.silhouette?.toFixed(3) ?? "—"}</strong>
+                          {selectedTopCandidate.rank_silhouette !== null && ` (rang ${selectedTopCandidate.rank_silhouette})`}
+                        </span>
+                        <span>
+                          Davies-Bouldin <strong className="text-foreground tabular-nums">{selectedTopCandidate.davies_bouldin?.toFixed(3) ?? "—"}</strong>
+                          {selectedTopCandidate.rank_davies_bouldin !== null && ` (rang ${selectedTopCandidate.rank_davies_bouldin})`}
+                        </span>
+                        <span>
+                          Calinski-Harabasz <strong className="text-foreground tabular-nums">{selectedTopCandidate.calinski_harabasz?.toFixed(0) ?? "—"}</strong>
+                          {selectedTopCandidate.rank_calinski_harabasz !== null && ` (rang ${selectedTopCandidate.rank_calinski_harabasz})`}
+                        </span>
+                        {selectedTopCandidate.noise_count !== null && selectedTopCandidate.noise_count > 0 && (
+                          <span>{selectedTopCandidate.noise_count} observation{selectedTopCandidate.noise_count > 1 ? "s" : ""} atypique{selectedTopCandidate.noise_count > 1 ? "s" : ""}</span>
+                        )}
+                      </div>
+                      <ClusterProfileGrid profiles={selectedTopCandidate.cluster_profiles} />
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )
         )
@@ -723,66 +787,7 @@ function ClusteringResultView({ job }: { job: ClusteringJobSummary }) {
       {activeTab === "profils" && (
       <div>
         <SectionHeader icon={Sparkles} color="violet" label="Profils de segments" help="Chaque groupe décrit par sa taille et ce qui le distingue le plus du reste de la population — jamais une simple étiquette numérique." />
-        <div className="grid sm:grid-cols-2 gap-4">
-          {result.profiles.map((profile, i) => {
-            const color = CANDIDATE_COLORS[i % CANDIDATE_COLORS.length];
-            return (
-              <Card key={profile.cluster_id} className={`p-4 ${accentSurfaceClass(color)}`}>
-                <div className="flex items-center justify-between mb-3">
-                  <div className="flex items-center gap-2">
-                    <ColorIconBadge icon={Boxes} color={color} size="sm" />
-                    <span className="text-sm font-medium text-foreground">Segment {profile.cluster_id + 1}</span>
-                  </div>
-                  <span className="text-sm font-semibold tabular-nums text-foreground">
-                    {profile.size_pct.toFixed(1)} %
-                  </span>
-                </div>
-                <p className="text-xs text-muted-foreground mb-2">
-                  {profile.size} observation{profile.size > 1 ? "s" : ""}
-                </p>
-                {profile.differentiating_variables.length > 0 && (
-                  <div className="space-y-1 mb-2">
-                    <p className="text-overline uppercase text-muted-foreground">
-                      Variables différenciantes
-                    </p>
-                    {profile.differentiating_variables.slice(0, 3).map((varName) => {
-                      const stat = profile.numeric_summary[varName];
-                      if (!stat) return null;
-                      return (
-                        <p key={varName} className="text-xs text-foreground/90">
-                          <span className="font-medium">{varName}</span> : moyenne {stat.mean.toFixed(2)}{" "}
-                          <span className="text-muted-foreground">
-                            ({stat.z_score > 0 ? "+" : ""}
-                            {stat.z_score.toFixed(1)}σ vs population)
-                          </span>
-                        </p>
-                      );
-                    })}
-                  </div>
-                )}
-                {Object.entries(profile.categorical_summary).length > 0 && (
-                  <div className="space-y-1">
-                    {Object.entries(profile.categorical_summary)
-                      .slice(0, 2)
-                      .map(([col, cat]) => (
-                        <p key={col} className="text-xs text-foreground/90">
-                          <span className="font-medium">{col}</span> dominant : {cat.top_category} (
-                          {cat.top_pct.toFixed(0)} %
-                          {cat.lift !== null && (cat.lift >= 1.5 || cat.lift <= 0.67) && (
-                            <span className="text-muted-foreground">
-                              {" "}
-                              — vs {cat.population_pct.toFixed(0)} % sur l'ensemble, ×{cat.lift.toFixed(1)}
-                            </span>
-                          )}
-                          )
-                        </p>
-                      ))}
-                  </div>
-                )}
-              </Card>
-            );
-          })}
-        </div>
+        <ClusterProfileGrid profiles={result.profiles} />
       </div>
       )}
 

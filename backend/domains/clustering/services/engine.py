@@ -82,6 +82,29 @@ class ClusterCandidateResult:
     noise_ratio: float
     is_winner: bool
     rank: int
+    # Rangs individuels + rang composite (voir `_attach_composite_rank`) —
+    # `None` pour les candidats hors budget de bruit (jamais classés, voir
+    # `_rank_candidates_with_noise_budget`). Exposés pour que la sélection
+    # ne soit jamais une boîte noire côté UI : l'utilisateur voit POURQUOI
+    # le gagnant a été choisi (ex. "1er en silhouette, 2e en Davies-Bouldin,
+    # 6e en Calinski-Harabasz — rang composite 3.0"), jamais juste une
+    # affirmation.
+    # Floats, pas des entiers — une égalité entre 2 candidats sur une
+    # métrique produit un rang moyen fractionnaire (voir `_rank_with_ties`,
+    # ex. 2.5 pour 2 candidats à égalité aux rangs 2 et 3).
+    rank_silhouette: Optional[float] = None
+    rank_davies_bouldin: Optional[float] = None
+    rank_calinski_harabasz: Optional[float] = None
+    composite_rank: Optional[float] = None
+    # Profil complet (segments, variables différenciantes) — calculé
+    # UNIQUEMENT pour le top 3 (retour utilisateur : "propose les 3
+    # meilleurs modèles, résultats propres pour chaque, laisse le choix à
+    # l'utilisateur"), jamais pour les ~10 autres candidats du classement
+    # (coût de calcul + volume de réponse non justifiés pour des
+    # configurations que l'utilisateur ne consultera probablement jamais en
+    # détail). `None` au-delà du top 3.
+    cluster_profiles: Optional[list["ClusterProfile"]] = None
+    noise_count: Optional[int] = None
 
 
 @dataclass
@@ -215,11 +238,78 @@ def _build_cluster_profiles(X: pd.DataFrame, labels: np.ndarray) -> list[Cluster
     return profiles
 
 
+def _rank_with_ties(values: list[float], descending: bool) -> list[float]:
+    """Rang MOYEN (1 = meilleur), à égalité pour des valeurs strictement
+    égales — jamais un rang arbitrairement départagé par l'ordre
+    d'apparition dans la liste d'entrée.
+
+    Bug réel trouvé en testant ce module (`_attach_composite_rank`, avant
+    ce correctif) : une simple énumération après `sorted()` (stable)
+    attribuait des rangs CONSÉCUTIFS (1, 2...) à des valeurs strictement
+    égales, dans l'ordre où elles apparaissaient dans la liste d'entrée —
+    un candidat cité en premier gagnait ainsi un avantage de rang sur les
+    métriques à égalité, sans AUCUNE différence réelle de qualité. Méthode
+    du rang moyen (« average » de `scipy.stats.rankdata`, jamais réimportée
+    ici pour rester sans dépendance nouvelle sur une fonction de quelques
+    lignes) : des valeurs à égalité se partagent la moyenne des rangs
+    qu'elles auraient occupés (ex. 2 candidats à égalité pour les rangs 2
+    et 3 reçoivent chacun 2.5), neutre par construction vis-à-vis de
+    l'ordre d'entrée."""
+    n = len(values)
+    order = sorted(range(n), key=lambda i: values[i], reverse=descending)
+    ranks = [0.0] * n
+    i = 0
+    while i < n:
+        j = i
+        while j + 1 < n and values[order[j + 1]] == values[order[i]]:
+            j += 1
+        avg_rank = (i + 1 + j + 1) / 2  # rangs 1-indexés i+1..j+1, moyennés
+        for k in range(i, j + 1):
+            ranks[order[k]] = avg_rank
+        i = j + 1
+    return ranks
+
+
+def _attach_composite_rank(candidates: list[dict[str, Any]]) -> None:
+    """Rang composite (moyenne de Borda, avec gestion des égalités — voir
+    `_rank_with_ties`) sur les 3 métriques de qualité — silhouette (plus
+    haut = meilleur), Davies-Bouldin (plus bas = meilleur), Calinski-
+    Harabasz (plus haut = meilleur). Chaque candidat reçoit un rang sur
+    CHAQUE métrique, moyenné en `composite_rank` (plus bas = meilleur dans
+    les trois à la fois).
+
+    Retour utilisateur direct, observé en usage réel (DBSCAN puis K-Means) :
+    la sélection au seul silhouette pouvait élire une configuration classée
+    dans le dernier tiers en Davies-Bouldin (clusters larges et peu denses)
+    pour un gain de silhouette marginal sur une configuration nettement
+    meilleure sur les deux autres métriques. Pratique standard de
+    sélection multi-critères non supervisée (agrégation de rangs / méthode
+    de Borda), pas une heuristique inventée pour ce projet — MAIS ne
+    change pas systématiquement le résultat : si les 3 métriques ne
+    s'accordent pas sur un même « meilleur compromis » clair (ex. l'une
+    favorise nettement le gagnant au silhouette), le rang composite peut
+    retomber en égalité, départagée par la silhouette (voir
+    `_rank_candidates_with_noise_budget`) — jamais un remplacement aveugle
+    d'une métrique unique par une autre, un vrai arbitrage entre les
+    trois à la fois."""
+    n = len(candidates)
+    rank_silhouette = _rank_with_ties([c["silhouette"] for c in candidates], descending=True)
+    rank_db = _rank_with_ties([c["davies_bouldin"] for c in candidates], descending=False)
+    rank_ch = _rank_with_ties([c["calinski_harabasz"] for c in candidates], descending=True)
+    for i in range(n):
+        candidates[i]["rank_silhouette"] = rank_silhouette[i]
+        candidates[i]["rank_davies_bouldin"] = rank_db[i]
+        candidates[i]["rank_calinski_harabasz"] = rank_ch[i]
+        candidates[i]["composite_rank"] = (rank_silhouette[i] + rank_db[i] + rank_ch[i]) / 3
+
+
 def _rank_candidates_with_noise_budget(
     valid: list[dict[str, Any]],
 ) -> tuple[list[dict[str, Any]], bool]:
-    """Classe les candidats évalués sur la silhouette, en excluant du sommet
-    du classement ceux dont le `noise_ratio` dépasse `MAX_SELECTABLE_NOISE_RATIO`
+    """Classe les candidats sur le RANG COMPOSITE (voir `_attach_composite_rank`
+    — moyenne des rangs silhouette/Davies-Bouldin/Calinski-Harabasz, jamais
+    la silhouette seule depuis ce correctif), en excluant du sommet du
+    classement ceux dont le `noise_ratio` dépasse `MAX_SELECTABLE_NOISE_RATIO`
     (P2 — un DBSCAN qui ne rattache que quelques points très compacts peut
     afficher une silhouette artificiellement haute, calculée uniquement sur
     ces points-là). Les candidats disqualifiés restent dans la liste
@@ -235,7 +325,12 @@ def _rank_candidates_with_noise_budget(
     excluded = [c for c in valid if c["noise_ratio"] > MAX_SELECTABLE_NOISE_RATIO]
     excluded.sort(key=lambda c: c["silhouette"], reverse=True)
     if selectable:
-        selectable.sort(key=lambda c: c["silhouette"], reverse=True)
+        _attach_composite_rank(selectable)
+        # Égalité de rang composite (rare, ex. 2 candidats parfaitement
+        # complémentaires) : silhouette comme départage — seule des 3
+        # métriques bornée et directement interprétable, même raisonnement
+        # que le commentaire historique sur le choix de la silhouette.
+        selectable.sort(key=lambda c: (c["composite_rank"], -c["silhouette"]))
         return selectable + excluded, False
     return excluded, True
 
@@ -390,17 +485,35 @@ def train_and_evaluate_clustering(
             "de groupes dans vos données."
         )
 
-    # Score de sélection = silhouette (borné [-1, 1], seule métrique des 3
-    # dont l'échelle est directement interprétable ["proche de 1" = bon] —
-    # Davies-Bouldin/Calinski-Harabasz servent à recouper, pas à classer,
-    # même logique que le SHAP/permutation qui recoupent sans remplacer le
-    # score de sélection principal côté supervisé).
+    # Score de sélection = rang composite sur les 3 métriques (voir
+    # `_attach_composite_rank`) — PLUS la silhouette seule depuis ce
+    # correctif (retour utilisateur direct, observé deux fois : la
+    # silhouette seule élisait une configuration nettement pire en
+    # Davies-Bouldin pour un gain marginal de silhouette). Silhouette
+    # gardée comme départage en cas d'égalité de rang composite (seule des
+    # 3 métriques bornée [-1, 1] et directement interprétable).
     valid, noise_budget_exceeded_for_all = _rank_candidates_with_noise_budget(valid)
 
     progress_cb("Sélection du meilleur regroupement", 88)
 
+    # Résultats complets (profils de segments) pour le TOP 3 seulement
+    # (retour utilisateur direct : "propose les 3 meilleurs modèles,
+    # résultats propres pour chaque, laisse le choix à l'utilisateur") —
+    # jamais pour le reste du classement (coût de calcul + volume de
+    # réponse non justifiés pour des configurations que l'utilisateur ne
+    # consultera probablement jamais). `labels` déjà disponible pour
+    # CHAQUE candidat évalué (calculé une seule fois plus haut, jamais
+    # refit ici) — ce correctif ne coûte donc que le calcul des profils
+    # eux-mêmes (statistiques descriptives), pas un nouveau clustering.
+    TOP_N_WITH_FULL_RESULTS = 3
+
     candidates_result: list[ClusterCandidateResult] = []
     for rank, c in enumerate(valid, start=1):
+        candidate_profiles = None
+        candidate_noise_count = None
+        if rank <= TOP_N_WITH_FULL_RESULTS:
+            candidate_profiles = _build_cluster_profiles(X_used, c["labels"])
+            candidate_noise_count = int((c["labels"] == -1).sum())
         candidates_result.append(
             ClusterCandidateResult(
                 algorithm_id=c["spec"].id,
@@ -414,12 +527,24 @@ def train_and_evaluate_clustering(
                 noise_ratio=c["noise_ratio"],
                 is_winner=(rank == 1),
                 rank=rank,
+                # `.get(...)` : `_attach_composite_rank` n'est appelé que sur
+                # les candidats DANS le budget de bruit (`selectable`) —
+                # un candidat exclu (`excluded`, hors budget) n'a jamais ces
+                # clés, `None` est alors le bon signal (jamais classé).
+                rank_silhouette=c.get("rank_silhouette"),
+                rank_davies_bouldin=c.get("rank_davies_bouldin"),
+                rank_calinski_harabasz=c.get("rank_calinski_harabasz"),
+                composite_rank=c.get("composite_rank"),
+                cluster_profiles=candidate_profiles,
+                noise_count=candidate_noise_count,
             )
         )
 
     winner = valid[0]
     progress_cb("Calcul des profils de segments", 92)
-    profiles = _build_cluster_profiles(X_used, winner["labels"])
+    # Déjà calculé ci-dessus (rang 1 fait toujours partie du top 3) — jamais
+    # recalculé une seconde fois.
+    profiles = candidates_result[0].cluster_profiles or _build_cluster_profiles(X_used, winner["labels"])
 
     progress_cb("Vérification de la stabilité", 96)
     stability_ari = _compute_cluster_stability(X_processed, winner["spec"], winner["params"], config.seed)

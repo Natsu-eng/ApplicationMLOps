@@ -556,6 +556,21 @@ class ClusterCandidateRecord(Base):
     noise_ratio: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     is_winner: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     rank: Mapped[int] = mapped_column(Integer, nullable=False)
+    # Phase clustering "top 3" (retour utilisateur direct — sélection au
+    # seul silhouette élisait parfois une configuration nettement pire en
+    # Davies-Bouldin, voir domains/clustering/services/engine.py::
+    # _attach_composite_rank) — rangs individuels + rang composite, NULL
+    # pour un candidat hors budget de bruit (jamais classé).
+    rank_silhouette: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    rank_davies_bouldin: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    rank_calinski_harabasz: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    composite_rank: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    # Profil complet (segments, variables différenciantes) — UNIQUEMENT pour
+    # le top 3 (voir TOP_N_WITH_FULL_RESULTS dans engine.py), NULL au-delà :
+    # comparer plusieurs modèles au lieu d'un seul, sans persister le détail
+    # de configurations que l'utilisateur ne consultera probablement jamais.
+    cluster_profiles_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    noise_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     organization: Mapped["Organization"] = relationship("Organization")

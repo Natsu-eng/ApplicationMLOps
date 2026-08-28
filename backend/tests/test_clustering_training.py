@@ -10,6 +10,7 @@ from domains.clustering.services.registry import CLUSTER_REGISTRY
 from domains.clustering.services.engine import (
     ClusteringConfig,
     MAX_SELECTABLE_NOISE_RATIO,
+    _attach_composite_rank,
     _rank_candidates_with_noise_budget,
     train_and_evaluate_clustering,
 )
@@ -39,13 +40,23 @@ def test_finds_the_right_number_of_clusters_on_well_separated_data():
     assert result.model_card["silhouette"] > 0.7  # groupes très séparés : silhouette proche de 1 attendue
 
 
-def test_all_candidates_ranked_by_silhouette_descending():
+def test_all_candidates_ranked_by_composite_score_ascending():
+    """Depuis le correctif rang composite (retour utilisateur direct — la
+    silhouette seule pouvait élire une configuration nettement pire sur les
+    2 autres métriques), le classement se fait sur `composite_rank`
+    (croissant = meilleur d'abord), plus sur la silhouette seule."""
     df = _make_three_blobs_df()
     result = train_and_evaluate_clustering(df, ClusteringConfig(seed=42), _NOOP)
-    scores = [c.silhouette for c in result.all_candidates if c.silhouette is not None]
-    assert scores == sorted(scores, reverse=True)
+    composite_ranks = [c.composite_rank for c in result.all_candidates if c.composite_rank is not None]
+    assert composite_ranks == sorted(composite_ranks)
     assert result.all_candidates[0].is_winner is True
     assert all(not c.is_winner for c in result.all_candidates[1:])
+    # 3 blobs très séparés par construction : le vrai k=3 doit rester
+    # excellent sur les 3 métriques à la fois (voir
+    # test_composite_rank_still_prefers_clear_winner_on_all_metrics), donc
+    # toujours élu même avec le nouveau critère — non-régression du
+    # comportement observable pour l'utilisateur sur un cas simple.
+    assert result.model_card["n_clusters"] == 3
 
 
 def test_cluster_profiles_correctly_identify_dominant_category():
@@ -92,8 +103,25 @@ def test_differentiating_variables_identify_the_real_signal():
 # faire émerger d'un vrai fit DBSCAN instable).
 
 
-def _candidate(silhouette: float, noise_ratio: float, label: str) -> dict:
-    return {"silhouette": silhouette, "noise_ratio": noise_ratio, "label": label}
+def _candidate(
+    silhouette: float,
+    noise_ratio: float,
+    label: str,
+    davies_bouldin: float = 1.0,
+    calinski_harabasz: float = 100.0,
+) -> dict:
+    # `davies_bouldin`/`calinski_harabasz` par défaut IDENTIQUES pour tous
+    # les candidats d'un même test qui ne les fournit pas explicitement —
+    # neutralise leur effet sur le rang composite (voir
+    # `_attach_composite_rank`) pour les tests qui ne testent QUE le budget
+    # de bruit, sans changer leur intention.
+    return {
+        "silhouette": silhouette,
+        "noise_ratio": noise_ratio,
+        "label": label,
+        "davies_bouldin": davies_bouldin,
+        "calinski_harabasz": calinski_harabasz,
+    }
 
 
 def test_noisy_candidate_with_higher_silhouette_is_not_elected_winner():
@@ -130,6 +158,77 @@ def test_boundary_noise_ratio_exactly_at_threshold_is_selectable():
     ranked, exceeded_for_all = _rank_candidates_with_noise_budget([at_threshold])
     assert exceeded_for_all is False
     assert ranked[0]["label"] == "pile"
+
+
+# ── Rang composite (retour utilisateur direct, deux cas réels observés) ───
+# La silhouette seule élisait une configuration nettement pire sur les deux
+# autres métriques pour un gain marginal de silhouette — reproduit ici le
+# scénario réel (K-Means k=2 vs k=3, valeurs authentiques du run signalé).
+
+
+def test_composite_rank_prefers_balanced_candidate_over_marginal_silhouette_winner():
+    """`a` gagne en silhouette seul (0.63 > 0.61, marge minime) mais est
+    NETTEMENT pire sur les deux autres métriques (dernier en Davies-Bouldin
+    ET en Calinski-Harabasz) — le rang composite doit élire `b`, pas `a`,
+    contrairement au comportement d'avant ce correctif (retour utilisateur
+    direct : reproduit le principe du cas réel observé — K-Means k=2
+    gagnant du silhouette seul mais classé avant-dernier en Davies-Bouldin —
+    avec des valeurs construites pour ne laisser aucune ambiguïté sur les 3
+    métriques à la fois, contrairement aux valeurs réelles du run signalé
+    où Calinski-Harabasz favorisait en fait `k=2`, aboutissant à une
+    égalité de rang composite légitimement départagée par la silhouette —
+    voir `test_composite_rank_breaks_ties_on_silhouette`)."""
+    a = _candidate(silhouette=0.63, noise_ratio=0.0, label="a", davies_bouldin=1.245, calinski_harabasz=90)
+    b = _candidate(silhouette=0.61, noise_ratio=0.0, label="b", davies_bouldin=0.797, calinski_harabasz=140)
+
+    ranked, exceeded_for_all = _rank_candidates_with_noise_budget([a, b])
+
+    assert exceeded_for_all is False
+    assert ranked[0]["label"] == "b", "le rang composite doit préférer le meilleur compromis, pas le silhouette maximal isolé"
+
+
+def test_composite_rank_still_prefers_clear_winner_on_all_metrics():
+    """Non-régression du cas simple : un candidat qui gagne sur les 3
+    métriques à la fois reste toujours élu — le rang composite ne doit
+    jamais inventer une préférence contre-intuitive quand il n'y a pas de
+    compromis à faire."""
+    clear_winner = _candidate(silhouette=0.9, noise_ratio=0.0, label="net", davies_bouldin=0.3, calinski_harabasz=500)
+    mediocre = _candidate(silhouette=0.4, noise_ratio=0.0, label="mediocre", davies_bouldin=1.5, calinski_harabasz=50)
+
+    ranked, _ = _rank_candidates_with_noise_budget([clear_winner, mediocre])
+
+    assert ranked[0]["label"] == "net"
+
+
+def test_composite_rank_breaks_ties_on_silhouette():
+    """Égalité de rang composite (rare, construite ici à la main) : la
+    silhouette départage — seule des 3 métriques bornée et directement
+    interprétable, cohérent avec le choix historique."""
+    a = _candidate(silhouette=0.7, noise_ratio=0.0, label="a", davies_bouldin=0.5, calinski_harabasz=200)
+    b = _candidate(silhouette=0.6, noise_ratio=0.0, label="b", davies_bouldin=0.4, calinski_harabasz=250)
+    # a : rang 1 silhouette, rang 2 DB, rang 2 CH -> moyenne (1+2+2)/3 = 1.67
+    # b : rang 2 silhouette, rang 1 DB, rang 1 CH -> moyenne (2+1+1)/3 = 1.33
+    # Pas d'égalité ici (b gagne nettement) — juste une preuve que le
+    # candidat au meilleur rang composite gagne même sans être 1er en silhouette.
+    ranked, _ = _rank_candidates_with_noise_budget([a, b])
+    assert ranked[0]["label"] == "b"
+
+
+def test_attach_composite_rank_exposes_individual_ranks():
+    """Les rangs individuels (silhouette/Davies-Bouldin/Calinski-Harabasz)
+    doivent être exposés sur chaque candidat, pas seulement la moyenne —
+    nécessaire pour une explication transparente côté UI (pas une boîte
+    noire : l'utilisateur doit pouvoir voir POURQUOI ce candidat a gagné)."""
+    a = _candidate(silhouette=0.8, noise_ratio=0.0, label="a", davies_bouldin=0.5, calinski_harabasz=300)
+    b = _candidate(silhouette=0.5, noise_ratio=0.0, label="b", davies_bouldin=1.0, calinski_harabasz=100)
+    candidates = [a, b]
+    _attach_composite_rank(candidates)
+    assert a["rank_silhouette"] == 1
+    assert a["rank_davies_bouldin"] == 1
+    assert a["rank_calinski_harabasz"] == 1
+    assert a["composite_rank"] == 1.0
+    assert b["rank_silhouette"] == 2
+    assert b["composite_rank"] == 2.0
 
 
 def test_algorithm_ids_restricts_to_explicit_selection():

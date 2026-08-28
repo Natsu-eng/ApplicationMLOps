@@ -100,6 +100,16 @@ class ClusterCandidateOut(BaseModel):
     noise_ratio: float
     is_winner: bool
     rank: int
+    # Rangs individuels + rang composite (transparence de la sélection,
+    # jamais une boîte noire — voir engine.py::_attach_composite_rank).
+    rank_silhouette: Optional[float] = None
+    rank_davies_bouldin: Optional[float] = None
+    rank_calinski_harabasz: Optional[float] = None
+    composite_rank: Optional[float] = None
+    # Résultats complets (top 3 seulement, voir engine.py — retour
+    # utilisateur : comparer plusieurs modèles au lieu d'un seul).
+    cluster_profiles: Optional[List[ClusterProfileOut]] = None
+    noise_count: Optional[int] = None
 
 
 class AlgorithmCatalogEntry(BaseModel):
@@ -455,6 +465,16 @@ def get_clustering_candidates(job_id: int, current_user: User = Depends(get_curr
             noise_ratio=c.noise_ratio,
             is_winner=c.is_winner,
             rank=c.rank,
+            rank_silhouette=c.rank_silhouette,
+            rank_davies_bouldin=c.rank_davies_bouldin,
+            rank_calinski_harabasz=c.rank_calinski_harabasz,
+            composite_rank=c.composite_rank,
+            cluster_profiles=(
+                [ClusterProfileOut(**p) for p in json.loads(c.cluster_profiles_json)]
+                if c.cluster_profiles_json
+                else None
+            ),
+            noise_count=c.noise_count,
         )
         for c in candidates
     ]

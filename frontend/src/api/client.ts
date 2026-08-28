@@ -657,6 +657,18 @@ export interface ClusterCandidate {
   noise_ratio: number;
   is_winner: boolean;
   rank: number;
+  // Transparence de la sélection (rang composite sur les 3 métriques,
+  // jamais la silhouette seule depuis ce correctif) — voir
+  // engine.py::_attach_composite_rank. `null` pour un candidat hors budget
+  // de bruit (jamais classé).
+  rank_silhouette: number | null;
+  rank_davies_bouldin: number | null;
+  rank_calinski_harabasz: number | null;
+  composite_rank: number | null;
+  // Résultats complets — uniquement pour le top 3 (retour utilisateur :
+  // comparer plusieurs modèles au lieu d'un seul), `null` au-delà.
+  cluster_profiles: ClusterProfile[] | null;
+  noise_count: number | null;
 }
 
 export interface AlgorithmCatalogEntry {
