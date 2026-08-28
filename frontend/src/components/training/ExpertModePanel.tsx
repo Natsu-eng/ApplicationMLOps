@@ -280,7 +280,12 @@ function ModelRow({
   overrides: Record<string, number | string>;
   onSetOverride: (name: string, value: number | string | undefined) => void;
 }) {
-  const hasTunableParams = model.tunable_hyperparameters.length > 0;
+  // `?? []` : filet de robustesse si jamais le backend répond sans ce champ
+  // (bug réel rencontré en dev : processus serveur périmé) — un champ manquant
+  // ne doit jamais faire planter toute la page (voir ErrorBoundary.tsx), juste
+  // dégrader silencieusement vers « aucun réglage avancé pour ce modèle ».
+  const tunableHyperparameters = model.tunable_hyperparameters ?? [];
+  const hasTunableParams = tunableHyperparameters.length > 0;
   const fixedCount = Object.keys(overrides).length;
 
   return (
@@ -322,7 +327,7 @@ function ModelRow({
 
       {checked && expanded && hasTunableParams && (
         <div className="space-y-3 border-t border-border/60 px-2.5 py-3">
-          {model.tunable_hyperparameters.map((meta) => (
+          {tunableHyperparameters.map((meta) => (
             <HyperparamControl
               key={meta.name}
               meta={meta}
