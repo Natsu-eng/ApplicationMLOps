@@ -193,6 +193,51 @@ def test_suggest_feature_engineering_excludes_target_and_group_from_datetime_sca
     assert "groupe_date" not in datetime_columns
 
 
+# ── excluded_columns (retour utilisateur direct — diagnostic de cohérence
+# du wizard : "ref_complete exclue à l'étape 1, l'étape 3 propose encore de
+# l'encoder") ────────────────────────────────────────────────────────────
+
+
+def test_excluded_columns_removes_suggestions_about_them():
+    """« ville » exclue à l'étape 1 : plus aucune suggestion ne doit la
+    mentionner, ni l'exclusion elle-même (déjà faite) ni le regroupement
+    par fréquence qui en dérivait — même si `date_signature` (colonne
+    distincte, également à cardinalité excessive dans ce jeu de données)
+    continue légitimement de déclencher ces deux mêmes codes pour
+    elle-même : la vérification porte sur les COLONNES mentionnées, pas sur
+    la simple présence du code dans l'ensemble des suggestions."""
+    df = _rich_df()
+    suggestions_before = suggest_feature_engineering(df, target_column="cible")
+    ville_suggestions_before = [s for s in suggestions_before if "ville" in s["columns"]]
+    assert ville_suggestions_before  # présentes avant exclusion (garde-fou du test)
+
+    suggestions = suggest_feature_engineering(df, target_column="cible", excluded_columns={"ville"})
+    mentioned_columns = {c for s in suggestions for c in s["columns"]}
+    assert "ville" not in mentioned_columns
+    # Les suggestions sur `date_signature` (indépendantes de « ville »)
+    # doivent rester intactes.
+    assert any(s["code"] == "exclusion_variable" and s["columns"] == ["date_signature"] for s in suggestions)
+    assert any(s["code"] == "regroupement_frequence" and s["columns"] == ["date_signature"] for s in suggestions)
+
+
+def test_excluded_columns_removes_datetime_suggestion_for_excluded_column():
+    """La détection datetime ne dérive PAS des avertissements Lot B (seule
+    exception dans `suggest_feature_engineering`) — vérifiée séparément."""
+    df = _rich_df()
+    suggestions = suggest_feature_engineering(df, target_column="cible", excluded_columns={"date_signature"})
+    datetime_columns = {c for s in suggestions if s["code"] == "decomposition_date" for c in s["columns"]}
+    assert "date_signature" not in datetime_columns
+
+
+def test_excluded_columns_does_not_affect_still_included_suggestions():
+    """Exclure « ville » ne doit jamais faire disparaître les suggestions
+    sur les AUTRES colonnes toujours retenues (date, ratio, imputation)."""
+    df = _rich_df()
+    suggestions = suggest_feature_engineering(df, target_column="cible", excluded_columns={"ville"})
+    codes = {s["code"] for s in suggestions}
+    assert {"decomposition_date", "ratio_colonnes_correlees", "imputation_configurable"} <= codes
+
+
 def test_apply_upstream_feature_engineering_noop_on_empty_spec():
     df = _rich_df(n=10)
     result, columns = apply_upstream_feature_engineering(df, ["surface", "ville"], None)

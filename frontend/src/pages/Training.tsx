@@ -14,7 +14,7 @@ import {
 import AppShell from "../components/AppShell";
 import { pillarColor } from "../config/pillars";
 import { ClassRebalancingSuggestion } from "../components/training/ClassRebalancingSuggestion";
-import { DataQualityWarnings } from "../components/training/DataQualityWarnings";
+import { DataQualityWarnings, EXCLUDABLE_CODES, excludableColumnsOf } from "../components/training/DataQualityWarnings";
 import {
   DEFAULT_CQR_ALPHA,
   DEFAULT_CV_FOLDS,
@@ -594,10 +594,49 @@ function TrainingForm({
   // Par défaut, toutes les variables sauf la cible et la colonne de groupe
   // (une colonne de groupe sert à identifier des échantillons répétés, pas
   // à prédire — l'inclure comme feature fuiterait l'identité du groupe).
+  //
+  // Retour utilisateur direct — diagnostic de cohérence du wizard,
+  // objectif 1/4 : "l'étape 1 doit détecter PAR DÉFAUT les colonnes à
+  // exclure (identifiants, quasi-constantes, doublons)", pas seulement
+  // laisser l'utilisateur les découvrir à l'étape 2 puis revenir en
+  // arrière. Dès que dataset+cible sont choisis, le même contrôle qualité
+  // qu'à l'étape 2 tourne une fois en arrière-plan et pré-exclut les
+  // colonnes SANS AUCUNE ambiguïté (`EXCLUDABLE_CODES` — colonne
+  // constante/quasi-constante, cardinalité excessive proche d'un
+  // identifiant, doublon exact) : la MÊME règle que le bouton "Exclure"
+  // manuel de l'étape 2, jamais une nouvelle heuristique inventée ici.
+  // Les vraies alertes qui exigent un jugement humain (fuite de cible,
+  // déséquilibre des classes...) ne sont JAMAIS auto-exclues — seulement
+  // signalées, l'utilisateur décide. Rien n'est verrouillé : la case reste
+  // cochable à tout moment à l'étape 1 pour réintégrer une colonne.
+  // Best-effort, jamais bloquant : une erreur réseau laisse simplement la
+  // sélection par défaut "tout inclus", le contrôle qualité de l'étape 2
+  // reste disponible pour exclure manuellement.
   useEffect(() => {
     setSelectedFeatures(new Set(otherColumns.filter((c) => c.name !== groupColumn).map((c) => c.name)));
+
+    if (!datasetId || !targetColumn) return;
+    let cancelled = false;
+    api.datasets
+      .qualityCheck(datasetId, targetColumn, groupColumn || undefined)
+      .then((res) => {
+        if (cancelled) return;
+        const toExclude = new Set(res.warnings.filter((w) => EXCLUDABLE_CODES.has(w.code)).flatMap(excludableColumnsOf));
+        if (toExclude.size === 0) return;
+        setSelectedFeatures((prev) => {
+          const next = new Set(prev);
+          toExclude.forEach((c) => next.delete(c));
+          return next;
+        });
+      })
+      .catch(() => {
+        // Dégradation silencieuse assumée — voir commentaire ci-dessus.
+      });
+    return () => {
+      cancelled = true;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [targetColumn, groupColumn, columns]);
+  }, [targetColumn, groupColumn, columns, datasetId]);
 
   function toggleFeature(name: string) {
     setSelectedFeatures((prev) => {
@@ -807,6 +846,7 @@ function TrainingForm({
               datasetId={datasetId}
               targetColumn={targetColumn}
               groupColumn={groupColumn || undefined}
+              selectedFeatures={selectedFeatures}
               onChange={setFeatureEngineering}
             />
           </StepContent>

@@ -30,13 +30,17 @@ const LEVEL_LABEL: Record<DataWarning["level"], string> = {
  * variables) — miroir de `_EXCLUSION_WARNING_CODES` côté backend
  * (`services/feature_engineering.py`), sans nouvel appel réseau : on lit
  * directement `warning.columns`, déjà disponible. */
-const EXCLUDABLE_CODES = new Set(["colonne_constante", "cardinalite_excessive", "colonnes_dupliquees"]);
+export const EXCLUDABLE_CODES = new Set(["colonne_constante", "cardinalite_excessive", "colonnes_dupliquees"]);
 
 /** Colonne(s) qu'un warning donné rend excluables — pour un doublon exact
  * (deux colonnes signalées), seule la SECONDE est proposée à l'exclusion :
  * garder au moins une des deux, contenu strictement identique (même règle
- * que `_suggest_column_exclusion` côté backend). */
-function excludableColumnsOf(warning: DataWarning): string[] {
+ * que `_suggest_column_exclusion` côté backend). Exportée : réutilisée par
+ * `Training.tsx` pour présélectionner par défaut les colonnes sans valeur
+ * prédictive à l'étape 1 (retour utilisateur : "l'étape 1 doit détecter par
+ * défaut les colonnes à exclure"), avec EXACTEMENT la même règle qu'ici —
+ * jamais une seconde heuristique qui pourrait diverger. */
+export function excludableColumnsOf(warning: DataWarning): string[] {
   if (!EXCLUDABLE_CODES.has(warning.code)) return [];
   if (warning.code === "colonnes_dupliquees" && warning.columns.length === 2) return [warning.columns[1]];
   return warning.columns;
@@ -80,16 +84,28 @@ export function DataQualityWarnings({
   // état visuel change.
   const [kept, setKept] = useState<Set<number>>(new Set());
 
+  // Clé stable dérivée de `selectedFeatures` (retour utilisateur : "l'étape
+  // 2 ne doit alerter que sur les colonnes conservées") — un `Set` change
+  // d'identité à chaque rendu même à contenu égal ; sérialisée en JSON
+  // UNIQUEMENT comme dépendance d'effet (jamais reconstruite en tableau
+  // par split : un nom de colonne peut contenir la plupart des
+  // séparateurs), pour éviter un refetch réseau superflu tout en
+  // redéclenchant l'analyse dès qu'une colonne est exclue/réintégrée à
+  // l'étape 1. `undefined` (prop absente, ex. EdaModal.tsx) : aucune
+  // restriction, comportement historique.
+  const featureColumnsKey = selectedFeatures ? JSON.stringify(Array.from(selectedFeatures).sort()) : undefined;
+
   useEffect(() => {
     setLoading(true);
     setError(null);
     setExpanded(new Set());
     api.datasets
-      .qualityCheck(datasetId, targetColumn || undefined, groupColumn)
+      .qualityCheck(datasetId, targetColumn || undefined, groupColumn, selectedFeatures ? Array.from(selectedFeatures) : undefined)
       .then((data) => setWarnings(data.warnings))
       .catch((err) => setError(err instanceof ApiError ? err.message : "Analyse des données indisponible"))
       .finally(() => setLoading(false));
-  }, [datasetId, targetColumn, groupColumn]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [datasetId, targetColumn, groupColumn, featureColumnsKey]);
 
   function toggle(index: number) {
     setExpanded((prev) => {

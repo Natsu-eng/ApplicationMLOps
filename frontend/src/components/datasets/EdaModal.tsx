@@ -7,6 +7,7 @@ import {
   Hash,
   Rows3,
   ShieldCheck,
+  Sparkles,
   Table2,
   Tags,
   Target as TargetIcon,
@@ -286,6 +287,23 @@ export default function EdaModal({ dataset, onClose }: { dataset: DatasetSummary
                     </option>
                   ))}
                 </Select>
+              </div>
+              {/* Retour utilisateur direct : "on pourrait proposer de
+                  supprimer là aussi, même avant d'arriver à la page
+                  entraînement" — jamais une suppression du fichier lui-même
+                  (l'app ne mute jamais un dataset importé, principe
+                  transversal) : la continuité se fait à la place par la
+                  présélection automatique de l'étape 1 du wizard, qui
+                  applique EXACTEMENT cette même analyse (voir
+                  Training.tsx). Ce bandeau rend cette continuité visible dès
+                  l'exploration, sans dupliquer d'action ici. */}
+              <div className="flex items-start gap-2 text-xs text-muted-foreground bg-muted/60 border border-border/60 rounded-lg px-3 py-2 mb-3">
+                <Sparkles size={13} className="flex-shrink-0 mt-0.5 text-primary" />
+                <p>
+                  Les colonnes sans valeur prédictive détectées ci-dessous (identifiant, constante, doublon) seront
+                  décochées automatiquement par défaut au démarrage d'un entraînement — vous restez libre de les
+                  réintégrer.
+                </p>
               </div>
               <DataQualityWarnings datasetId={dataset.id} targetColumn={targetColumn || undefined} />
             </Card>

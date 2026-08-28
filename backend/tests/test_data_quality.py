@@ -405,3 +405,54 @@ def test_analyze_data_quality_with_target_unchanged_behavior():
     df = pd.DataFrame({"cible": target, "copie_bruitee": target + rng.normal(0, 0.01, n)})
     warnings = analyze_data_quality(df, "cible")
     assert _warnings_with_code(warnings, "fuite_cible") != []
+
+
+# ── excluded_columns (retour utilisateur direct — diagnostic de cohérence
+# du wizard : "une colonne exclue à l'étape 1 déclenche encore une alerte
+# à l'étape 2") ─────────────────────────────────────────────────────────
+
+
+def test_excluded_columns_produces_no_warning_about_them():
+    """Une colonne déjà retirée de la sélection de variables (étape 1) ne
+    doit plus jamais générer d'alerte — même règle que target_column/
+    group_column, jamais une seconde catégorie de traitement."""
+    df = pd.DataFrame({
+        "identifiant": [f"REF-{i}" for i in range(200)],
+        "valeur": np.random.default_rng(1).normal(0, 1, 200),
+    })
+    warnings_without_exclusion = analyze_data_quality(df, target_column=None)
+    assert _warnings_with_code(warnings_without_exclusion, "cardinalite_excessive") != []
+
+    warnings_with_exclusion = analyze_data_quality(df, target_column=None, excluded_columns={"identifiant"})
+    assert _warnings_with_code(warnings_with_exclusion, "cardinalite_excessive") == []
+
+
+def test_excluded_columns_does_not_affect_still_included_columns():
+    """Exclure une colonne ne doit jamais masquer une alerte légitime sur
+    une AUTRE colonne toujours retenue."""
+    df = pd.DataFrame({
+        "identifiant": [f"REF-{i}" for i in range(200)],
+        "constante": [1] * 200,
+        "valeur": np.random.default_rng(1).normal(0, 1, 200),
+    })
+    warnings = analyze_data_quality(df, target_column=None, excluded_columns={"identifiant"})
+    assert _warnings_with_code(warnings, "cardinalite_excessive") == []
+    assert _warnings_with_code(warnings, "colonne_constante") != []
+
+
+def test_excluded_columns_combines_with_target_and_group_exclusion():
+    """`excluded_columns` s'ajoute à l'exclusion cible/groupe existante,
+    jamais à la place."""
+    rng = np.random.default_rng(1)
+    n = 200
+    df = pd.DataFrame({
+        "cible": rng.integers(0, 2, n),
+        "groupe": rng.integers(0, 5, n),
+        "identifiant": [f"REF-{i}" for i in range(n)],
+        "valeur": rng.normal(0, 1, n),
+    })
+    warnings = analyze_data_quality(df, target_column="cible", group_column="groupe", excluded_columns={"identifiant"})
+    assert _warnings_with_code(warnings, "cardinalite_excessive") == []
+    # La transparence sur la colonne de groupe reste émise (comportement
+    # inchangé, non affecté par excluded_columns).
+    assert _warnings_with_code(warnings, "colonne_groupe_exclue") != []

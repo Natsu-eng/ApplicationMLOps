@@ -1481,10 +1481,16 @@ export const api = {
     // seules les détections structurelles reviennent (voir services/data_quality.py) —
     // permet d'appeler ce endpoint dès l'exploration d'un dataset, avant même
     // de choisir une cible.
-    qualityCheck: (id: number, targetColumn?: string, groupColumn?: string) => {
+    // `featureColumns` (retour utilisateur direct — diagnostic de cohérence
+    // du wizard : "une colonne exclue à l'étape 1 déclenche encore une
+    // alerte à l'étape 2") : liste blanche des variables encore retenues,
+    // absente = toutes les colonnes du dataset (comportement historique,
+    // ex. EdaModal.tsx qui n'a pas de notion de sélection de variables).
+    qualityCheck: (id: number, targetColumn?: string, groupColumn?: string, featureColumns?: string[]) => {
       const params = new URLSearchParams();
       if (targetColumn) params.set("target_column", targetColumn);
       if (groupColumn) params.set("group_column", groupColumn);
+      if (featureColumns) params.set("feature_columns", featureColumns.join(","));
       const qs = params.toString();
       return request<DataQualityResponse>(`/datasets/${id}/quality-check${qs ? `?${qs}` : ""}`);
     },
@@ -1492,10 +1498,11 @@ export const api = {
       request<FeatureByTargetResponse>(
         `/datasets/${id}/feature-by-target?feature=${encodeURIComponent(feature)}&target=${encodeURIComponent(target)}`,
       ),
-    featureEngineeringSuggestions: (id: number, targetColumn: string, groupColumn?: string) =>
+    featureEngineeringSuggestions: (id: number, targetColumn: string, groupColumn?: string, featureColumns?: string[]) =>
       request<FeatureEngineeringSuggestionsResponse>(
         `/datasets/${id}/feature-engineering-suggestions?target_column=${encodeURIComponent(targetColumn)}` +
-          (groupColumn ? `&group_column=${encodeURIComponent(groupColumn)}` : ""),
+          (groupColumn ? `&group_column=${encodeURIComponent(groupColumn)}` : "") +
+          (featureColumns ? `&feature_columns=${encodeURIComponent(featureColumns.join(","))}` : ""),
       ),
     targetSuggestions: (id: number) => request<TargetSuggestionsResponse>(`/datasets/${id}/target-suggestions`),
   },

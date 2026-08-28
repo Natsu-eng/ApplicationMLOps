@@ -642,7 +642,10 @@ def _group_column_transparency_warning(group_column: str) -> dict[str, Any]:
 
 
 def analyze_data_quality(
-    df: pd.DataFrame, target_column: Optional[str] = None, group_column: Optional[str] = None
+    df: pd.DataFrame,
+    target_column: Optional[str] = None,
+    group_column: Optional[str] = None,
+    excluded_columns: Optional[set[str]] = None,
 ) -> list[dict[str, Any]]:
     """Point d'entrée — analyse `df` par rapport à `target_column` et
     retourne une liste d'avertissements triés (critique > attention > info).
@@ -666,6 +669,15 @@ def analyze_data_quality(
     prédictive, aucune alerte de qualité de feature n'a de sens dessus. Un
     avertissement "info" signale explicitement cette exclusion.
 
+    `excluded_columns` (retour utilisateur direct — diagnostic de
+    cohérence du wizard d'entraînement : "l'étape 2 alerte encore sur des
+    colonnes déjà exclues à l'étape 1") : colonnes que l'appelant a déjà
+    retirées de sa sélection de variables (étape 1) — traitées EXACTEMENT
+    comme `group_column` ci-dessus, jamais analysées. `None` (défaut) =
+    comportement historique inchangé, aucune colonne présélectionnée
+    n'existe encore (ex. `GET /datasets/{id}/eda`, avant tout choix de
+    variables).
+
     Lève `KeyError` si `target_column` est fourni mais n'existe pas dans `df`
     (à l'appelant de traduire en erreur HTTP, comme pour
     `compute_histogram`). Toute autre exception issue d'une détection
@@ -676,7 +688,11 @@ def analyze_data_quality(
         raise KeyError(f"Colonne cible '{target_column}' absente du dataset")
 
     has_group = group_column is not None and group_column in df.columns
-    excluded = ({target_column} if target_column is not None else set()) | ({group_column} if has_group else set())
+    excluded = (
+        ({target_column} if target_column is not None else set())
+        | ({group_column} if has_group else set())
+        | (excluded_columns or set())
+    )
     features_to_analyze = [c for c in df.columns if c not in excluded]
 
     task_type: Optional[str] = None

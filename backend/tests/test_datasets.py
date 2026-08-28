@@ -376,3 +376,41 @@ def test_quality_check_without_target_column_returns_structural_warnings(client)
     # Aucune détection nécessitant une cible ne peut apparaître sans cible fournie.
     assert "fuite_cible" not in codes
     assert "desequilibre_classes" not in codes
+
+
+# ── feature_columns (retour utilisateur direct — diagnostic de cohérence
+# du wizard : "une colonne exclue à l'étape 1 déclenche encore une alerte à
+# l'étape 2") ────────────────────────────────────────────────────────────
+
+
+def test_quality_check_feature_columns_hides_warnings_about_excluded_columns(client):
+    headers = _register(client)
+    n = 100
+    content = "id_client,toujours_pareil,x\n" + "\n".join(f"C{i},42,{i}" for i in range(n)) + "\n"
+    created = client.post(
+        "/api/datasets", headers=headers, files={"file": ("d.csv", io.BytesIO(content.encode()), "text/csv")}
+    ).json()
+
+    # Étape 1 : seule "x" est retenue — "id_client"/"toujours_pareil" exclues.
+    resp = client.get(
+        f"/api/datasets/{created['id']}/quality-check", headers=headers, params={"feature_columns": "x"}
+    )
+    assert resp.status_code == 200
+    codes = {w["code"] for w in resp.json()["warnings"]}
+    assert codes == set()
+
+
+def test_quality_check_feature_columns_absent_keeps_historical_behavior(client):
+    """Non-régression explicite : sans `feature_columns`, comportement
+    identique à avant ce correctif."""
+    headers = _register(client)
+    n = 100
+    content = "id_client,toujours_pareil,x\n" + "\n".join(f"C{i},42,{i}" for i in range(n)) + "\n"
+    created = client.post(
+        "/api/datasets", headers=headers, files={"file": ("d.csv", io.BytesIO(content.encode()), "text/csv")}
+    ).json()
+
+    resp = client.get(f"/api/datasets/{created['id']}/quality-check", headers=headers)
+    codes = {w["code"] for w in resp.json()["warnings"]}
+    assert "colonne_constante" in codes
+    assert "cardinalite_excessive" in codes

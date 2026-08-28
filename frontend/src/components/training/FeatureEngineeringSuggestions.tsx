@@ -25,11 +25,20 @@ export function FeatureEngineeringSuggestions({
   datasetId,
   targetColumn,
   groupColumn,
+  selectedFeatures,
   onChange,
 }: {
   datasetId: number;
   targetColumn: string;
   groupColumn?: string;
+  /** Variables retenues à l'étape 1 (retour utilisateur direct : "ref_complete
+   * exclue à l'étape 1, l'étape 3 propose encore de l'encoder") — jusqu'ici
+   * absent de ce composant, alors que `DataQualityWarnings.tsx` le recevait
+   * déjà : les suggestions portaient sur TOUTES les colonnes du dataset,
+   * jamais restreintes à la sélection de l'étape 1. Optionnel pour ne pas
+   * casser un futur appelant hors wizard (aucun aujourd'hui) : absent = toutes
+   * les colonnes du dataset, comportement historique. */
+  selectedFeatures?: Set<string>;
   onChange: (payload: { upstream: FeatureEngineeringSpec["upstream"]; pipeline: FeatureEngineeringSpec["pipeline"] } | null) => void;
 }) {
   const [suggestions, setSuggestions] = useState<FeatureEngineeringSuggestion[] | null>(null);
@@ -39,6 +48,11 @@ export function FeatureEngineeringSuggestions({
   const [approved, setApproved] = useState<Set<number>>(new Set());
   const [strategies, setStrategies] = useState<Record<number, string>>({});
   const [fillValues, setFillValues] = useState<Record<number, string>>({});
+
+  // Même mécanisme que DataQualityWarnings.tsx::featureColumnsKey — clé
+  // stable dérivée de `selectedFeatures`, utilisée uniquement comme
+  // dépendance d'effet (jamais reconstruite en tableau par split).
+  const featureColumnsKey = selectedFeatures ? JSON.stringify(Array.from(selectedFeatures).sort()) : undefined;
 
   useEffect(() => {
     if (!targetColumn) {
@@ -52,7 +66,7 @@ export function FeatureEngineeringSuggestions({
     setStrategies({});
     setFillValues({});
     api.datasets
-      .featureEngineeringSuggestions(datasetId, targetColumn, groupColumn)
+      .featureEngineeringSuggestions(datasetId, targetColumn, groupColumn, selectedFeatures ? Array.from(selectedFeatures) : undefined)
       // "exclusion_variable" (Lot Nettoyage guidé des variables) est déjà
       // proposée, en plus utilement (bouton direct par colonne, sans étape
       // supplémentaire), dans le panneau "Qualité des données" juste avant
@@ -64,7 +78,8 @@ export function FeatureEngineeringSuggestions({
       .then((data) => setSuggestions(data.suggestions.filter((s) => s.code !== "exclusion_variable")))
       .catch((err) => setError(err instanceof ApiError ? err.message : "Suggestions indisponibles"))
       .finally(() => setLoading(false));
-  }, [datasetId, targetColumn, groupColumn]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [datasetId, targetColumn, groupColumn, featureColumnsKey]);
 
   // Recalcule le payload (upstream/pipeline) à chaque changement d'approbation
   // ou de stratégie choisie, et le remonte au formulaire parent.

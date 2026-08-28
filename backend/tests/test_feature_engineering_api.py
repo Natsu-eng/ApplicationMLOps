@@ -66,6 +66,29 @@ def test_feature_engineering_suggestions_endpoint_rejects_unknown_target(client)
     assert resp.json()["detail"]["code"] == "COLONNE_INTROUVABLE"
 
 
+def test_feature_engineering_suggestions_endpoint_respects_feature_columns(client):
+    """Retour utilisateur direct — diagnostic de cohérence du wizard :
+    "ref_complete exclue à l'étape 1, l'étape 3 propose encore de
+    l'encoder". « ville » exclue à l'étape 1 -> plus aucune suggestion ne
+    doit la mentionner."""
+    headers = _register(client)
+    dataset = _upload_rich_dataset(client, headers)
+
+    resp = client.get(
+        f"/api/datasets/{dataset['id']}/feature-engineering-suggestions",
+        headers=headers,
+        params={"target_column": "cible", "feature_columns": "date,surface,consommation,revenu"},
+    )
+    assert resp.status_code == 200
+    codes = {s["code"] for s in resp.json()["suggestions"]}
+    assert "exclusion_variable" not in codes
+    assert "regroupement_frequence" not in codes
+    mentioned = {c for s in resp.json()["suggestions"] for c in s["columns"]}
+    assert "ville" not in mentioned
+    # Les suggestions sur les colonnes toujours retenues restent présentes.
+    assert {"decomposition_date", "ratio_colonnes_correlees", "imputation_configurable"} <= codes
+
+
 def _upload_simple_dataset(client, headers):
     rows = "\n".join(f"2022-01-{(i % 28) + 1:02d},{i}" for i in range(60))
     content = f"date,cible\n{rows}\n".encode()

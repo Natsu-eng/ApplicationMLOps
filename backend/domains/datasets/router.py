@@ -15,6 +15,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
 
+import pandas as pd
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session, joinedload
@@ -273,6 +274,20 @@ def _get_org_dataset(dataset_id: int, current_user: User, db: Session) -> Datase
     return dataset
 
 
+def _excluded_columns_from_allowlist(df: pd.DataFrame, feature_columns: Optional[str]) -> Optional[set[str]]:
+    """Convertit le paramètre `feature_columns` (liste blanche CSV, étape 1
+    du formulaire) en ensemble de colonnes à EXCLURE — c'est ce dernier
+    format qu'attendent `analyze_data_quality`/`suggest_feature_engineering`
+    (même mécanisme que l'exclusion cible/groupe déjà en place). `None`
+    (paramètre absent) : aucune restriction, comportement historique
+    inchangé — appelants qui ne connaissent pas encore de sélection de
+    variables (ex. `GET /datasets/{id}/eda`)."""
+    if feature_columns is None:
+        return None
+    included = {c.strip() for c in feature_columns.split(",") if c.strip()}
+    return {c for c in df.columns if c not in included}
+
+
 # ── Endpoints ────────────────────────────────────────────────────────────────
 
 _upload_rate_limit = rate_limit_dependency(
@@ -508,6 +523,14 @@ def get_dataset_quality_check(
     dataset_id: int,
     target_column: Optional[str] = None,
     group_column: Optional[str] = None,
+    feature_columns: Optional[str] = Query(
+        None,
+        description=(
+            "Colonnes CSV déjà retenues à l'étape 1 du formulaire — si fourni, seules ces colonnes "
+            "peuvent générer une alerte, jamais une colonne déjà exclue. Absent = comportement "
+            "historique (toutes les colonnes du dataset analysées)."
+        ),
+    ),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -522,7 +545,14 @@ def get_dataset_quality_check(
     excessive, doublons exacts, numérique mal typé, valeurs manquantes,
     colinéarité) sont renvoyées — permet d'appeler cet endpoint dès
     l'exploration d'un dataset (page Données/EDA), avant même de choisir une
-    cible pour un entraînement."""
+    cible pour un entraînement.
+
+    `feature_columns` (retour utilisateur direct — diagnostic de cohérence
+    du wizard : "une colonne exclue à l'étape 1 déclenche encore une alerte
+    à l'étape 2") : liste blanche des variables encore retenues. Une colonne
+    absente de cette liste (déjà exclue par l'utilisateur) n'est plus
+    analysée du tout, quel que soit son problème — voir
+    `services/data_quality.py::analyze_data_quality`."""
     dataset = _get_org_dataset(dataset_id, current_user, db)
     if dataset.status != "ready":
         raise HTTPException(
@@ -531,7 +561,8 @@ def get_dataset_quality_check(
         )
     try:
         df = read_dataset_dataframe(Path(dataset.file_path), Path(dataset.file_path).suffix)
-        warnings = analyze_data_quality(df, target_column, group_column)
+        excluded_columns = _excluded_columns_from_allowlist(df, feature_columns)
+        warnings = analyze_data_quality(df, target_column, group_column, excluded_columns=excluded_columns)
     except DatasetParsingError as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -578,6 +609,13 @@ def get_dataset_feature_engineering_suggestions(
     dataset_id: int,
     target_column: str,
     group_column: Optional[str] = None,
+    feature_columns: Optional[str] = Query(
+        None,
+        description=(
+            "Colonnes CSV déjà retenues à l'étape 1 du formulaire — si fourni, aucune suggestion "
+            "n'est générée pour une colonne déjà exclue. Absent = comportement historique."
+        ),
+    ),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -585,7 +623,12 @@ def get_dataset_feature_engineering_suggestions(
     reliées quand c'est pertinent à un garde-fou déjà détecté (Lot B).
     Jamais bloquant, jamais appliqué automatiquement : l'utilisateur approuve
     explicitement au moment de lancer l'entraînement
-    (`POST /training/jobs`, champ `feature_engineering`)."""
+    (`POST /training/jobs`, champ `feature_engineering`).
+
+    `feature_columns` (retour utilisateur direct — diagnostic de cohérence
+    du wizard : "ref_complete exclue à l'étape 1, l'étape 3 propose encore
+    de l'encoder") : voir `_excluded_columns_from_allowlist` /
+    `services/feature_engineering.py::suggest_feature_engineering`."""
     dataset = _get_org_dataset(dataset_id, current_user, db)
     if dataset.status != "ready":
         raise HTTPException(
@@ -594,7 +637,8 @@ def get_dataset_feature_engineering_suggestions(
         )
     try:
         df = read_dataset_dataframe(Path(dataset.file_path), Path(dataset.file_path).suffix)
-        suggestions = suggest_feature_engineering(df, target_column, group_column)
+        excluded_columns = _excluded_columns_from_allowlist(df, feature_columns)
+        suggestions = suggest_feature_engineering(df, target_column, group_column, excluded_columns=excluded_columns)
     except DatasetParsingError as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

@@ -445,16 +445,26 @@ def _suggest_imputation(quality_warnings: list[dict[str, Any]], df: pd.DataFrame
 
 
 def suggest_feature_engineering(
-    df: pd.DataFrame, target_column: str, group_column: Optional[str] = None
+    df: pd.DataFrame,
+    target_column: str,
+    group_column: Optional[str] = None,
+    excluded_columns: Optional[set[str]] = None,
 ) -> list[dict[str, Any]]:
     """Point d'entrée — réutilise `analyze_data_quality` (Lot B) une seule
     fois et en dérive toutes les suggestions de ce lot, plutôt que de
     redétecter les mêmes problèmes. Même exclusion cible/groupe que
     `analyze_data_quality` pour la détection datetime (aucun sens à proposer
-    de décomposer la cible ou la colonne de groupe)."""
-    quality_warnings = analyze_data_quality(df, target_column, group_column)
+    de décomposer la cible ou la colonne de groupe).
 
-    excluded = {target_column} | ({group_column} if group_column else set())
+    `excluded_columns` (retour utilisateur direct — diagnostic de cohérence
+    du wizard : "ref_complete exclue à l'étape 1, l'étape 3 propose encore
+    de l'encoder") : colonnes déjà retirées de la sélection de variables à
+    l'étape 1, propagées à `analyze_data_quality` (dont dérivent la plupart
+    des suggestions ci-dessous) ET à `feature_df` (détection datetime,
+    seule suggestion qui ne dérive pas des avertissements)."""
+    quality_warnings = analyze_data_quality(df, target_column, group_column, excluded_columns=excluded_columns)
+
+    excluded = {target_column} | ({group_column} if group_column else set()) | (excluded_columns or set())
     feature_df = df[[c for c in df.columns if c not in excluded]]
 
     suggestions: list[dict[str, Any]] = []
