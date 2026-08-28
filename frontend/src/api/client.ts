@@ -968,6 +968,11 @@ export interface VisionClassificationResult {
   roc_curves?: Record<string, RocCurve>;
   pr_curves?: Record<string, PrCurve>;
   test_roc_auc?: number | null;
+  // Onglet "Fiabilité" (retour utilisateur : "d'autres fonctionnalités
+  // modernes que les autres plateformes n'offrent pas") — même forme que
+  // `Calibration` (tabulaire) pour réutiliser CalibrationChart.tsx tel
+  // quel. Absent (undefined) sur les modèles entraînés avant ce correctif.
+  calibration?: Calibration | null;
 }
 
 export interface GradCamExplanation {
@@ -975,6 +980,20 @@ export interface GradCamExplanation {
   probabilities: Record<string, number>;
   target_label: string;
   heatmap_png: string;
+}
+
+// Grad-CAM en lot (retour utilisateur direct : "Grad-CAM devrait supporter
+// le batch, pas une image à la fois") — sur des images déjà présentes dans
+// le dataset (`relative_path`), typiquement les exemples mal classés déjà
+// affichés dans l'onglet "Exemples". `error` non nul = cette image précise
+// n'a pas pu être expliquée (jamais un lot tout-ou-rien).
+export interface GradCamBatchItem {
+  relative_path: string;
+  predicted_label: string | null;
+  probabilities: Record<string, number> | null;
+  target_label: string | null;
+  heatmap_png: string | null;
+  error: string | null;
 }
 
 export interface VisionAnomalyModelOption {
@@ -1650,6 +1669,14 @@ export const api = {
         file,
         targetLabel ? { target_label: targetLabel } : {},
       ),
+    // Grad-CAM en lot sur des images déjà présentes dans le dataset (retour
+    // utilisateur direct : "Grad-CAM devrait supporter le batch") — zéro
+    // upload, un ou plusieurs `relative_path` (voir PredictionExampleOut).
+    explainDatasetExamples: (id: number, relativePaths: string[]) =>
+      request<{ results: GradCamBatchItem[] }>(`/vision/classification/jobs/${id}/explain-dataset-examples`, {
+        method: "POST",
+        body: JSON.stringify({ relative_paths: relativePaths }),
+      }),
     cancel: (id: number) =>
       request<VisionClassificationJobSummary>(`/vision/classification/jobs/${id}/cancel`, { method: "POST" }),
     rerun: (id: number) =>

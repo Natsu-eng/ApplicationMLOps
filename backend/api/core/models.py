@@ -901,6 +901,10 @@ class VisionClassificationModel(Base):
     roc_curves_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     pr_curves_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     test_roc_auc: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    # Onglet "Fiabilité" (retour utilisateur : "d'autres fonctionnalités
+    # modernes que les autres plateformes n'offrent pas") — NULL sur les
+    # modèles entraînés avant ce correctif, même motif que roc_curves_json.
+    calibration_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     file_path: Mapped[str] = mapped_column(String(500), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
 

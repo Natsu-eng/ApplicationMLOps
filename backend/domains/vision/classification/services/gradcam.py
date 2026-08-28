@@ -13,6 +13,7 @@ mécanisme de superposition heatmap/image dans tout le module vision, jamais
 deux implémentations séparées."""
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Any
 
@@ -23,6 +24,8 @@ from PIL import Image
 from domains.vision.classification.services.registry import get_backbone_spec
 from domains.vision.classification.services.engine import build_eval_transform
 from domains.vision.localization import overlay_heatmap_on_image, resize_map_to_original
+
+logger = logging.getLogger("datalab.vision.gradcam")
 
 
 class GradCamError(ValueError):
@@ -35,6 +38,19 @@ class GradCamResult:
     probabilities: dict[str, float]
     target_label: str  # classe réellement expliquée (= predicted_label si non précisée)
     heatmap_png: str
+
+
+@dataclass
+class GradCamBatchItemResult:
+    """Un élément du batch (retour utilisateur direct : "Grad-CAM devrait
+    supporter le batch, pas une image à la fois") — `key` identifie l'image
+    pour l'appelant (ex. son `relative_path` dans le dataset), `error` porte
+    un message actionnable SI cette image précise n'a pas pu être expliquée
+    (jamais silencieux) sans faire échouer le reste du batch."""
+
+    key: str
+    result: GradCamResult | None
+    error: str | None
 
 
 class _ActivationGradientCapture:
@@ -63,21 +79,30 @@ def _rebuild_model(artifact: dict[str, Any]) -> nn.Module:
     return model
 
 
-def explain_classification_prediction(
-    artifact: dict[str, Any],
-    image: Image.Image,
-    target_label: str | None = None,
-) -> GradCamResult:
-    """Point d'entrée principal — `artifact` est le contenu de
-    `VisionClassificationModel.file_path` (`torch.load`, voir
-    `workers/vision_classification_worker.py`). `target_label` optionnel :
-    explique la classe prédite par défaut, ou une classe précise choisie par
-    l'utilisateur (ex. "pourquoi PAS la classe X ?")."""
+def _prepare_model_and_capture(artifact: dict[str, Any]) -> tuple[nn.Module, _ActivationGradientCapture, list[str]]:
+    """Reconstruction du modèle + enregistrement des hooks Grad-CAM — coût
+    dominant de cet endpoint ("le plus coûteux du backend", voir
+    `api/routers/vision_classification.py::_explain_rate_limit`). Isolé pour
+    n'être payé QU'UNE FOIS par requête, y compris en mode batch (retour
+    utilisateur direct : jusqu'ici une image à la fois, chaque appel
+    rechargeait le modèle depuis zéro)."""
     class_names: list[str] = artifact["class_names"]
     spec = get_backbone_spec(artifact["backbone_id"])
     model = _rebuild_model(artifact)
     capture = _ActivationGradientCapture(spec.gradcam_target_layer(model))
+    return model, capture, class_names
 
+
+def _run_gradcam(
+    model: nn.Module,
+    capture: _ActivationGradientCapture,
+    class_names: list[str],
+    image: Image.Image,
+    target_label: str | None,
+) -> GradCamResult:
+    """Un seul forward+backward pass — partagé par `explain_classification_
+    prediction` (1 image) et `explain_classification_predictions_batch`
+    (N images, modèle/hooks déjà prêts via `_prepare_model_and_capture`)."""
     transform = build_eval_transform()
     original_size = image.size  # (largeur, hauteur)
     input_tensor = transform(image.convert("RGB")).unsqueeze(0)
@@ -124,3 +149,52 @@ def explain_classification_prediction(
         # la prédiction, directement lisibles sur la photo elle-même.
         heatmap_png=overlay_heatmap_on_image(image, cam_original_size),
     )
+
+
+def explain_classification_prediction(
+    artifact: dict[str, Any],
+    image: Image.Image,
+    target_label: str | None = None,
+) -> GradCamResult:
+    """Point d'entrée — une seule image (ex. une image externe apportée par
+    l'utilisateur, hors du dataset d'entraînement). `artifact` est le
+    contenu de `VisionClassificationModel.file_path` (`torch.load`, voir
+    `workers/vision_classification_worker.py`). `target_label` optionnel :
+    explique la classe prédite par défaut, ou une classe précise choisie par
+    l'utilisateur (ex. "pourquoi PAS la classe X ?")."""
+    model, capture, class_names = _prepare_model_and_capture(artifact)
+    return _run_gradcam(model, capture, class_names, image, target_label)
+
+
+def explain_classification_predictions_batch(
+    artifact: dict[str, Any],
+    images: list[tuple[str, Image.Image]],
+) -> list[GradCamBatchItemResult]:
+    """Point d'entrée — PLUSIEURS images en un seul appel (retour utilisateur
+    direct : "Grad-CAM devrait supporter le batch, pas une image à la
+    fois"). Typiquement les exemples mal classés déjà affichés dans l'onglet
+    "Exemples" — expliquer plusieurs erreurs d'un coup, sans ré-uploader
+    chacune une par une.
+
+    Modèle reconstruit et hooks enregistrés UNE SEULE FOIS pour tout le
+    batch (voir `_prepare_model_and_capture`) — le coût dominant de
+    l'opération n'est payé qu'une fois, pas N fois. Toujours la classe
+    PRÉDITE qui est expliquée pour chaque image (pas de `target_label` par
+    image en mode batch — un batch mélange typiquement plusieurs classes
+    prédites différentes, choisir une cible commune n'aurait pas de sens).
+
+    Dégradation par image, jamais par lot entier : une image individuellement
+    illisible (cas limite non filtré en amont) n'interrompt pas les autres —
+    voir `GradCamBatchItemResult.error`, jamais silencieux."""
+    model, capture, class_names = _prepare_model_and_capture(artifact)
+    results: list[GradCamBatchItemResult] = []
+    for key, image in images:
+        try:
+            result = _run_gradcam(model, capture, class_names, image, None)
+            results.append(GradCamBatchItemResult(key=key, result=result, error=None))
+        except Exception as exc:
+            logger.warning(
+                "[GradCam] Échec sur l'image '%s' du batch, poursuite avec les suivantes", key, exc_info=True
+            )
+            results.append(GradCamBatchItemResult(key=key, result=None, error=str(exc)))
+    return results

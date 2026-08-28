@@ -102,6 +102,7 @@ def run_vision_classification_job(job_id: int) -> None:
                 roc_curves_json=json.dumps(result.roc_curves) if result.roc_curves else None,
                 pr_curves_json=json.dumps(result.pr_curves) if result.pr_curves else None,
                 test_roc_auc=result.test_roc_auc,
+                calibration_json=json.dumps(result.calibration) if result.calibration else None,
                 file_path=str(artifact_path),
             )
             db.add(vision_model)

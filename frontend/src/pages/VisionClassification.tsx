@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import {
+  Activity,
   AlertCircle,
   Ban,
   Boxes,
@@ -12,12 +13,14 @@ import {
   Sparkles,
   Target,
   Trash2,
+  Wand2,
 } from "lucide-react";
 import { Line, LineChart, CartesianGrid, ResponsiveContainer, Tooltip as RechartsTooltip, XAxis, YAxis } from "recharts";
 import {
   ApiError,
   api,
   type AugmentationPreset,
+  type GradCamBatchItem,
   type GradCamExplanation,
   type VisionBackbone,
   type VisionClassificationJobSummary,
@@ -28,10 +31,12 @@ import {
 import AppShell from "../components/AppShell";
 import { pillarColor } from "../config/pillars";
 import { Badge } from "../components/ui/Badge";
+import { BulkActionBar } from "../components/ui/BulkActionBar";
 import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
 import { accentSurfaceClass, accentValueTextClass, type AccentColor } from "../components/ui/ColorIconBadge";
 import EvaluationCharts from "../components/training/EvaluationCharts";
+import { CalibrationChart } from "../components/training/ReliabilityDiagnostics";
 import { Input } from "../components/ui/Input";
 import { PageHeader } from "../components/ui/PageHeader";
 import { SectionHeader } from "../components/ui/SectionHeader";
@@ -70,6 +75,9 @@ const STEP_LABELS = [
 
 const ACTIVE_STATUSES = new Set(["queued", "running"]);
 const ACTIVE_JOB_STORAGE_KEY = "datalab_active_vision_classification_job_id";
+// Même plafond que `router.py::MAX_EXPLAIN_BATCH_SIZE` — affiché ici pour
+// que l'utilisateur voie la limite AVANT de se heurter à un rejet serveur.
+const MAX_EXPLAIN_BATCH_SIZE = 12;
 
 type Phase = "configure" | "progress" | "results" | "failed" | "cancelled";
 
@@ -681,7 +689,16 @@ function MetricTile({ label, value, color }: { label: string; value: string; col
 function ClassificationResultView({ jobId, datasetId }: { jobId: number; datasetId: number }) {
   const [result, setResult] = useState<VisionClassificationResult | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<"performance" | "exemples" | "gradcam">("performance");
+  const [activeTab, setActiveTab] = useState<"performance" | "exemples" | "fiabilite" | "gradcam">("performance");
+
+  // Sélection multiple pour Grad-CAM en lot (retour utilisateur direct :
+  // "Grad-CAM devrait supporter le batch, pas une image à la fois") — vit
+  // ici (au-dessus de l'onglet "Exemples") plutôt que dans ExampleGrid, la
+  // sélection doit survivre en passant de "Exemples" à "Grad-CAM".
+  const [selectedForExplain, setSelectedForExplain] = useState<Set<string>>(new Set());
+  const [batchExplainResults, setBatchExplainResults] = useState<GradCamBatchItem[] | null>(null);
+  const [batchExplainLoading, setBatchExplainLoading] = useState(false);
+  const [batchExplainError, setBatchExplainError] = useState<string | null>(null);
 
   useEffect(() => {
     api.visionClassification
@@ -689,6 +706,33 @@ function ClassificationResultView({ jobId, datasetId }: { jobId: number; dataset
       .then(setResult)
       .catch((err) => setError(err instanceof ApiError ? err.message : "Résultat indisponible"));
   }, [jobId]);
+
+  function toggleExplainSelection(path: string) {
+    setSelectedForExplain((prev) => {
+      const next = new Set(prev);
+      if (next.has(path)) {
+        next.delete(path);
+      } else if (next.size < MAX_EXPLAIN_BATCH_SIZE) {
+        next.add(path);
+      }
+      return next;
+    });
+  }
+
+  async function handleExplainSelected() {
+    setBatchExplainLoading(true);
+    setBatchExplainError(null);
+    try {
+      const res = await api.visionClassification.explainDatasetExamples(jobId, Array.from(selectedForExplain));
+      setBatchExplainResults(res.results);
+      setSelectedForExplain(new Set());
+      setActiveTab("gradcam");
+    } catch (err) {
+      setBatchExplainError(err instanceof ApiError ? err.message : "Impossible de générer les explications");
+    } finally {
+      setBatchExplainLoading(false);
+    }
+  }
 
   if (error) return <p className="text-sm text-destructive text-center">{error}</p>;
   if (!result) return <p className="text-sm text-muted-foreground text-center">Chargement…</p>;
@@ -746,6 +790,7 @@ function ClassificationResultView({ jobId, datasetId }: { jobId: number; dataset
         items={[
           { id: "performance" as const, label: "Performance", icon: Sparkles },
           { id: "exemples" as const, label: "Exemples", icon: Target },
+          { id: "fiabilite" as const, label: "Fiabilité", icon: Activity },
           { id: "gradcam" as const, label: "Grad-CAM", icon: AlertCircle },
         ]}
         active={activeTab}
@@ -790,48 +835,164 @@ function ClassificationResultView({ jobId, datasetId }: { jobId: number; dataset
 
       {activeTab === "exemples" && (
         <>
+          <p className="text-xs text-muted-foreground">
+            Cochez jusqu'à {MAX_EXPLAIN_BATCH_SIZE} images pour les expliquer d'un coup (Grad-CAM) — utile pour
+            comparer plusieurs erreurs sans les ré-uploader une par une.
+          </p>
           {incorrectExamples.length > 0 && (
             <div>
               <SectionHeader icon={AlertCircle} color="rose" label={`Erreurs de classification (${incorrectExamples.length})`} />
-              <ExampleGrid examples={incorrectExamples} datasetId={datasetId} />
+              <ExampleGrid
+                examples={incorrectExamples}
+                datasetId={datasetId}
+                selectedForExplain={selectedForExplain}
+                onToggleExplainSelection={toggleExplainSelection}
+              />
             </div>
           )}
 
           {correctExamples.length > 0 && (
             <div>
               <SectionHeader icon={Target} color="teal" label={`Exemples corrects (${correctExamples.length})`} />
-              <ExampleGrid examples={correctExamples} datasetId={datasetId} />
+              <ExampleGrid
+                examples={correctExamples}
+                datasetId={datasetId}
+                selectedForExplain={selectedForExplain}
+                onToggleExplainSelection={toggleExplainSelection}
+              />
             </div>
           )}
+
+          <BulkActionBar count={selectedForExplain.size} onClear={() => setSelectedForExplain(new Set())}>
+            <Button size="sm" onClick={handleExplainSelected} loading={batchExplainLoading}>
+              <Wand2 size={14} />
+              Expliquer (Grad-CAM)
+            </Button>
+          </BulkActionBar>
+          {batchExplainError && <p className="text-xs text-destructive">{batchExplainError}</p>}
         </>
       )}
 
-      {activeTab === "gradcam" && <GradCamPanel jobId={jobId} />}
+      {activeTab === "fiabilite" && <ReliabilityTab result={result} />}
+
+      {activeTab === "gradcam" && (
+        <GradCamPanel jobId={jobId} batchResults={batchExplainResults} onClearBatch={() => setBatchExplainResults(null)} />
+      )}
     </div>
   );
 }
 
-function ExampleGrid({ examples, datasetId }: { examples: VisionPredictionExample[]; datasetId: number }) {
+/** Onglet "Fiabilité" (retour utilisateur : "d'autres fonctionnalités
+ * modernes que les autres plateformes n'offrent pas") — le modèle est-il
+ * "sûr à raison" ? Une confiance de 90 % qui n'est vraie que 60 % du temps
+ * est un vrai risque en production, invisible dans la seule exactitude déjà
+ * affichée dans l'onglet Performance. Réutilise CalibrationChart.tsx tel
+ * quel (déjà validé côté tabulaire, `ModelResultModal.tsx`) — jamais un
+ * second composant de graphique de calibration à maintenir en parallèle. */
+function ReliabilityTab({ result }: { result: VisionClassificationResult }) {
+  const status = result.model_card.calibration_status;
+  const isEmpty = !result.calibration || Object.keys(result.calibration).length === 0;
+  const isDegraded = typeof status === "object" && status !== null && "status" in status && status.status === "degraded";
+  const degradedMessage =
+    isDegraded && "message" in status && typeof status.message === "string" ? status.message : null;
+
+  return (
+    <Card className="p-5">
+      <SectionHeader
+        icon={Activity}
+        color="teal"
+        label="Courbe de calibration"
+        help="Compare la probabilité annoncée par le modèle à la fréquence réellement observée sur le jeu de test — le modèle est-il « sûr à raison » ? Un point sur la diagonale signifie une confiance fiable."
+      />
+      {status === undefined || (!isDegraded && isEmpty) ? (
+        <p className="text-xs text-muted-foreground italic">Non disponible pour ce modèle — réentraînez-le pour l'obtenir.</p>
+      ) : isDegraded ? (
+        <p className="text-xs text-muted-foreground italic">{degradedMessage ?? "Calcul indisponible pour ce modèle."}</p>
+      ) : (
+        <CalibrationChart calibration={result.calibration ?? {}} />
+      )}
+    </Card>
+  );
+}
+
+function ExampleGrid({
+  examples,
+  datasetId,
+  selectedForExplain,
+  onToggleExplainSelection,
+}: {
+  examples: VisionPredictionExample[];
+  datasetId: number;
+  selectedForExplain: Set<string>;
+  onToggleExplainSelection: (path: string) => void;
+}) {
   return (
     <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-3">
-      {examples.map((example) => (
-        <div key={example.relative_path} className="space-y-1">
-          <VisionImage
-            datasetId={datasetId}
-            path={example.relative_path}
-            alt={example.relative_path}
-            className={`w-full aspect-square object-cover rounded-lg border-2 ${example.correct ? "border-success/40" : "border-destructive/40"}`}
-          />
-          <p className="text-caption text-muted-foreground truncate" title={example.relative_path}>
-            {example.correct ? example.predicted_label : `${example.true_label} → ${example.predicted_label}`}
-          </p>
-        </div>
-      ))}
+      {examples.map((example) => {
+        const checked = selectedForExplain.has(example.relative_path);
+        return (
+          <div key={example.relative_path} className="space-y-1">
+            <label className="relative block cursor-pointer">
+              <VisionImage
+                datasetId={datasetId}
+                path={example.relative_path}
+                alt={example.relative_path}
+                className={`w-full aspect-square object-cover rounded-lg border-2 transition-colors ${
+                  checked ? "border-primary" : example.correct ? "border-success/40" : "border-destructive/40"
+                }`}
+              />
+              <input
+                type="checkbox"
+                checked={checked}
+                onChange={() => onToggleExplainSelection(example.relative_path)}
+                aria-label={`Sélectionner ${example.relative_path} pour Grad-CAM`}
+                className="absolute top-1.5 left-1.5 accent-primary h-4 w-4 rounded shadow"
+              />
+            </label>
+            <p className="text-caption text-muted-foreground truncate" title={example.relative_path}>
+              {example.correct ? example.predicted_label : `${example.true_label} → ${example.predicted_label}`}
+            </p>
+          </div>
+        );
+      })}
     </div>
   );
 }
 
-function GradCamPanel({ jobId }: { jobId: number }) {
+/** Légende de la palette "jet" (bleu=faible/rouge=fort — couleurs fixes
+ * volontaires, Lot 8 : reproduit exactement la palette appliquée côté
+ * serveur, `backend/domains/vision/localization.py::_apply_colormap`,
+ * jamais les jetons de thème, qui rendraient cette légende fausse) —
+ * extraite pour être partagée par l'explication unique (upload) ET la
+ * grille du batch, jamais dupliquée. */
+function GradCamColorLegend({ targetLabel }: { targetLabel: string }) {
+  return (
+    <div className="flex items-center gap-2 mt-2">
+      <span
+        className="inline-block h-2 w-16 rounded-full flex-shrink-0"
+        style={{ background: "linear-gradient(to right, #0000cc, #00cc66, #cc0000)" }}
+        aria-hidden="true"
+      />
+      <p className="text-xs text-muted-foreground">
+        Bleu = faible influence · Rouge = zones qui ont le plus influencé la classe "{targetLabel}"
+      </p>
+    </div>
+  );
+}
+
+function GradCamPanel({
+  jobId,
+  batchResults,
+  onClearBatch,
+}: {
+  jobId: number;
+  /** Résultats du lot lancé depuis l'onglet "Exemples" (retour utilisateur
+   * direct : "Grad-CAM devrait supporter le batch") — `null` tant qu'aucun
+   * lot n'a été demandé, indépendant de l'explication par upload ci-dessous
+   * (les deux peuvent coexister). */
+  batchResults: GradCamBatchItem[] | null;
+  onClearBatch: () => void;
+}) {
   const [explanation, setExplanation] = useState<GradCamExplanation | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -855,63 +1016,86 @@ function GradCamPanel({ jobId }: { jobId: number }) {
   }
 
   return (
-    <Card className="p-5">
-      <SectionHeader
-        icon={Sparkles}
-        color="amber"
-        label="Pourquoi cette prédiction ? (Grad-CAM)"
-        help="Superpose une carte de chaleur sur l'image : les zones les plus chaudes sont celles qui ont le plus influencé la classe prédite par le modèle."
-      />
-      <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={(e) => handleFile(e.target.files)} />
-      <Button variant="secondary" size="sm" type="button" onClick={() => fileInputRef.current?.click()}>
-        Choisir une image à expliquer
-      </Button>
-
-      {isSubmitting && <p className="text-sm text-muted-foreground mt-3">Calcul en cours…</p>}
-      {error && (
-        <div className="flex items-center gap-2 text-sm text-destructive bg-destructive/10 border border-destructive/20 rounded-lg px-3 py-2 mt-3">
-          <AlertCircle size={15} className="flex-shrink-0" />
-          {error}
-        </div>
-      )}
-
-      {explanation && previewUrl && (
-        <div className="mt-4 space-y-3">
-          <div className="flex items-center gap-2 flex-wrap">
-            <Badge variant="primary">Prédiction : {explanation.predicted_label}</Badge>
-            {Object.entries(explanation.probabilities).map(([label, proba]) => (
-              <Badge key={label} variant="neutral">
-                {label} : {(proba * 100).toFixed(0)} %
-              </Badge>
+    <div className="space-y-5">
+      {batchResults && (
+        <Card className="p-5">
+          <div className="flex items-start justify-between gap-3">
+            <SectionHeader
+              icon={Wand2}
+              color="violet"
+              label={`Explications en lot (${batchResults.length})`}
+              help="Images sélectionnées depuis l'onglet « Exemples » — même modèle chargé une seule fois pour tout le lot."
+            />
+            <Button variant="secondary" size="sm" onClick={onClearBatch}>
+              Effacer
+            </Button>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+            {batchResults.map((item) => (
+              <div key={item.relative_path} className="space-y-1.5">
+                {item.error ? (
+                  <div className="aspect-square rounded-lg border border-destructive/30 bg-destructive/5 flex items-center justify-center p-2">
+                    <p className="text-xs text-destructive text-center">{item.error}</p>
+                  </div>
+                ) : (
+                  <img
+                    src={item.heatmap_png ?? undefined}
+                    alt={`Grad-CAM pour ${item.relative_path}`}
+                    className="w-full aspect-square object-cover rounded-lg border border-border"
+                  />
+                )}
+                <p className="text-caption text-muted-foreground truncate" title={item.relative_path}>
+                  {item.relative_path}
+                </p>
+                {item.predicted_label && <Badge variant="primary">{item.predicted_label}</Badge>}
+              </div>
             ))}
           </div>
-          <div className="max-w-sm">
-            <img
-              src={explanation.heatmap_png}
-              alt="Image avec carte de chaleur Grad-CAM superposée"
-              className="w-full aspect-square object-cover rounded-lg border border-border"
-            />
-            <div className="flex items-center gap-2 mt-2">
-              {/* Couleurs fixes volontaires (Lot 8, revue du grep de couleurs
-                  en dur porté depuis le Lot 1) : reproduit exactement la
-                  palette "jet" appliquée côté serveur au PNG ci-dessus
-                  (backend/domains/vision/localization.py::_apply_colormap,
-                  bleu=faible/rouge=fort) — jamais les jetons de thème, qui
-                  rendraient cette légende fausse par rapport à l'image
-                  réellement affichée au-dessus. */}
-              <span
-                className="inline-block h-2 w-16 rounded-full flex-shrink-0"
-                style={{ background: "linear-gradient(to right, #0000cc, #00cc66, #cc0000)" }}
-                aria-hidden="true"
+          {batchResults.some((item) => !item.error) && <GradCamColorLegend targetLabel="classe prédite (par image)" />}
+        </Card>
+      )}
+
+      <Card className="p-5">
+        <SectionHeader
+          icon={Sparkles}
+          color="amber"
+          label="Expliquer une image externe"
+          help="Superpose une carte de chaleur sur l'image : les zones les plus chaudes sont celles qui ont le plus influencé la classe prédite par le modèle. Pour expliquer des images déjà dans le dataset, sélectionnez-les depuis l'onglet « Exemples »."
+        />
+        <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={(e) => handleFile(e.target.files)} />
+        <Button variant="secondary" size="sm" type="button" onClick={() => fileInputRef.current?.click()}>
+          Choisir une image à expliquer
+        </Button>
+
+        {isSubmitting && <p className="text-sm text-muted-foreground mt-3">Calcul en cours…</p>}
+        {error && (
+          <div className="flex items-center gap-2 text-sm text-destructive bg-destructive/10 border border-destructive/20 rounded-lg px-3 py-2 mt-3">
+            <AlertCircle size={15} className="flex-shrink-0" />
+            {error}
+          </div>
+        )}
+
+        {explanation && previewUrl && (
+          <div className="mt-4 space-y-3">
+            <div className="flex items-center gap-2 flex-wrap">
+              <Badge variant="primary">Prédiction : {explanation.predicted_label}</Badge>
+              {Object.entries(explanation.probabilities).map(([label, proba]) => (
+                <Badge key={label} variant="neutral">
+                  {label} : {(proba * 100).toFixed(0)} %
+                </Badge>
+              ))}
+            </div>
+            <div className="max-w-sm">
+              <img
+                src={explanation.heatmap_png}
+                alt="Image avec carte de chaleur Grad-CAM superposée"
+                className="w-full aspect-square object-cover rounded-lg border border-border"
               />
-              <p className="text-xs text-muted-foreground">
-                Bleu = faible influence · Rouge = zones qui ont le plus influencé la classe "
-                {explanation.target_label}"
-              </p>
+              <GradCamColorLegend targetLabel={explanation.target_label} />
             </div>
           </div>
-        </div>
-      )}
-    </Card>
+        )}
+      </Card>
+    </div>
   );
 }

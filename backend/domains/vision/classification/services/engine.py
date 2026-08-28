@@ -16,6 +16,7 @@ que le nombre d'époques demandé a été respecté.
 """
 from __future__ import annotations
 
+import logging
 import time
 from collections import Counter
 from dataclasses import dataclass, field
@@ -25,6 +26,7 @@ from typing import Any, Callable, Optional
 import numpy as np
 import torch
 import torch.nn as nn
+from sklearn.calibration import calibration_curve
 from sklearn.metrics import (
     confusion_matrix,
     f1_score,
@@ -70,6 +72,8 @@ __all__ = [
 
 ProgressCallback = Callable[[str, int], None]
 
+logger = logging.getLogger("datalab.vision.classification.engine")
+
 IMAGENET_MEAN = [0.485, 0.456, 0.406]
 IMAGENET_STD = [0.229, 0.224, 0.225]
 
@@ -79,6 +83,7 @@ IMAGENET_STD = [0.229, 0.224, 0.225]
 # à l'utilisateur.
 MIN_IMAGES_PER_CLASS_FOR_TRAINING = 6
 MAX_EXAMPLES_PER_KIND = 12  # exemples corrects/erronés conservés pour l'UI
+_CALIBRATION_N_BINS = 10  # même valeur que ml_training.py::_CALIBRATION_N_BINS
 
 DEFAULT_AUGMENTATION_PRESET = "standard"  # comportement historique, inchangé par défaut
 
@@ -177,6 +182,10 @@ class ClassificationResult:
     roc_curves: dict[str, dict[str, list[float]]] = field(default_factory=dict)
     pr_curves: dict[str, dict[str, list[float]]] = field(default_factory=dict)
     test_roc_auc: Optional[float] = None
+    # Retour utilisateur : "d'autres fonctionnalités modernes que les autres
+    # plateformes n'offrent pas" — le modèle est-il "sûr à raison" ? Portée
+    # depuis ml_training.py::_compute_calibration, voir cette fonction.
+    calibration: dict[str, dict[str, list[float]]] = field(default_factory=dict)
 
 
 def build_eval_transform() -> transforms.Compose:
@@ -303,6 +312,53 @@ def _compute_roc_pr_curves(
         test_roc_auc = None
 
     return roc_curves, pr_curves, test_roc_auc
+
+
+def _compute_calibration(
+    y_test: list[int], proba_test: np.ndarray, class_names: list[str]
+) -> tuple[dict[str, dict[str, list[float]]], dict[str, Any]]:
+    """Courbe de calibration (reliability diagram) — portée depuis
+    `ml_training.py::_compute_calibration` (même fonction sklearn, même
+    stratégie de tranches), jamais réinventée — même raisonnement que
+    `_compute_roc_pr_curves` ci-dessus. Réutilise `all_true`/`all_proba`
+    (déjà collectés pour les métriques de test et ROC/PR) — aucun forward
+    pass supplémentaire.
+
+    Retour utilisateur direct (Lot vision, "d'autres fonctionnalités
+    modernes que les autres plateformes n'offrent pas") : le modèle
+    est-il "sûr à raison" ? Une confiance de 90 % qui n'est vraie que 60 %
+    du temps est un vrai risque en production — invisible dans la seule
+    exactitude/precision/recall déjà affichées.
+
+    `strategy="quantile"` (tranches à effectif égal) : évite les tranches
+    vides quand les probabilités prédites sont concentrées, courant sur un
+    modèle déjà bien discriminant. Multiclasse : une courbe par classe, en
+    un-contre-tous — même motif que `_compute_roc_pr_curves`."""
+    try:
+        y_test_arr = np.asarray(y_test)
+        curves: dict[str, dict[str, list[float]]] = {}
+        if len(class_names) == 2:
+            frac_pos, mean_pred = calibration_curve(
+                y_test_arr, proba_test[:, 1], n_bins=_CALIBRATION_N_BINS, strategy="quantile"
+            )
+            curves[class_names[1]] = {"mean_predicted": mean_pred.tolist(), "fraction_positive": frac_pos.tolist()}
+        else:
+            labels = list(range(len(class_names)))
+            y_bin = label_binarize(y_test_arr, classes=labels)
+            for i, name in enumerate(class_names):
+                if y_bin[:, i].sum() == 0:  # classe absente du test (jeu de test réduit) — pas de courbe pour elle
+                    continue
+                frac_pos, mean_pred = calibration_curve(
+                    y_bin[:, i], proba_test[:, i], n_bins=_CALIBRATION_N_BINS, strategy="quantile"
+                )
+                curves[name] = {"mean_predicted": mean_pred.tolist(), "fraction_positive": frac_pos.tolist()}
+        return curves, {"status": "ok", "message": None}
+    except Exception as exc:
+        logger.warning("[VisionClassification] Courbe de calibration dégradée : %s", exc)
+        return {}, {
+            "status": "degraded",
+            "message": "La courbe de calibration n'a pas pu être calculée pour ce modèle sur ce jeu de données.",
+        }
 
 
 def _stratified_split(
@@ -501,9 +557,9 @@ def train_and_evaluate_classification(
     test_recall = recall_score(all_true, all_pred, average="macro", zero_division=0)
     test_f1 = f1_score(all_true, all_pred, average="macro", zero_division=0)
     conf_matrix = confusion_matrix(all_true, all_pred, labels=list(range(len(class_names))))
-    roc_curves, pr_curves, test_roc_auc = _compute_roc_pr_curves(
-        all_true, np.concatenate(all_proba_batches, axis=0), class_names
-    )
+    all_proba = np.concatenate(all_proba_batches, axis=0)
+    roc_curves, pr_curves, test_roc_auc = _compute_roc_pr_curves(all_true, all_proba, class_names)
+    calibration, calibration_diagnostic = _compute_calibration(all_true, all_proba, class_names)
 
     progress_cb("Sélection des exemples", 95)
     examples: list[PredictionExample] = []
@@ -567,6 +623,9 @@ def train_and_evaluate_classification(
         "n_incorrect_examples": len(incorrect_examples),
         "n_correct_examples": len(correct_examples),
         "test_roc_auc": test_roc_auc,
+        # Transparence sur le calcul de la courbe de calibration — jamais un
+        # graphe vide sans explication (même motif que le tabulaire).
+        "calibration_status": calibration_diagnostic,
     }
 
     return ClassificationResult(
@@ -592,4 +651,5 @@ def train_and_evaluate_classification(
         roc_curves=roc_curves,
         pr_curves=pr_curves,
         test_roc_auc=test_roc_auc,
+        calibration=calibration,
     )

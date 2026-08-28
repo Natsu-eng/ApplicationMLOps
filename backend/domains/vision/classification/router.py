@@ -43,7 +43,11 @@ from domains.shared.job_lifecycle import ACTIVE_STATUSES, CANCELLED_MESSAGE, try
 from domains.shared.job_quota import ALL_JOB_MODELS, raise_if_quota_exceeded
 from domains.shared.job_watchdog import reconcile_stale_jobs
 from domains.vision.classification.services.engine import AUGMENTATION_PRESET_IDS, DEFAULT_AUGMENTATION_PRESET
-from domains.vision.classification.services.gradcam import GradCamError, explain_classification_prediction
+from domains.vision.classification.services.gradcam import (
+    GradCamError,
+    explain_classification_prediction,
+    explain_classification_predictions_batch,
+)
 from domains.vision.classification.services.registry import CLASSIFICATION_BACKBONE_REGISTRY, DEFAULT_BACKBONE_ID
 
 router = APIRouter(prefix="/vision/classification", tags=["vision"])
@@ -125,6 +129,34 @@ class GradCamExplanationOut(BaseModel):
     heatmap_png: str
 
 
+# Retour utilisateur direct : "Grad-CAM devrait supporter le batch, pas une
+# image à la fois" — plafond volontairement modeste (voir
+# `_explain_rate_limit` : "l'endpoint le plus coûteux du backend") pour
+# qu'un seul appel batch ne puisse pas à lui seul consommer tout le quota
+# horaire (`explain_rate_limit_max_attempts`, 20/heure par défaut) sans
+# supprimer l'intérêt du plafond.
+MAX_EXPLAIN_BATCH_SIZE = 12
+
+
+class ExplainDatasetExamplesRequest(BaseModel):
+    relative_paths: List[str] = Field(min_length=1, max_length=MAX_EXPLAIN_BATCH_SIZE)
+
+
+class GradCamBatchItemOut(BaseModel):
+    relative_path: str
+    predicted_label: Optional[str] = None
+    probabilities: Optional[dict[str, float]] = None
+    target_label: Optional[str] = None
+    heatmap_png: Optional[str] = None
+    # `None` = expliquée avec succès ; sinon message actionnable — jamais un
+    # batch tout-ou-rien silencieux sur les images qui ont échoué.
+    error: Optional[str] = None
+
+
+class ExplainDatasetExamplesResponse(BaseModel):
+    results: List[GradCamBatchItemOut]
+
+
 class VisionClassificationResultOut(BaseModel):
     backbone_id: str
     class_names: List[str]
@@ -144,6 +176,9 @@ class VisionClassificationResultOut(BaseModel):
     roc_curves: Optional[dict[str, dict[str, List[float]]]] = None
     pr_curves: Optional[dict[str, dict[str, List[float]]]] = None
     test_roc_auc: Optional[float] = None
+    # Onglet "Fiabilité" — None sur les modèles entraînés avant ce correctif
+    # (rétrocompatibilité par absence, même motif que roc_curves ci-dessus).
+    calibration: Optional[dict[str, dict[str, List[float]]]] = None
 
 
 # ── Aides ────────────────────────────────────────────────────────────────
@@ -405,6 +440,7 @@ def get_vision_classification_result(job_id: int, current_user: User = Depends(g
         roc_curves=json.loads(result.roc_curves_json) if result.roc_curves_json else None,
         pr_curves=json.loads(result.pr_curves_json) if result.pr_curves_json else None,
         test_roc_auc=result.test_roc_auc,
+        calibration=json.loads(result.calibration_json) if result.calibration_json else None,
     )
 
 
@@ -495,6 +531,84 @@ async def explain_vision_classification_prediction(
         target_label=explanation.target_label,
         heatmap_png=explanation.heatmap_png,
     )
+
+
+@router.post(
+    "/jobs/{job_id}/explain-dataset-examples",
+    response_model=ExplainDatasetExamplesResponse,
+    dependencies=[Depends(_explain_rate_limit)],
+)
+def explain_vision_classification_dataset_examples(
+    job_id: int,
+    body: ExplainDatasetExamplesRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Grad-CAM en LOT sur des images déjà présentes dans le dataset
+    d'entraînement (retour utilisateur direct : "Grad-CAM devrait supporter
+    le batch, pas une image à la fois") — typiquement les exemples mal
+    classés déjà affichés dans l'onglet "Exemples" : zéro ré-upload, un clic
+    "Expliquer" directement sur une erreur, ou plusieurs à la fois. Modèle
+    chargé UNE SEULE FOIS pour tout le lot (voir
+    `services/vision_gradcam.py::explain_classification_predictions_batch`),
+    jamais une fois par image.
+
+    Complémentaire de `/explain` (upload libre, ex. tester une image externe
+    au dataset) — celui-ci reste inchangé pour ce cas d'usage."""
+    job = _get_org_job(job_id, current_user, db)
+    if job.result is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "RESULTAT_INDISPONIBLE", "message": "Cet entraînement n'a pas encore de résultat"},
+        )
+
+    # Même garde-fou anti-traversée de répertoire que
+    # `vision/datasets/router.py::get_vision_dataset_image` — un chemin ne
+    # peut désigner qu'un fichier réellement SOUS le dossier de CE dataset.
+    base_dir = Path(job.vision_dataset.storage_dir).resolve()
+    images: list[tuple[str, Image.Image]] = []
+    missing: list[str] = []
+    for relative_path in body.relative_paths:
+        target = (base_dir / relative_path).resolve()
+        if base_dir not in target.parents or not target.is_file():
+            missing.append(relative_path)
+            continue
+        try:
+            image = Image.open(target)
+            image.load()
+            images.append((relative_path, image))
+        except (UnidentifiedImageError, OSError):
+            missing.append(relative_path)
+
+    artifact = torch.load(job.result.file_path, weights_only=True)
+    try:
+        batch_results = explain_classification_predictions_batch(artifact, images)
+    finally:
+        for _, opened_image in images:
+            opened_image.close()
+
+    by_key = {r.key: r for r in batch_results}
+    results: list[GradCamBatchItemOut] = []
+    for relative_path in body.relative_paths:
+        if relative_path in missing:
+            results.append(GradCamBatchItemOut(relative_path=relative_path, error="Image introuvable dans ce dataset"))
+            continue
+        item = by_key[relative_path]
+        if item.error is not None or item.result is None:
+            results.append(
+                GradCamBatchItemOut(relative_path=relative_path, error=item.error or "Explication indisponible")
+            )
+        else:
+            results.append(
+                GradCamBatchItemOut(
+                    relative_path=relative_path,
+                    predicted_label=item.result.predicted_label,
+                    probabilities=item.result.probabilities,
+                    target_label=item.result.target_label,
+                    heatmap_png=item.result.heatmap_png,
+                )
+            )
+    return ExplainDatasetExamplesResponse(results=results)
 
 
 @router.post("/jobs/{job_id}/cancel", response_model=VisionClassificationJobSummary)

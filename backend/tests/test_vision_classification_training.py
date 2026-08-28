@@ -334,6 +334,35 @@ def test_multiclass_classification_produces_one_roc_curve_per_class(tmp_path):
     assert 0.0 <= result.test_roc_auc <= 1.0
 
 
+# ── Calibration (onglet "Fiabilité", retour utilisateur : "d'autres
+# fonctionnalités modernes que les autres plateformes n'offrent pas") ────
+
+
+def test_binary_classification_produces_a_calibration_curve(tmp_path):
+    _write_classification_dataset(tmp_path, {"classe_a": 20, "classe_b": 20})
+    config = ClassificationConfig(backbone_id="mobilenet_v3_small", num_epochs=1, batch_size=4)
+
+    result = train_and_evaluate_classification(tmp_path, config, _noop_progress)
+
+    assert set(result.calibration.keys()) <= {"classe_b"}
+    if result.calibration:
+        curve = result.calibration["classe_b"]
+        assert len(curve["mean_predicted"]) == len(curve["fraction_positive"])
+        assert all(0.0 <= v <= 1.0 for v in curve["mean_predicted"])
+        assert all(0.0 <= v <= 1.0 for v in curve["fraction_positive"])
+    assert result.model_card["calibration_status"]["status"] == "ok"
+
+
+def test_multiclass_classification_produces_calibration_per_class(tmp_path):
+    _write_classification_dataset(tmp_path, {"classe_a": 15, "classe_b": 15, "classe_c": 15})
+    config = ClassificationConfig(backbone_id="mobilenet_v3_small", num_epochs=1, batch_size=4)
+
+    result = train_and_evaluate_classification(tmp_path, config, _noop_progress)
+
+    assert set(result.calibration.keys()) <= {"classe_a", "classe_b", "classe_c"}
+    assert result.model_card["calibration_status"]["status"] == "ok"
+
+
 # ── Sélection représentative des exemples (Lot 6A, correctif §G.4) ─────────
 
 

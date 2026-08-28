@@ -93,6 +93,13 @@ def test_worker_persists_result_on_success(db_session, tmp_path):
     assert json.loads(result.class_names_json) == ["classe_a", "classe_b"]
     assert result.n_train + result.n_val + result.n_test == 16
     assert Path(result.file_path).exists()
+    # Onglet "Fiabilité" (retour utilisateur : "d'autres fonctionnalités
+    # modernes que les autres plateformes n'offrent pas") — persisté au
+    # même titre que roc_curves_json/pr_curves_json. Jeu de test minuscule
+    # ici (16 images) : peut légitimement être vide (`None`), jamais un
+    # JSON invalide.
+    if result.calibration_json is not None:
+        assert isinstance(json.loads(result.calibration_json), dict)
 
 
 def test_worker_marks_job_failed_on_missing_dataset(db_session, tmp_path):

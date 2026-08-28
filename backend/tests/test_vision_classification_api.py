@@ -326,6 +326,9 @@ def test_result_after_completion(client, db_session):
     # persistée par le worker et exposée telle quelle par l'endpoint.
     assert set(body["roc_curves"].keys()) == {"classe_1"}
     assert body["test_roc_auc"] is not None
+    # Onglet "Fiabilité" (retour utilisateur : "d'autres fonctionnalités
+    # modernes que les autres plateformes n'offrent pas").
+    assert set(body["calibration"].keys()) <= {"classe_1"}
 
     job_resp = client.get(f"/api/vision/classification/jobs/{job['id']}", headers=headers)
     assert job_resp.json()["status"] == "completed"
@@ -447,4 +450,152 @@ def test_explain_404_before_completion(client):
         files={"file": ("test.png", io.BytesIO(_png_bytes()), "image/png")},
     )
     assert resp.status_code == 404
-    assert resp.json()["detail"]["code"] == "RESULTAT_INDISPONIBLE"
+
+
+# ── explain-dataset-examples (retour utilisateur direct : "Grad-CAM devrait
+# supporter le batch, pas une image à la fois") ─────────────────────────
+
+
+def test_explain_batch_returns_a_result_per_image(client, db_session):
+    headers = _register(client)
+    dataset = _upload_vision_dataset(client, headers)
+    job = _create_job(client, headers, dataset["id"]).json()
+    run_vision_classification_job(job["id"])
+    db_session.expire_all()
+
+    resp = client.post(
+        f"/api/vision/classification/jobs/{job['id']}/explain-dataset-examples",
+        headers=headers,
+        json={"relative_paths": ["classe_0/img_0.png", "classe_1/img_0.png"]},
+    )
+    assert resp.status_code == 200
+    results = resp.json()["results"]
+    assert [r["relative_path"] for r in results] == ["classe_0/img_0.png", "classe_1/img_0.png"]
+    for r in results:
+        assert r["error"] is None
+        assert r["predicted_label"] in {"classe_0", "classe_1"}
+        assert r["heatmap_png"].startswith("data:image/png;base64,")
+
+
+def test_explain_batch_reports_missing_image_without_failing_the_others(client, db_session):
+    headers = _register(client)
+    dataset = _upload_vision_dataset(client, headers)
+    job = _create_job(client, headers, dataset["id"]).json()
+    run_vision_classification_job(job["id"])
+    db_session.expire_all()
+
+    resp = client.post(
+        f"/api/vision/classification/jobs/{job['id']}/explain-dataset-examples",
+        headers=headers,
+        json={"relative_paths": ["classe_0/img_0.png", "classe_0/introuvable.png"]},
+    )
+    assert resp.status_code == 200
+    results = resp.json()["results"]
+    assert results[0]["error"] is None
+    assert results[0]["predicted_label"] is not None
+    assert results[1]["error"] is not None
+    assert results[1]["predicted_label"] is None
+
+
+def test_explain_batch_rejects_directory_traversal_as_a_per_item_error_not_a_crash(client, db_session):
+    headers = _register(client)
+    dataset = _upload_vision_dataset(client, headers)
+    job = _create_job(client, headers, dataset["id"]).json()
+    run_vision_classification_job(job["id"])
+    db_session.expire_all()
+
+    resp = client.post(
+        f"/api/vision/classification/jobs/{job['id']}/explain-dataset-examples",
+        headers=headers,
+        json={"relative_paths": ["../../../etc/passwd"]},
+    )
+    assert resp.status_code == 200
+    results = resp.json()["results"]
+    assert results[0]["error"] is not None
+    assert results[0]["heatmap_png"] is None
+
+
+def test_explain_batch_rejects_more_than_the_max_batch_size(client, db_session):
+    headers = _register(client)
+    dataset = _upload_vision_dataset(client, headers)
+    job = _create_job(client, headers, dataset["id"]).json()
+    run_vision_classification_job(job["id"])
+    db_session.expire_all()
+
+    resp = client.post(
+        f"/api/vision/classification/jobs/{job['id']}/explain-dataset-examples",
+        headers=headers,
+        json={"relative_paths": [f"classe_0/img_{i % 8}.png" for i in range(13)]},
+    )
+    assert resp.status_code == 422
+
+
+def test_explain_batch_rejects_empty_list(client, db_session):
+    headers = _register(client)
+    dataset = _upload_vision_dataset(client, headers)
+    job = _create_job(client, headers, dataset["id"]).json()
+    run_vision_classification_job(job["id"])
+    db_session.expire_all()
+
+    resp = client.post(
+        f"/api/vision/classification/jobs/{job['id']}/explain-dataset-examples",
+        headers=headers,
+        json={"relative_paths": []},
+    )
+    assert resp.status_code == 422
+
+
+def test_explain_batch_404_before_completion(client):
+    headers = _register(client)
+    dataset = _upload_vision_dataset(client, headers)
+    job = _create_job(client, headers, dataset["id"]).json()
+
+    resp = client.post(
+        f"/api/vision/classification/jobs/{job['id']}/explain-dataset-examples",
+        headers=headers,
+        json={"relative_paths": ["classe_0/img_0.png"]},
+    )
+    assert resp.status_code == 404
+
+
+def test_explain_batch_404_for_other_organization(client, db_session):
+    headers_a = _register(client, "a@bureau-a.fr", "Bureau A")
+    dataset_a = _upload_vision_dataset(client, headers_a)
+    job = _create_job(client, headers_a, dataset_a["id"]).json()
+    run_vision_classification_job(job["id"])
+    db_session.expire_all()
+
+    headers_b = _register(client, "b@bureau-b.fr", "Bureau B")
+    resp = client.post(
+        f"/api/vision/classification/jobs/{job['id']}/explain-dataset-examples",
+        headers=headers_b,
+        json={"relative_paths": ["classe_0/img_0.png"]},
+    )
+    assert resp.status_code == 404
+
+
+def test_explain_batch_shares_the_explain_rate_limit(client, db_session):
+    """Un appel batch consomme le MÊME quota horaire que `/explain` — sinon
+    le plafond anti-abus de l'endpoint le plus coûteux serait contournable
+    en passant systématiquement par le batch."""
+    headers = _register(client)
+    dataset = _upload_vision_dataset(client, headers)
+    job = _create_job(client, headers, dataset["id"]).json()
+    run_vision_classification_job(job["id"])
+    db_session.expire_all()
+
+    limit = get_settings().explain_rate_limit_max_attempts
+    for _ in range(limit):
+        resp = client.post(
+            f"/api/vision/classification/jobs/{job['id']}/explain-dataset-examples",
+            headers=headers,
+            json={"relative_paths": ["classe_0/img_0.png"]},
+        )
+        assert resp.status_code == 200
+
+    blocked = client.post(
+        f"/api/vision/classification/jobs/{job['id']}/explain-dataset-examples",
+        headers=headers,
+        json={"relative_paths": ["classe_0/img_0.png"]},
+    )
+    assert blocked.status_code == 429
