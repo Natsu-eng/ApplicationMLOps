@@ -449,3 +449,32 @@ def test_weight_decay_is_applied_without_error_and_reported_honestly(tmp_path):
     result = train_and_evaluate_classification(tmp_path, config, _noop_progress)
 
     assert result.model_card["weight_decay"] == 0.01
+
+
+# ── Mode expert : résolution d'entrée (retour utilisateur direct — "vision
+# n'offre pas de réduire/augmenter la taille des images") ──────────────────
+
+
+@pytest.mark.parametrize("image_size", [64, 128, 224])
+def test_training_succeeds_at_every_allowed_image_size(tmp_path, image_size):
+    _write_classification_dataset(tmp_path, {"classe_a": 8, "classe_b": 8})
+    config = ClassificationConfig(num_epochs=1, batch_size=4, image_size=image_size)
+
+    result = train_and_evaluate_classification(tmp_path, config, _noop_progress)
+
+    assert result.model_card["image_size"] == image_size
+    assert result.model_artifact["image_size"] == image_size
+
+
+def test_smaller_image_size_trains_faster_pipeline_end_to_end(tmp_path):
+    """Pas une assertion de timing (non fiable en CI) — juste que le
+    pipeline complet (transform -> forward -> évaluation) reste cohérent à
+    une résolution non standard, la classe de bug la plus probable étant un
+    mismatch de shape silencieux plutôt qu'une lenteur."""
+    _write_classification_dataset(tmp_path, {"classe_a": 8, "classe_b": 8})
+    config = ClassificationConfig(num_epochs=1, batch_size=4, image_size=64)
+
+    result = train_and_evaluate_classification(tmp_path, config, _noop_progress)
+
+    assert result.test_accuracy is not None
+    assert len(result.confusion_matrix) == 2

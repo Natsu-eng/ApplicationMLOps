@@ -103,6 +103,14 @@ MAX_BACKBONES_PER_COMPARISON = 4
 @dataclass
 class ClassificationConfig:
     backbone_id: str = DEFAULT_BACKBONE_ID
+    # Mode expert (retour utilisateur direct : "vision n'offre pas de
+    # réduire/augmenter la taille des images 224x224, 128, 64 etc") — voir
+    # `domains/vision/shared.py::ALLOWED_IMAGE_SIZES` pour les valeurs
+    # proposées et la contrainte de divisibilité. Une résolution plus petite
+    # accélère l'entraînement (moins de calcul par image) au prix de détails
+    # fins potentiellement perdus ; plus grande fait l'inverse. 224 =
+    # comportement historique inchangé (ancien `IMAGE_SIZE` en dur).
+    image_size: int = IMAGE_SIZE
     num_epochs: int = 8
     batch_size: int = 16
     learning_rate: float = 1e-3
@@ -208,26 +216,31 @@ class ClassificationResult:
     calibration: dict[str, dict[str, list[float]]] = field(default_factory=dict)
 
 
-def build_eval_transform() -> transforms.Compose:
+def build_eval_transform(image_size: int = IMAGE_SIZE) -> transforms.Compose:
     """Transform d'évaluation (pas d'augmentation) — publique et réutilisée
     telle quelle par `services/vision_gradcam.py` (sous-lot D) : Grad-CAM
-    doit voir exactement la même normalisation que l'entraînement, jamais
-    une transformation reconstruite indépendamment (source d'incohérence)."""
+    doit voir exactement la même normalisation ET la même résolution que
+    l'entraînement, jamais une transformation reconstruite indépendamment
+    (source d'incohérence). `image_size` par défaut = `IMAGE_SIZE` (224,
+    comportement historique) — mode expert (retour utilisateur direct :
+    "vision n'offre pas de réduire/augmenter la taille des images"),
+    `Grad-CAM` passe la résolution RÉELLEMENT utilisée à l'entraînement du
+    modèle expliqué (`artifact["image_size"]`), jamais 224 en dur."""
     return transforms.Compose([
-        transforms.Resize((IMAGE_SIZE, IMAGE_SIZE)),
+        transforms.Resize((image_size, image_size)),
         transforms.ToTensor(),
         transforms.Normalize(IMAGENET_MEAN, IMAGENET_STD),
     ])
 
 
-def _build_transforms(augmentation_preset: str) -> tuple[transforms.Compose, transforms.Compose]:
+def _build_transforms(augmentation_preset: str, image_size: int) -> tuple[transforms.Compose, transforms.Compose]:
     train_transform = transforms.Compose([
-        transforms.Resize((IMAGE_SIZE, IMAGE_SIZE)),
+        transforms.Resize((image_size, image_size)),
         *augmentation_transforms(augmentation_preset),
         transforms.ToTensor(),
         transforms.Normalize(IMAGENET_MEAN, IMAGENET_STD),
     ])
-    return train_transform, build_eval_transform()
+    return train_transform, build_eval_transform(image_size)
 
 
 def _should_stop_early(epochs_without_improvement: int, patience: Optional[int]) -> bool:
@@ -453,7 +466,7 @@ def train_and_evaluate_classification(
     progress_cb("Préparation des données", 3)
 
     spec = get_backbone_spec(config.backbone_id)
-    train_transform, eval_transform = _build_transforms(config.augmentation_preset)
+    train_transform, eval_transform = _build_transforms(config.augmentation_preset, config.image_size)
 
     probe = ImageFolder(str(dataset_dir))
     class_names = probe.classes
@@ -625,6 +638,7 @@ def train_and_evaluate_classification(
 
     model_card = {
         "backbone_id": config.backbone_id,
+        "image_size": config.image_size,
         "num_epochs_requested": config.num_epochs,
         "num_epochs_run": len(history),
         "time_capped": time_capped,
@@ -671,6 +685,10 @@ def train_and_evaluate_classification(
             "backbone_id": config.backbone_id,
             "class_names": class_names,
             "dropout_rate": config.dropout_rate,
+            # Mode expert : résolution d'entrée — Grad-CAM (services/gradcam.py)
+            # en a besoin pour reconstruire EXACTEMENT le même prétraitement
+            # que celui vu à l'entraînement de CE modèle précis.
+            "image_size": config.image_size,
             "state_dict": model.state_dict(),
         },
         roc_curves=roc_curves,

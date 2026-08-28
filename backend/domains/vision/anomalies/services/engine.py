@@ -92,6 +92,13 @@ MAX_MODELS_PER_COMPARISON = len(ANOMALY_MODEL_REGISTRY)
 @dataclass
 class AnomalyVisionConfig:
     model_id: str = "conv_autoencoder"
+    # Mode expert (retour utilisateur direct : "vision n'offre pas de
+    # réduire/augmenter la taille des images") — voir
+    # domains/vision/shared.py::ALLOWED_IMAGE_SIZES pour les valeurs
+    # proposées et la contrainte de divisibilité (l'autoencodeur convolutif
+    # exige un multiple de 8, voir ce module). 128 = comportement historique
+    # inchangé (ancien `IMAGE_SIZE` en dur).
+    image_size: int = IMAGE_SIZE
     num_epochs: int = 15
     batch_size: int = 16
     learning_rate: float = 1e-3
@@ -173,16 +180,20 @@ class AnomalyVisionResult:
     category_breakdown: list[dict[str, Any]] = field(default_factory=list)
 
 
-def _build_transform(augmentation_preset: str = "aucune") -> transforms.Compose:
+def _build_transform(augmentation_preset: str = "aucune", image_size: int = IMAGE_SIZE) -> transforms.Compose:
     # Pas de normalisation ImageNet : la reconstruction est comparée
     # directement en espace [0,1] (sortie Sigmoid du décodeur) — mélanger un
     # espace normalisé et l'espace [0,1] est précisément le bug #11 déjà
     # documenté, évité ici en n'introduisant jamais de normalisation.
     # `augmentation_preset` réutilise domains.vision.shared
     # (même presets, mêmes noms) — n'a de sens que sur train/good/, jamais
-    # sur test/ (voir appels ci-dessous).
+    # sur test/ (voir appels ci-dessous). `image_size` (mode expert) — voir
+    # `AnomalyVisionConfig.image_size` ; l'autoencodeur est entièrement
+    # convolutif (voir registry.py::ConvAutoEncoder), aucune contrainte de
+    # taille câblée dans le modèle lui-même au-delà de la divisibilité par 8
+    # déjà imposée côté validation (`ALLOWED_IMAGE_SIZES`).
     return transforms.Compose([
-        transforms.Resize((IMAGE_SIZE, IMAGE_SIZE)),
+        transforms.Resize((image_size, image_size)),
         *augmentation_transforms(augmentation_preset),
         transforms.ToTensor(),
     ])
@@ -326,8 +337,8 @@ def train_and_evaluate_anomaly_vision(
     progress_cb("Préparation des données", 3)
 
     spec = get_anomaly_model_spec(config.model_id)
-    train_transform = _build_transform(config.augmentation_preset)
-    eval_transform = _build_transform("aucune")
+    train_transform = _build_transform(config.augmentation_preset, config.image_size)
+    eval_transform = _build_transform("aucune", config.image_size)
 
     probe = ImageFolder(str(dataset_dir / "train"), transform=eval_transform)
     if len(probe) < MIN_TRAIN_GOOD_FOR_TRAINING:
@@ -528,7 +539,7 @@ def train_and_evaluate_anomaly_vision(
 
     model_card: dict[str, Any] = {
         "model_id": config.model_id,
-        "image_size": IMAGE_SIZE,
+        "image_size": config.image_size,
         "num_epochs_requested": config.num_epochs,
         "num_epochs_run": len(history),
         "time_capped": time_capped,
@@ -576,6 +587,7 @@ def train_and_evaluate_anomaly_vision(
         model_artifact={
             "model_id": config.model_id,
             "threshold": threshold,
+            "image_size": config.image_size,
             "state_dict": model.state_dict(),
         },
         roc_curves=result_roc_curves,

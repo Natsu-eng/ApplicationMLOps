@@ -1726,8 +1726,14 @@ export const api = {
     // Lot 6A — aperçu réel avant/après (même transformation que l'entraînement,
     // voir services/vision_classification_training.py::augmentation_transforms),
     // partagé par les deux wizards Vision (classification ET anomalies).
-    augmentationPreview: (id: number, preset: AugmentationPreset) =>
-      request<AugmentationPreviewResult>(`/vision/datasets/${id}/augmentation-preview?preset=${preset}`),
+    // `imageSize` optionnel (mode expert, retour utilisateur direct : "vision
+    // n'offre pas de réduire/augmenter la taille des images") — reflète la
+    // résolution réellement choisie par l'utilisateur, jamais la valeur par
+    // défaut du pilier si l'utilisateur en a choisi une autre.
+    augmentationPreview: (id: number, preset: AugmentationPreset, imageSize?: number) =>
+      request<AugmentationPreviewResult>(
+        `/vision/datasets/${id}/augmentation-preview?preset=${preset}${imageSize ? `&image_size=${imageSize}` : ""}`,
+      ),
     remove: (id: number) => request<void>(`/vision/datasets/${id}`, { method: "DELETE" }),
   },
 

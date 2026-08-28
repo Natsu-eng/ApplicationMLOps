@@ -37,6 +37,7 @@ from domains.vision.datasets.service import (
 )
 from domains.vision.localization import encode_image_png
 from domains.vision.shared import (
+    ALLOWED_IMAGE_SIZES,
     ANOMALY_IMAGE_SIZE,
     AUGMENTATION_PRESET_IDS,
     augmentation_transforms,
@@ -363,6 +364,13 @@ _PREVIEW_SAMPLE_COUNT = 3
 def get_augmentation_preview(
     dataset_id: int,
     preset: str = Query(...),
+    # Mode expert (retour utilisateur direct : "vision n'offre pas de
+    # réduire/augmenter la taille des images") — None (défaut) garde le
+    # comportement historique (taille par défaut du pilier concerné) ;
+    # renseigné, reflète la résolution RÉELLEMENT choisie par l'utilisateur
+    # dans le formulaire, pour un aperçu honnête (jamais 224/128 par défaut
+    # si l'utilisateur a choisi une autre taille).
+    image_size: Optional[int] = Query(None),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -378,6 +386,14 @@ def get_augmentation_preview(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={"code": "AUGMENTATION_PRESET_INCONNU", "message": f"Preset d'augmentation inconnu : {preset!r}"},
         )
+    if image_size is not None and image_size not in ALLOWED_IMAGE_SIZES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "code": "TAILLE_IMAGE_INCONNUE",
+                "message": f"Taille d'image invalide : {image_size} (voir {ALLOWED_IMAGE_SIZES})",
+            },
+        )
     dataset = _get_org_dataset(dataset_id, current_user, db)
     if dataset.status != "ready":
         raise HTTPException(
@@ -391,14 +407,14 @@ def get_augmentation_preview(
         # vision_anomaly_training.py) — l'aperçu doit montrer EXACTEMENT
         # les images qui seront transformées, jamais test/.
         sample_dir = base_dir / "train" / "good"
-        image_size = ANOMALY_IMAGE_SIZE
+        effective_image_size = image_size if image_size is not None else ANOMALY_IMAGE_SIZE
     else:
         # Classification — première classe trouvée (ordre alphabétique,
         # déterministe) : suffisant pour juger l'effet visuel d'un preset,
         # pas besoin de couvrir toutes les classes.
         first_class_dir = next((p for p in sorted(base_dir.iterdir()) if p.is_dir()), None)
         sample_dir = first_class_dir if first_class_dir else base_dir
-        image_size = CLASSIFICATION_IMAGE_SIZE
+        effective_image_size = image_size if image_size is not None else CLASSIFICATION_IMAGE_SIZE
 
     sample_paths = sorted(p for p in sample_dir.iterdir() if p.is_file())[:_PREVIEW_SAMPLE_COUNT] if sample_dir.is_dir() else []
     if not sample_paths:
@@ -412,7 +428,7 @@ def get_augmentation_preview(
     pairs: list[AugmentationPreviewPair] = []
     for path in sample_paths:
         with Image.open(path) as raw:
-            original = raw.convert("RGB").resize((image_size, image_size), resample=resize)
+            original = raw.convert("RGB").resize((effective_image_size, effective_image_size), resample=resize)
         augmented = original
         for t in transform_pipeline:
             augmented = t(augmented)

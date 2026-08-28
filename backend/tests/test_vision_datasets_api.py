@@ -401,3 +401,34 @@ def test_augmentation_preview_404_for_other_organization(client):
         f"/api/vision/datasets/{dataset_a['id']}/augmentation-preview", headers=headers_b, params={"preset": "standard"}
     )
     assert resp.status_code == 404
+
+
+# ── Mode expert : résolution d'entrée dans l'aperçu (retour utilisateur
+# direct — "vision n'offre pas de réduire/augmenter la taille des images")
+# ──────────────────────────────────────────────────────────────────────────
+
+
+def test_augmentation_preview_reflects_the_chosen_image_size(client):
+    headers = _register(client)
+    dataset = _upload_vision_dataset(client, headers, _classification_zip_bytes(n_per_class=4)).json()
+
+    resp = client.get(
+        f"/api/vision/datasets/{dataset['id']}/augmentation-preview",
+        headers=headers,
+        params={"preset": "standard", "image_size": 64},
+    )
+    assert resp.status_code == 200
+    assert len(resp.json()["pairs"]) > 0
+
+
+def test_augmentation_preview_rejects_an_unknown_image_size(client):
+    headers = _register(client)
+    dataset = _upload_vision_dataset(client, headers, _classification_zip_bytes()).json()
+
+    resp = client.get(
+        f"/api/vision/datasets/{dataset['id']}/augmentation-preview",
+        headers=headers,
+        params={"preset": "standard", "image_size": 100},
+    )
+    assert resp.status_code == 400
+    assert resp.json()["detail"]["code"] == "TAILLE_IMAGE_INCONNUE"

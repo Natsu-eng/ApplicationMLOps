@@ -31,6 +31,19 @@ IMAGE_SIZE = 224
 # legacy documenté dans DECISIONS.md).
 ANOMALY_IMAGE_SIZE = 128
 
+# Mode expert (retour utilisateur direct : "vision n'offre pas aux
+# utilisateurs de réduire ou d'augmenter la taille des images") — résolutions
+# proposées à l'utilisateur pour CHAQUE pilier vision (classification comme
+# anomalies), un compromis vitesse/précision explicite plutôt qu'une taille
+# imposée. Toutes divisibles par 8 : l'autoencodeur convolutif des anomalies
+# (`vision/anomalies/services/registry.py::ConvAutoEncoder`, 3 étages de
+# sous-échantillonnage ÷2 chacun) exige une entrée divisible par 2³=8, sous
+# peine d'un décodeur qui ne reconstruit pas exactement la taille d'entrée
+# (`ConvTranspose2d` symétrique). Les backbones de classification (pooling
+# adaptatif) n'ont pas cette contrainte mais partagent le même choix pour une
+# UI cohérente entre les deux piliers.
+ALLOWED_IMAGE_SIZES = (64, 96, 128, 160, 192, 224)
+
 # Lot 6A (correctif I9, AUDIT_DATALAB_2026-08-16.md §I9) — 4 presets, du plus
 # faible au plus fort — jamais de valeurs choisies au hasard : chaque niveau
 # ajoute une transformation à celles du niveau précédent, jamais une

@@ -48,6 +48,7 @@ import {
   AugmentationPresetPicker,
   AugmentationPreviewGallery,
   Fact,
+  ImageSizePicker,
   SplitRatioControl,
   StepContent,
 } from "../components/vision/VisionWizard";
@@ -317,6 +318,10 @@ function AnomalyVisionForm({ onJobCreated }: { onJobCreated: (job: VisionAnomaly
   // non activé.
   const [comparisonMode, setComparisonMode] = useState(false);
   const [comparisonModelIds, setComparisonModelIds] = useState<Set<string>>(new Set());
+  // Mode expert : résolution d'entrée (retour utilisateur direct — "vision
+  // n'offre pas de réduire/augmenter la taille des images") — 128 =
+  // comportement historique inchangé.
+  const [imageSize, setImageSize] = useState(128);
   const [numEpochs, setNumEpochs] = useState(15);
   const [batchSize, setBatchSize] = useState(16);
   const [learningRate, setLearningRate] = useState(1e-3);
@@ -376,6 +381,7 @@ function AnomalyVisionForm({ onJobCreated }: { onJobCreated: (job: VisionAnomaly
           // jamais un tableau à 1 élément (même garde que backbone_ids côté
           // classification).
           model_ids: comparisonMode && comparisonModelIds.size >= 2 ? Array.from(comparisonModelIds) : undefined,
+          image_size: imageSize,
           num_epochs: numEpochs,
           batch_size: batchSize,
           learning_rate: learningRate,
@@ -489,6 +495,8 @@ function AnomalyVisionForm({ onJobCreated }: { onJobCreated: (job: VisionAnomaly
               </div>
             )}
 
+            <ImageSizePicker value={imageSize} onChange={setImageSize} defaultValue={128} />
+
             {datasetDetail && (
               <div>
                 <label className="block text-sm text-muted-foreground mb-1.5">Répartition de train/good/</label>
@@ -507,7 +515,7 @@ function AnomalyVisionForm({ onJobCreated }: { onJobCreated: (job: VisionAnomaly
             description="Diversifie artificiellement vos images normales d'entraînement (retournements, rotations légères...) — appliquée uniquement à train/good/, jamais à test/."
           >
             <AugmentationPresetPicker value={augmentationPreset} onChange={setAugmentationPreset} />
-            <AugmentationPreviewGallery datasetId={datasetId} preset={augmentationPreset} />
+            <AugmentationPreviewGallery datasetId={datasetId} preset={augmentationPreset} imageSize={imageSize} />
           </StepContent>
         )}
 

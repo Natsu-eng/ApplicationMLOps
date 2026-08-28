@@ -181,11 +181,11 @@ def test_batch_isolates_a_failing_image_from_the_rest(trained_artifact, monkeypa
     real_run_gradcam = gradcam_module._run_gradcam
     call_count = {"n": 0}
 
-    def _flaky_run_gradcam(model, capture, class_names, image, target_label):
+    def _flaky_run_gradcam(model, capture, class_names, image, target_label, image_size):
         call_count["n"] += 1
         if call_count["n"] == 1:
             raise RuntimeError("panne simulée sur la première image")
-        return real_run_gradcam(model, capture, class_names, image, target_label)
+        return real_run_gradcam(model, capture, class_names, image, target_label, image_size)
 
     monkeypatch.setattr(gradcam_module, "_run_gradcam", _flaky_run_gradcam)
     try:
@@ -205,3 +205,37 @@ def test_batch_isolates_a_failing_image_from_the_rest(trained_artifact, monkeypa
 def test_batch_on_empty_list_returns_empty_without_crashing(trained_artifact):
     artifact, _ = trained_artifact
     assert explain_classification_predictions_batch(artifact, []) == []
+
+
+# ── Mode expert : résolution d'entrée (retour utilisateur direct — "vision
+# n'offre pas de réduire/augmenter la taille des images") ──────────────────
+
+
+def test_explain_reconstructs_the_resolution_the_model_was_actually_trained_at(tmp_path):
+    """Régression ciblée : un modèle entraîné à une résolution NON standard
+    (64, pas le défaut 224) doit rester explicable — `_run_gradcam` doit lire
+    `artifact["image_size"]`, jamais un 224 en dur, sous peine d'un mismatch
+    de shape (backbone gelé attend l'entrée qu'il a vue à l'entraînement)."""
+    root = tmp_path / "dataset"
+    _write_classification_dataset(root)
+    config = ClassificationConfig(
+        backbone_id="mobilenet_v3_small", num_epochs=1, batch_size=4, freeze_backbone=True, image_size=64
+    )
+    result = train_and_evaluate_classification(root, config, lambda step, pct: None)
+
+    with Image.open(root / "rouge" / "0.png") as image:
+        explanation = explain_classification_prediction(result.model_artifact, image)
+
+    assert explanation.predicted_label in {"rouge", "bleu"}
+
+
+def test_explain_falls_back_to_224_for_artifacts_predating_the_image_size_field(trained_artifact):
+    """Rétrocompatibilité par absence (même motif que les autres champs
+    ajoutés à `model_card`/`model_artifact` dans ce projet) — un artefact
+    d'un modèle entraîné avant ce correctif n'a pas la clé `image_size`."""
+    artifact, sample_image_path = trained_artifact
+    artifact_without_image_size = {k: v for k, v in artifact.items() if k != "image_size"}
+    with Image.open(sample_image_path) as image:
+        explanation = explain_classification_prediction(artifact_without_image_size, image)
+
+    assert explanation.predicted_label in {"rouge", "bleu"}

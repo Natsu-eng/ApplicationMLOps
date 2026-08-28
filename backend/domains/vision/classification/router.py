@@ -45,8 +45,10 @@ from domains.shared.job_watchdog import reconcile_stale_jobs
 from domains.vision.classification.services.engine import (
     AUGMENTATION_PRESET_IDS,
     DEFAULT_AUGMENTATION_PRESET,
+    IMAGE_SIZE,
     MAX_BACKBONES_PER_COMPARISON,
 )
+from domains.vision.shared import ALLOWED_IMAGE_SIZES
 from domains.vision.classification.services.gradcam import (
     GradCamError,
     explain_classification_prediction,
@@ -74,6 +76,10 @@ class VisionClassificationJobCreate(BaseModel):
     # `services/engine.py::train_and_compare_backbones`). None (défaut) :
     # comportement historique inchangé, un seul backbone (`backbone_id`).
     backbone_ids: Optional[List[str]] = None
+    # Mode expert (retour utilisateur direct : "vision n'offre pas de
+    # réduire/augmenter la taille des images") — voir
+    # domains/vision/shared.py::ALLOWED_IMAGE_SIZES.
+    image_size: int = IMAGE_SIZE
     num_epochs: int = Field(default=8, ge=1, le=30)
     batch_size: int = Field(default=16, ge=1, le=128)
     learning_rate: float = Field(default=1e-3, gt=0, le=1)
@@ -299,6 +305,14 @@ def create_vision_classification_job(
                 "message": f"Preset d'augmentation inconnu : {body.augmentation_preset!r}",
             },
         )
+    if body.image_size not in ALLOWED_IMAGE_SIZES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "code": "TAILLE_IMAGE_INCONNUE",
+                "message": f"Taille d'image invalide : {body.image_size} (voir {ALLOWED_IMAGE_SIZES})",
+            },
+        )
     if body.val_ratio + body.test_ratio >= 0.9:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -339,6 +353,7 @@ def create_vision_classification_job(
 
     config = {
         "backbone_id": body.backbone_id,
+        "image_size": body.image_size,
         "num_epochs": body.num_epochs,
         "batch_size": body.batch_size,
         "learning_rate": body.learning_rate,

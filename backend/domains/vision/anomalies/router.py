@@ -31,10 +31,10 @@ from domains.shared.job_events import stream_job_updates
 from domains.shared.job_lifecycle import ACTIVE_STATUSES, CANCELLED_MESSAGE, try_cancel_rq_job
 from domains.shared.job_quota import ALL_JOB_MODELS, raise_if_quota_exceeded
 from domains.shared.job_watchdog import reconcile_stale_jobs
-from domains.vision.anomalies.services.engine import MAX_MODELS_PER_COMPARISON
+from domains.vision.anomalies.services.engine import IMAGE_SIZE, MAX_MODELS_PER_COMPARISON
 from domains.vision.anomalies.services.registry import ANOMALY_MODEL_REGISTRY, DEFAULT_ANOMALY_MODEL_ID
 from domains.vision.localization import DEFAULT_MASK_PERCENTILE
-from domains.vision.shared import AUGMENTATION_PRESET_IDS
+from domains.vision.shared import ALLOWED_IMAGE_SIZES, AUGMENTATION_PRESET_IDS
 
 router = APIRouter(prefix="/vision/anomalies", tags=["vision"])
 _settings = get_settings()
@@ -56,6 +56,10 @@ class VisionAnomalyJobCreate(BaseModel):
     # `services/engine.py::train_and_compare_anomaly_models`). None (défaut) :
     # comportement historique inchangé, une seule architecture (`model_id`).
     model_ids: Optional[List[str]] = None
+    # Mode expert (retour utilisateur direct : "vision n'offre pas de
+    # réduire/augmenter la taille des images") — voir
+    # domains/vision/shared.py::ALLOWED_IMAGE_SIZES.
+    image_size: int = IMAGE_SIZE
     num_epochs: int = Field(default=15, ge=1, le=50)
     batch_size: int = Field(default=16, ge=1, le=128)
     learning_rate: float = Field(default=1e-3, gt=0, le=1)
@@ -235,6 +239,14 @@ def create_vision_anomaly_job(
                 "message": f"Preset d'augmentation inconnu : {body.augmentation_preset!r}",
             },
         )
+    if body.image_size not in ALLOWED_IMAGE_SIZES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "code": "TAILLE_IMAGE_INCONNUE",
+                "message": f"Taille d'image invalide : {body.image_size} (voir {ALLOWED_IMAGE_SIZES})",
+            },
+        )
 
     reconcile_stale_jobs(
         db, current_user.organization_id, _settings.stale_job_timeout_minutes, model=VisionAnomalyJob
@@ -267,6 +279,7 @@ def create_vision_anomaly_job(
 
     config = {
         "model_id": body.model_id,
+        "image_size": body.image_size,
         "num_epochs": body.num_epochs,
         "batch_size": body.batch_size,
         "learning_rate": body.learning_rate,

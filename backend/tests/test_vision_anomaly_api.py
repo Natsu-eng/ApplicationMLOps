@@ -378,3 +378,33 @@ def test_comparison_result_includes_a_leaderboard_and_the_winner_is_persisted(cl
     assert sum(1 for c in candidates if c["selected"]) == 1
     winner = next(c for c in candidates if c["selected"])
     assert result["model_id"] == winner["model_id"]
+
+
+# ── Mode expert : résolution d'entrée (retour utilisateur direct — "vision
+# n'offre pas de réduire/augmenter la taille des images") ──────────────────
+
+
+def test_create_job_accepts_a_non_default_image_size(client):
+    headers = _register(client)
+    dataset = _upload_vision_dataset(client, headers, _mvtec_zip_bytes())
+    resp = _create_job(client, headers, dataset["id"], image_size=64)
+    assert resp.status_code == 201
+
+
+def test_create_job_rejects_an_unknown_image_size(client):
+    headers = _register(client)
+    dataset = _upload_vision_dataset(client, headers, _mvtec_zip_bytes())
+    resp = _create_job(client, headers, dataset["id"], image_size=100)
+    assert resp.status_code == 400
+    assert resp.json()["detail"]["code"] == "TAILLE_IMAGE_INCONNUE"
+
+
+def test_result_reflects_the_image_size_actually_used(client, db_session):
+    headers = _register(client)
+    dataset = _upload_vision_dataset(client, headers, _mvtec_zip_bytes())
+    job = _create_job(client, headers, dataset["id"], image_size=64).json()
+    run_vision_anomaly_job(job["id"])
+    db_session.expire_all()
+
+    result = client.get(f"/api/vision/anomalies/jobs/{job['id']}/result", headers=headers).json()
+    assert result["model_card"]["image_size"] == 64

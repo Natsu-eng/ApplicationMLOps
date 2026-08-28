@@ -13,6 +13,54 @@ export const AUGMENTATION_PRESET_INFO: Record<AugmentationPreset, { label: strin
   forte: { label: "Forte", description: "Standard, en plus marqué, + décalage et mise à l'échelle aléatoires." },
 };
 
+// Mode expert (retour utilisateur direct : "vision n'offre pas de
+// réduire/augmenter la taille des images 224x224, 128, 64 etc") — même
+// liste que `domains/vision/shared.py::ALLOWED_IMAGE_SIZES`, partagée par
+// les deux wizards Vision.
+export const ALLOWED_IMAGE_SIZES = [64, 96, 128, 160, 192, 224] as const;
+
+/** Sélecteur de résolution d'entrée — mode expert, partagé par les deux
+ * wizards Vision. Une résolution plus petite accélère l'entraînement (moins
+ * de calcul par image) au prix de détails fins potentiellement perdus ;
+ * plus grande fait l'inverse — jamais un choix "meilleur" dans l'absolu,
+ * un compromis explicite laissé à l'utilisateur. */
+export function ImageSizePicker({
+  value,
+  onChange,
+  defaultValue,
+}: {
+  value: number;
+  onChange: (size: number) => void;
+  defaultValue: number;
+}) {
+  return (
+    <div>
+      <label className="block text-sm text-muted-foreground mb-1.5">Résolution des images</label>
+      <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
+        {ALLOWED_IMAGE_SIZES.map((size) => (
+          <button
+            key={size}
+            type="button"
+            onClick={() => onChange(size)}
+            className={`rounded-lg border px-2 py-1.5 text-xs font-medium tabular-nums transition-colors ${
+              value === size
+                ? "border-primary/40 bg-primary/10 text-primary"
+                : "border-border text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            {size}px
+            {size === defaultValue && <span className="block text-[10px] font-normal opacity-70">Défaut</span>}
+          </button>
+        ))}
+      </div>
+      <p className="text-xs text-muted-foreground mt-1.5">
+        Plus petite = entraînement plus rapide, au prix de détails fins potentiellement perdus. Plus grande =
+        l'inverse. {defaultValue}px convient à la plupart des datasets.
+      </p>
+    </div>
+  );
+}
+
 // Barre d'étapes : voir components/ui/WizardStepper.tsx — partagée avec
 // Training.tsx (avant cette refonte, ce fichier avait déjà sa propre copie
 // pour les 2 wizards Vision, malgré le commentaire ci-dessus revendiquant
@@ -174,7 +222,18 @@ export function AugmentationPresetPicker({
  * réelles du dataset, jamais une approximation CSS côté client (qui
  * divergerait silencieusement des transformations torchvision réelles).
  * Partagé par les deux wizards Vision. */
-export function AugmentationPreviewGallery({ datasetId, preset }: { datasetId: number | ""; preset: AugmentationPreset }) {
+export function AugmentationPreviewGallery({
+  datasetId,
+  preset,
+  imageSize,
+}: {
+  datasetId: number | "";
+  preset: AugmentationPreset;
+  // Mode expert (retour utilisateur direct : "vision n'offre pas de
+  // réduire/augmenter la taille des images") — optionnel, l'aperçu retombe
+  // sur la taille par défaut du pilier si omis (comportement historique).
+  imageSize?: number;
+}) {
   const [result, setResult] = useState<AugmentationPreviewResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -187,11 +246,11 @@ export function AugmentationPreviewGallery({ datasetId, preset }: { datasetId: n
     setLoading(true);
     setError(null);
     api.visionDatasets
-      .augmentationPreview(datasetId, preset)
+      .augmentationPreview(datasetId, preset, imageSize)
       .then(setResult)
       .catch((err) => setError(err instanceof ApiError ? err.message : "Aperçu indisponible"))
       .finally(() => setLoading(false));
-  }, [datasetId, preset]);
+  }, [datasetId, preset, imageSize]);
 
   if (!datasetId) return null;
 

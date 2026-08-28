@@ -21,8 +21,8 @@ import torch
 import torch.nn as nn
 from PIL import Image
 
+from domains.vision.classification.services.engine import IMAGE_SIZE, build_eval_transform
 from domains.vision.classification.services.registry import get_backbone_spec
-from domains.vision.classification.services.engine import build_eval_transform
 from domains.vision.localization import overlay_heatmap_on_image, resize_map_to_original
 
 logger = logging.getLogger("datalab.vision.gradcam")
@@ -99,11 +99,17 @@ def _run_gradcam(
     class_names: list[str],
     image: Image.Image,
     target_label: str | None,
+    image_size: int,
 ) -> GradCamResult:
     """Un seul forward+backward pass — partagé par `explain_classification_
     prediction` (1 image) et `explain_classification_predictions_batch`
-    (N images, modèle/hooks déjà prêts via `_prepare_model_and_capture`)."""
-    transform = build_eval_transform()
+    (N images, modèle/hooks déjà prêts via `_prepare_model_and_capture`).
+    `image_size` = résolution RÉELLEMENT utilisée à l'entraînement de CE
+    modèle (`artifact["image_size"]`, mode expert) — jamais 224 en dur,
+    sous peine de faire voir au modèle une image à une résolution différente
+    de celle sur laquelle il a appris (dégrade silencieusement la qualité
+    de la carte Grad-CAM, voire fausse la prédiction elle-même)."""
+    transform = build_eval_transform(image_size)
     original_size = image.size  # (largeur, hauteur)
     input_tensor = transform(image.convert("RGB")).unsqueeze(0)
     # Le backbone est gelé par défaut (sous-lot B) : sans ceci, AUCUN tenseur
@@ -163,7 +169,11 @@ def explain_classification_prediction(
     explique la classe prédite par défaut, ou une classe précise choisie par
     l'utilisateur (ex. "pourquoi PAS la classe X ?")."""
     model, capture, class_names = _prepare_model_and_capture(artifact)
-    return _run_gradcam(model, capture, class_names, image, target_label)
+    # `.get(..., IMAGE_SIZE)` — rétrocompatibilité par absence (modèles
+    # entraînés avant le mode expert résolution, tous à 224, l'ancien
+    # `IMAGE_SIZE` en dur).
+    image_size = artifact.get("image_size", IMAGE_SIZE)
+    return _run_gradcam(model, capture, class_names, image, target_label, image_size)
 
 
 def explain_classification_predictions_batch(
@@ -187,10 +197,11 @@ def explain_classification_predictions_batch(
     illisible (cas limite non filtré en amont) n'interrompt pas les autres —
     voir `GradCamBatchItemResult.error`, jamais silencieux."""
     model, capture, class_names = _prepare_model_and_capture(artifact)
+    image_size = artifact.get("image_size", IMAGE_SIZE)
     results: list[GradCamBatchItemResult] = []
     for key, image in images:
         try:
-            result = _run_gradcam(model, capture, class_names, image, None)
+            result = _run_gradcam(model, capture, class_names, image, None, image_size)
             results.append(GradCamBatchItemResult(key=key, result=result, error=None))
         except Exception as exc:
             logger.warning(

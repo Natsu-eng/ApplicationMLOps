@@ -312,3 +312,21 @@ def test_weight_decay_is_applied_without_error_and_reported_honestly(tmp_path):
     result = train_and_evaluate_anomaly_vision(tmp_path, config, _noop_progress)
 
     assert result.model_card["weight_decay"] == 0.01
+
+
+# ── Mode expert : résolution d'entrée (retour utilisateur direct — "vision
+# n'offre pas de réduire/augmenter la taille des images") ──────────────────
+
+
+@pytest.mark.parametrize("image_size", [64, 96])
+def test_training_succeeds_at_every_allowed_image_size(tmp_path, image_size):
+    """L'autoencodeur exige un multiple de 8 (voir registry.py) — 64 et 96
+    le sont tous les deux, la classe de bug la plus probable étant un
+    mismatch de shape encodeur/décodeur silencieux, pas une lenteur."""
+    _write_mvtec_dataset(tmp_path)
+    config = AnomalyVisionConfig(num_epochs=1, batch_size=4, image_size=image_size)
+
+    result = train_and_evaluate_anomaly_vision(tmp_path, config, _noop_progress)
+
+    assert result.model_card["image_size"] == image_size
+    assert result.model_artifact["image_size"] == image_size

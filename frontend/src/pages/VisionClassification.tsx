@@ -57,6 +57,7 @@ import {
   AugmentationPreviewGallery,
   ClassImbalanceBanner,
   Fact,
+  ImageSizePicker,
   SplitRatioControl,
   StepContent,
 } from "../components/vision/VisionWizard";
@@ -314,6 +315,10 @@ function ClassificationForm({ onJobCreated }: { onJobCreated: (job: VisionClassi
   // un seul backbone (comportement historique) tant que non activé.
   const [comparisonMode, setComparisonMode] = useState(false);
   const [comparisonBackboneIds, setComparisonBackboneIds] = useState<Set<string>>(new Set());
+  // Mode expert : résolution d'entrée (retour utilisateur direct — "vision
+  // n'offre pas de réduire/augmenter la taille des images") — 224 =
+  // comportement historique inchangé.
+  const [imageSize, setImageSize] = useState(224);
   const [numEpochs, setNumEpochs] = useState(8);
   const [batchSize, setBatchSize] = useState(16);
   const [learningRate, setLearningRate] = useState(1e-3);
@@ -398,6 +403,7 @@ function ClassificationForm({ onJobCreated }: { onJobCreated: (job: VisionClassi
           // tabulaire, voir trainingPayload.ts).
           backbone_ids:
             comparisonMode && comparisonBackboneIds.size >= 2 ? Array.from(comparisonBackboneIds) : undefined,
+          image_size: imageSize,
           num_epochs: numEpochs,
           batch_size: batchSize,
           learning_rate: learningRate,
@@ -524,6 +530,8 @@ function ClassificationForm({ onJobCreated }: { onJobCreated: (job: VisionClassi
               </div>
             )}
 
+            <ImageSizePicker value={imageSize} onChange={setImageSize} defaultValue={224} />
+
             {datasetDetail && (
               <div>
                 <label className="block text-sm text-muted-foreground mb-1.5">Répartition des données</label>
@@ -550,7 +558,7 @@ function ClassificationForm({ onJobCreated }: { onJobCreated: (job: VisionClassi
               recommendedPreset={datasetDetail?.recommended_augmentation_preset}
             />
 
-            <AugmentationPreviewGallery datasetId={datasetId} preset={augmentationPreset} />
+            <AugmentationPreviewGallery datasetId={datasetId} preset={augmentationPreset} imageSize={imageSize} />
           </StepContent>
         )}
 
