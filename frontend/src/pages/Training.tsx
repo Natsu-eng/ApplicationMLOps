@@ -8,6 +8,7 @@ import {
   type DatasetSummary,
   type DurationEstimate,
   type FeatureEngineeringSpec,
+  type HyperparameterOverrides,
   type TargetSuggestion,
   type TrainingJobSummary,
 } from "../api/client";
@@ -488,6 +489,11 @@ function TrainingForm({
   const [seed, setSeed] = useState(DEFAULT_SEED);
   const [cqrAlpha, setCqrAlpha] = useState(DEFAULT_CQR_ALPHA);
   const [selectedModelIds, setSelectedModelIds] = useState<Set<string>>(new Set());
+  // Mode expert hyperparamètres (retour utilisateur direct : "laisser le
+  // choix sur les hyperparamètres, profondeur des arbres etc.") — clé = id
+  // du modèle, valeur = {nom_hyperparamètre: valeur fixée}. Vide par
+  // défaut : comportement strictement inchangé (recherche automatique).
+  const [hyperparameterOverrides, setHyperparameterOverrides] = useState<HyperparameterOverrides>({});
   const [durationEstimate, setDurationEstimate] = useState<DurationEstimate | null>(null);
 
   // Estimation de durée avant lancement (Lot 7, §J.1) — dérivée de
@@ -574,6 +580,7 @@ function TrainingForm({
           classRebalancing,
           expertMode,
           selectedModelIds,
+          hyperparameterOverrides,
         }),
         idempotencyKey.current,
       );
@@ -885,6 +892,8 @@ function TrainingForm({
               onSelectedModelIdsChange={setSelectedModelIds}
               classRebalancing={classRebalancing}
               onClassRebalancingChange={setClassRebalancing}
+              hyperparameterOverrides={hyperparameterOverrides}
+              onHyperparameterOverridesChange={setHyperparameterOverrides}
             />
           </StepContent>
         )}
@@ -899,6 +908,14 @@ function TrainingForm({
                 <Fact
                   label="Modèles comparés"
                   value={expertMode ? `${selectedModelIds.size} sélectionné${selectedModelIds.size > 1 ? "s" : ""}` : "Sélection automatique"}
+                />
+                <Fact
+                  label="Hyperparamètres fixés"
+                  value={
+                    expertMode && Object.keys(hyperparameterOverrides).length > 0
+                      ? `${Object.values(hyperparameterOverrides).reduce((n, params) => n + Object.keys(params).length, 0)}`
+                      : "Aucun (recherche automatique)"
+                  }
                 />
                 <Fact label="Rééquilibrage des classes" value={classRebalancing ? "Activé" : "Désactivé"} />
                 <Fact label="Ingénierie de variables" value={featureEngineering ? "Activée" : "Non appliquée"} />

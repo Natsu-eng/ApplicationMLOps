@@ -19,6 +19,7 @@ function baseState(overrides: Partial<TrainingFormState> = {}): TrainingFormStat
     classRebalancing: false,
     expertMode: false,
     selectedModelIds: new Set(),
+    hyperparameterOverrides: {},
     ...overrides,
   };
 }
@@ -56,5 +57,50 @@ describe("buildTrainingJobPayload", () => {
   it("colonne de groupe vide envoyée comme absente, pas comme chaîne vide", () => {
     const payload = buildTrainingJobPayload(baseState({ groupColumn: "" }));
     expect(payload.group_column).toBeUndefined();
+  });
+
+  // ── Mode expert : hyperparamètres fixés (retour utilisateur direct :
+  // "laisser le choix sur les hyperparamètres, profondeur des arbres etc.") ──
+
+  it("mode expert avec un hyperparamètre fixé sur un modèle sélectionné l'envoie", () => {
+    const payload = buildTrainingJobPayload(
+      baseState({
+        expertMode: true,
+        selectedModelIds: new Set(["random_forest"]),
+        hyperparameterOverrides: { random_forest: { max_depth: 6 } },
+      }),
+    );
+    expect(payload.hyperparameter_overrides).toEqual({ random_forest: { max_depth: 6 } });
+  });
+
+  it("mode guidé (expert OFF) n'envoie jamais hyperparameter_overrides, même si l'état en contient", () => {
+    const payload = buildTrainingJobPayload(
+      baseState({ expertMode: false, hyperparameterOverrides: { random_forest: { max_depth: 6 } } }),
+    );
+    expect(payload.hyperparameter_overrides).toBeUndefined();
+  });
+
+  it("un override laissé pour un modèle décoché entre-temps n'est jamais envoyé", () => {
+    const payload = buildTrainingJobPayload(
+      baseState({
+        expertMode: true,
+        selectedModelIds: new Set(["lightgbm"]), // random_forest décoché
+        hyperparameterOverrides: { random_forest: { max_depth: 6 }, lightgbm: { max_depth: 8 } },
+      }),
+    );
+    expect(payload.hyperparameter_overrides).toEqual({ lightgbm: { max_depth: 8 } });
+  });
+
+  it("aucun hyperparamètre fixé envoie undefined, jamais un objet vide", () => {
+    const payload = buildTrainingJobPayload(
+      baseState({ expertMode: true, selectedModelIds: new Set(["lightgbm"]), hyperparameterOverrides: {} }),
+    );
+    expect(payload.hyperparameter_overrides).toBeUndefined();
+  });
+
+  it("mode expert activé SANS rien changer (hyperparamètres compris) reste identique au mode guidé", () => {
+    const guided = buildTrainingJobPayload(baseState({ expertMode: false }));
+    const expertUntouched = buildTrainingJobPayload(baseState({ expertMode: true, hyperparameterOverrides: {} }));
+    expect(expertUntouched).toEqual(guided);
   });
 });

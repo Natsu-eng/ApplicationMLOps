@@ -1331,3 +1331,88 @@ def test_linear_explainer_still_works_with_sparse_upstream_input():
     assert status["status"] == "ok"
     assert len(summary) == len(feature_names)
     assert set(beeswarm.keys()) == {"global"}
+
+
+# ── Mode expert : hyperparamètres fixés par l'utilisateur (retour
+# utilisateur direct : "laisser le choix sur les hyperparamètres,
+# profondeur des arbres etc.") ───────────────────────────────────────────
+
+
+def test_hyperparameter_override_is_applied_to_the_final_model():
+    """Bout en bout : un hyperparamètre fixé par l'utilisateur doit se
+    retrouver sur le modèle FINAL retourné (pas seulement pendant la
+    recherche) — piège réel identifié en implémentant ce correctif :
+    `study.best_params` ne contient QUE ce qu'Optuna a réellement suggéré,
+    un paramètre fixé (jamais soumis à `trial.suggest_*`) en est absent et
+    retomberait sur le défaut de la bibliothèque sans la fusion explicite
+    dans `_optimize_one_model`."""
+    df = _make_regression_df()
+    split = split_dataset(df, "cible", ["x1", "x2"], "regression", None, 0.2, 42)
+    y_train = split.y_train.to_numpy(dtype=float)
+    preprocessor_template = build_preprocessor(split.X_train)
+    cv = _make_cv("regression", 3, None, 42)
+    config = TrainingConfig(optuna_trials=3, cv_folds=3, hyperparameter_overrides={"random_forest": {"max_depth": 3}})
+
+    spec = MODEL_REGISTRY["random_forest"]
+    opt = _optimize_one_model(
+        spec, split.X_train, y_train, "regression", cv, split.groups_train,
+        preprocessor_template, config, lambda s, p: None, 0, 10,
+    )
+    fitted_model = opt.model.named_steps["model"] if hasattr(opt.model, "named_steps") else opt.model
+    assert fitted_model.max_depth == 3
+
+
+def test_hyperparameter_override_leaves_other_params_auto_tuned():
+    """Fixer UN hyperparamètre ne doit jamais figer les autres — seule la
+    clé explicitement fournie est retirée de la recherche Optuna."""
+    df = _make_regression_df()
+    split = split_dataset(df, "cible", ["x1", "x2"], "regression", None, 0.2, 42)
+    y_train = split.y_train.to_numpy(dtype=float)
+    preprocessor_template = build_preprocessor(split.X_train)
+    cv = _make_cv("regression", 3, None, 42)
+    config_fixed = TrainingConfig(
+        optuna_trials=5, cv_folds=3, seed=1, hyperparameter_overrides={"random_forest": {"n_estimators": 120}}
+    )
+    config_free = TrainingConfig(optuna_trials=5, cv_folds=3, seed=1)
+
+    spec = MODEL_REGISTRY["random_forest"]
+    opt_fixed = _optimize_one_model(
+        spec, split.X_train, y_train, "regression", cv, split.groups_train,
+        preprocessor_template, config_fixed, lambda s, p: None, 0, 10,
+    )
+    opt_free = _optimize_one_model(
+        spec, split.X_train, y_train, "regression", cv, split.groups_train,
+        preprocessor_template, config_free, lambda s, p: None, 0, 10,
+    )
+    model_fixed = opt_fixed.model.named_steps["model"] if hasattr(opt_fixed.model, "named_steps") else opt_fixed.model
+    model_free = opt_free.model.named_steps["model"] if hasattr(opt_free.model, "named_steps") else opt_free.model
+    assert model_fixed.n_estimators == 120
+    # max_depth n'a jamais été fixé : rien ne garantit qu'il diffère du
+    # tirage libre, mais il doit rester dans la plage déclarée du registre
+    # (aucune valeur aberrante introduite par la fusion overrides/best_params).
+    assert 3 <= model_fixed.max_depth <= 20
+    assert model_free.n_estimators != 120 or model_free.max_depth != model_fixed.max_depth
+
+
+def test_no_hyperparameter_overrides_reproduces_historical_behavior():
+    """`hyperparameter_overrides=None` (défaut, comportement historique) ne
+    doit rien changer au résultat par rapport à l'absence totale de ce
+    champ — non-régression explicite sur le chemin déjà en production."""
+    df = _make_regression_df()
+    split = split_dataset(df, "cible", ["x1", "x2"], "regression", None, 0.2, 42)
+    y_train = split.y_train.to_numpy(dtype=float)
+    preprocessor_template = build_preprocessor(split.X_train)
+    cv = _make_cv("regression", 3, None, 42)
+    config_a = TrainingConfig(optuna_trials=3, cv_folds=3, seed=7)
+    config_b = TrainingConfig(optuna_trials=3, cv_folds=3, seed=7, hyperparameter_overrides=None)
+
+    spec = MODEL_REGISTRY["lightgbm"]
+    opt_a = _optimize_one_model(
+        spec, split.X_train, y_train, "regression", cv, split.groups_train,
+        preprocessor_template, config_a, lambda s, p: None, 0, 10,
+    )
+    opt_b = _optimize_one_model(
+        spec, split.X_train, y_train, "regression", cv, split.groups_train,
+        preprocessor_template, config_b, lambda s, p: None, 0, 10,
+    )
+    assert opt_a.cv_score == pytest.approx(opt_b.cv_score, abs=1e-9)

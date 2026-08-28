@@ -1,4 +1,4 @@
-import type { FeatureEngineeringSpec, TrainingJobCreatePayload } from "../api/client";
+import type { FeatureEngineeringSpec, HyperparameterOverrides, TrainingJobCreatePayload } from "../api/client";
 
 /** État du formulaire d'entraînement nécessaire à la construction du payload
  * — extrait de `TrainingForm` (Lot E2) pour rester testable sans dépendre du
@@ -17,6 +17,9 @@ export interface TrainingFormState {
   classRebalancing: boolean;
   expertMode: boolean;
   selectedModelIds: Set<string>;
+  // Mode expert hyperparamètres (retour utilisateur direct : "laisser le
+  // choix sur les hyperparamètres, profondeur des arbres etc.").
+  hyperparameterOverrides: HyperparameterOverrides;
 }
 
 /** Construit le payload envoyé à `POST /training/jobs` — mode expert OFF
@@ -26,6 +29,13 @@ export interface TrainingFormState {
  * résultat, `model_ids` toujours omis — c'est le serveur qui retombe alors
  * sur son sous-ensemble par défaut (`services/ml_registry.models_for_task`). */
 export function buildTrainingJobPayload(state: TrainingFormState): TrainingJobCreatePayload {
+  const activeOverrides =
+    state.expertMode && Object.keys(state.hyperparameterOverrides).length > 0
+      ? Object.fromEntries(
+          Object.entries(state.hyperparameterOverrides).filter(([modelId]) => state.selectedModelIds.has(modelId)),
+        )
+      : {};
+
   return {
     dataset_id: state.datasetId,
     target_column: state.targetColumn,
@@ -40,5 +50,11 @@ export function buildTrainingJobPayload(state: TrainingFormState): TrainingJobCr
     class_rebalancing: state.classRebalancing,
     model_ids:
       state.expertMode && state.selectedModelIds.size > 0 ? Array.from(state.selectedModelIds) : undefined,
+    // Même garde que model_ids ci-dessus : mode expert OFF (ou jamais
+    // ouvert) -> jamais envoyé, comportement strictement inchangé. Ne
+    // garde que les modèles réellement sélectionnés — un override laissé
+    // pour un modèle décoché entre-temps ne doit jamais partir au serveur
+    // (rejeté de toute façon côté API, mais autant ne pas l'envoyer).
+    hyperparameter_overrides: Object.keys(activeOverrides).length > 0 ? activeOverrides : undefined,
   };
 }

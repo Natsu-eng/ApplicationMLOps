@@ -38,7 +38,7 @@ from domains.training.services.duration_estimate import estimate_training_durati
 from domains.training.services.engine import selection_metric_label
 from domains.training.services.inference import predict_one
 from domains.training.services.prediction_retention import purge_old_predictions
-from domains.training.services.registry import MODEL_REGISTRY
+from domains.training.services.registry import MODEL_REGISTRY, models_for_task
 from domains.training.services.verdict import compute_verdict
 
 _KNOWN_UPSTREAM_TYPES = {"datetime_decompose", "ratio", "numeric_coerce"}
@@ -86,6 +86,14 @@ class TrainingJobCreate(BaseModel):
     # `services/ml_registry.MODEL_REGISTRY`). `None` : sous-ensemble par
     # défaut (stratégie produit "B"), comportement strictement inchangé.
     model_ids: Optional[List[str]] = None
+    # Mode expert (retour utilisateur direct : "laisser le choix sur les
+    # hyperparamètres, profondeur des arbres etc.") — clé = id du registre,
+    # valeur = {nom_hyperparamètre: valeur fixée}. Validé contre
+    # `ModelSpec.tunable_hyperparameters` avant d'enfiler le job (voir
+    # `_validate_hyperparameter_overrides` ci-dessous) : jamais un nom ou
+    # une valeur hors-catalogue transmis tel quel au moteur. `None` :
+    # comportement strictement inchangé, recherche entièrement automatique.
+    hyperparameter_overrides: Optional[dict[str, dict[str, Any]]] = None
     feature_engineering: Optional[FeatureEngineeringConfig] = None
     # Rééquilibrage des classes (lot déséquilibre) — PROPOSÉ à l'utilisateur sur
     # la base du garde-fou Lot B (`desequilibre_classes`), jamais appliqué
@@ -97,6 +105,21 @@ class TrainingJobCreate(BaseModel):
     # `test_size`...), jamais dans `feature_engineering_json`. Ignoré si la
     # tâche est une régression (concept propre à la classification).
     class_rebalancing: bool = False
+
+
+class HyperparamMetaOut(BaseModel):
+    """Un hyperparamètre réglable en mode expert (retour utilisateur direct :
+    "laisser le choix sur les hyperparamètres, profondeur des arbres
+    etc.") — décrit le type de contrôle à rendre côté frontend, jamais le
+    catalogue de modèles codé en dur côté client."""
+    name: str
+    label: str
+    kind: str  # "int" | "float" | "categorical"
+    low: Optional[float] = None
+    high: Optional[float] = None
+    log: bool = False
+    choices: Optional[List[str]] = None
+    help: str = ""
 
 
 class ModelCatalogEntry(BaseModel):
@@ -111,6 +134,7 @@ class ModelCatalogEntry(BaseModel):
     supports_rebalancing: bool
     supported_tasks: List[str]
     slow: bool
+    tunable_hyperparameters: List[HyperparamMetaOut] = []
 
 
 class ModelCatalogResponse(BaseModel):
@@ -448,6 +472,72 @@ def _validate_and_serialize_feature_engineering(
     return json.dumps({"version": CURRENT_SPEC_VERSION, "upstream": fe.upstream, "pipeline": fe.pipeline})
 
 
+def _validate_hyperparameter_overrides(
+    overrides: Optional[dict[str, dict[str, Any]]], effective_model_ids: set[str], task_type: str
+) -> None:
+    """Mode expert hyperparamètres (retour utilisateur direct : "laisser le
+    choix sur les hyperparamètres, profondeur des arbres etc.") — jamais
+    fait confiance au client : rejette toute surcharge qui référence un
+    modèle inconnu ou non sélectionné pour ce job, un nom d'hyperparamètre
+    qui n'existe pas pour ce modèle, ou une valeur hors du type/des bornes
+    déclarés dans `ModelSpec.tunable_hyperparameters` — avant d'enfiler le
+    job, jamais découvert en pleine recherche Optuna."""
+    if not overrides:
+        return
+    for model_id, params in overrides.items():
+        spec = MODEL_REGISTRY.get(model_id)
+        if spec is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"code": "MODELE_INCONNU", "message": f"Modèle inconnu pour les hyperparamètres : {model_id}"},
+            )
+        if model_id not in effective_model_ids:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "code": "MODELE_NON_SELECTIONNE",
+                    "message": f"{spec.label(task_type)} : hyperparamètres fixés hors des modèles comparés",
+                },
+            )
+        meta_by_name = {m.name: m for m in spec.tunable_hyperparameters}
+        for name, value in params.items():
+            meta = meta_by_name.get(name)
+            if meta is None:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail={
+                        "code": "HYPERPARAMETRE_INCONNU",
+                        "message": f"« {name} » n'est pas un hyperparamètre réglable de « {spec.label(task_type)} »",
+                    },
+                )
+            if meta.kind == "categorical":
+                if value not in (meta.choices or ()):
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail={
+                            "code": "HYPERPARAMETRE_INVALIDE",
+                            "message": f"{name} doit être l'une de {list(meta.choices or ())}",
+                        },
+                    )
+            else:
+                if not isinstance(value, (int, float)) or isinstance(value, bool):
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail={
+                            "code": "HYPERPARAMETRE_INVALIDE",
+                            "message": f"« {name} » doit être un nombre pour « {spec.label(task_type)} »",
+                        },
+                    )
+                if (meta.low is not None and value < meta.low) or (meta.high is not None and value > meta.high):
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail={
+                            "code": "HYPERPARAMETRE_HORS_BORNES",
+                            "message": f"{name} doit être entre {meta.low} et {meta.high}",
+                        },
+                    )
+
+
 def _get_org_job(job_id: int, current_user: User, db: Session) -> TrainingJob:
     job = (
         db.query(TrainingJob)
@@ -484,6 +574,19 @@ def get_models_catalog(current_user: User = Depends(get_current_user)):
                 supports_rebalancing=spec.supports_rebalancing,
                 supported_tasks=tasks,
                 slow=spec.id in _SLOW_MODEL_IDS,
+                tunable_hyperparameters=[
+                    HyperparamMetaOut(
+                        name=m.name,
+                        label=m.label,
+                        kind=m.kind,
+                        low=m.low,
+                        high=m.high,
+                        log=m.log,
+                        choices=list(m.choices) if m.choices else None,
+                        help=m.help,
+                    )
+                    for m in spec.tunable_hyperparameters
+                ],
             )
         )
     return ModelCatalogResponse(models=entries)
@@ -651,6 +754,16 @@ def create_training_job(
                 },
             )
 
+    # Mode expert hyperparamètres (retour utilisateur direct : "laisser le
+    # choix sur les hyperparamètres, profondeur des arbres etc.") — jamais
+    # fait confiance au client : un nom de modèle/hyperparamètre inconnu ou
+    # une valeur hors bornes déclarées est rejetée ici, avant d'enfiler le
+    # job (jamais découvert 20 essais Optuna plus tard).
+    effective_model_ids = set(selected_model_ids) if selected_model_ids is not None else {
+        s.id for s in models_for_task(task_type, subset="default")
+    }
+    _validate_hyperparameter_overrides(body.hyperparameter_overrides, effective_model_ids, task_type)
+
     config = {
         "test_size": body.test_size,
         "seed": body.seed if body.seed is not None else _settings.model_seed,
@@ -661,6 +774,7 @@ def create_training_job(
         "shap_sample_size": _settings.shap_sample_size,
         "class_rebalancing": body.class_rebalancing,
         "model_ids": selected_model_ids,
+        "hyperparameter_overrides": body.hyperparameter_overrides,
     }
 
     job = TrainingJob(
@@ -1302,6 +1416,7 @@ def rerun_training_job(
         seed=config.get("seed"),
         cqr_alpha=config.get("cqr_alpha"),
         model_ids=config.get("model_ids"),
+        hyperparameter_overrides=config.get("hyperparameter_overrides"),
         feature_engineering=FeatureEngineeringConfig(upstream=fe["upstream"], pipeline=fe["pipeline"]) if fe else None,
         class_rebalancing=config.get("class_rebalancing", False),
     )

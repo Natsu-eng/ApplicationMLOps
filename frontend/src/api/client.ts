@@ -1102,6 +1102,25 @@ export interface TrainingJobCreatePayload {
   seed?: number;
   cqr_alpha?: number;
   model_ids?: string[];
+  // Mode expert hyperparamètres (retour utilisateur direct : "laisser le
+  // choix sur les hyperparamètres, profondeur des arbres etc.") — absent :
+  // recherche entièrement automatique, comportement inchangé.
+  hyperparameter_overrides?: Record<string, Record<string, number | string>>;
+}
+
+/** Un hyperparamètre réglable en mode expert (retour utilisateur direct :
+ * "laisser le choix sur les hyperparamètres, profondeur des arbres etc.")
+ * — décrit le type de contrôle à rendre, jamais un catalogue codé en dur
+ * côté frontend. */
+export interface HyperparamMeta {
+  name: string;
+  label: string;
+  kind: "int" | "float" | "categorical";
+  low: number | null;
+  high: number | null;
+  log: boolean;
+  choices: string[] | null;
+  help: string;
 }
 
 /** Une entrée du catalogue de modèles (Lot 5), exposée au mode expert
@@ -1114,7 +1133,13 @@ export interface ModelCatalogEntry {
   supports_rebalancing: boolean;
   supported_tasks: TaskType[];
   slow: boolean;
+  tunable_hyperparameters: HyperparamMeta[];
 }
+
+/** Valeurs fixées par l'utilisateur, clé = id du modèle (registre), valeur
+ * = {nom_hyperparamètre: valeur fixée} — un hyperparamètre absent reste
+ * recherché automatiquement par Optuna. */
+export type HyperparameterOverrides = Record<string, Record<string, number | string>>;
 
 export interface DurationEstimate {
   status: "estimated" | "degraded";

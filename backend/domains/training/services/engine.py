@@ -158,6 +158,17 @@ class TrainingConfig:
     # produit "B", `ModelSpec.is_default`), voir `train_and_evaluate`. Validé
     # et filtré selon la tâche par l'API avant d'arriver ici (`routers/training.py`).
     model_ids: Optional[list[str]] = None
+    # Mode expert (retour utilisateur direct : "laisser le choix sur les
+    # hyperparamètres, profondeur des arbres etc.") — clé = id du registre
+    # (`ml_registry.MODEL_REGISTRY`), valeur = {nom_hyperparamètre: valeur
+    # fixée}. Un hyperparamètre absent de cette valeur reste recherché
+    # normalement par Optuna — l'utilisateur ne fixe que ce qu'il choisit
+    # explicitement, jamais tout ou rien. `None`/`{}` : comportement
+    # strictement inchangé (recherche entièrement automatique, voir
+    # `_optimize_one_model`). Validé contre `ModelSpec.tunable_hyperparameters`
+    # par l'API avant d'arriver ici (`routers/training.py`), jamais fait
+    # confiance aveuglément à ce stade.
+    hyperparameter_overrides: Optional[dict[str, dict[str, Any]]] = None
 
 
 @dataclass
@@ -328,8 +339,15 @@ def _optimize_one_model(
     apply_rebalancing = sample_weight is not None and spec.supports_rebalancing
     fit_params = {"model__sample_weight": sample_weight} if apply_rebalancing else None
 
+    # Mode expert (retour utilisateur direct : "laisser le choix sur les
+    # hyperparamètres, profondeur des arbres etc.") — valeurs fixées par
+    # l'utilisateur pour CE modèle, jamais recherchées par Optuna (voir
+    # `registry.py::_sg`). `{}` par défaut : comportement strictement
+    # inchangé, recherche entièrement automatique comme avant ce correctif.
+    overrides = (config.hyperparameter_overrides or {}).get(spec.id, {})
+
     def objective(trial: optuna.Trial) -> float:
-        params = spec.hyperparameter_space(trial)
+        params = spec.hyperparameter_space(trial, overrides)
         model = spec.build_estimator(task_type, config.seed, params, False)
         steps = [("preprocess", clone(preprocessor_template))]
         if spec.requires_dense_input:
@@ -365,7 +383,17 @@ def _optimize_one_model(
     # retrouve `probability=True`, nécessaire à `predict_proba` en évaluation
     # finale/inférence) — un seul objet construit ici, jamais fit tant que ce
     # candidat n'est pas le gagnant (voir `train_and_evaluate`).
-    best_model = spec.build_estimator(task_type, config.seed, study.best_params, True)
+    #
+    # `study.best_params` ne contient QUE ce qu'Optuna a réellement suggéré
+    # (`trial.suggest_*`) — un hyperparamètre fixé par l'utilisateur (mode
+    # expert) n'y apparaît jamais, puisque `_sg` court-circuite l'appel à
+    # `trial.suggest_*` pour lui (voir `registry.py`). Sans cette fusion, le
+    # modèle FINAL retomberait silencieusement sur la valeur par défaut de
+    # la bibliothèque pour ce paramètre au lieu du choix explicite de
+    # l'utilisateur — `overrides` doit donc être réappliqué ici aussi,
+    # jamais seulement pendant la recherche.
+    final_params = {**study.best_params, **overrides}
+    best_model = spec.build_estimator(task_type, config.seed, final_params, True)
     best_attrs = study.best_trial.user_attrs
     return OptimizedCandidate(
         model=best_model,

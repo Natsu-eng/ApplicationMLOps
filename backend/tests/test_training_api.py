@@ -464,6 +464,205 @@ def test_create_job_rejects_model_ids_incompatible_with_detected_task(mock_queue
     assert resp.json()["detail"]["code"] == "AUCUN_MODELE_COMPATIBLE"
 
 
+# ── Mode expert : hyperparamètres fixés par l'utilisateur (retour
+# utilisateur direct : "laisser le choix sur les hyperparamètres,
+# profondeur des arbres etc.") ───────────────────────────────────────────
+
+
+@patch("domains.training.router.training_queue")
+def test_create_job_accepts_valid_hyperparameter_overrides(mock_queue, client, db_session):
+    mock_queue.enqueue.return_value.id = "fake-rq-id"
+    headers = _register(client)
+    dataset = _upload_dataset(client, headers)
+
+    resp = client.post(
+        "/api/training/jobs",
+        headers=headers,
+        json={
+            "dataset_id": dataset["id"],
+            "target_column": "cible",
+            "model_ids": ["random_forest"],
+            "hyperparameter_overrides": {"random_forest": {"max_depth": 6}},
+        },
+    )
+    assert resp.status_code == 201
+    job = db_session.query(TrainingJob).filter(TrainingJob.id == resp.json()["id"]).first()
+    config = json.loads(job.config_json)
+    assert config["hyperparameter_overrides"] == {"random_forest": {"max_depth": 6}}
+
+
+@patch("domains.training.router.training_queue")
+def test_create_job_rejects_hyperparameter_override_for_unknown_model(mock_queue, client):
+    headers = _register(client)
+    dataset = _upload_dataset(client, headers)
+
+    resp = client.post(
+        "/api/training/jobs",
+        headers=headers,
+        json={"dataset_id": dataset["id"], "target_column": "cible", "hyperparameter_overrides": {"modele_bidon": {"x": 1}}},
+    )
+    assert resp.status_code == 400
+    assert resp.json()["detail"]["code"] == "MODELE_INCONNU"
+
+
+@patch("domains.training.router.training_queue")
+def test_create_job_rejects_hyperparameter_override_for_model_not_selected(mock_queue, client):
+    """« lightgbm » a des hyperparamètres fixés mais seul « random_forest »
+    est comparé — rejeté explicitement plutôt qu'ignoré silencieusement."""
+    headers = _register(client)
+    dataset = _upload_dataset(client, headers)
+
+    resp = client.post(
+        "/api/training/jobs",
+        headers=headers,
+        json={
+            "dataset_id": dataset["id"],
+            "target_column": "cible",
+            "model_ids": ["random_forest"],
+            "hyperparameter_overrides": {"lightgbm": {"max_depth": 6}},
+        },
+    )
+    assert resp.status_code == 400
+    assert resp.json()["detail"]["code"] == "MODELE_NON_SELECTIONNE"
+
+
+@patch("domains.training.router.training_queue")
+def test_create_job_rejects_unknown_hyperparameter_name(mock_queue, client):
+    headers = _register(client)
+    dataset = _upload_dataset(client, headers)
+
+    resp = client.post(
+        "/api/training/jobs",
+        headers=headers,
+        json={
+            "dataset_id": dataset["id"],
+            "target_column": "cible",
+            "model_ids": ["random_forest"],
+            "hyperparameter_overrides": {"random_forest": {"hyperparametre_bidon": 1}},
+        },
+    )
+    assert resp.status_code == 400
+    assert resp.json()["detail"]["code"] == "HYPERPARAMETRE_INCONNU"
+
+
+@patch("domains.training.router.training_queue")
+def test_create_job_rejects_hyperparameter_value_out_of_bounds(mock_queue, client):
+    headers = _register(client)
+    dataset = _upload_dataset(client, headers)
+
+    resp = client.post(
+        "/api/training/jobs",
+        headers=headers,
+        json={
+            "dataset_id": dataset["id"],
+            "target_column": "cible",
+            "model_ids": ["random_forest"],
+            "hyperparameter_overrides": {"random_forest": {"max_depth": 999}},
+        },
+    )
+    assert resp.status_code == 400
+    assert resp.json()["detail"]["code"] == "HYPERPARAMETRE_HORS_BORNES"
+
+
+@patch("domains.training.router.training_queue")
+def test_create_job_rejects_hyperparameter_value_of_wrong_type(mock_queue, client):
+    headers = _register(client)
+    dataset = _upload_dataset(client, headers)
+
+    resp = client.post(
+        "/api/training/jobs",
+        headers=headers,
+        json={
+            "dataset_id": dataset["id"],
+            "target_column": "cible",
+            "model_ids": ["random_forest"],
+            "hyperparameter_overrides": {"random_forest": {"max_depth": "profond"}},
+        },
+    )
+    assert resp.status_code == 400
+    assert resp.json()["detail"]["code"] == "HYPERPARAMETRE_INVALIDE"
+
+
+@patch("domains.training.router.training_queue")
+def test_create_job_rejects_invalid_categorical_hyperparameter_choice(mock_queue, client):
+    headers = _register(client)
+    dataset = _upload_dataset(client, headers)
+
+    resp = client.post(
+        "/api/training/jobs",
+        headers=headers,
+        json={
+            "dataset_id": dataset["id"],
+            "target_column": "cible",
+            "model_ids": ["svm"],
+            "hyperparameter_overrides": {"svm": {"kernel": "polynomial"}},
+        },
+    )
+    assert resp.status_code == 400
+    assert resp.json()["detail"]["code"] == "HYPERPARAMETRE_INVALIDE"
+
+
+@patch("domains.training.router.training_queue")
+def test_create_job_validates_overrides_against_default_subset_when_model_ids_absent(mock_queue, client):
+    """Mode guidé (`model_ids` absent) : les surcharges doivent être validées
+    contre le sous-ensemble par défaut réellement utilisé, pas rejetées à
+    tort — « random_forest » fait partie du sous-ensemble par défaut."""
+    mock_queue.enqueue.return_value.id = "fake-rq-id"
+    headers = _register(client)
+    dataset = _upload_dataset(client, headers)
+
+    resp = client.post(
+        "/api/training/jobs",
+        headers=headers,
+        json={
+            "dataset_id": dataset["id"],
+            "target_column": "cible",
+            "hyperparameter_overrides": {"random_forest": {"max_depth": 6}},
+        },
+    )
+    assert resp.status_code == 201
+
+
+@patch("domains.training.router.training_queue")
+def test_rerun_preserves_hyperparameter_overrides(mock_queue, client, db_session):
+    """Bug réel évité (retour utilisateur direct sur un autre lot, même
+    session : une étape qui oublie une autre) — relancer un entraînement ne
+    doit jamais faire disparaître silencieusement les hyperparamètres fixés
+    par l'utilisateur."""
+    mock_queue.enqueue.return_value.id = "fake-rq-id"
+    headers = _register(client)
+    dataset = _upload_dataset(client, headers)
+    original = client.post(
+        "/api/training/jobs",
+        headers=headers,
+        json={
+            "dataset_id": dataset["id"],
+            "target_column": "cible",
+            "model_ids": ["random_forest"],
+            "hyperparameter_overrides": {"random_forest": {"max_depth": 6}},
+        },
+    ).json()
+
+    resp = client.post(f"/api/training/jobs/{original['id']}/rerun", headers=headers)
+    assert resp.status_code == 201
+    job = db_session.query(TrainingJob).filter(TrainingJob.id == resp.json()["id"]).first()
+    config = json.loads(job.config_json)
+    assert config["hyperparameter_overrides"] == {"random_forest": {"max_depth": 6}}
+
+
+@patch("domains.training.router.training_queue")
+def test_models_catalog_exposes_tunable_hyperparameters(mock_queue, client):
+    headers = _register(client)
+    resp = client.get("/api/training/models-catalog", headers=headers)
+    assert resp.status_code == 200
+    by_id = {m["id"]: m for m in resp.json()["models"]}
+    rf_params = {p["name"] for p in by_id["random_forest"]["tunable_hyperparameters"]}
+    assert "max_depth" in rf_params
+    assert "n_estimators" in rf_params
+    # Chaque hyperparamètre porte un texte d'aide, jamais un contrôle nu.
+    assert all(p["help"] for p in by_id["random_forest"]["tunable_hyperparameters"])
+
+
 # ── Lot D — carte d'historique : score de sélection, pas l'accuracy brute ──
 
 
