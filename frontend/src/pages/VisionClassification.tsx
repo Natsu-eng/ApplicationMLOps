@@ -13,6 +13,7 @@ import {
   Sparkles,
   Target,
   Trash2,
+  Trophy,
   Wand2,
 } from "lucide-react";
 import { Line, LineChart, CartesianGrid, ResponsiveContainer, Tooltip as RechartsTooltip, XAxis, YAxis } from "recharts";
@@ -20,6 +21,7 @@ import {
   ApiError,
   api,
   type AugmentationPreset,
+  type BackboneComparisonCandidate,
   type GradCamBatchItem,
   type GradCamExplanation,
   type VisionBackbone,
@@ -43,6 +45,8 @@ import { SectionHeader } from "../components/ui/SectionHeader";
 import { Select } from "../components/ui/Select";
 import { Switch } from "../components/ui/Switch";
 import { Tabs } from "../components/ui/Tabs";
+import { Table, type TableColumn } from "../components/ui/Table";
+import { LabelWithHelp } from "../components/ui/Tooltip";
 import { ModelExportActions } from "../components/ui/ModelExportActions";
 import { VisionDatasetPicker } from "../components/vision/VisionDatasetPicker";
 import { useJobEvents } from "../hooks/useJobEvents";
@@ -78,6 +82,9 @@ const ACTIVE_JOB_STORAGE_KEY = "datalab_active_vision_classification_job_id";
 // Même plafond que `router.py::MAX_EXPLAIN_BATCH_SIZE` — affiché ici pour
 // que l'utilisateur voie la limite AVANT de se heurter à un rejet serveur.
 const MAX_EXPLAIN_BATCH_SIZE = 12;
+// Même plafond que `services/engine.py::MAX_BACKBONES_PER_COMPARISON` —
+// comparatif de backbones (mode expert), affiché ici pour la même raison.
+const MAX_BACKBONES_PER_COMPARISON = 4;
 
 type Phase = "configure" | "progress" | "results" | "failed" | "cancelled";
 
@@ -302,9 +309,15 @@ function ClassificationForm({ onJobCreated }: { onJobCreated: (job: VisionClassi
   const [datasetDetail, setDatasetDetail] = useState<VisionDatasetDetail | null>(null);
   const [backbones, setBackbones] = useState<VisionBackbone[]>([]);
   const [backboneId, setBackboneId] = useState("");
+  // Mode expert : comparatif de backbones (retour utilisateur direct — parité
+  // avec la comparaison multi-modèles du ML tabulaire) — replié par défaut,
+  // un seul backbone (comportement historique) tant que non activé.
+  const [comparisonMode, setComparisonMode] = useState(false);
+  const [comparisonBackboneIds, setComparisonBackboneIds] = useState<Set<string>>(new Set());
   const [numEpochs, setNumEpochs] = useState(8);
   const [batchSize, setBatchSize] = useState(16);
   const [learningRate, setLearningRate] = useState(1e-3);
+  const [weightDecay, setWeightDecay] = useState(0);
   const [dropoutRate, setDropoutRate] = useState(0.3);
   const [freezeBackbone, setFreezeBackbone] = useState(true);
   const [unfreezeAfterEpoch, setUnfreezeAfterEpoch] = useState<number | "">("");
@@ -378,9 +391,17 @@ function ClassificationForm({ onJobCreated }: { onJobCreated: (job: VisionClassi
         {
           vision_dataset_id: datasetId,
           backbone_id: backboneId,
+          // Mode expert : comparatif (retour utilisateur direct) — n'envoyé
+          // que si réellement activé ET au moins 2 backbones cochés, jamais
+          // un tableau à 1 élément (rejeté côté serveur de toute façon, mais
+          // autant ne pas l'envoyer — même garde que le mode expert du ML
+          // tabulaire, voir trainingPayload.ts).
+          backbone_ids:
+            comparisonMode && comparisonBackboneIds.size >= 2 ? Array.from(comparisonBackboneIds) : undefined,
           num_epochs: numEpochs,
           batch_size: batchSize,
           learning_rate: learningRate,
+          weight_decay: weightDecay,
           dropout_rate: dropoutRate,
           freeze_backbone: freezeBackbone,
           unfreeze_after_epoch: unfreezeAfterEpoch === "" ? null : unfreezeAfterEpoch,
@@ -403,7 +424,21 @@ function ClassificationForm({ onJobCreated }: { onJobCreated: (job: VisionClassi
   }
 
   const selectedBackboneLabel = backbones.find((b) => b.id === backboneId)?.label ?? "—";
-  const step1Valid = Boolean(datasetId && backboneId);
+  const step1Valid = Boolean(
+    datasetId && (comparisonMode ? comparisonBackboneIds.size >= 2 : backboneId),
+  );
+
+  function toggleComparisonBackbone(id: string) {
+    setComparisonBackboneIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else if (next.size < MAX_BACKBONES_PER_COMPARISON) {
+        next.add(id);
+      }
+      return next;
+    });
+  }
 
   return (
     <form onSubmit={handleSubmit}>
@@ -424,21 +459,68 @@ function ClassificationForm({ onJobCreated }: { onJobCreated: (job: VisionClassi
 
             {backbones.length > 0 && (
               <div>
-                <label htmlFor="vc-backbone" className="block text-sm text-muted-foreground mb-1">
-                  Modèle pré-entraîné (transfer learning)
-                </label>
-                <Select id="vc-backbone" value={backboneId} onChange={(e) => setBackboneId(e.target.value)}>
-                  {backbones.map((b) => (
-                    <option key={b.id} value={b.id}>
-                      {b.label}
-                    </option>
-                  ))}
-                </Select>
-                <p className="text-xs text-muted-foreground mt-1">
-                  Un modèle plus léger (MobileNet) entraîne plus vite ; un modèle plus profond (ResNet,
-                  EfficientNet, DenseNet) peut être plus précis sur un dataset plus riche, au prix d'un
-                  entraînement plus long.
-                </p>
+                <div className="flex items-center justify-between gap-3 mb-1">
+                  <label htmlFor="vc-backbone" className="block text-sm text-muted-foreground">
+                    Modèle pré-entraîné (transfer learning)
+                  </label>
+                  <Switch
+                    checked={comparisonMode}
+                    onChange={(v) => {
+                      setComparisonMode(v);
+                      if (v) setComparisonBackboneIds(new Set(backboneId ? [backboneId] : []));
+                    }}
+                    label="Comparer plusieurs modèles"
+                  />
+                </div>
+
+                {!comparisonMode ? (
+                  <>
+                    <Select id="vc-backbone" value={backboneId} onChange={(e) => setBackboneId(e.target.value)}>
+                      {backbones.map((b) => (
+                        <option key={b.id} value={b.id}>
+                          {b.label}
+                        </option>
+                      ))}
+                    </Select>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Un modèle plus léger (MobileNet) entraîne plus vite ; un modèle plus profond (ResNet,
+                      EfficientNet, DenseNet) peut être plus précis sur un dataset plus riche, au prix d'un
+                      entraînement plus long.
+                    </p>
+                  </>
+                ) : (
+                  <div>
+                    <p className="text-xs text-muted-foreground mb-2">
+                      Chaque modèle coché sera entraîné avec les mêmes réglages, puis le meilleur sur la
+                      validation sera automatiquement retenu — jusqu'à {MAX_BACKBONES_PER_COMPARISON} modèles
+                      ({comparisonBackboneIds.size}/{MAX_BACKBONES_PER_COMPARISON} sélectionnés). L'entraînement
+                      prendra environ {comparisonBackboneIds.size || 1}× plus longtemps qu'un seul modèle.
+                    </p>
+                    <div className="space-y-1.5">
+                      {backbones.map((b) => {
+                        const checked = comparisonBackboneIds.has(b.id);
+                        const disabled = !checked && comparisonBackboneIds.size >= MAX_BACKBONES_PER_COMPARISON;
+                        return (
+                          <label
+                            key={b.id}
+                            className={`flex items-center gap-2 rounded-lg border px-2.5 py-2 text-sm cursor-pointer transition-colors ${
+                              checked ? "border-primary/40 bg-primary/10 text-primary" : "border-border text-foreground/90"
+                            } ${disabled ? "opacity-50 cursor-not-allowed" : ""}`}
+                          >
+                            <input
+                              type="checkbox"
+                              className="accent-primary"
+                              checked={checked}
+                              disabled={disabled}
+                              onChange={() => toggleComparisonBackbone(b.id)}
+                            />
+                            {b.label}
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 
@@ -582,6 +664,25 @@ function ClassificationForm({ onJobCreated }: { onJobCreated: (job: VisionClassi
                   />
                 </div>
 
+                <div>
+                  <label htmlFor="vc-weight-decay" className="block text-sm text-muted-foreground mb-1">
+                    <LabelWithHelp
+                      label={`Régularisation L2 (weight decay) — ${weightDecay}`}
+                      help="Pénalise les poids trop grands pendant l'entraînement, en plus du dropout — un second levier contre le sur-apprentissage. 0 = désactivée (comportement historique)."
+                    />
+                  </label>
+                  <input
+                    id="vc-weight-decay"
+                    type="range"
+                    min={0}
+                    max={0.01}
+                    step={0.0005}
+                    value={weightDecay}
+                    onChange={(e) => setWeightDecay(Number(e.target.value))}
+                    className="w-full accent-primary"
+                  />
+                </div>
+
                 <div className="flex items-center justify-between rounded-lg border border-border px-3 py-2.5">
                   <div>
                     <p className="text-sm text-foreground">Pondération de classes</p>
@@ -686,6 +787,56 @@ function MetricTile({ label, value, color }: { label: string; value: string; col
   );
 }
 
+// Mode expert : classement des backbones comparés (retour utilisateur direct
+// — parité avec le classement multi-modèles du ML tabulaire) — n'apparaît
+// que sur un job lancé avec `backbone_ids` (≥ 2 entrées).
+const BACKBONE_CANDIDATE_COLUMNS: TableColumn<BackboneComparisonCandidate>[] = [
+  { key: "backbone_label", header: "Backbone", render: (c) => c.backbone_label },
+  {
+    key: "best_val_accuracy",
+    header: "Exactitude (validation)",
+    render: (c) => `${(c.best_val_accuracy * 100).toFixed(1)} %`,
+    sortValue: (c) => c.best_val_accuracy,
+  },
+  {
+    key: "best_val_loss",
+    header: "Perte (validation)",
+    render: (c) => c.best_val_loss.toFixed(4),
+    sortValue: (c) => c.best_val_loss,
+  },
+  {
+    key: "test_accuracy",
+    header: "Exactitude (test)",
+    render: (c) => `${(c.test_accuracy * 100).toFixed(1)} %`,
+    sortValue: (c) => c.test_accuracy,
+  },
+  { key: "num_epochs_run", header: "Époques", render: (c) => String(c.num_epochs_run) },
+  {
+    key: "training_seconds",
+    header: "Durée",
+    render: (c) => `${Math.round(c.training_seconds)} s${c.time_capped ? " (plafonnée)" : ""}`,
+  },
+];
+
+function BackboneComparisonCard({ candidates }: { candidates: BackboneComparisonCandidate[] }) {
+  return (
+    <Card className={`p-5 ${accentSurfaceClass("amber")}`}>
+      <SectionHeader
+        icon={Trophy}
+        color="amber"
+        label={`Comparatif de backbones (${candidates.length})`}
+        help="Chaque backbone a été entraîné avec les mêmes réglages. Le retenu (surligné) est celui dont la meilleure époque généralise le mieux — perte de validation minimale, jamais le score de test (réservé à l'évaluation finale, pas au choix entre candidats)."
+      />
+      <Table
+        columns={BACKBONE_CANDIDATE_COLUMNS}
+        rows={candidates}
+        rowKey={(c) => c.backbone_id}
+        highlightRow={(c) => c.selected}
+      />
+    </Card>
+  );
+}
+
 function ClassificationResultView({ jobId, datasetId }: { jobId: number; datasetId: number }) {
   const [result, setResult] = useState<VisionClassificationResult | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -772,6 +923,10 @@ function ClassificationResultView({ jobId, datasetId }: { jobId: number; dataset
           {Boolean(result.model_card.time_capped) && " Entraînement arrêté par le garde-fou de temps CPU."}
         </p>
       </Card>
+
+      {Array.isArray(result.model_card.candidates) && result.model_card.candidates.length > 1 && (
+        <BackboneComparisonCard candidates={result.model_card.candidates as BackboneComparisonCandidate[]} />
+      )}
 
       <ModelExportActions
         onExportArtifact={() => api.visionClassification.exportModel(jobId)}

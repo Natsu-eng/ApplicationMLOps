@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import time
 from collections import Counter
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Callable
 
@@ -50,7 +50,7 @@ from torchvision import transforms
 from torchvision.datasets import ImageFolder
 
 from domains.shared.ml_preprocessing import TrainingAbortedError
-from domains.vision.anomalies.services.registry import IMAGE_SIZE, get_anomaly_model_spec
+from domains.vision.anomalies.services.registry import ANOMALY_MODEL_REGISTRY, IMAGE_SIZE, get_anomaly_model_spec
 from domains.vision.shared import AUGMENTATION_PRESET_IDS, augmentation_transforms
 from domains.vision.localization import (
     DEFAULT_MASK_PERCENTILE,
@@ -81,6 +81,13 @@ MAX_EXAMPLES = 12
 # 10 images de test, donc en dessous de ce plancher une fois divisées par 2.
 MIN_IMAGES_PER_CATEGORY_FOR_CALIBRATION_SPLIT = 6
 
+# Mode expert (retour utilisateur direct : parité avec le comparatif
+# multi-modèles du ML tabulaire et le comparatif multi-backbones de la
+# classification) — borne au nombre d'architectures réellement disponibles
+# dans le registre (3 aujourd'hui) : comparer un id en double n'aurait aucun
+# sens, jamais une constante arbitraire déconnectée du registre.
+MAX_MODELS_PER_COMPARISON = len(ANOMALY_MODEL_REGISTRY)
+
 
 @dataclass
 class AnomalyVisionConfig:
@@ -88,6 +95,10 @@ class AnomalyVisionConfig:
     num_epochs: int = 15
     batch_size: int = 16
     learning_rate: float = 1e-3
+    # Régularisation L2 (mode expert) — voir
+    # vision/classification/services/engine.py::ClassificationConfig.weight_decay,
+    # même levier, même raisonnement. 0.0 = comportement historique inchangé.
+    weight_decay: float = 0.0
     seed: int = 42
     max_training_seconds: int = 1500
     mask_percentile: float = DEFAULT_MASK_PERCENTILE
@@ -355,7 +366,7 @@ def train_and_evaluate_anomaly_vision(
     # le terme KL. Les autres architectures (dont le débruiteur, qui ne
     # change QUE le forward, pas la loss) restent sur MSELoss standard.
     use_custom_loss = spec.loss_kind == "vae"
-    optimizer = torch.optim.Adam(model.parameters(), lr=config.learning_rate)
+    optimizer = torch.optim.Adam(model.parameters(), lr=config.learning_rate, weight_decay=config.weight_decay)
 
     history: list[EpochMetrics] = []
     best_val_loss = float("inf")
@@ -523,6 +534,7 @@ def train_and_evaluate_anomaly_vision(
         "time_capped": time_capped,
         "seed": config.seed,
         "mask_percentile": config.mask_percentile,
+        "weight_decay": config.weight_decay,
         "augmentation_preset": config.augmentation_preset,
         "val_ratio": config.val_ratio,
         "n_defect_categories": len(class_names) - 1,  # toutes sauf "good"
@@ -571,3 +583,70 @@ def train_and_evaluate_anomaly_vision(
         score_histogram=score_histogram,
         category_breakdown=category_breakdown,
     )
+
+
+def train_and_compare_anomaly_models(
+    dataset_dir: Path,
+    base_config: AnomalyVisionConfig,
+    model_ids: list[str],
+    progress_cb: ProgressCallback,
+) -> AnomalyVisionResult:
+    """Mode expert — comparatif automatique de plusieurs architectures
+    (autoencodeur convolutif / débruiteur / variationnel), même principe que
+    `vision/classification/services/engine.py::train_and_compare_backbones`
+    (voir sa docstring pour le raisonnement complet, identique ici).
+
+    Sélection par min(val_loss) sur l'historique de chaque candidat — jamais
+    le ROC-AUC ni les métriques de test, qui dépendent du SEUIL calibré sur
+    `test/` (fuite si utilisé pour choisir ENTRE modèles, pas seulement pour
+    évaluer le modèle déjà choisi). `val_loss` est toujours une MSE de
+    reconstruction pure, y compris pour le VAE (voir plus haut, la boucle
+    d'entraînement) : les 3 architectures restent directement comparables sur
+    ce même critère, aucun besoin de normaliser entre elles."""
+    if len(model_ids) < 2:
+        raise TrainingAbortedError("La comparaison de modèles nécessite au moins 2 architectures")
+    if len(model_ids) > MAX_MODELS_PER_COMPARISON:
+        raise TrainingAbortedError(f"Au plus {MAX_MODELS_PER_COMPARISON} architectures comparables par entraînement")
+    if len(set(model_ids)) != len(model_ids):
+        raise TrainingAbortedError("Architectures en double dans le comparatif")
+
+    n = len(model_ids)
+    results: dict[str, AnomalyVisionResult] = {}
+    candidates: list[dict[str, Any]] = []
+
+    for i, model_id in enumerate(model_ids):
+        spec = get_anomaly_model_spec(model_id)  # lève si id inconnu — jamais découvert à mi-job
+
+        def scoped_progress_cb(step: str, percent: int, _i: int = i, _label: str = spec.label) -> None:
+            overall = int((_i * 100 + percent) / n)
+            progress_cb(f"[{_i + 1}/{n}] {_label} — {step}", min(overall, 99))
+
+        candidate_config = replace(base_config, model_id=model_id)
+        t0 = time.monotonic()
+        result = train_and_evaluate_anomaly_vision(dataset_dir, candidate_config, scoped_progress_cb)
+        elapsed_seconds = time.monotonic() - t0
+        results[model_id] = result
+
+        best_val_loss = min((h.val_loss for h in result.history), default=float("inf"))
+        candidates.append({
+            "model_id": model_id,
+            "model_label": spec.label,
+            "best_val_loss": best_val_loss,
+            "roc_auc": result.roc_auc,
+            "test_accuracy": result.test_accuracy,
+            "num_epochs_run": len(result.history),
+            "time_capped": bool(result.model_card.get("time_capped")),
+            "training_seconds": round(elapsed_seconds, 1),
+        })
+
+    winner = min(candidates, key=lambda c: c["best_val_loss"])
+    winner_id = winner["model_id"]
+    for c in candidates:
+        c["selected"] = c["model_id"] == winner_id
+
+    progress_cb("Terminé", 100)
+
+    winner_result = results[winner_id]
+    winner_result.model_card["candidates"] = candidates
+    winner_result.model_card["comparison_mode"] = True
+    return winner_result

@@ -19,7 +19,11 @@ from api.core.models import VisionAnomalyExampleRecord, VisionAnomalyJob, Vision
 from api.core.observability import request_id_var
 from api.core.storage import vision_anomaly_model_file_path
 from domains.shared.ml_preprocessing import TrainingAbortedError
-from domains.vision.anomalies.services.engine import AnomalyVisionConfig, train_and_evaluate_anomaly_vision
+from domains.vision.anomalies.services.engine import (
+    AnomalyVisionConfig,
+    train_and_compare_anomaly_models,
+    train_and_evaluate_anomaly_vision,
+)
 
 logger = logging.getLogger("datalab.vision_anomaly_worker")
 
@@ -76,9 +80,18 @@ def run_vision_anomaly_job(job_id: int) -> None:
                     "un dataset de classification ne peut pas être utilisé pour la détection d'anomalies visuelles"
                 )
 
-            config = AnomalyVisionConfig(**json.loads(job.config_json))
+            config_dict = json.loads(job.config_json)
+            # Mode expert : comparatif d'architectures (retour utilisateur
+            # direct, voir services/engine.py::train_and_compare_anomaly_models)
+            # — un champ en plus dans config_json, jamais accepté par
+            # `AnomalyVisionConfig` (donc retiré avant construction).
+            model_ids = config_dict.pop("model_ids", None)
+            config = AnomalyVisionConfig(**config_dict)
             progress_cb = _make_progress_callback(db, job)
-            result = train_and_evaluate_anomaly_vision(Path(dataset.storage_dir), config, progress_cb)
+            if model_ids:
+                result = train_and_compare_anomaly_models(Path(dataset.storage_dir), config, model_ids, progress_cb)
+            else:
+                result = train_and_evaluate_anomaly_vision(Path(dataset.storage_dir), config, progress_cb)
 
             artifact_path = vision_anomaly_model_file_path(job.organization_id, job.id)
             torch.save(result.model_artifact, artifact_path)

@@ -12,12 +12,14 @@ from PIL import Image
 from domains.shared.ml_preprocessing import TrainingAbortedError
 from domains.vision.classification.services.engine import (
     AUGMENTATION_PRESET_IDS,
+    MAX_BACKBONES_PER_COMPARISON,
     MIN_IMAGES_PER_CLASS_FOR_TRAINING,
     ClassificationConfig,
     augmentation_transforms,
     _class_weights,
     _should_stop_early,
     recommend_augmentation_preset,
+    train_and_compare_backbones,
     train_and_evaluate_classification,
 )
 
@@ -389,3 +391,61 @@ def test_representative_sample_exhausts_small_groups_gracefully():
 
     assert len(sample) == 4
     assert "b1" in sample  # le seul élément du petit groupe doit apparaître
+
+
+# ── Mode expert : comparatif de backbones (retour utilisateur direct, parité
+# avec le comparatif multi-modèles du ML tabulaire) ─────────────────────────
+
+
+def test_compare_backbones_returns_the_candidate_with_lowest_best_val_loss(tmp_path):
+    _write_classification_dataset(tmp_path, {"classe_a": 8, "classe_b": 8})
+    base_config = ClassificationConfig(num_epochs=1, batch_size=4)
+    backbone_ids = ["mobilenet_v3_small", "shufflenet_v2"]
+
+    result = train_and_compare_backbones(tmp_path, base_config, backbone_ids, _noop_progress)
+
+    candidates = result.model_card["candidates"]
+    assert result.model_card["comparison_mode"] is True
+    assert {c["backbone_id"] for c in candidates} == set(backbone_ids)
+    # Un seul candidat retenu, et c'est bien celui de plus petite val_loss.
+    selected = [c for c in candidates if c["selected"]]
+    assert len(selected) == 1
+    assert selected[0]["backbone_id"] == min(candidates, key=lambda c: c["best_val_loss"])["backbone_id"]
+    # Le résultat retourné EST celui du gagnant (même structure qu'un
+    # entraînement mono-backbone, `backbone_id` cohérent avec le candidat élu).
+    assert result.backbone_id == selected[0]["backbone_id"]
+
+
+def test_compare_backbones_requires_at_least_two_candidates(tmp_path):
+    _write_classification_dataset(tmp_path, {"classe_a": 8, "classe_b": 8})
+    config = ClassificationConfig(num_epochs=1, batch_size=4)
+    with pytest.raises(TrainingAbortedError):
+        train_and_compare_backbones(tmp_path, config, ["mobilenet_v3_small"], _noop_progress)
+
+
+def test_compare_backbones_rejects_more_than_the_maximum(tmp_path):
+    _write_classification_dataset(tmp_path, {"classe_a": 8, "classe_b": 8})
+    config = ClassificationConfig(num_epochs=1, batch_size=4)
+    too_many = [
+        "mobilenet_v3_small", "resnet18", "resnet34", "mobilenet_v3_large", "efficientnet_b0",
+    ][: MAX_BACKBONES_PER_COMPARISON + 1]
+    with pytest.raises(TrainingAbortedError):
+        train_and_compare_backbones(tmp_path, config, too_many, _noop_progress)
+
+
+def test_compare_backbones_rejects_duplicates(tmp_path):
+    _write_classification_dataset(tmp_path, {"classe_a": 8, "classe_b": 8})
+    config = ClassificationConfig(num_epochs=1, batch_size=4)
+    with pytest.raises(TrainingAbortedError):
+        train_and_compare_backbones(
+            tmp_path, config, ["mobilenet_v3_small", "mobilenet_v3_small"], _noop_progress
+        )
+
+
+def test_weight_decay_is_applied_without_error_and_reported_honestly(tmp_path):
+    _write_classification_dataset(tmp_path, {"classe_a": 8, "classe_b": 8})
+    config = ClassificationConfig(num_epochs=1, batch_size=4, weight_decay=0.01)
+
+    result = train_and_evaluate_classification(tmp_path, config, _noop_progress)
+
+    assert result.model_card["weight_decay"] == 0.01

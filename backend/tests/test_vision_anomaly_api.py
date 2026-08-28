@@ -311,3 +311,70 @@ def test_examples_isolated_between_organizations(client):
     headers_b = _register(client, "b@bureau-b.fr", "Bureau B")
     resp = client.get(f"/api/vision/anomalies/jobs/{job['id']}/examples", headers=headers_b)
     assert resp.status_code == 404
+
+
+# ── Mode expert : comparatif d'architectures (retour utilisateur direct,
+# parité avec `backbone_ids` de la classification) ──────────────────────────
+
+
+def test_create_job_accepts_model_ids_comparison(client):
+    headers = _register(client)
+    dataset = _upload_vision_dataset(client, headers, _mvtec_zip_bytes())
+    resp = _create_job(
+        client, headers, dataset["id"], model_ids=["conv_autoencoder", "denoising_autoencoder"]
+    )
+    assert resp.status_code == 201
+
+
+def test_create_job_rejects_a_single_model_id_in_the_comparison_list(client):
+    headers = _register(client)
+    dataset = _upload_vision_dataset(client, headers, _mvtec_zip_bytes())
+    resp = _create_job(client, headers, dataset["id"], model_ids=["conv_autoencoder"])
+    assert resp.status_code == 400
+    assert resp.json()["detail"]["code"] == "COMPARATIF_MODELES_INVALIDE"
+
+
+def test_create_job_rejects_too_many_model_ids(client):
+    headers = _register(client)
+    dataset = _upload_vision_dataset(client, headers, _mvtec_zip_bytes())
+    resp = _create_job(
+        client, headers, dataset["id"],
+        model_ids=["conv_autoencoder", "denoising_autoencoder", "conv_vae", "conv_autoencoder"],
+    )
+    assert resp.status_code == 400
+    assert resp.json()["detail"]["code"] == "COMPARATIF_MODELES_INVALIDE"
+
+
+def test_create_job_rejects_duplicate_model_ids(client):
+    headers = _register(client)
+    dataset = _upload_vision_dataset(client, headers, _mvtec_zip_bytes())
+    resp = _create_job(
+        client, headers, dataset["id"], model_ids=["conv_autoencoder", "conv_autoencoder"]
+    )
+    assert resp.status_code == 400
+    assert resp.json()["detail"]["code"] == "COMPARATIF_MODELES_INVALIDE"
+
+
+def test_create_job_rejects_unknown_model_in_the_comparison_list(client):
+    headers = _register(client)
+    dataset = _upload_vision_dataset(client, headers, _mvtec_zip_bytes())
+    resp = _create_job(client, headers, dataset["id"], model_ids=["conv_autoencoder", "patchcore"])
+    assert resp.status_code == 400
+    assert resp.json()["detail"]["code"] == "MODELE_INCONNU"
+
+
+def test_comparison_result_includes_a_leaderboard_and_the_winner_is_persisted(client, db_session):
+    headers = _register(client)
+    dataset = _upload_vision_dataset(client, headers, _mvtec_zip_bytes())
+    job = _create_job(
+        client, headers, dataset["id"], model_ids=["conv_autoencoder", "denoising_autoencoder"]
+    ).json()
+    run_vision_anomaly_job(job["id"])
+    db_session.expire_all()
+
+    result = client.get(f"/api/vision/anomalies/jobs/{job['id']}/result", headers=headers).json()
+    candidates = result["model_card"]["candidates"]
+    assert len(candidates) == 2
+    assert sum(1 for c in candidates if c["selected"]) == 1
+    winner = next(c for c in candidates if c["selected"])
+    assert result["model_id"] == winner["model_id"]

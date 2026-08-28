@@ -9,10 +9,12 @@ from PIL import Image
 
 from domains.shared.ml_preprocessing import TrainingAbortedError
 from domains.vision.anomalies.services.engine import (
+    MAX_MODELS_PER_COMPARISON,
     MIN_IMAGES_PER_CATEGORY_FOR_CALIBRATION_SPLIT,
     MIN_TRAIN_GOOD_FOR_TRAINING,
     AnomalyVisionConfig,
     _split_calibration_evaluation,
+    train_and_compare_anomaly_models,
     train_and_evaluate_anomaly_vision,
 )
 
@@ -255,3 +257,58 @@ def test_diagnostics_persisted_even_in_biased_fallback_mode(tmp_path):
     assert result.pr_curves
     assert result.score_histogram
     assert result.category_breakdown
+
+
+# ── Mode expert : comparatif d'architectures (retour utilisateur direct,
+# même parité que le comparatif de backbones côté classification) ──────────
+
+
+def test_compare_models_returns_the_candidate_with_lowest_best_val_loss(tmp_path):
+    _write_mvtec_dataset(tmp_path)
+    base_config = AnomalyVisionConfig(num_epochs=1, batch_size=4)
+    model_ids = ["conv_autoencoder", "denoising_autoencoder"]
+
+    result = train_and_compare_anomaly_models(tmp_path, base_config, model_ids, _noop_progress)
+
+    candidates = result.model_card["candidates"]
+    assert result.model_card["comparison_mode"] is True
+    assert {c["model_id"] for c in candidates} == set(model_ids)
+    selected = [c for c in candidates if c["selected"]]
+    assert len(selected) == 1
+    assert selected[0]["model_id"] == min(candidates, key=lambda c: c["best_val_loss"])["model_id"]
+    assert result.model_id == selected[0]["model_id"]
+
+
+def test_compare_models_requires_at_least_two_candidates(tmp_path):
+    _write_mvtec_dataset(tmp_path)
+    config = AnomalyVisionConfig(num_epochs=1, batch_size=4)
+    with pytest.raises(TrainingAbortedError):
+        train_and_compare_anomaly_models(tmp_path, config, ["conv_autoencoder"], _noop_progress)
+
+
+def test_compare_models_rejects_more_than_the_maximum(tmp_path):
+    _write_mvtec_dataset(tmp_path)
+    config = AnomalyVisionConfig(num_epochs=1, batch_size=4)
+    too_many = ["conv_autoencoder", "denoising_autoencoder", "conv_vae", "conv_autoencoder"][
+        : MAX_MODELS_PER_COMPARISON + 1
+    ]
+    with pytest.raises(TrainingAbortedError):
+        train_and_compare_anomaly_models(tmp_path, config, too_many, _noop_progress)
+
+
+def test_compare_models_rejects_duplicates(tmp_path):
+    _write_mvtec_dataset(tmp_path)
+    config = AnomalyVisionConfig(num_epochs=1, batch_size=4)
+    with pytest.raises(TrainingAbortedError):
+        train_and_compare_anomaly_models(
+            tmp_path, config, ["conv_autoencoder", "conv_autoencoder"], _noop_progress
+        )
+
+
+def test_weight_decay_is_applied_without_error_and_reported_honestly(tmp_path):
+    _write_mvtec_dataset(tmp_path)
+    config = AnomalyVisionConfig(num_epochs=1, batch_size=4, weight_decay=0.01)
+
+    result = train_and_evaluate_anomaly_vision(tmp_path, config, _noop_progress)
+
+    assert result.model_card["weight_decay"] == 0.01

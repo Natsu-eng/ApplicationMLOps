@@ -883,9 +883,15 @@ export type AugmentationPreset = "aucune" | "legere" | "standard" | "forte";
 export interface VisionClassificationJobCreatePayload {
   vision_dataset_id: number;
   backbone_id?: string;
+  // Mode expert (retour utilisateur direct : parité avec le comparatif
+  // multi-modèles du ML tabulaire) — quand fourni (≥ 2 entrées), remplace
+  // backbone_id : chaque backbone listé est entraîné, le meilleur sur la
+  // validation est automatiquement retenu.
+  backbone_ids?: string[];
   num_epochs?: number;
   batch_size?: number;
   learning_rate?: number;
+  weight_decay?: number;
   dropout_rate?: number;
   freeze_backbone?: boolean;
   unfreeze_after_epoch?: number | null;
@@ -975,6 +981,23 @@ export interface VisionClassificationResult {
   calibration?: Calibration | null;
 }
 
+// Mode expert : comparatif de backbones (retour utilisateur direct, parité
+// avec le comparatif multi-modèles du ML tabulaire) — une entrée par
+// backbone testé, vit dans `result.model_card.candidates` (voir backend
+// services/engine.py::train_and_compare_backbones). N'existe que sur un job
+// lancé avec `backbone_ids` (≥ 2 entrées) — absent sinon.
+export interface BackboneComparisonCandidate {
+  backbone_id: string;
+  backbone_label: string;
+  best_val_loss: number;
+  best_val_accuracy: number;
+  test_accuracy: number;
+  num_epochs_run: number;
+  time_capped: boolean;
+  training_seconds: number;
+  selected: boolean;
+}
+
 export interface GradCamExplanation {
   predicted_label: string;
   probabilities: Record<string, number>;
@@ -1004,9 +1027,13 @@ export interface VisionAnomalyModelOption {
 export interface VisionAnomalyJobCreatePayload {
   vision_dataset_id: number;
   model_id?: string;
+  // Mode expert (retour utilisateur direct — parité avec `backbone_ids` de
+  // la classification) — quand fourni (≥ 2 entrées), remplace model_id.
+  model_ids?: string[];
   num_epochs?: number;
   batch_size?: number;
   learning_rate?: number;
+  weight_decay?: number;
   mask_percentile?: number;
   seed?: number;
   // Lot 6A — parité avec la classification (même presets, voir
@@ -1068,6 +1095,22 @@ export interface VisionAnomalyResult {
   pr_curves?: Record<string, PrCurve>;
   score_histogram?: { bin_edges: number[]; normal_counts: number[]; defect_counts: number[] } | null;
   category_breakdown?: { category: string; n: number; detection_rate: number }[] | null;
+}
+
+// Mode expert : comparatif d'architectures (retour utilisateur direct,
+// parité avec BackboneComparisonCandidate côté classification) — une entrée
+// par architecture testée, vit dans `result.model_card.candidates`. N'existe
+// que sur un job lancé avec `model_ids` (≥ 2 entrées) — absent sinon.
+export interface AnomalyModelComparisonCandidate {
+  model_id: string;
+  model_label: string;
+  best_val_loss: number;
+  roc_auc: number;
+  test_accuracy: number;
+  num_epochs_run: number;
+  time_capped: boolean;
+  training_seconds: number;
+  selected: boolean;
 }
 
 export interface VisionAnomalyExample {

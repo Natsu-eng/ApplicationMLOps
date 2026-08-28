@@ -19,7 +19,11 @@ from api.core.models import VisionClassificationJob, VisionClassificationModel, 
 from api.core.observability import request_id_var
 from api.core.storage import vision_classification_model_file_path
 from domains.shared.ml_preprocessing import TrainingAbortedError
-from domains.vision.classification.services.engine import ClassificationConfig, train_and_evaluate_classification
+from domains.vision.classification.services.engine import (
+    ClassificationConfig,
+    train_and_compare_backbones,
+    train_and_evaluate_classification,
+)
 
 logger = logging.getLogger("datalab.vision_classification_worker")
 
@@ -76,9 +80,18 @@ def run_vision_classification_job(job_id: int) -> None:
                     "un dataset normal/défaut ne peut pas être utilisé pour la classification"
                 )
 
-            config = ClassificationConfig(**json.loads(job.config_json))
+            config_dict = json.loads(job.config_json)
+            # Mode expert : comparatif de backbones (retour utilisateur direct,
+            # voir services/engine.py::train_and_compare_backbones) — un champ
+            # en plus dans config_json, jamais un accepté par
+            # `ClassificationConfig` (donc retiré avant construction).
+            backbone_ids = config_dict.pop("backbone_ids", None)
+            config = ClassificationConfig(**config_dict)
             progress_cb = _make_progress_callback(db, job)
-            result = train_and_evaluate_classification(Path(dataset.storage_dir), config, progress_cb)
+            if backbone_ids:
+                result = train_and_compare_backbones(Path(dataset.storage_dir), config, backbone_ids, progress_cb)
+            else:
+                result = train_and_evaluate_classification(Path(dataset.storage_dir), config, progress_cb)
 
             artifact_path = vision_classification_model_file_path(job.organization_id, job.id)
             torch.save(result.model_artifact, artifact_path)

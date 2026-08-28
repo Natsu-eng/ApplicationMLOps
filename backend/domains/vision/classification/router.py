@@ -42,7 +42,11 @@ from domains.shared.job_events import stream_job_updates
 from domains.shared.job_lifecycle import ACTIVE_STATUSES, CANCELLED_MESSAGE, try_cancel_rq_job
 from domains.shared.job_quota import ALL_JOB_MODELS, raise_if_quota_exceeded
 from domains.shared.job_watchdog import reconcile_stale_jobs
-from domains.vision.classification.services.engine import AUGMENTATION_PRESET_IDS, DEFAULT_AUGMENTATION_PRESET
+from domains.vision.classification.services.engine import (
+    AUGMENTATION_PRESET_IDS,
+    DEFAULT_AUGMENTATION_PRESET,
+    MAX_BACKBONES_PER_COMPARISON,
+)
 from domains.vision.classification.services.gradcam import (
     GradCamError,
     explain_classification_prediction,
@@ -62,9 +66,20 @@ _VALID_BACKBONE_IDS = {s.id for s in CLASSIFICATION_BACKBONE_REGISTRY}
 class VisionClassificationJobCreate(BaseModel):
     vision_dataset_id: int
     backbone_id: str = DEFAULT_BACKBONE_ID
+    # Mode expert (retour utilisateur direct : "tavais dit taller fire aussi
+    # pareil" côté vision — parité avec `model_ids` du ML tabulaire) — quand
+    # fourni (≥ 2 entrées), remplace `backbone_id` : chaque backbone listé
+    # est entraîné avec les mêmes autres réglages, le meilleur sur la
+    # validation est automatiquement retenu (voir
+    # `services/engine.py::train_and_compare_backbones`). None (défaut) :
+    # comportement historique inchangé, un seul backbone (`backbone_id`).
+    backbone_ids: Optional[List[str]] = None
     num_epochs: int = Field(default=8, ge=1, le=30)
     batch_size: int = Field(default=16, ge=1, le=128)
     learning_rate: float = Field(default=1e-3, gt=0, le=1)
+    # Régularisation L2 (mode expert) — voir
+    # services/engine.py::ClassificationConfig.weight_decay.
+    weight_decay: float = Field(default=0.0, ge=0, le=0.1)
     dropout_rate: float = Field(default=0.3, ge=0, le=0.9)
     freeze_backbone: bool = True
     unfreeze_after_epoch: Optional[int] = Field(default=None, ge=0)
@@ -256,6 +271,26 @@ def create_vision_classification_job(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={"code": "BACKBONE_INCONNU", "message": f"Backbone inconnu : {body.backbone_id}"},
         )
+    if body.backbone_ids is not None:
+        if len(body.backbone_ids) < 2 or len(body.backbone_ids) > MAX_BACKBONES_PER_COMPARISON:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "code": "COMPARATIF_BACKBONES_INVALIDE",
+                    "message": f"Comparatif : entre 2 et {MAX_BACKBONES_PER_COMPARISON} backbones requis",
+                },
+            )
+        if len(set(body.backbone_ids)) != len(body.backbone_ids):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"code": "COMPARATIF_BACKBONES_INVALIDE", "message": "Backbones en double dans le comparatif"},
+            )
+        unknown = [b for b in body.backbone_ids if b not in _VALID_BACKBONE_IDS]
+        if unknown:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"code": "BACKBONE_INCONNU", "message": f"Backbone(s) inconnu(s) : {', '.join(unknown)}"},
+            )
     if body.augmentation_preset not in AUGMENTATION_PRESET_IDS:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -307,6 +342,7 @@ def create_vision_classification_job(
         "num_epochs": body.num_epochs,
         "batch_size": body.batch_size,
         "learning_rate": body.learning_rate,
+        "weight_decay": body.weight_decay,
         "dropout_rate": body.dropout_rate,
         "freeze_backbone": body.freeze_backbone,
         "unfreeze_after_epoch": body.unfreeze_after_epoch,
@@ -318,6 +354,8 @@ def create_vision_classification_job(
         "val_ratio": body.val_ratio,
         "test_ratio": body.test_ratio,
     }
+    if body.backbone_ids is not None:
+        config["backbone_ids"] = body.backbone_ids
 
     job = VisionClassificationJob(
         organization_id=current_user.organization_id,

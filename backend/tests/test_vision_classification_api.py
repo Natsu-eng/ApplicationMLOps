@@ -599,3 +599,69 @@ def test_explain_batch_shares_the_explain_rate_limit(client, db_session):
         json={"relative_paths": ["classe_0/img_0.png"]},
     )
     assert blocked.status_code == 429
+
+
+# ── Mode expert : comparatif de backbones (retour utilisateur direct, parité
+# avec `model_ids` du ML tabulaire) ─────────────────────────────────────────
+
+
+def test_create_job_accepts_backbone_ids_comparison(client):
+    headers = _register(client)
+    dataset = _upload_vision_dataset(client, headers)
+    resp = _create_job(client, headers, dataset["id"], backbone_ids=["mobilenet_v3_small", "shufflenet_v2"])
+    assert resp.status_code == 201
+
+
+def test_create_job_rejects_a_single_backbone_id_in_the_comparison_list(client):
+    headers = _register(client)
+    dataset = _upload_vision_dataset(client, headers)
+    resp = _create_job(client, headers, dataset["id"], backbone_ids=["mobilenet_v3_small"])
+    assert resp.status_code == 400
+    assert resp.json()["detail"]["code"] == "COMPARATIF_BACKBONES_INVALIDE"
+
+
+def test_create_job_rejects_too_many_backbone_ids(client):
+    headers = _register(client)
+    dataset = _upload_vision_dataset(client, headers)
+    resp = _create_job(
+        client, headers, dataset["id"],
+        backbone_ids=["mobilenet_v3_small", "resnet18", "resnet34", "mobilenet_v3_large", "efficientnet_b0"],
+    )
+    assert resp.status_code == 400
+    assert resp.json()["detail"]["code"] == "COMPARATIF_BACKBONES_INVALIDE"
+
+
+def test_create_job_rejects_duplicate_backbone_ids(client):
+    headers = _register(client)
+    dataset = _upload_vision_dataset(client, headers)
+    resp = _create_job(
+        client, headers, dataset["id"], backbone_ids=["mobilenet_v3_small", "mobilenet_v3_small"]
+    )
+    assert resp.status_code == 400
+    assert resp.json()["detail"]["code"] == "COMPARATIF_BACKBONES_INVALIDE"
+
+
+def test_create_job_rejects_unknown_backbone_in_the_comparison_list(client):
+    headers = _register(client)
+    dataset = _upload_vision_dataset(client, headers)
+    resp = _create_job(client, headers, dataset["id"], backbone_ids=["mobilenet_v3_small", "resnet152"])
+    assert resp.status_code == 400
+    assert resp.json()["detail"]["code"] == "BACKBONE_INCONNU"
+
+
+def test_comparison_result_includes_a_leaderboard_and_the_winner_is_persisted(client, db_session):
+    headers = _register(client)
+    dataset = _upload_vision_dataset(client, headers)
+    job = _create_job(
+        client, headers, dataset["id"], backbone_ids=["mobilenet_v3_small", "shufflenet_v2"]
+    ).json()
+    run_vision_classification_job(job["id"])
+    db_session.expire_all()
+
+    result = client.get(f"/api/vision/classification/jobs/{job['id']}/result", headers=headers).json()
+    candidates = result["model_card"]["candidates"]
+    assert len(candidates) == 2
+    assert sum(1 for c in candidates if c["selected"]) == 1
+    # Le backbone persisté comme modèle final EST celui marqué "selected".
+    winner = next(c for c in candidates if c["selected"])
+    assert result["backbone_id"] == winner["backbone_id"]

@@ -31,6 +31,7 @@ from domains.shared.job_events import stream_job_updates
 from domains.shared.job_lifecycle import ACTIVE_STATUSES, CANCELLED_MESSAGE, try_cancel_rq_job
 from domains.shared.job_quota import ALL_JOB_MODELS, raise_if_quota_exceeded
 from domains.shared.job_watchdog import reconcile_stale_jobs
+from domains.vision.anomalies.services.engine import MAX_MODELS_PER_COMPARISON
 from domains.vision.anomalies.services.registry import ANOMALY_MODEL_REGISTRY, DEFAULT_ANOMALY_MODEL_ID
 from domains.vision.localization import DEFAULT_MASK_PERCENTILE
 from domains.vision.shared import AUGMENTATION_PRESET_IDS
@@ -47,9 +48,20 @@ _VALID_MODEL_IDS = {s.id for s in ANOMALY_MODEL_REGISTRY}
 class VisionAnomalyJobCreate(BaseModel):
     vision_dataset_id: int
     model_id: str = DEFAULT_ANOMALY_MODEL_ID
+    # Mode expert (retour utilisateur direct — parité avec `backbone_ids` de
+    # la classification et `model_ids` du ML tabulaire) — quand fourni (≥ 2
+    # entrées), remplace `model_id` : chaque architecture listée est
+    # entraînée avec les mêmes autres réglages, la meilleure sur la
+    # validation est automatiquement retenue (voir
+    # `services/engine.py::train_and_compare_anomaly_models`). None (défaut) :
+    # comportement historique inchangé, une seule architecture (`model_id`).
+    model_ids: Optional[List[str]] = None
     num_epochs: int = Field(default=15, ge=1, le=50)
     batch_size: int = Field(default=16, ge=1, le=128)
     learning_rate: float = Field(default=1e-3, gt=0, le=1)
+    # Régularisation L2 (mode expert) — voir
+    # services/engine.py::AnomalyVisionConfig.weight_decay.
+    weight_decay: float = Field(default=0.0, ge=0, le=0.1)
     mask_percentile: float = Field(default=DEFAULT_MASK_PERCENTILE, gt=0, lt=1)
     seed: Optional[int] = None
     # Même système de presets que la classification (Lot 6A, parité des
@@ -195,6 +207,26 @@ def create_vision_anomaly_job(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={"code": "MODELE_INCONNU", "message": f"Modèle inconnu : {body.model_id}"},
         )
+    if body.model_ids is not None:
+        if len(body.model_ids) < 2 or len(body.model_ids) > MAX_MODELS_PER_COMPARISON:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "code": "COMPARATIF_MODELES_INVALIDE",
+                    "message": f"Comparatif : entre 2 et {MAX_MODELS_PER_COMPARISON} architectures requises",
+                },
+            )
+        if len(set(body.model_ids)) != len(body.model_ids):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"code": "COMPARATIF_MODELES_INVALIDE", "message": "Architectures en double dans le comparatif"},
+            )
+        unknown = [m for m in body.model_ids if m not in _VALID_MODEL_IDS]
+        if unknown:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"code": "MODELE_INCONNU", "message": f"Modèle(s) inconnu(s) : {', '.join(unknown)}"},
+            )
     if body.augmentation_preset not in AUGMENTATION_PRESET_IDS:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -238,11 +270,14 @@ def create_vision_anomaly_job(
         "num_epochs": body.num_epochs,
         "batch_size": body.batch_size,
         "learning_rate": body.learning_rate,
+        "weight_decay": body.weight_decay,
         "mask_percentile": body.mask_percentile,
         "seed": body.seed if body.seed is not None else _settings.model_seed,
         "augmentation_preset": body.augmentation_preset,
         "val_ratio": body.val_ratio,
     }
+    if body.model_ids is not None:
+        config["model_ids"] = body.model_ids
 
     job = VisionAnomalyJob(
         organization_id=current_user.organization_id,

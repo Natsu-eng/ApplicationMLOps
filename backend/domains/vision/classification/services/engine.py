@@ -19,7 +19,7 @@ from __future__ import annotations
 import logging
 import time
 from collections import Counter
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Callable, Optional
 
@@ -68,6 +68,8 @@ __all__ = [
     "augmentation_transforms",
     "recommend_augmentation_preset",
     "ClassificationConfig",
+    "MAX_BACKBONES_PER_COMPARISON",
+    "train_and_compare_backbones",
 ]
 
 ProgressCallback = Callable[[str, int], None]
@@ -87,6 +89,16 @@ _CALIBRATION_N_BINS = 10  # même valeur que ml_training.py::_CALIBRATION_N_BINS
 
 DEFAULT_AUGMENTATION_PRESET = "standard"  # comportement historique, inchangé par défaut
 
+# Mode expert (retour utilisateur direct : "tu avais dit t'allais faire aussi
+# pareil côté vision" — parité avec le comparatif multi-modèles du ML
+# tabulaire) — borne le nombre de backbones comparables en un seul job : le
+# coût est strictement séquentiel (chaque backbone entraîné en entier l'un
+# après l'autre, aucun parallélisme — un seul worker RQ partagé, voir
+# docstring du module), donc N backbones ≈ N × la durée d'un seul. 4 couvre
+# largement les comparatifs utiles (ex. léger vs. profond vs. 2 intermédiaires)
+# sans risquer un temps total démesuré sur un dataset volumineux.
+MAX_BACKBONES_PER_COMPARISON = 4
+
 
 @dataclass
 class ClassificationConfig:
@@ -94,6 +106,14 @@ class ClassificationConfig:
     num_epochs: int = 8
     batch_size: int = 16
     learning_rate: float = 1e-3
+    # Régularisation L2 (mode expert, retour utilisateur direct : "laisser le
+    # choix sur les hyperparamètres... d'autres fonctionnalités") — pénalise
+    # les poids trop grands pendant l'optimisation (Adam), en plus du dropout
+    # déjà réglable ci-dessous : deux leviers anti-surapprentissage
+    # complémentaires (dropout coupe des activations, weight_decay contraint
+    # l'amplitude des poids), pas redondants. 0.0 = comportement historique
+    # inchangé (Adam sans pénalité, seule option avant ce correctif).
+    weight_decay: float = 0.0
     dropout_rate: float = 0.3
     freeze_backbone: bool = True
     # Époque (0-indexée) à partir de laquelle le backbone est entièrement
@@ -474,7 +494,11 @@ def train_and_evaluate_classification(
         criterion = nn.CrossEntropyLoss()
 
     def _make_optimizer() -> torch.optim.Optimizer:
-        return torch.optim.Adam((p for p in model.parameters() if p.requires_grad), lr=config.learning_rate)
+        return torch.optim.Adam(
+            (p for p in model.parameters() if p.requires_grad),
+            lr=config.learning_rate,
+            weight_decay=config.weight_decay,
+        )
 
     def _make_scheduler(opt: torch.optim.Optimizer):
         # patience=2 : plus courte que early_stopping_patience (défaut 3) —
@@ -612,6 +636,7 @@ def train_and_evaluate_classification(
         # temps (time_capped) ni par épuisement du budget d'époques demandé.
         "early_stopped": early_stopped,
         "class_weighting_applied": config.class_weighting,
+        "weight_decay": config.weight_decay,
         "lr_scheduler_used": config.use_lr_scheduler,
         "augmentation_preset": config.augmentation_preset,
         "val_ratio": config.val_ratio,
@@ -653,3 +678,88 @@ def train_and_evaluate_classification(
         test_roc_auc=test_roc_auc,
         calibration=calibration,
     )
+
+
+def train_and_compare_backbones(
+    dataset_dir: Path,
+    base_config: ClassificationConfig,
+    backbone_ids: list[str],
+    progress_cb: ProgressCallback,
+) -> ClassificationResult:
+    """Mode expert — comparatif automatique de plusieurs backbones (retour
+    utilisateur direct : "tavais dit taller fire aussi pareil" côté vision,
+    parité avec le comparatif multi-modèles du ML tabulaire, `ml_training.py`
+    `_optimize_one_model` × N).
+
+    Entraîne CHAQUE backbone demandé avec exactement les mêmes autres
+    hyperparamètres (`base_config`, `backbone_id` y est ignoré/écrasé),
+    retient celui dont la MEILLEURE époque généralise le mieux — min(val_loss)
+    sur son propre historique, EXACTEMENT le même critère que celui qui
+    choisit déjà `best_state` à l'intérieur d'un entraînement mono-backbone
+    (voir plus haut) : jamais un second critère inventé pour l'occasion.
+    Jamais le test — réservé à l'évaluation finale du gagnant, jamais à la
+    sélection entre candidats (même discipline anti-fuite que la validation
+    croisée côté tabulaire : décider avec des données, puis rapporter le
+    score sur CES MÊMES données, produirait un résultat optimiste).
+
+    Retourne EXACTEMENT le `ClassificationResult` du backbone gagnant (même
+    structure qu'un entraînement mono-backbone, aucun champ en moins) —
+    enrichi de `model_card["candidates"]`, la liste de tous les candidats
+    testés avec leurs métriques, pour une transparence totale sur ce qui a
+    été écarté et pourquoi (jamais une boîte noire qui annonce juste "voici
+    le meilleur" sans dire par rapport à quoi)."""
+    if len(backbone_ids) < 2:
+        raise TrainingAbortedError("La comparaison de backbones nécessite au moins 2 modèles")
+    if len(backbone_ids) > MAX_BACKBONES_PER_COMPARISON:
+        raise TrainingAbortedError(
+            f"Au plus {MAX_BACKBONES_PER_COMPARISON} backbones comparables en un seul entraînement "
+            f"(chacun entraîné en entier l'un après l'autre — au-delà, le temps total devient déraisonnable)"
+        )
+    if len(set(backbone_ids)) != len(backbone_ids):
+        raise TrainingAbortedError("Backbones en double dans le comparatif")
+
+    n = len(backbone_ids)
+    results: dict[str, ClassificationResult] = {}
+    candidates: list[dict[str, Any]] = []
+
+    for i, backbone_id in enumerate(backbone_ids):
+        spec = get_backbone_spec(backbone_id)  # lève si id inconnu — jamais découvert à mi-job
+
+        def scoped_progress_cb(step: str, percent: int, _i: int = i, _label: str = spec.label) -> None:
+            # Répartit la progression 0-100 sur les N candidats — jamais
+            # bloquée à 0 % pendant tout le premier backbone (mauvaise
+            # expérience sur un comparatif à 4 modèles). Plafonnée à 99 tant
+            # que le gagnant n'est pas encore désigné (juste après la boucle).
+            overall = int((_i * 100 + percent) / n)
+            progress_cb(f"[{_i + 1}/{n}] {_label} — {step}", min(overall, 99))
+
+        candidate_config = replace(base_config, backbone_id=backbone_id)
+        t0 = time.monotonic()
+        result = train_and_evaluate_classification(dataset_dir, candidate_config, scoped_progress_cb)
+        elapsed_seconds = time.monotonic() - t0
+        results[backbone_id] = result
+
+        best_val_loss = min((h.val_loss for h in result.history), default=float("inf"))
+        best_val_accuracy = max((h.val_accuracy for h in result.history), default=0.0)
+        candidates.append({
+            "backbone_id": backbone_id,
+            "backbone_label": spec.label,
+            "best_val_loss": best_val_loss,
+            "best_val_accuracy": best_val_accuracy,
+            "test_accuracy": result.test_accuracy,
+            "num_epochs_run": len(result.history),
+            "time_capped": bool(result.model_card.get("time_capped")),
+            "training_seconds": round(elapsed_seconds, 1),
+        })
+
+    winner = min(candidates, key=lambda c: c["best_val_loss"])
+    winner_id = winner["backbone_id"]
+    for c in candidates:
+        c["selected"] = c["backbone_id"] == winner_id
+
+    progress_cb("Terminé", 100)
+
+    winner_result = results[winner_id]
+    winner_result.model_card["candidates"] = candidates
+    winner_result.model_card["comparison_mode"] = True
+    return winner_result

@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { Activity, AlertCircle, AlertTriangle, Ban, ChevronLeft, ChevronRight, Loader2, PlayCircle, RotateCcw, Sparkles, Target, Trash2 } from "lucide-react";
+import { Activity, AlertCircle, AlertTriangle, Ban, ChevronLeft, ChevronRight, Loader2, PlayCircle, RotateCcw, Sparkles, Target, Trash2, Trophy } from "lucide-react";
 import {
   Bar,
   BarChart,
@@ -16,6 +16,7 @@ import {
 import {
   ApiError,
   api,
+  type AnomalyModelComparisonCandidate,
   type AugmentationPreset,
   type VisionAnomalyExample,
   type VisionAnomalyJobSummary,
@@ -34,8 +35,10 @@ import { Input } from "../components/ui/Input";
 import { PageHeader } from "../components/ui/PageHeader";
 import { SectionHeader } from "../components/ui/SectionHeader";
 import { Select } from "../components/ui/Select";
+import { Switch } from "../components/ui/Switch";
 import { Table, type TableColumn } from "../components/ui/Table";
 import { Tabs } from "../components/ui/Tabs";
+import { LabelWithHelp } from "../components/ui/Tooltip";
 import { ModelExportActions } from "../components/ui/ModelExportActions";
 import { VisionDatasetPicker } from "../components/vision/VisionDatasetPicker";
 import { useJobEvents } from "../hooks/useJobEvents";
@@ -80,6 +83,10 @@ const MODEL_HINTS: Record<string, string> = {
 
 const ACTIVE_STATUSES = new Set(["queued", "running"]);
 const ACTIVE_JOB_STORAGE_KEY = "datalab_active_vision_anomaly_job_id";
+// Même plafond que `services/engine.py::MAX_MODELS_PER_COMPARISON` (le
+// nombre d'architectures du registre, 3 aujourd'hui) — comparatif
+// d'architectures (mode expert), affiché ici pour la même raison.
+const MAX_MODELS_PER_COMPARISON = 3;
 
 type Phase = "configure" | "progress" | "results" | "failed" | "cancelled";
 
@@ -304,9 +311,16 @@ function AnomalyVisionForm({ onJobCreated }: { onJobCreated: (job: VisionAnomaly
   const [datasetDetail, setDatasetDetail] = useState<VisionDatasetDetail | null>(null);
   const [models, setModels] = useState<VisionAnomalyModelOption[]>([]);
   const [modelId, setModelId] = useState("");
+  // Mode expert : comparatif d'architectures (retour utilisateur direct —
+  // parité avec le comparatif de backbones de la classification) — replié
+  // par défaut, une seule architecture (comportement historique) tant que
+  // non activé.
+  const [comparisonMode, setComparisonMode] = useState(false);
+  const [comparisonModelIds, setComparisonModelIds] = useState<Set<string>>(new Set());
   const [numEpochs, setNumEpochs] = useState(15);
   const [batchSize, setBatchSize] = useState(16);
   const [learningRate, setLearningRate] = useState(1e-3);
+  const [weightDecay, setWeightDecay] = useState(0);
   const [maskPercentile, setMaskPercentile] = useState(0.97);
   const [augmentationPreset, setAugmentationPreset] = useState<AugmentationPreset>("aucune");
   // Part de train/good/ réservée à la validation (répartition, Lot 6A) —
@@ -357,9 +371,15 @@ function AnomalyVisionForm({ onJobCreated }: { onJobCreated: (job: VisionAnomaly
         {
           vision_dataset_id: datasetId,
           model_id: modelId,
+          // Mode expert : comparatif (retour utilisateur direct) — n'envoyé
+          // que si réellement activé ET au moins 2 architectures cochées,
+          // jamais un tableau à 1 élément (même garde que backbone_ids côté
+          // classification).
+          model_ids: comparisonMode && comparisonModelIds.size >= 2 ? Array.from(comparisonModelIds) : undefined,
           num_epochs: numEpochs,
           batch_size: batchSize,
           learning_rate: learningRate,
+          weight_decay: weightDecay,
           mask_percentile: maskPercentile,
           augmentation_preset: augmentationPreset,
           val_ratio: valRatio,
@@ -376,7 +396,19 @@ function AnomalyVisionForm({ onJobCreated }: { onJobCreated: (job: VisionAnomaly
   }
 
   const selectedModelLabel = models.find((m) => m.id === modelId)?.label ?? "—";
-  const step1Valid = Boolean(datasetId && modelId);
+  const step1Valid = Boolean(datasetId && (comparisonMode ? comparisonModelIds.size >= 2 : modelId));
+
+  function toggleComparisonModel(id: string) {
+    setComparisonModelIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else if (next.size < MAX_MODELS_PER_COMPARISON) {
+        next.add(id);
+      }
+      return next;
+    });
+  }
 
   return (
     <form onSubmit={handleSubmit}>
@@ -395,17 +427,65 @@ function AnomalyVisionForm({ onJobCreated }: { onJobCreated: (job: VisionAnomaly
 
             {models.length > 0 && (
               <div>
-                <label htmlFor="va-model" className="block text-sm text-muted-foreground mb-1">
-                  Modèle
-                </label>
-                <Select id="va-model" value={modelId} onChange={(e) => setModelId(e.target.value)}>
-                  {models.map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.label}
-                    </option>
-                  ))}
-                </Select>
-                {MODEL_HINTS[modelId] && <p className="text-xs text-muted-foreground mt-1">{MODEL_HINTS[modelId]}</p>}
+                <div className="flex items-center justify-between gap-3 mb-1">
+                  <label htmlFor="va-model" className="block text-sm text-muted-foreground">
+                    Modèle
+                  </label>
+                  <Switch
+                    checked={comparisonMode}
+                    onChange={(v) => {
+                      setComparisonMode(v);
+                      if (v) setComparisonModelIds(new Set(modelId ? [modelId] : []));
+                    }}
+                    label="Comparer plusieurs architectures"
+                  />
+                </div>
+
+                {!comparisonMode ? (
+                  <>
+                    <Select id="va-model" value={modelId} onChange={(e) => setModelId(e.target.value)}>
+                      {models.map((m) => (
+                        <option key={m.id} value={m.id}>
+                          {m.label}
+                        </option>
+                      ))}
+                    </Select>
+                    {MODEL_HINTS[modelId] && (
+                      <p className="text-xs text-muted-foreground mt-1">{MODEL_HINTS[modelId]}</p>
+                    )}
+                  </>
+                ) : (
+                  <div>
+                    <p className="text-xs text-muted-foreground mb-2">
+                      Chaque architecture cochée sera entraînée avec les mêmes réglages, puis la meilleure sur
+                      la validation sera automatiquement retenue ({comparisonModelIds.size}/
+                      {MAX_MODELS_PER_COMPARISON} sélectionnées).
+                    </p>
+                    <div className="space-y-1.5">
+                      {models.map((m) => {
+                        const checked = comparisonModelIds.has(m.id);
+                        const disabled = !checked && comparisonModelIds.size >= MAX_MODELS_PER_COMPARISON;
+                        return (
+                          <label
+                            key={m.id}
+                            className={`flex items-center gap-2 rounded-lg border px-2.5 py-2 text-sm cursor-pointer transition-colors ${
+                              checked ? "border-primary/40 bg-primary/10 text-primary" : "border-border text-foreground/90"
+                            } ${disabled ? "opacity-50 cursor-not-allowed" : ""}`}
+                          >
+                            <input
+                              type="checkbox"
+                              className="accent-primary"
+                              checked={checked}
+                              disabled={disabled}
+                              onChange={() => toggleComparisonModel(m.id)}
+                            />
+                            {m.label}
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 
@@ -476,6 +556,25 @@ function AnomalyVisionForm({ onJobCreated }: { onJobCreated: (job: VisionAnomaly
                 step={0.0001}
                 value={learningRate}
                 onChange={(e) => setLearningRate(Number(e.target.value))}
+                className="w-full accent-primary"
+              />
+            </div>
+
+            <div>
+              <label htmlFor="va-weight-decay" className="block text-sm text-muted-foreground mb-1">
+                <LabelWithHelp
+                  label={`Régularisation L2 (weight decay) — ${weightDecay}`}
+                  help="Pénalise les poids trop grands pendant l'entraînement — réduit le sur-apprentissage. 0 = désactivée (comportement historique)."
+                />
+              </label>
+              <input
+                id="va-weight-decay"
+                type="range"
+                min={0}
+                max={0.01}
+                step={0.0005}
+                value={weightDecay}
+                onChange={(e) => setWeightDecay(Number(e.target.value))}
                 className="w-full accent-primary"
               />
             </div>
@@ -559,6 +658,56 @@ function MetricTile({ label, value, color }: { label: string; value: string; col
   );
 }
 
+// Mode expert : classement des architectures comparées (retour utilisateur
+// direct — parité avec le classement de backbones de la classification) —
+// n'apparaît que sur un job lancé avec `model_ids` (≥ 2 entrées).
+const MODEL_CANDIDATE_COLUMNS: TableColumn<AnomalyModelComparisonCandidate>[] = [
+  { key: "model_label", header: "Architecture", render: (c) => c.model_label },
+  {
+    key: "best_val_loss",
+    header: "Perte (validation)",
+    render: (c) => c.best_val_loss.toFixed(5),
+    sortValue: (c) => c.best_val_loss,
+  },
+  {
+    key: "roc_auc",
+    header: "ROC-AUC (test)",
+    render: (c) => c.roc_auc.toFixed(3),
+    sortValue: (c) => c.roc_auc,
+  },
+  {
+    key: "test_accuracy",
+    header: "Exactitude (test)",
+    render: (c) => `${(c.test_accuracy * 100).toFixed(1)} %`,
+    sortValue: (c) => c.test_accuracy,
+  },
+  { key: "num_epochs_run", header: "Époques", render: (c) => String(c.num_epochs_run) },
+  {
+    key: "training_seconds",
+    header: "Durée",
+    render: (c) => `${Math.round(c.training_seconds)} s${c.time_capped ? " (plafonnée)" : ""}`,
+  },
+];
+
+function AnomalyModelComparisonCard({ candidates }: { candidates: AnomalyModelComparisonCandidate[] }) {
+  return (
+    <Card className={`p-5 ${accentSurfaceClass("amber")}`}>
+      <SectionHeader
+        icon={Trophy}
+        color="amber"
+        label={`Comparatif d'architectures (${candidates.length})`}
+        help="Chaque architecture a été entraînée avec les mêmes réglages. La retenue (surlignée) est celle dont la meilleure époque reconstruit le mieux les images normales — perte de validation minimale, jamais le ROC-AUC ni l'exactitude de test (réservés à l'évaluation finale, pas au choix entre candidats, car ils dépendent du seuil calibré sur le jeu de test)."
+      />
+      <Table
+        columns={MODEL_CANDIDATE_COLUMNS}
+        rows={candidates}
+        rowKey={(c) => c.model_id}
+        highlightRow={(c) => c.selected}
+      />
+    </Card>
+  );
+}
+
 function AnomalyVisionResultView({ jobId, datasetId }: { jobId: number; datasetId: number }) {
   const [result, setResult] = useState<VisionAnomalyResult | null>(null);
   const [examples, setExamples] = useState<VisionAnomalyExample[]>([]);
@@ -625,6 +774,10 @@ function AnomalyVisionResultView({ jobId, datasetId }: { jobId: number; datasetI
           .{Boolean(result.model_card.time_capped) && " Entraînement arrêté par le garde-fou de temps CPU."}
         </p>
       </Card>
+
+      {Array.isArray(result.model_card.candidates) && result.model_card.candidates.length > 1 && (
+        <AnomalyModelComparisonCard candidates={result.model_card.candidates as AnomalyModelComparisonCandidate[]} />
+      )}
 
       <ModelExportActions
         onExportArtifact={() => api.visionAnomalies.exportModel(jobId)}
