@@ -1473,6 +1473,25 @@ export interface PredictionHistoryEntry {
   created_at: string;
 }
 
+// Prédiction en lot (retour utilisateur : "batch prediction" — upload d'un
+// fichier, prédictions pour toutes les lignes) — même forme que
+// TrainingJobSummary (statut/progression/erreur), traitée par le frontend
+// comme n'importe quel autre job de fond.
+export interface BatchPredictionJobSummary {
+  id: number;
+  training_job_id: number;
+  input_filename: string;
+  status: JobStatus;
+  progress_step: string | null;
+  progress_percent: number;
+  error_message: string | null;
+  n_rows: number | null;
+  created_by: string | null;
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+}
+
 // Lot 4 (correctif I3, AUDIT_DATALAB_2026-08-16.md §C.2.4) — remplace les 8
 // appels de liste complets faits par Dashboard.tsx au montage par un seul
 // aller-retour agrégé (GET /dashboard/summary). Mêmes formes de résumé de
@@ -1645,6 +1664,19 @@ export const api = {
     modelVersions: (jobId: number) => request<{ entries: ModelVersionEntry[] }>(`/training/jobs/${jobId}/model/versions`),
     exportModel: (jobId: number, suggestedFilename?: string) =>
       downloadModelExport(`/training/jobs/${jobId}/model/export`, suggestedFilename ?? `modele_job${jobId}.joblib`),
+    // Prédiction en lot (retour utilisateur : "batch prediction" — upload
+    // d'un fichier, prédictions pour toutes les lignes) — tâche de fond
+    // comme un entraînement, jamais un calcul synchrone (fichier non borné
+    // en taille, contrairement à `predict` ci-dessus).
+    createBatchPrediction: (jobId: number, file: File) =>
+      uploadFile<BatchPredictionJobSummary>(`/training/jobs/${jobId}/predict-batch`, file),
+    listBatchPredictions: () => request<BatchPredictionJobSummary[]>("/training/batch-predictions"),
+    getBatchPrediction: (id: number) => request<BatchPredictionJobSummary>(`/training/batch-predictions/${id}`),
+    cancelBatchPrediction: (id: number) =>
+      request<BatchPredictionJobSummary>(`/training/batch-predictions/${id}/cancel`, { method: "POST" }),
+    removeBatchPrediction: (id: number) => request<void>(`/training/batch-predictions/${id}`, { method: "DELETE" }),
+    downloadBatchPredictionResult: (id: number, filename: string) =>
+      downloadModelExport(`/training/batch-predictions/${id}/download`, filename),
   },
 
   clustering: {

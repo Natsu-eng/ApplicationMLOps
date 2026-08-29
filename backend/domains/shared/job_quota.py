@@ -33,6 +33,7 @@ from sqlalchemy.orm import Session
 
 from api.core.models import (
     AnomalyJob,
+    BatchPredictionJob,
     ClusteringJob,
     DimensionalityJob,
     TrainingJob,
@@ -47,6 +48,7 @@ ALL_JOB_MODELS: list[Type] = [
     AnomalyJob,
     VisionClassificationJob,
     VisionAnomalyJob,
+    BatchPredictionJob,
 ]
 
 

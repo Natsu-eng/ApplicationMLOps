@@ -30,7 +30,16 @@ LOCAL_EXPLAIN_TOP_FEATURES = 10
 # Réexportés pour compatibilité — `InferenceError`/`load_bundle` vivent
 # désormais dans `services/model_bundle.py` (Lot 8, §Phase 0 : chargement
 # générique, sans raison d'être un import training-domain pour clustering).
-__all__ = ["InferenceError", "load_bundle", "explain_one", "predict_one"]
+__all__ = ["InferenceError", "load_bundle", "explain_one", "predict_one", "predict_batch"]
+
+# Prédiction en lot (retour utilisateur : "upload d'un fichier, prédictions
+# pour toutes les lignes") — colonnes ajoutées au fichier d'origine, jamais
+# un remplacement : l'utilisateur retrouve ses propres colonnes (identifiant
+# de ligne compris) à côté des prédictions, pour pouvoir les recroiser.
+BATCH_PREDICTION_COLUMN = "prediction"
+BATCH_CONFIDENCE_COLUMN = "confiance"
+BATCH_INTERVAL_LOW_COLUMN = "intervalle_bas"
+BATCH_INTERVAL_HIGH_COLUMN = "intervalle_haut"
 
 
 def _build_input_frame(row: dict[str, Any], feature_columns: list[str]) -> pd.DataFrame:
@@ -48,27 +57,37 @@ def _build_input_frame(row: dict[str, Any], feature_columns: list[str]) -> pd.Da
     return df
 
 
-def _cqr_interval(cqr: dict[str, Any], X_proc: np.ndarray, point_prediction: float) -> dict[str, float]:
+def _cqr_interval_batch(
+    cqr: dict[str, Any], X_proc: np.ndarray, point_predictions: np.ndarray
+) -> tuple[np.ndarray, np.ndarray]:
+    """Version vectorisée de l'intervalle CQR — un seul appel `.predict()`
+    sur TOUT le lot plutôt qu'une boucle Python ligne par ligne (voir
+    `predict_batch`). `_cqr_interval` (une seule observation) délègue ici
+    avec des tableaux à 1 élément, pour ne jamais dupliquer cette logique."""
     q_lo, q_hi = cqr["q_lo"], cqr["q_hi"]
-    lo = float(q_lo.predict(X_proc)[0])
-    hi = float(q_hi.predict(X_proc)[0])
+    lo = q_lo.predict(X_proc)
+    hi = q_hi.predict(X_proc)
     center = (lo + hi) / 2
 
     bounds = np.array(cqr["strata_bounds"])
     qhat = np.array(cqr["qhat_per_stratum"])
-    stratum = int(np.clip(np.searchsorted(bounds, center, side="right") - 1, 0, len(qhat) - 1))
+    stratum = np.clip(np.searchsorted(bounds, center, side="right") - 1, 0, len(qhat) - 1)
 
     lo_final = lo - qhat[stratum]
     hi_final = hi + qhat[stratum]
     if cqr.get("clip_negative"):
-        lo_final = max(lo_final, 0.0)
+        lo_final = np.maximum(lo_final, 0.0)
     # L'intervalle doit toujours contenir la prédiction centrale du modèle
     # retenu, même si les régresseurs de quantile (indépendants) divergent
     # légèrement sur un point hors distribution.
-    lo_final = min(lo_final, point_prediction)
-    hi_final = max(hi_final, point_prediction)
+    lo_final = np.minimum(lo_final, point_predictions)
+    hi_final = np.maximum(hi_final, point_predictions)
+    return lo_final, hi_final
 
-    return {"low": float(lo_final), "high": float(hi_final), "confidence": float(cqr["target_coverage"])}
+
+def _cqr_interval(cqr: dict[str, Any], X_proc: np.ndarray, point_prediction: float) -> dict[str, float]:
+    lo, hi = _cqr_interval_batch(cqr, X_proc, np.array([point_prediction]))
+    return {"low": float(lo[0]), "high": float(hi[0]), "confidence": float(cqr["target_coverage"])}
 
 
 def explain_one(bundle: dict[str, Any], X_proc_row: np.ndarray, class_index: Optional[int]) -> dict[str, Any]:
@@ -221,4 +240,93 @@ def predict_one(bundle: dict[str, Any], feature_columns: list[str], row: dict[st
         X_proc_cqr = np.asarray(X_proc_cqr.todense()) if hasattr(X_proc_cqr, "todense") else np.asarray(X_proc_cqr)
         result["interval"] = _cqr_interval(bundle["cqr"], X_proc_cqr, point)
     result["explanation"] = explain_one(bundle, X_proc, None)
+    return result
+
+
+def predict_batch(bundle: dict[str, Any], feature_columns: list[str], df: pd.DataFrame) -> pd.DataFrame:
+    """Prédit sur un fichier entier d'un coup (retour utilisateur : "batch
+    prediction — upload d'un fichier, prédictions pour toutes les lignes").
+
+    Volontairement DIFFÉRENT de `predict_one` appelé en boucle : une seule
+    transformation preprocesseur + un seul appel `.predict()` sur TOUTE la
+    matrice, jamais une boucle Python ligne par ligne (des heures d'écart
+    sur un fichier de plusieurs milliers de lignes). Pas d'explication SHAP
+    locale ici non plus — coûteuse par nature, elle a du sens pour UNE
+    observation qu'on examine en détail, pas pour un lot entier (même
+    raisonnement que le Grad-CAM en lot, qui n'explique jamais TOUT un
+    dataset d'un coup).
+
+    Contrairement à `predict_one`/`_build_input_frame`, une VALEUR
+    manquante dans une cellule n'est jamais un rejet : le préprocesseur
+    entraîné inclut déjà un imputeur (voir `ml_preprocessing.py`) — une
+    ligne avec un trou est traitée exactement comme une ligne équivalente
+    aurait été traitée PENDANT l'entraînement, jamais un traitement plus
+    strict pour l'inférence en lot. Seule une COLONNE entièrement absente
+    du fichier est rejetée (rien à imputer, la colonne n'existe pas).
+
+    Retourne `df` enrichi de colonnes de prédiction (jamais un sous-ensemble
+    des colonnes d'origine — l'utilisateur doit pouvoir recroiser le
+    résultat avec ses propres colonnes, ex. un identifiant de ligne)."""
+    missing_columns = [c for c in feature_columns if c not in df.columns]
+    if missing_columns:
+        raise InferenceError(f"Colonne(s) manquante(s) dans le fichier : {', '.join(missing_columns)}")
+    if len(df) == 0:
+        # Rejet explicite (message clair) plutôt que de laisser remonter
+        # l'erreur brute de sklearn ("Found array with 0 sample(s)...") —
+        # le préprocesseur entraîné (imputeur compris) exige au moins une
+        # ligne, un fichier vide n'a de toute façon rien à prédire.
+        raise InferenceError("Le fichier ne contient aucune ligne à prédire")
+
+    input_df = df[feature_columns].copy()
+    for col in input_df.columns:
+        converted = pd.to_numeric(input_df[col], errors="coerce")
+        # Même garde que `_build_input_frame` : ne convertit que si TOUTE la
+        # colonne est numérique une fois convertie — sinon la colonne est
+        # catégorielle avec quelques valeurs qui ressemblent à des nombres,
+        # jamais une conversion partielle qui introduirait des NaN artificiels.
+        if not converted.isna().any():
+            input_df[col] = converted
+
+    feature_engineering_spec = bundle.get("feature_engineering_spec")
+    if feature_engineering_spec:
+        try:
+            input_df, _ = apply_upstream_feature_engineering(input_df, feature_columns, feature_engineering_spec)
+        except FeatureEngineeringSpecError as exc:
+            raise InferenceError(f"Ingénierie de variables du modèle non rejouable : {exc}") from exc
+
+    try:
+        X_proc = bundle["preprocessor"].transform(input_df)
+    except Exception as exc:  # colonnes/types incompatibles avec le preprocessor entraîné
+        raise InferenceError(f"Données incompatibles avec le modèle : {exc}") from exc
+    X_proc = np.asarray(X_proc.todense()) if hasattr(X_proc, "todense") else np.asarray(X_proc)
+
+    model = bundle["model"]
+    task_type = bundle["task_type"]
+    result = df.copy()
+
+    if task_type == "classification":
+        pred_indices = model.predict(X_proc)
+        class_names = bundle.get("class_names") or []
+        result[BATCH_PREDICTION_COLUMN] = [
+            class_names[i] if i < len(class_names) else str(i) for i in pred_indices
+        ]
+        if hasattr(model, "predict_proba"):
+            proba = model.predict_proba(X_proc)
+            result[BATCH_CONFIDENCE_COLUMN] = proba.max(axis=1)
+    else:
+        point = model.predict(X_proc)
+        if bundle.get("cqr", {}).get("clip_negative"):
+            point = np.maximum(point, 0.0)
+        result[BATCH_PREDICTION_COLUMN] = point
+        if bundle.get("cqr"):
+            # Préprocesseur CQR distinct (fit sur sa propre portion train,
+            # voir _cqr_interval/predict_one) — jamais X_proc, calculé avec
+            # le préprocesseur du modèle principal.
+            cqr_preprocessor = bundle["cqr"]["preprocessor"]
+            X_proc_cqr = cqr_preprocessor.transform(input_df)
+            X_proc_cqr = np.asarray(X_proc_cqr.todense()) if hasattr(X_proc_cqr, "todense") else np.asarray(X_proc_cqr)
+            lo, hi = _cqr_interval_batch(bundle["cqr"], X_proc_cqr, point)
+            result[BATCH_INTERVAL_LOW_COLUMN] = lo
+            result[BATCH_INTERVAL_HIGH_COLUMN] = hi
+
     return result

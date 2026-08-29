@@ -394,6 +394,60 @@ class Prediction(Base):
     requested_by: Mapped[Optional["User"]] = relationship("User")
 
 
+class BatchPredictionJob(Base):
+    """Prédiction en lot (retour utilisateur : "batch prediction — upload
+    d'un fichier, prédictions pour toutes les lignes") — même principe que
+    `Prediction` (ligne par ligne) mais pour un fichier entier d'un coup,
+    téléchargé en retour. Tâche de fond (RQ, `analysis_queue` — pas de
+    recherche d'hyperparamètres, coût comparable au clustering/à la
+    réduction de dimension), jamais un calcul synchrone dans la requête :
+    la taille du fichier uploadé n'est pas bornée à l'avance, contrairement
+    à `POST /jobs/{id}/predict` (une seule observation, toujours rapide).
+
+    `training_job_id` (pas `ml_model_id` directement) — même convention
+    d'adressage que `POST /jobs/{id}/predict`, cohérent avec le reste du
+    router (`/training/jobs/{job_id}/...`)."""
+
+    __tablename__ = "batch_prediction_jobs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    organization_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    training_job_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("training_jobs.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    created_by_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    input_filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    input_file_path: Mapped[str] = mapped_column(String(500), nullable=False)
+    # NULL tant que le job n'est pas terminé avec succès.
+    output_file_path: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    # queued | running | completed | failed | cancelled
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="queued", index=True)
+    progress_step: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    progress_percent: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    progress_updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    rq_job_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    request_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    n_rows: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    # Lignes que le modèle n'a pas pu prédire (colonne manquante détectée
+    # avant enfilage -> jamais ce cas ; type incompatible avec le
+    # préprocesseur détecté ligne par ligne -> celui-ci) — jamais un échec
+    # tout-ou-rien du fichier entier pour quelques lignes corrompues (même
+    # principe que le Grad-CAM en lot, `services/gradcam.py`).
+    n_failed_rows: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+    organization: Mapped["Organization"] = relationship("Organization")
+    training_job: Mapped["TrainingJob"] = relationship("TrainingJob")
+    created_by: Mapped[Optional["User"]] = relationship("User")
+
+
 class AuditLog(Base):
     """Journal des actions sensibles (Lot 10 — durcissement SaaS) : qui a
     fait quoi, quand — ajout/désactivation de membre, suppression de

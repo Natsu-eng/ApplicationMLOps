@@ -1,5 +1,5 @@
 import { type ReactNode, useEffect, useState } from "react";
-import { Activity, AlertTriangle, Award, Calculator, ClipboardList, Download, Gauge, History, Scale, ShieldCheck, Sparkles, Trophy, Wand2 } from "lucide-react";
+import { Activity, AlertTriangle, Award, Calculator, ClipboardList, Download, Gauge, History, Scale, ShieldCheck, Sparkles, Trophy, UploadCloud, Wand2 } from "lucide-react";
 import {
   ApiError,
   api,
@@ -26,6 +26,7 @@ import { ShapBeeswarmChart, PermutationImportanceChart } from "./GlobalExplainab
 import { ModelVerdict } from "./ModelVerdict";
 import { CalibrationChart, LearningCurveChart } from "./ReliabilityDiagnostics";
 import PredictionForm from "./PredictionForm";
+import BatchPredictionForm from "./BatchPredictionForm";
 
 const RESULT_TABS = [
   { id: "performance", label: "Performance", icon: Gauge },
@@ -33,6 +34,7 @@ const RESULT_TABS = [
   { id: "explicabilite", label: "Explicabilité", icon: Sparkles },
   { id: "fiabilite", label: "Fiabilité", icon: Activity },
   { id: "predire", label: "Prédire", icon: Calculator },
+  { id: "predire-lot", label: "Prédiction en lot", icon: UploadCloud },
   { id: "details", label: "Détails", icon: ClipboardList },
 ] as const;
 type ResultTabId = (typeof RESULT_TABS)[number]["id"];
@@ -874,6 +876,8 @@ export function ModelResultView({ job }: { job: TrainingJobSummary }) {
           {activeTab === "predire" && (
             <PredictionForm jobId={job.id} taskType={model.task_type} featureSchema={model.feature_schema} />
           )}
+
+          {activeTab === "predire-lot" && <BatchPredictionForm jobId={job.id} />}
 
           {activeTab === "details" && (
             <div className="space-y-5">

@@ -20,7 +20,7 @@ import pytest
 
 from api.core.models import Dataset, MLModel, TrainingJob
 from domains.shared.feature_engineering import apply_upstream_feature_engineering
-from domains.training.services.inference import predict_one
+from domains.training.services.inference import predict_batch, predict_one
 from domains.shared.ml_preprocessing import split_dataset
 from domains.training.services.engine import TrainingConfig, train_and_evaluate
 from domains.shared.model_bundle import InferenceError
@@ -296,3 +296,104 @@ def test_explain_degrades_gracefully_on_legacy_bundle_without_explainer_kind():
     assert out["explanation"]["status"] == "degraded"
     assert out["explanation"]["contributions"] == []
     assert out["explanation"]["message"]
+
+
+# ── Prédiction en lot (retour utilisateur : "batch prediction" — upload
+# d'un fichier, prédictions pour toutes les lignes) ─────────────────────────
+
+
+def _regression_bundle():
+    rng = np.random.default_rng(42)
+    n = 150
+    df = pd.DataFrame({"x1": rng.normal(50, 10, n), "x2": rng.normal(20, 5, n)})
+    df["cible"] = 2.5 * df["x1"] - 1.2 * df["x2"] + rng.normal(0, 3, n)
+    split = split_dataset(df, "cible", ["x1", "x2"], "regression", None, 0.2, 42)
+    result = train_and_evaluate(split, "regression", _FAST_CONFIG, lambda s, p: None)
+    return result.pipeline_bundle
+
+
+def _classification_bundle():
+    rng = np.random.default_rng(0)
+    n = 200
+    df = pd.DataFrame({"x1": rng.normal(0, 1, n), "x2": rng.normal(0, 1, n)})
+    df["cible"] = np.where(df["x1"] + df["x2"] > 0, "a", "b")
+    split = split_dataset(df, "cible", ["x1", "x2"], "classification", None, 0.2, 42)
+    config = TrainingConfig(optuna_trials=3, cv_folds=3, model_ids=["lightgbm"])
+    result = train_and_evaluate(split, "classification", config, lambda s, p: None)
+    return result.pipeline_bundle
+
+
+def test_predict_batch_regression_matches_predict_one_row_by_row():
+    """Même bundle, mêmes lignes : le lot doit reproduire EXACTEMENT ce que
+    `predict_one` produirait ligne par ligne — la vectorisation ne doit
+    jamais changer le résultat, seulement la vitesse à laquelle il est
+    obtenu."""
+    bundle = _regression_bundle()
+    rows = [{"x1": 45.0, "x2": 18.0}, {"x1": 55.0, "x2": 22.0}, {"x1": 50.0, "x2": 20.0}]
+    df = pd.DataFrame(rows)
+
+    batch_result = predict_batch(bundle, ["x1", "x2"], df)
+
+    for i, row in enumerate(rows):
+        single = predict_one(bundle, ["x1", "x2"], row)
+        assert batch_result.iloc[i]["prediction"] == pytest.approx(single["prediction"], abs=1e-6)
+        assert batch_result.iloc[i]["intervalle_bas"] == pytest.approx(single["interval"]["low"], abs=1e-6)
+        assert batch_result.iloc[i]["intervalle_haut"] == pytest.approx(single["interval"]["high"], abs=1e-6)
+
+
+def test_predict_batch_classification_adds_prediction_and_confidence_columns():
+    bundle = _classification_bundle()
+    df = pd.DataFrame({"x1": [2.0, -2.0], "x2": [2.0, -2.0]})
+
+    result = predict_batch(bundle, ["x1", "x2"], df)
+
+    assert list(result["prediction"]) == ["a", "b"]
+    assert (result["confiance"] > 0.5).all()  # les deux points sont loin de la frontière
+
+
+def test_predict_batch_preserves_original_columns_alongside_predictions():
+    """L'utilisateur doit pouvoir recroiser le résultat avec ses propres
+    colonnes (ex. un identifiant de ligne) — jamais seulement les colonnes
+    utilisées par le modèle."""
+    bundle = _regression_bundle()
+    df = pd.DataFrame({"id_ligne": ["r1", "r2"], "x1": [45.0, 55.0], "x2": [18.0, 22.0], "notes": ["a", "b"]})
+
+    result = predict_batch(bundle, ["x1", "x2"], df)
+
+    assert list(result["id_ligne"]) == ["r1", "r2"]
+    assert list(result["notes"]) == ["a", "b"]
+    assert "prediction" in result.columns
+
+
+def test_predict_batch_rejects_missing_column():
+    bundle = _regression_bundle()
+    df = pd.DataFrame({"x1": [45.0, 55.0]})  # x2 manquante
+
+    with pytest.raises(InferenceError, match="x2"):
+        predict_batch(bundle, ["x1", "x2"], df)
+
+
+def test_predict_batch_tolerates_missing_values_via_the_trained_imputer():
+    """Contrairement à `predict_one` (formulaire interactif, strict), une
+    valeur manquante dans le fichier uploadé ne rejette jamais la ligne — le
+    préprocesseur entraîné impute déjà les valeurs manquantes (voir
+    ml_preprocessing.py), exactement comme il l'aurait fait pour une ligne
+    d'entraînement avec le même trou."""
+    bundle = _regression_bundle()
+    df = pd.DataFrame({"x1": [45.0, np.nan, 55.0], "x2": [18.0, 20.0, np.nan]})
+
+    result = predict_batch(bundle, ["x1", "x2"], df)
+
+    assert len(result) == 3
+    assert result["prediction"].notna().all()
+
+
+def test_predict_batch_rejects_an_empty_file_with_a_clear_message():
+    """Le préprocesseur entraîné (imputeur compris) exige au moins une ligne
+    — un fichier vide (en-tête seul) doit échouer avec un message clair,
+    jamais l'exception brute de sklearn ("Found array with 0 sample(s)...")."""
+    bundle = _regression_bundle()
+    df = pd.DataFrame({"x1": pd.Series(dtype=float), "x2": pd.Series(dtype=float)})
+
+    with pytest.raises(InferenceError, match="aucune ligne"):
+        predict_batch(bundle, ["x1", "x2"], df)

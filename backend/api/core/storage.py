@@ -64,6 +64,27 @@ def anomaly_model_file_path(organization_id: int, anomaly_job_id: int) -> Path:
     return org_dir / f"{anomaly_job_id}.joblib"
 
 
+BATCH_PREDICTIONS_DIR = STORAGE_ROOT / "batch_predictions"
+
+
+def batch_prediction_input_file_path(organization_id: int, batch_job_id: int, extension: str) -> Path:
+    """Fichier uploadé par l'utilisateur (retour utilisateur : prédiction en
+    lot) — même isolation que `dataset_file_path`. `extension` reprend
+    celle du fichier source (csv/xlsx/xls/parquet/json), voir
+    `domains/shared/dataset_io.py::validate_extension`."""
+    org_dir = BATCH_PREDICTIONS_DIR / str(organization_id)
+    org_dir.mkdir(parents=True, exist_ok=True)
+    return org_dir / f"{batch_job_id}_input{extension}"
+
+
+def batch_prediction_output_file_path(organization_id: int, batch_job_id: int) -> Path:
+    """Résultat téléchargeable — toujours CSV (format universel, peu importe
+    le format du fichier uploadé), jamais l'extension d'origine."""
+    org_dir = BATCH_PREDICTIONS_DIR / str(organization_id)
+    org_dir.mkdir(parents=True, exist_ok=True)
+    return org_dir / f"{batch_job_id}_output.csv"
+
+
 def vision_dataset_dir(organization_id: int, dataset_id: int) -> Path:
     """Dossier racine — TOUJOURS VIDE au retour — des images extraites d'un
     `VisionDataset`. Même isolation disque que `dataset_file_path`

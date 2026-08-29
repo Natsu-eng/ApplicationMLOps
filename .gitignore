@@ -44,6 +44,12 @@ backend/storage/models/*
 backend/storage/datasets_vision/*
 !backend/storage/datasets_vision/.gitkeep
 
+# Prédiction en lot (retour utilisateur : "batch prediction") — fichiers
+# uploadés + résultats générés, jamais dans git, même raisonnement que
+# backend/storage/datasets/ ci-dessus.
+backend/storage/batch_predictions/*
+!backend/storage/batch_predictions/.gitkeep
+
 # CatBoost écrit ses logs d'entraînement dans le répertoire courant (Lot 3)
 catboost_info/
 
