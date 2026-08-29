@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { ChevronDown, Scale } from "lucide-react";
 import { api, type DataWarning } from "../../api/client";
 import { Badge } from "../ui/Badge";
+import { ClassBalanceChart } from "../charts";
 
 /** Rééquilibrage des classes (lot déséquilibre) — même pattern d'approbation
  * que l'ingénierie de variables (Lot 4c) : détecté par le garde-fou Lot B
@@ -49,7 +50,8 @@ export function ClassRebalancingSuggestion({
 
   if (!targetColumn || loading || !warning) return null;
 
-  const ratio = (warning.details as { ratio?: number } | null)?.ratio;
+  const details = warning.details as { ratio?: number; class_counts?: Record<string, number>; class_weights?: Record<string, number> } | null;
+  const ratio = details?.ratio;
   const explanation = ratio
     ? `Dans ce dataset, la classe la plus fréquente apparaît environ ${Math.round(ratio)} fois plus souvent ` +
       "que la plus rare. Sans rééquilibrage, le modèle a tendance à privilégier la classe majoritaire : bonne " +
@@ -98,7 +100,19 @@ export function ClassRebalancingSuggestion({
           </button>
         </div>
 
-        {expanded && <p className="text-xs text-muted-foreground mt-2 pl-6">{explanation}</p>}
+        {expanded && (
+          <div className="mt-2 pl-6 space-y-3">
+            <p className="text-xs text-muted-foreground">{explanation}</p>
+            {/* Retour utilisateur direct : "on détecte bien le déséquilibre
+                mais on ne montre pas par un graphique adéquat... ce que ça
+                donnera" — comptages ET poids effectif par classe, calculés
+                côté serveur (voir data_quality.py::_detect_class_imbalance),
+                jamais une approximation côté client. */}
+            {details?.class_counts && (
+              <ClassBalanceChart classCounts={details.class_counts} classWeights={details.class_weights} />
+            )}
+          </div>
+        )}
 
         <p className="text-xs text-muted-foreground mt-2 pl-6">
           Cochez pour donner plus de poids à la classe rare pendant l'entraînement — aucune ligne n'est

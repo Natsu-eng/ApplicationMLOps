@@ -1,7 +1,8 @@
-import { ImageOff } from "lucide-react";
+import { ChevronDown, ImageOff } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { ApiError, api, type AugmentationPreset, type AugmentationPreviewResult } from "../../api/client";
 import { Badge } from "../ui/Badge";
+import { ClassBalanceChart } from "../charts";
 
 // Lot 6A (correctif I9) — labels/descriptions des 4 presets, partagés par
 // les deux wizards Vision (classification ET anomalies, même presets
@@ -154,6 +155,7 @@ export function classImbalanceRatio(classDistribution: Record<string, number> | 
 const IMBALANCE_WARN_THRESHOLD = 3;
 
 export function ClassImbalanceBanner({ classDistribution }: { classDistribution: Record<string, number> | undefined }) {
+  const [expanded, setExpanded] = useState(false);
   const ratio = classImbalanceRatio(classDistribution);
   if (ratio === null || ratio < IMBALANCE_WARN_THRESHOLD) return null;
   const entries = Object.entries(classDistribution ?? {}).sort((a, b) => b[1] - a[1]);
@@ -169,6 +171,27 @@ export function ClassImbalanceBanner({ classDistribution }: { classDistribution:
         La pondération de classes (Mode expert, activée par défaut) compense ce déséquilibre pendant
         l'entraînement — sans elle, le modèle peut apprendre à toujours prédire la classe majoritaire.
       </p>
+      {/* Retour utilisateur direct : "on détecte bien le déséquilibre mais
+          on ne montre pas par un graphique adéquat... ce que ça donnera" —
+          même graphique que le ML tabulaire (ClassRebalancingSuggestion.tsx),
+          poids dérivé ici avec la même formule "balanced" que
+          `_class_weights` (services/engine.py) : aucun calcul backend
+          équivalent pour la vision aujourd'hui, mais le même miroir exact du
+          calcul réellement appliqué à l'entraînement, jamais une
+          approximation inventée. */}
+      <button
+        type="button"
+        onClick={() => setExpanded((v) => !v)}
+        className="flex items-center gap-1 text-xs text-warning hover:underline underline-offset-2 mt-2"
+      >
+        {expanded ? "Masquer le graphique" : "Voir la répartition en détail"}
+        <ChevronDown size={12} className={`transition-transform ${expanded ? "rotate-180" : ""}`} />
+      </button>
+      {expanded && classDistribution && (
+        <div className="mt-2">
+          <ClassBalanceChart classCounts={classDistribution} />
+        </div>
+      )}
     </div>
   );
 }

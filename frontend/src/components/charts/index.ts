@@ -11,3 +11,4 @@ export { EmbeddingScatter, type EmbeddingPoint } from "./EmbeddingScatter";
 export { CorrelationHeatmap } from "./CorrelationHeatmap";
 export { Sparkline } from "./Sparkline";
 export { Gauge } from "./Gauge";
+export { ClassBalanceChart } from "./ClassBalanceChart";

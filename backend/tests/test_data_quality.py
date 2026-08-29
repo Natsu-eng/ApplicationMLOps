@@ -86,6 +86,25 @@ def test_class_imbalance_triggers_on_skewed_classes():
     assert imbalance[0]["level"] == "attention"
 
 
+def test_class_imbalance_details_expose_counts_and_balanced_weights_for_the_chart():
+    """Retour utilisateur direct : "on détecte bien le déséquilibre mais on
+    ne montre pas par un graphique... ce que ça donnera [avec le
+    rééquilibrage]" — le frontend a besoin des comptages ET des poids
+    effectifs (même formule "balanced" que `compute_sample_weight`
+    réellement appliquée à l'entraînement), jamais juste le ratio."""
+    df = pd.DataFrame({"cible": ["rare"] * 5 + ["frequent"] * 200, "x": range(205)})
+    warnings = analyze_data_quality(df, "cible")
+    details = _warnings_with_code(warnings, "desequilibre_classes")[0]["details"]
+
+    assert details["class_counts"] == {"frequent": 200, "rare": 5}
+    # Poids "balanced" = n_total / (n_classes * n_c) — la classe rare doit
+    # recevoir un poids bien plus élevé que la classe fréquente.
+    assert details["class_weights"]["rare"] > details["class_weights"]["frequent"]
+    n_total, n_classes = 205, 2
+    assert details["class_weights"]["rare"] == round(n_total / (n_classes * 5), 3)
+    assert details["class_weights"]["frequent"] == round(n_total / (n_classes * 200), 3)
+
+
 def test_class_imbalance_does_not_trigger_on_balanced_classes():
     df = pd.DataFrame({"cible": ["a"] * 100 + ["b"] * 100, "x": range(200)})
     warnings = analyze_data_quality(df, "cible")

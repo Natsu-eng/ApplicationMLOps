@@ -243,6 +243,17 @@ def _detect_class_imbalance(df: pd.DataFrame, target_column: str, task_type: str
     ratio = float(counts.max() / counts.min())
     if ratio <= CLASS_IMBALANCE_RATIO_THRESHOLD:
         return []
+    # Retour utilisateur direct : "on détecte bien le déséquilibre mais on
+    # ne montre pas par un graphique adéquat... ce que ça donnera [avec le
+    # rééquilibrage]" — répartition brute ET poids effectif par classe (même
+    # formule "balanced" que `sklearn.utils.class_weight.compute_sample_weight`
+    # réellement appliquée à l'entraînement, voir services/engine.py::
+    # _optimize_one_model/sample_weight) : le frontend n'invente rien, il
+    # affiche le résultat d'un calcul déjà fait, jamais une approximation.
+    n_total = int(counts.sum())
+    n_classes = len(counts)
+    class_counts = {str(k): int(v) for k, v in counts.items()}
+    class_weights = {str(k): round(n_total / (n_classes * int(v)), 3) for k, v in counts.items()}
     return [_warning(
         level="attention",
         code="desequilibre_classes",
@@ -263,7 +274,7 @@ def _detect_class_imbalance(df: pd.DataFrame, target_column: str, task_type: str
             "lors de l'entraînement."
         ),
         columns=[target_column],
-        details={"ratio": round(ratio, 2)},
+        details={"ratio": round(ratio, 2), "class_counts": class_counts, "class_weights": class_weights},
     )]
 
 
