@@ -24,6 +24,7 @@ from api.core.observability import request_id_var
 from api.core.storage import batch_prediction_output_file_path
 from domains.shared.dataset_io import DatasetParsingError, read_dataframe
 from domains.shared.model_bundle import InferenceError, load_bundle
+from domains.shared.notifications import notify_job_terminal
 from domains.training.services.inference import predict_batch
 
 logger = logging.getLogger("datalab.batch_prediction_worker")
@@ -99,6 +100,10 @@ def run_batch_prediction_job(batch_job_id: int) -> None:
             job.progress_step = "Terminé"
             job.progress_percent = 100
             job.finished_at = datetime.now(timezone.utc)
+            notify_job_terminal(
+                db, job.organization_id, job.created_by_id, "batch_prediction", job.id, "completed",
+                job.input_filename, link_job_id=job.training_job_id,
+            )
             db.commit()
             logger.info("[BatchPrediction] Job %s terminé — %s lignes prédites", batch_job_id, job.n_rows)
 
@@ -106,6 +111,10 @@ def run_batch_prediction_job(batch_job_id: int) -> None:
             job.status = "failed"
             job.error_message = str(exc)
             job.finished_at = datetime.now(timezone.utc)
+            notify_job_terminal(
+                db, job.organization_id, job.created_by_id, "batch_prediction", job.id, "failed",
+                job.input_filename, link_job_id=job.training_job_id,
+            )
             db.commit()
             logger.warning("[BatchPrediction] Job %s — échec diagnostiqué : %s", batch_job_id, exc)
 
@@ -113,6 +122,10 @@ def run_batch_prediction_job(batch_job_id: int) -> None:
             job.status = "failed"
             job.error_message = _user_safe_error_message(exc)
             job.finished_at = datetime.now(timezone.utc)
+            notify_job_terminal(
+                db, job.organization_id, job.created_by_id, "batch_prediction", job.id, "failed",
+                job.input_filename, link_job_id=job.training_job_id,
+            )
             db.commit()
             logger.error("[BatchPrediction] Job %s échoué : %s\n%s", batch_job_id, exc, traceback.format_exc())
 

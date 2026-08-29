@@ -19,6 +19,7 @@ from api.core.models import VisionClassificationJob, VisionClassificationModel, 
 from api.core.observability import request_id_var
 from api.core.storage import vision_classification_model_file_path
 from domains.shared.ml_preprocessing import TrainingAbortedError
+from domains.shared.notifications import notify_job_terminal
 from domains.vision.classification.services.engine import (
     ClassificationConfig,
     train_and_compare_backbones,
@@ -124,6 +125,9 @@ def run_vision_classification_job(job_id: int) -> None:
             job.progress_step = "Terminé"
             job.progress_percent = 100
             job.finished_at = datetime.now(timezone.utc)
+            notify_job_terminal(
+                db, job.organization_id, job.created_by_id, "vision_classification", job.id, "completed", dataset.name
+            )
             db.commit()
             logger.info(
                 "[VisionClassification] Job %s terminé — accuracy test %.3f", job_id, result.test_accuracy
@@ -133,6 +137,10 @@ def run_vision_classification_job(job_id: int) -> None:
             job.status = "failed"
             job.error_message = str(exc)
             job.finished_at = datetime.now(timezone.utc)
+            notify_job_terminal(
+                db, job.organization_id, job.created_by_id, "vision_classification", job.id, "failed",
+                f"Dataset #{job.vision_dataset_id}",
+            )
             db.commit()
             logger.warning("[VisionClassification] Job %s — échec diagnostiqué : %s", job_id, exc)
 
@@ -140,6 +148,10 @@ def run_vision_classification_job(job_id: int) -> None:
             job.status = "failed"
             job.error_message = _user_safe_error_message(exc)
             job.finished_at = datetime.now(timezone.utc)
+            notify_job_terminal(
+                db, job.organization_id, job.created_by_id, "vision_classification", job.id, "failed",
+                f"Dataset #{job.vision_dataset_id}",
+            )
             db.commit()
             logger.error("[VisionClassification] Job %s échoué : %s\n%s", job_id, exc, traceback.format_exc())
 

@@ -23,6 +23,7 @@ from api.core.storage import model_file_path
 from domains.shared.dataset_io import read_dataset_dataframe
 from domains.shared.feature_engineering import FeatureEngineeringSpecError, apply_upstream_feature_engineering
 from domains.shared.ml_preprocessing import DataLeakageError, TrainingAbortedError, split_dataset
+from domains.shared.notifications import notify_job_terminal
 from domains.training.services.engine import TrainingConfig, train_and_evaluate
 from domains.training.services.versioning import next_version
 
@@ -208,6 +209,10 @@ def run_training_job(job_id: int) -> None:
             job.progress_step = "Terminé"
             job.progress_percent = 100
             job.finished_at = datetime.now(timezone.utc)
+            notify_job_terminal(
+                db, job.organization_id, job.created_by_id, "training", job.id, "completed",
+                f"{dataset.name} → {job.target_column}",
+            )
             db.commit()
             logger.info("[Training] Job %s terminé — %s retenu", job_id, result.algorithm)
 
@@ -215,6 +220,9 @@ def run_training_job(job_id: int) -> None:
             job.status = "failed"
             job.error_message = str(exc)
             job.finished_at = datetime.now(timezone.utc)
+            notify_job_terminal(
+                db, job.organization_id, job.created_by_id, "training", job.id, "failed", job.target_column
+            )
             db.commit()
             logger.warning("[Training] Job %s — fuite détectée : %s", job_id, exc)
 
@@ -235,6 +243,9 @@ def run_training_job(job_id: int) -> None:
             job.status = "failed"
             job.error_message = str(exc)
             job.finished_at = datetime.now(timezone.utc)
+            notify_job_terminal(
+                db, job.organization_id, job.created_by_id, "training", job.id, "failed", job.target_column
+            )
             db.commit()
             logger.warning("[Training] Job %s — échec diagnostiqué : %s", job_id, exc)
 
@@ -242,6 +253,9 @@ def run_training_job(job_id: int) -> None:
             job.status = "failed"
             job.error_message = _user_safe_error_message(exc)
             job.finished_at = datetime.now(timezone.utc)
+            notify_job_terminal(
+                db, job.organization_id, job.created_by_id, "training", job.id, "failed", job.target_column
+            )
             db.commit()
             # Détail technique complet (type, message brut, traceback) — JAMAIS
             # renvoyé à l'utilisateur (voir job.error_message ci-dessus), utile

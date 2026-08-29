@@ -1121,3 +1121,47 @@ class Feedback(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     author: Mapped["User"] = relationship("User")
+
+
+class Notification(Base):
+    """Notification de fin de job (retour utilisateur : "notifications de
+    fin de job — email/navigateur") — une ligne par transition terminale
+    (`completed`/`failed`) d'un job de fond, tous types confondus (7 tables
+    de job distinctes, voir `domains/shared/notifications.py` pour le
+    mapping) : `job_type`/`job_id` référencent la ligne d'origine SANS
+    clé étrangère (la cible change de table selon `job_type`, comme
+    `AuditLog.target_type`/`target_id` déjà dans ce fichier) — supprimer le
+    job d'origine ne supprime jamais silencieusement la notification, qui
+    reste un fait historique ("votre entraînement du 12/03 a échoué").
+
+    Personnelle, jamais partagée à toute l'organisation (`user_id` non
+    nullable) — un job lancé par un collègue ne doit pas notifier tout le
+    monde, seulement la personne qui l'a lancé et qui l'attend."""
+
+    __tablename__ = "notifications"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    organization_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    user_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    # "training" | "clustering" | "dimensionality" | "anomaly" |
+    # "vision_classification" | "vision_anomaly" | "batch_prediction" — voir
+    # domains/shared/notifications.py::_JOB_TYPE_LABELS pour la liste
+    # canonique (seule source de vérité sur les valeurs valides).
+    job_type: Mapped[str] = mapped_column(String(30), nullable=False)
+    job_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False)  # completed | failed
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    message: Mapped[str] = mapped_column(String(500), nullable=False)
+    # Chemin frontend prêt à l'emploi (ex. "/training?job=45") — même
+    # convention `?job=` déjà utilisée par Dashboard.tsx/AllHistory.tsx,
+    # jamais reconstruite différemment ici.
+    link_path: Mapped[str] = mapped_column(String(255), nullable=False)
+    read_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+    organization: Mapped["Organization"] = relationship("Organization")
+    user: Mapped["User"] = relationship("User")

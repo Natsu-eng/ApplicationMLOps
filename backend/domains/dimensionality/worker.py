@@ -24,6 +24,7 @@ from api.core.storage import dimensionality_model_file_path
 from domains.dimensionality.services.engine import DimensionalityConfig, train_and_evaluate_dimensionality
 from domains.shared.dataset_io import read_dataset_dataframe
 from domains.shared.ml_preprocessing import TrainingAbortedError
+from domains.shared.notifications import notify_job_terminal
 
 logger = logging.getLogger("datalab.dimensionality_worker")
 
@@ -127,6 +128,9 @@ def run_dimensionality_job(job_id: int) -> None:
             job.progress_step = "Terminé"
             job.progress_percent = 100
             job.finished_at = datetime.now(timezone.utc)
+            notify_job_terminal(
+                db, job.organization_id, job.created_by_id, "dimensionality", job.id, "completed", dataset.name
+            )
             db.commit()
             logger.info("[Dimensionality] Job %s terminé — %s", job_id, result.algorithm_label)
 
@@ -134,6 +138,10 @@ def run_dimensionality_job(job_id: int) -> None:
             job.status = "failed"
             job.error_message = str(exc)
             job.finished_at = datetime.now(timezone.utc)
+            notify_job_terminal(
+                db, job.organization_id, job.created_by_id, "dimensionality", job.id, "failed",
+                f"Dataset #{job.dataset_id}",
+            )
             db.commit()
             logger.warning("[Dimensionality] Job %s — échec diagnostiqué : %s", job_id, exc)
 
@@ -141,6 +149,10 @@ def run_dimensionality_job(job_id: int) -> None:
             job.status = "failed"
             job.error_message = _user_safe_error_message(exc)
             job.finished_at = datetime.now(timezone.utc)
+            notify_job_terminal(
+                db, job.organization_id, job.created_by_id, "dimensionality", job.id, "failed",
+                f"Dataset #{job.dataset_id}",
+            )
             db.commit()
             logger.error("[Dimensionality] Job %s échoué : %s\n%s", job_id, exc, traceback.format_exc())
 

@@ -19,6 +19,7 @@ from api.core.models import VisionAnomalyExampleRecord, VisionAnomalyJob, Vision
 from api.core.observability import request_id_var
 from api.core.storage import vision_anomaly_model_file_path
 from domains.shared.ml_preprocessing import TrainingAbortedError
+from domains.shared.notifications import notify_job_terminal
 from domains.vision.anomalies.services.engine import (
     AnomalyVisionConfig,
     train_and_compare_anomaly_models,
@@ -142,6 +143,9 @@ def run_vision_anomaly_job(job_id: int) -> None:
             job.progress_step = "Terminé"
             job.progress_percent = 100
             job.finished_at = datetime.now(timezone.utc)
+            notify_job_terminal(
+                db, job.organization_id, job.created_by_id, "vision_anomaly", job.id, "completed", dataset.name
+            )
             db.commit()
             logger.info(
                 "[VisionAnomaly] Job %s terminé — ROC-AUC test %.3f", job_id, result.roc_auc
@@ -151,6 +155,10 @@ def run_vision_anomaly_job(job_id: int) -> None:
             job.status = "failed"
             job.error_message = str(exc)
             job.finished_at = datetime.now(timezone.utc)
+            notify_job_terminal(
+                db, job.organization_id, job.created_by_id, "vision_anomaly", job.id, "failed",
+                f"Dataset #{job.vision_dataset_id}",
+            )
             db.commit()
             logger.warning("[VisionAnomaly] Job %s — échec diagnostiqué : %s", job_id, exc)
 
@@ -158,6 +166,10 @@ def run_vision_anomaly_job(job_id: int) -> None:
             job.status = "failed"
             job.error_message = _user_safe_error_message(exc)
             job.finished_at = datetime.now(timezone.utc)
+            notify_job_terminal(
+                db, job.organization_id, job.created_by_id, "vision_anomaly", job.id, "failed",
+                f"Dataset #{job.vision_dataset_id}",
+            )
             db.commit()
             logger.error("[VisionAnomaly] Job %s échoué : %s\n%s", job_id, exc, traceback.format_exc())
 

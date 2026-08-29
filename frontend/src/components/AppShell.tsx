@@ -2,6 +2,7 @@ import { type ReactNode, useEffect, useRef, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { HelpCircle, History, LayoutDashboard, LogOut, Menu, Palette, Target, X } from "lucide-react";
 import { useAuth } from "../contexts/AuthContext";
+import { NotificationBell } from "./NotificationBell";
 import { Avatar } from "./ui/Avatar";
 import { Badge } from "./ui/Badge";
 import { ThemePickerCompact } from "./ui/ThemePicker";
@@ -255,6 +256,7 @@ export default function AppShell({ children, pillarId }: { children: ReactNode; 
           </button>
 
           <div className="ml-auto flex items-center gap-2">
+            <NotificationBell />
             <Link
               to="/aide"
               className="flex items-center gap-1.5 h-9 rounded-lg px-3 text-sm text-muted-foreground hover:bg-muted/60 hover:text-foreground transition-colors"

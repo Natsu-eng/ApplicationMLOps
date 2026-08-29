@@ -26,6 +26,7 @@ from api.core.storage import cluster_model_file_path
 from domains.clustering.services.engine import ClusteringConfig, train_and_evaluate_clustering
 from domains.shared.dataset_io import read_dataset_dataframe
 from domains.shared.ml_preprocessing import TrainingAbortedError
+from domains.shared.notifications import notify_job_terminal
 
 logger = logging.getLogger("datalab.clustering_worker")
 
@@ -167,6 +168,9 @@ def run_clustering_job(job_id: int) -> None:
             job.progress_step = "Terminé"
             job.progress_percent = 100
             job.finished_at = datetime.now(timezone.utc)
+            notify_job_terminal(
+                db, job.organization_id, job.created_by_id, "clustering", job.id, "completed", dataset.name
+            )
             db.commit()
             logger.info("[Clustering] Job %s terminé — %s retenu", job_id, result.winning_label)
 
@@ -174,6 +178,9 @@ def run_clustering_job(job_id: int) -> None:
             job.status = "failed"
             job.error_message = str(exc)
             job.finished_at = datetime.now(timezone.utc)
+            notify_job_terminal(
+                db, job.organization_id, job.created_by_id, "clustering", job.id, "failed", f"Dataset #{job.dataset_id}"
+            )
             db.commit()
             logger.warning("[Clustering] Job %s — échec diagnostiqué : %s", job_id, exc)
 
@@ -181,6 +188,9 @@ def run_clustering_job(job_id: int) -> None:
             job.status = "failed"
             job.error_message = _user_safe_error_message(exc)
             job.finished_at = datetime.now(timezone.utc)
+            notify_job_terminal(
+                db, job.organization_id, job.created_by_id, "clustering", job.id, "failed", f"Dataset #{job.dataset_id}"
+            )
             db.commit()
             logger.error("[Clustering] Job %s échoué : %s\n%s", job_id, exc, traceback.format_exc())
 

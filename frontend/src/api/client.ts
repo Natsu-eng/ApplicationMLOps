@@ -594,6 +594,33 @@ export interface FeatureEngineeringSpec {
 export type TaskType = "classification" | "regression";
 export type JobStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
 
+// ── Notifications (retour utilisateur : "notifications de fin de job —
+// email/navigateur") — nommé `NotificationEntry`, jamais `Notification` :
+// collision directe avec l'API navigateur native (`window.Notification`,
+// utilisée telle quelle pour la notification navigateur, voir
+// NotificationBell.tsx) sinon. ─────────────────────────────────────────────
+
+export type NotificationJobType =
+  | "training"
+  | "clustering"
+  | "dimensionality"
+  | "anomaly"
+  | "vision_classification"
+  | "vision_anomaly"
+  | "batch_prediction";
+
+export interface NotificationEntry {
+  id: number;
+  job_type: NotificationJobType;
+  job_id: number;
+  status: "completed" | "failed";
+  title: string;
+  message: string;
+  link_path: string;
+  read_at: string | null;
+  created_at: string;
+}
+
 // ── Clustering (Lot 11+ — ML non supervisé) ──────────────────────────────
 
 export interface ClusteringJobCreatePayload {
@@ -1819,5 +1846,13 @@ export const api = {
     rerun: (id: number) => request<VisionAnomalyJobSummary>(`/vision/anomalies/jobs/${id}/rerun`, { method: "POST" }),
     remove: (id: number) => request<void>(`/vision/anomalies/jobs/${id}`, { method: "DELETE" }),
     exportModel: (id: number) => downloadModelExport(`/vision/anomalies/jobs/${id}/model/export`, `vision_anomalies_job${id}.pt`),
+  },
+
+  notifications: {
+    list: (unreadOnly = false) =>
+      request<NotificationEntry[]>(`/notifications${unreadOnly ? "?unread_only=true" : ""}`),
+    unreadCount: () => request<{ count: number }>("/notifications/unread-count"),
+    markRead: (id: number) => request<NotificationEntry>(`/notifications/${id}/read`, { method: "POST" }),
+    markAllRead: () => request<void>("/notifications/read-all", { method: "POST" }),
   },
 };

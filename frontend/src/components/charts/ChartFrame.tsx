@@ -64,30 +64,40 @@ export function ChartFrame({
 
 /** Petit tableau de repli générique — colonnes + lignes déjà formatées en
  * chaînes par l'appelant (chaque graphique connaît le bon format/l'unité
- * métier de ses propres données, `ChartFrame` reste agnostique). */
+ * métier de ses propres données, `ChartFrame` reste agnostique).
+ *
+ * Retour utilisateur direct : la première version (`border-foreground/
+ * [0.05]`, quasi invisible) rendait les lignes illisibles à l'œil sans
+ * survoler chaque cellule — séparateurs remontés à `border` (jeton de
+ * thème, même contraste que le `Table.tsx` principal), zébrage léger une
+ * ligne sur deux et surlignage au survol pour suivre une ligne sans
+ * confusion, conteneur arrondi avec cadre pour détacher le tableau du
+ * texte environnant plutôt que de flotter à même le fond. */
 export function ChartFallbackTable({ columns, rows }: { columns: string[]; rows: (string | number)[][] }) {
   return (
-    <table className="w-full text-caption border-collapse">
-      <thead>
-        <tr className="border-b border-foreground/[0.05]">
-          {columns.map((c) => (
-            <th key={c} scope="col" className="text-left font-medium text-muted-foreground text-overline uppercase py-1.5 pr-4 whitespace-nowrap">
-              {c}
-            </th>
-          ))}
-        </tr>
-      </thead>
-      <tbody className="divide-y divide-foreground/[0.05]">
-        {rows.map((row, i) => (
-          <tr key={i}>
-            {row.map((cell, j) => (
-              <td key={j} className={`py-1.5 pr-4 whitespace-nowrap ${typeof cell === "number" ? "num text-right" : "text-foreground/90"}`}>
-                {cell}
-              </td>
+    <div className="overflow-hidden rounded-lg border border-border">
+      <table className="w-full text-caption border-collapse">
+        <thead>
+          <tr className="bg-muted border-b border-border">
+            {columns.map((c) => (
+              <th key={c} scope="col" className="text-left font-medium text-muted-foreground text-overline uppercase py-2 px-3 whitespace-nowrap">
+                {c}
+              </th>
             ))}
           </tr>
-        ))}
-      </tbody>
-    </table>
+        </thead>
+        <tbody className="divide-y divide-border">
+          {rows.map((row, i) => (
+            <tr key={i} className={`transition-colors hover:bg-muted/60 ${i % 2 === 1 ? "bg-muted/25" : ""}`}>
+              {row.map((cell, j) => (
+                <td key={j} className={`py-2 px-3 whitespace-nowrap ${typeof cell === "number" ? "num text-right" : "text-foreground/90"}`}>
+                  {cell}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }

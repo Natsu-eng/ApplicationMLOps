@@ -40,6 +40,7 @@ from domains.clustering.router import router as clustering_router
 from domains.dashboard.router import router as dashboard_router
 from domains.datasets.router import router as datasets_router
 from domains.dimensionality.router import router as dimensionality_router
+from domains.notifications.router import router as notifications_router
 from domains.training.router import router as training_router
 from domains.vision.anomalies.router import router as vision_anomalies_router
 from domains.vision.classification.router import router as vision_classification_router
@@ -257,6 +258,7 @@ app.include_router(vision_datasets_router, prefix="/api")
 app.include_router(vision_classification_router, prefix="/api")
 app.include_router(vision_anomalies_router, prefix="/api")
 app.include_router(dashboard_router, prefix="/api")
+app.include_router(notifications_router, prefix="/api")
 
 
 # Phase 3 (AUDIT_BACKEND_2026-08-23.md, Axe I, §5) — avant ce correctif,
