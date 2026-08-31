@@ -778,6 +778,18 @@ export interface DimensionalityColorByResponse {
   values: Record<string, number | string | null>;
 }
 
+// Lot 6B, §F.2 — projeter une NOUVELLE observation (contrairement à
+// DimensionalityPoint, qui décrit une ligne du jeu de données
+// d'entraînement déjà projetée). "unsupported" pour t-SNE (transductif,
+// aucun `.transform()` natif — jamais d'approximation inventée).
+export type DimensionalityProjectionMethod = "exact" | "unsupported";
+
+export interface DimensionalityProjection {
+  x: number | null;
+  y: number | null;
+  projection_method: DimensionalityProjectionMethod;
+}
+
 // ── Détection d'anomalies (Lot 14 — ML non supervisé) ─────────────────────
 
 export interface AnomalyJobCreatePayload {
@@ -1772,10 +1784,19 @@ export const api = {
     getPoints: (id: number) => request<DimensionalityPoint[]>(`/dimensionality/jobs/${id}/points`),
     getColorBy: (id: number, column: string) =>
       request<DimensionalityColorByResponse>(`/dimensionality/jobs/${id}/color-by?column=${encodeURIComponent(column)}`),
+    project: (id: number, data: Record<string, unknown>) =>
+      request<DimensionalityProjection>(`/dimensionality/jobs/${id}/project`, {
+        method: "POST",
+        body: JSON.stringify({ data }),
+      }),
     cancel: (id: number) => request<DimensionalityJobSummary>(`/dimensionality/jobs/${id}/cancel`, { method: "POST" }),
     rerun: (id: number) => request<DimensionalityJobSummary>(`/dimensionality/jobs/${id}/rerun`, { method: "POST" }),
     remove: (id: number) => request<void>(`/dimensionality/jobs/${id}`, { method: "DELETE" }),
     exportModel: (id: number) => downloadModelExport(`/dimensionality/jobs/${id}/model/export`, `projection_job${id}.joblib`),
+    exportDeploymentScript: (id: number) =>
+      downloadModelExport(`/dimensionality/jobs/${id}/model/export-script`, `projection_job${id}_deploiement.py`),
+    exportPoints: (id: number) =>
+      downloadModelExport(`/dimensionality/jobs/${id}/points/export`, `projection_points_job${id}.csv`),
   },
 
   anomalies: {

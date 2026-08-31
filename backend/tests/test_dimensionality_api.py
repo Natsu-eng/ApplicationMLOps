@@ -268,3 +268,100 @@ def test_color_by_isolated_between_organizations(client):
     headers_b = _register(client, "b@bureau-b.fr", "Bureau B")
     resp = client.get(f"/api/dimensionality/jobs/{job['id']}/color-by?column=x1", headers=headers_b)
     assert resp.status_code == 404
+
+
+# ── /project, /points/export, /model/export-script (Lot 6B, §F.2 — projeter
+# une NOUVELLE observation, jamais seulement consulter le jeu de données
+# d'entraînement) ──────────────────────────────────────────────────────────
+
+
+def test_project_endpoint_projects_new_observation_with_pca(client, db_session):
+    headers = _register(client)
+    dataset = _upload_dataset(client, headers, n=60)
+    job = _create_job(client, headers, dataset["id"], algorithm_id="pca").json()
+
+    run_dimensionality_job(job["id"])
+    db_session.expire_all()
+
+    resp = client.post(f"/api/dimensionality/jobs/{job['id']}/project", headers=headers, json={"data": {"x1": 0, "x2": 0}})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["projection_method"] == "exact"
+    assert body["x"] is not None
+    assert body["y"] is not None
+
+
+def test_project_endpoint_reports_unsupported_for_tsne(client, db_session):
+    headers = _register(client)
+    dataset = _upload_dataset(client, headers, n=60)
+    job = _create_job(client, headers, dataset["id"], algorithm_id="tsne").json()
+
+    run_dimensionality_job(job["id"])
+    db_session.expire_all()
+
+    resp = client.post(f"/api/dimensionality/jobs/{job['id']}/project", headers=headers, json={"data": {"x1": 0, "x2": 0}})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["projection_method"] == "unsupported"
+    assert body["x"] is None
+
+
+def test_project_endpoint_rejects_missing_feature(client, db_session):
+    headers = _register(client)
+    dataset = _upload_dataset(client, headers, n=60)
+    job = _create_job(client, headers, dataset["id"], algorithm_id="pca").json()
+
+    run_dimensionality_job(job["id"])
+    db_session.expire_all()
+
+    resp = client.post(f"/api/dimensionality/jobs/{job['id']}/project", headers=headers, json={"data": {"x1": 0}})
+    assert resp.status_code == 400
+    assert resp.json()["detail"]["code"] == "PROJECTION_IMPOSSIBLE"
+
+
+def test_project_endpoint_409_before_completion(client):
+    headers = _register(client)
+    dataset = _upload_dataset(client, headers)
+    job = _create_job(client, headers, dataset["id"]).json()
+    resp = client.post(f"/api/dimensionality/jobs/{job['id']}/project", headers=headers, json={"data": {"x1": 0, "x2": 0}})
+    assert resp.status_code == 409
+    assert resp.json()["detail"]["code"] == "RESULTAT_INDISPONIBLE"
+
+
+def test_export_points_covers_every_row_of_the_original_dataset(client, db_session):
+    headers = _register(client)
+    dataset = _upload_dataset(client, headers, n=60)
+    job = _create_job(client, headers, dataset["id"], algorithm_id="pca").json()
+
+    run_dimensionality_job(job["id"])
+    db_session.expire_all()
+
+    resp = client.get(f"/api/dimensionality/jobs/{job['id']}/points/export", headers=headers)
+    assert resp.status_code == 200
+    lines = resp.text.strip().splitlines()
+    assert len(lines) - 1 == 60
+    assert "projection_status" in lines[0]
+
+
+def test_export_deployment_script_returns_a_python_file_after_completion(client, db_session):
+    headers = _register(client)
+    dataset = _upload_dataset(client, headers, n=60)
+    job = _create_job(client, headers, dataset["id"], algorithm_id="pca").json()
+
+    run_dimensionality_job(job["id"])
+    db_session.expire_all()
+
+    resp = client.get(f"/api/dimensionality/jobs/{job['id']}/model/export-script", headers=headers)
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("text/x-python")
+    assert "def project(" in resp.text
+    assert "domains" not in resp.text  # jamais de dépendance à ce projet
+
+
+def test_export_deployment_script_409_before_completion(client):
+    headers = _register(client)
+    dataset = _upload_dataset(client, headers)
+    job = _create_job(client, headers, dataset["id"]).json()
+    resp = client.get(f"/api/dimensionality/jobs/{job['id']}/model/export-script", headers=headers)
+    assert resp.status_code == 409
+    assert resp.json()["detail"]["code"] == "MODELE_NON_DISPONIBLE"

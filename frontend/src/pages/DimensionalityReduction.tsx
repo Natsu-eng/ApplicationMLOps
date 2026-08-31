@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { AlertCircle, Ban, Info, ListChecks, Loader2, PlayCircle, RotateCcw, ScatterChart as ScatterChartIcon, Sparkles, Trash2 } from "lucide-react";
+import { AlertCircle, Ban, Download, FileCode, FileJson, Info, ListChecks, Loader2, PlayCircle, RotateCcw, ScatterChart as ScatterChartIcon, Sparkles, Target, Trash2 } from "lucide-react";
 import {
   CartesianGrid,
   Legend,
@@ -20,12 +20,14 @@ import {
   type DimensionalityColorByResponse,
   type DimensionalityJobSummary,
   type DimensionalityPoint,
+  type DimensionalityProjection,
   type DimensionalityResult,
 } from "../api/client";
 import AppShell from "../components/AppShell";
 import { pillarColor } from "../config/pillars";
 import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
+import { Input } from "../components/ui/Input";
 import { accentSurfaceClass, accentValueTextClass, type AccentColor } from "../components/ui/ColorIconBadge";
 import { PageHeader } from "../components/ui/PageHeader";
 import { SectionHeader } from "../components/ui/SectionHeader";
@@ -40,6 +42,7 @@ import { binIndexForValue, computeQuantileEdges, formatBinLabel } from "../utils
 import { DataQualityWarnings } from "../components/training/DataQualityWarnings";
 import { useJobEvents } from "../hooks/useJobEvents";
 import { assessTrustworthinessQuality } from "../utils/dimensionalityQuality";
+import { buildDimensionalityModelCard } from "../utils/dimensionalityModelCard";
 import { QUALITY_TONE_ACCENT } from "../utils/qualityAssessment";
 
 const ACTIVE_STATUSES = new Set(["queued", "running"]);
@@ -270,7 +273,7 @@ export default function DimensionalityReduction() {
           </div>
         </Card>
       ) : phase === "results" && activeJob ? (
-        <DimensionalityResultView jobId={activeJob.id} />
+        <DimensionalityResultView jobId={activeJob.id} datasetName={activeJob.dataset_name} />
       ) : null}
 
       {phase === "configure" && (
@@ -547,7 +550,7 @@ const LOADING_COLUMNS: TableColumn<{ feature: string; pc1: number; pc2: number }
   { key: "pc2", header: "PC2", align: "right", render: (r) => r.pc2.toFixed(3) },
 ];
 
-function DimensionalityResultView({ jobId }: { jobId: number }) {
+function DimensionalityResultView({ jobId, datasetName }: { jobId: number; datasetName: string | null }) {
   const [result, setResult] = useState<DimensionalityResult | null>(null);
   const [points, setPoints] = useState<DimensionalityPoint[]>([]);
   const [pointsError, setPointsError] = useState<string | null>(null);
@@ -583,6 +586,23 @@ function DimensionalityResultView({ jobId }: { jobId: number }) {
 
   const series = buildSeries(points, colorByData);
   const quality = assessTrustworthinessQuality(result.trustworthiness_primary);
+
+  // Fiche modèle (retour utilisateur direct : "on peut télécharger le
+  // modèle mais pas un json... qui suit le modèle") — construite
+  // ENTIÈREMENT à partir de `result`, déjà en mémoire, jamais un second
+  // appel réseau. Voir `utils/dimensionalityModelCard.ts`.
+  function handleExportModelCard() {
+    const card = buildDimensionalityModelCard(datasetName, result);
+    const blob = new Blob([JSON.stringify(card, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `projection_fiche_modele_job${jobId}.json`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  }
 
   return (
     <div className="max-w-4xl mx-auto space-y-5">
@@ -640,16 +660,46 @@ function DimensionalityResultView({ jobId }: { jobId: number }) {
         <p className="text-xs text-foreground/70">{result.distance_fidelity_note}</p>
       </Card>
 
-      <ModelExportActions
-        onExportArtifact={() => api.dimensionality.exportModel(jobId)}
-        exportConfig={{
-          algorithm: result.algorithm,
-          feature_columns: result.feature_columns,
-          total_variance_explained: result.total_variance_explained,
-          trustworthiness_primary: result.trustworthiness_primary,
-          model_card: result.model_card,
-        }}
-        configFilename={`projection_config_job${jobId}.json`}
+      <div className="flex items-center gap-2 flex-wrap">
+        <ModelExportActions
+          onExportArtifact={() => api.dimensionality.exportModel(jobId)}
+          exportConfig={{
+            algorithm: result.algorithm,
+            feature_columns: result.feature_columns,
+            total_variance_explained: result.total_variance_explained,
+            trustworthiness_primary: result.trustworthiness_primary,
+            model_card: result.model_card,
+          }}
+          configFilename={`projection_config_job${jobId}.json`}
+        />
+        <Button variant="secondary" size="sm" onClick={() => api.dimensionality.exportPoints(jobId)}>
+          <Download size={14} />
+          Exporter les points (CSV, toutes les lignes)
+        </Button>
+        <Button variant="secondary" size="sm" onClick={handleExportModelCard}>
+          <FileJson size={14} />
+          Fiche modèle (JSON)
+        </Button>
+        {result.algorithm_id !== "tsne" && (
+          <Button variant="secondary" size="sm" onClick={() => api.dimensionality.exportDeploymentScript(jobId)}>
+            <FileCode size={14} />
+            Script de déploiement (.py)
+          </Button>
+        )}
+      </div>
+      {result.algorithm_id !== "tsne" && (
+        <p className="text-xs text-muted-foreground -mt-2">
+          Pour déployer ce modèle en dehors de DataLab Pro : téléchargez l'artefact ET le script de déploiement,
+          placez-les dans le même dossier — le script recharge l'artefact et projette de nouvelles observations,
+          sans dépendre de cette plateforme (voir l'en-tête du script pour l'installation des bibliothèques
+          nécessaires).
+        </p>
+      )}
+
+      <DimensionalityProjectionForm
+        jobId={jobId}
+        featureColumns={result.feature_columns}
+        supportsNewPoints={result.algorithm_id !== "tsne"}
       />
 
       {result.algorithm_id === "pca" && result.loadings.length > 0 && (
@@ -720,6 +770,94 @@ function DimensionalityResultView({ jobId }: { jobId: number }) {
         </div>
       )}
     </div>
+  );
+}
+
+/** Projette une NOUVELLE observation (Lot 6B, §F.2 — jusqu'ici, comme les
+ * autres piliers non supervisés avant elle, une projection entraînée ne
+ * pouvait jamais être réutilisée sur une nouvelle observation) — même
+ * pattern que `Clustering.tsx::ClusterAssignmentForm`. Honnête sur les
+ * limites : t-SNE n'a pas de méthode `.transform()` (transductif), le
+ * formulaire le rappelle explicitement plutôt que d'échouer silencieusement. */
+function DimensionalityProjectionForm({
+  jobId,
+  featureColumns,
+  supportsNewPoints,
+}: {
+  jobId: number;
+  featureColumns: string[];
+  supportsNewPoints: boolean;
+}) {
+  const [values, setValues] = useState<Record<string, string>>({});
+  const [projection, setProjection] = useState<DimensionalityProjection | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  async function handleSubmit(event: FormEvent) {
+    event.preventDefault();
+    setError(null);
+    setProjection(null);
+    setIsSubmitting(true);
+    try {
+      const result = await api.dimensionality.project(jobId, values);
+      setProjection(result);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Impossible de projeter cette observation");
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  return (
+    <Card className="p-5">
+      <SectionHeader
+        icon={Target}
+        color="blue"
+        label="Projeter une nouvelle observation"
+        help="Indiquez les valeurs d'une nouvelle observation pour voir où elle se situerait sur cette projection 2D, sans relancer un calcul complet."
+      />
+      {!supportsNewPoints ? (
+        <p className="text-xs text-muted-foreground">
+          t-SNE ne permet pas de projeter de nouvelles observations (modèle transductif — aucune méthode
+          mathématique ne permet de situer un nouveau point sans ré-entraîner sur l'ensemble des données).
+          Ré-entraînez avec PCA ou UMAP si vous avez besoin de cette capacité.
+        </p>
+      ) : (
+        <form onSubmit={handleSubmit} className="space-y-3">
+          <div className="grid sm:grid-cols-2 gap-3">
+            {featureColumns.map((col) => (
+              <div key={col}>
+                <label htmlFor={`project-${col}`} className="block text-xs text-muted-foreground mb-1">
+                  {col}
+                </label>
+                <Input
+                  id={`project-${col}`}
+                  value={values[col] ?? ""}
+                  onChange={(e) => setValues((prev) => ({ ...prev, [col]: e.target.value }))}
+                  required
+                />
+              </div>
+            ))}
+          </div>
+          {error && (
+            <div className="flex items-center gap-2 text-sm text-destructive bg-destructive/10 border border-destructive/20 rounded-lg px-3 py-2">
+              <AlertCircle size={15} className="flex-shrink-0" />
+              {error}
+            </div>
+          )}
+          <Button type="submit" variant="secondary" size="sm" disabled={isSubmitting}>
+            {isSubmitting ? "Projection…" : "Projeter"}
+          </Button>
+        </form>
+      )}
+      {projection && projection.x !== null && projection.y !== null && (
+        <div className={`rounded-lg border p-3 mt-3 ${accentSurfaceClass("blue")}`}>
+          <p className="text-sm text-foreground">
+            Position projetée : x = {projection.x.toFixed(3)}, y = {projection.y.toFixed(3)}
+          </p>
+        </div>
+      )}
+    </Card>
   );
 }
 

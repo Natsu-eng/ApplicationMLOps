@@ -15,6 +15,7 @@ from typing import Any, Callable, Optional
 
 import numpy as np
 import pandas as pd
+from sklearn.base import BaseEstimator
 from sklearn.decomposition import PCA
 from sklearn.manifold import trustworthiness
 
@@ -153,9 +154,11 @@ def train_and_evaluate_dimensionality(
     progress_cb(f"Calcul de la projection ({spec.label})", 45)
     if spec.id == "pca":
         embedding_primary = embedding_pca
+        primary_model: BaseEstimator = pca
     else:
         estimator = spec.build_estimator(n_samples_used, config.seed)
         embedding_primary = estimator.fit_transform(X_processed)
+        primary_model = estimator
 
     progress_cb("Évaluation de la fidélité de la projection", 80)
     n_neighbors_trust = min(5, n_samples_used - 1)
@@ -203,5 +206,18 @@ def train_and_evaluate_dimensionality(
         distance_fidelity_note=DISTANCE_FIDELITY_NOTES[spec.id],
         feature_columns=list(X.columns),
         model_card=model_card,
-        pipeline_bundle={"preprocessor": preprocessor, "pca_model": pca, "algorithm_id": spec.id},
+        pipeline_bundle={
+            "preprocessor": preprocessor,
+            "pca_model": pca,
+            "algorithm_id": spec.id,
+            # Estimateur RÉELLEMENT choisi par l'utilisateur (correctif Lot
+            # 6B, §F.2 — jusqu'ici, `pca_model` ci-dessus, calculé
+            # systématiquement comme référence de fidélité, était le SEUL
+            # estimateur persisté : un export/déploiement d'un job t-SNE ou
+            # UMAP livrait en réalité une PCA, silencieusement). Voir
+            # `services/inference.py` pour la projection de nouvelles
+            # observations (native pour PCA/UMAP, non supportée pour t-SNE —
+            # `.transform()` n'existe pas sur ce modèle transductif).
+            "primary_model": primary_model,
+        },
     )
