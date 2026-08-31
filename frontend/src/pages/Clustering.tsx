@@ -9,6 +9,8 @@ import {
   Boxes,
   CircleDashed,
   Download,
+  FileCode,
+  FileJson,
   Gauge,
   ListChecks,
   Loader2,
@@ -48,6 +50,7 @@ import { Select } from "../components/ui/Select";
 import { Table, type TableColumn } from "../components/ui/Table";
 import { Tabs } from "../components/ui/Tabs";
 import { ModelExportActions } from "../components/ui/ModelExportActions";
+import { buildClusteringModelCard } from "../utils/clusteringModelCard";
 import { DataQualityWarnings } from "../components/training/DataQualityWarnings";
 import { ClusterProfileGrid } from "../components/clustering/ClusterProfileGrid";
 import { useJobEvents } from "../hooks/useJobEvents";
@@ -686,6 +689,24 @@ function ClusteringResultView({ job }: { job: ClusteringJobSummary }) {
     }
   }
 
+  // Fiche modèle (retour utilisateur direct : "on peut télécharger le
+  // modèle mais pas un json... qui suit le modèle") — construite
+  // ENTIÈREMENT à partir de `result`, déjà en mémoire, jamais un second
+  // appel réseau. Voir `utils/clusteringModelCard.ts`.
+  function handleExportModelCard() {
+    if (!result) return;
+    const card = buildClusteringModelCard(job, result);
+    const blob = new Blob([JSON.stringify(card, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `clustering_fiche_modele_job${jobId}.json`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  }
+
   useEffect(() => {
     api.clustering
       .getResult(jobId)
@@ -803,8 +824,21 @@ function ClusteringResultView({ job }: { job: ClusteringJobSummary }) {
           <Download size={14} />
           Exporter les assignations (CSV, toutes les lignes)
         </Button>
+        <Button variant="secondary" size="sm" onClick={handleExportModelCard}>
+          <FileJson size={14} />
+          Fiche modèle (JSON)
+        </Button>
+        <Button variant="secondary" size="sm" onClick={() => api.clustering.exportDeploymentScript(jobId)}>
+          <FileCode size={14} />
+          Script de déploiement (.py)
+        </Button>
       </div>
       {exportAssignmentsError && <p className="text-xs text-destructive">{exportAssignmentsError}</p>}
+      <p className="text-xs text-muted-foreground -mt-2">
+        Pour déployer ce modèle en dehors de DataLab Pro : téléchargez l'artefact ET le script de déploiement,
+        placez-les dans le même dossier — le script recharge l'artefact et assigne un cluster, sans dépendre de
+        cette plateforme (voir l'en-tête du script pour l'installation des bibliothèques nécessaires).
+      </p>
 
       <Tabs
         items={[

@@ -27,6 +27,7 @@ from api.core.job_queue import analysis_queue, redis_conn
 from api.core.models import ClusterCandidateRecord, ClusteringJob, Dataset, User
 from api.core.pagination import paginate_by_id
 from domains.auth.router import get_current_user
+from domains.clustering.services.deployment_export import generate_clustering_deployment_script
 from domains.clustering.services.inference import ClusterInferenceError, assign_cluster, assign_clusters_batch
 from domains.clustering.services.registry import CLUSTER_REGISTRY, DEFAULT_ALGORITHM_IDS
 from domains.shared.audit import log_action
@@ -410,6 +411,57 @@ def export_clustering_model(job_id: int, current_user: User = Depends(get_curren
         )
     filename = f"clustering_{job.dataset.name.rsplit('.', 1)[0] if job.dataset else 'export'}_job{job.id}.joblib"
     return FileResponse(path=artifact_path, filename=filename, media_type="application/octet-stream")
+
+
+@router.get("/jobs/{job_id}/model/export-script")
+def export_clustering_deployment_script(
+    job_id: int, current_user: User = Depends(get_current_user), db=Depends(get_db)
+):
+    """Script de déploiement autonome — même principe que
+    `GET /training/jobs/{job_id}/model/export-script` (pilier supervisé) :
+    recharge le bundle joblib déjà exportable et reproduit l'assignation de
+    cluster SANS jamais importer un module `domains.*` de ce projet."""
+    job = _get_org_job(job_id, current_user, db)
+    if job.status != "completed" or job.result is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"code": "MODELE_NON_DISPONIBLE", "message": "Ce clustering n'a pas encore produit de modèle"},
+        )
+    result = job.result
+    artifact_path = Path(result.file_path)
+    if not artifact_path.exists():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "ARTEFACT_INTROUVABLE", "message": "Artefact du modèle introuvable sur le serveur"},
+        )
+    try:
+        bundle = load_bundle(result.file_path)
+    except InferenceError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"code": "ARTEFACT_ILLISIBLE", "message": str(exc)},
+        ) from exc
+    dataset_name = job.dataset.name.rsplit(".", 1)[0] if job.dataset else "export"
+    base_name = f"clustering_{dataset_name}_job{job.id}"
+    artifact_filename = f"{base_name}.joblib"
+    script_filename = f"{base_name}_deploiement.py"
+    # `family` n'est pas une colonne dédiée de `ClusterModel` (contrairement à
+    # `ClusterCandidateRecord`) — elle vit dans le model_card déjà persisté
+    # (engine.py::model_card["family"]), jamais recalculée ici.
+    model_card = json.loads(result.model_card_json or "{}")
+    script = generate_clustering_deployment_script(
+        bundle=bundle,
+        feature_columns=json.loads(result.feature_columns_json),
+        algorithm=result.algorithm,
+        family=model_card.get("family", ""),
+        artifact_filename=artifact_filename,
+        script_filename=script_filename,
+    )
+    return Response(
+        content=script,
+        media_type="text/x-python",
+        headers={"Content-Disposition": f'attachment; filename="{script_filename}"'},
+    )
 
 
 @router.post("/jobs/{job_id}/predict", response_model=ClusterPredictionResponse)
