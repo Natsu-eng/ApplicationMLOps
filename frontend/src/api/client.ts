@@ -1691,6 +1691,14 @@ export const api = {
     modelVersions: (jobId: number) => request<{ entries: ModelVersionEntry[] }>(`/training/jobs/${jobId}/model/versions`),
     exportModel: (jobId: number, suggestedFilename?: string) =>
       downloadModelExport(`/training/jobs/${jobId}/model/export`, suggestedFilename ?? `modele_job${jobId}.joblib`),
+    // Script de déploiement autonome (retour utilisateur direct : "tous les
+    // modèles doivent pouvoir être déployés dans d'autres plateformes") —
+    // aucune dépendance à ce projet, voir services/deployment_export.py.
+    exportDeploymentScript: (jobId: number, suggestedFilename?: string) =>
+      downloadModelExport(
+        `/training/jobs/${jobId}/model/export-script`,
+        suggestedFilename ?? `modele_job${jobId}_deploiement.py`,
+      ),
     // Prédiction en lot (retour utilisateur : "batch prediction" — upload
     // d'un fichier, prédictions pour toutes les lignes) — tâche de fond
     // comme un entraînement, jamais un calcul synchrone (fichier non borné

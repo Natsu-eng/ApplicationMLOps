@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
-import { AlertCircle, Ban, Download, History, Loader2, Trash2, UploadCloud } from "lucide-react";
-import { ApiError, api, type BatchPredictionJobSummary } from "../../api/client";
+import { AlertCircle, Ban, Download, FileDown, History, Loader2, Trash2, UploadCloud } from "lucide-react";
+import { ApiError, api, type BatchPredictionJobSummary, type MLModelDetail } from "../../api/client";
 import { Button } from "../ui/Button";
 import { Card } from "../ui/Card";
 import { SectionHeader } from "../ui/SectionHeader";
@@ -17,8 +17,14 @@ const ACTIVE_STATUSES = new Set(["queued", "running"]);
  * que `PredictionForm.tsx` (une observation à la fois) mais pour un fichier
  * entier, traité en tâche de fond (voir `POST /training/jobs/{id}/predict-batch`).
  * Historique scopé à CE job (filtré côté client — pas de query serveur
- * dédiée, l'historique par organisation reste de taille raisonnable). */
-export default function BatchPredictionForm({ jobId }: { jobId: number }) {
+ * dédiée, l'historique par organisation reste de taille raisonnable).
+ *
+ * `model` (retour utilisateur direct : "la prédiction par batch devrait
+ * expliquer comment ça fonctionne... les utilisateurs peuvent se perdre")
+ * — l'explication et le modèle de fichier téléchargeable sont SPÉCIFIQUES à
+ * CE modèle précis (ses variables, sa tâche, son intervalle de confiance le
+ * cas échéant), jamais un texte générique identique pour tous les modèles. */
+export default function BatchPredictionForm({ jobId, model }: { jobId: number; model: MLModelDetail }) {
   const [file, setFile] = useState<File | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -89,6 +95,22 @@ export default function BatchPredictionForm({ jobId }: { jobId: number }) {
     if (activeBatch?.id === batchId) setActiveBatch(null);
   }
 
+  // Modèle de fichier téléchargeable (retour utilisateur : "les utilisateurs
+  // peuvent se perdre") — l'en-tête EXACT attendu par CE modèle précis,
+  // jamais à deviner. Généré côté client (aucun appel réseau, les colonnes
+  // sont déjà en mémoire via `model.feature_columns`).
+  function handleDownloadTemplate() {
+    const blob = new Blob([`${model.feature_columns.join(",")}\n`], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `modele_de_fichier_job${jobId}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  }
+
   const columns: TableColumn<BatchPredictionJobSummary>[] = [
     { key: "input_filename", header: "Fichier", render: (b) => b.input_filename },
     { key: "status", header: "Statut", render: (b) => <JobStatusBadge status={b.status} /> },
@@ -132,8 +154,61 @@ export default function BatchPredictionForm({ jobId }: { jobId: number }) {
           icon={UploadCloud}
           color="violet"
           label="Prédiction en lot"
-          help="Uploadez un fichier (csv/xlsx/xls/parquet/json) contenant les mêmes colonnes que celles utilisées à l'entraînement — une prédiction est calculée pour CHAQUE ligne, résultat téléchargeable une fois terminé."
+          help="Uploadez un fichier contenant les mêmes colonnes que celles utilisées à l'entraînement — une prédiction est calculée pour CHAQUE ligne, résultat téléchargeable une fois terminé."
         />
+
+        {/* Explication spécifique à CE modèle (retour utilisateur direct :
+            "au lieu juste de mettre ainsi les utilisateurs peuvent se
+            perdre") — toujours visible, jamais repliée par défaut : c'est
+            précisément l'information qui manquait. */}
+        <div className="rounded-lg border border-border bg-muted/40 p-3.5 mb-4 space-y-2.5">
+          <p className="text-xs font-medium text-foreground">Comment ça marche, pour ce modèle précis</p>
+          <p className="text-xs text-muted-foreground">
+            Votre fichier (csv, xlsx, xls, parquet ou json) doit contenir une colonne pour chacune des{" "}
+            <strong className="text-foreground">{model.feature_columns.length}</strong> variables ci-dessous — les
+            autres colonnes de votre fichier (un identifiant de ligne, par exemple) sont conservées telles quelles
+            dans le résultat, jamais supprimées.
+          </p>
+          <div className="flex flex-wrap gap-1.5">
+            {model.feature_columns.map((col) => (
+              <code key={col} className="rounded bg-card border border-border px-1.5 py-0.5 text-[11px] text-foreground">
+                {col}
+              </code>
+            ))}
+          </div>
+          <p className="text-xs text-muted-foreground">
+            {model.task_type === "classification" ? (
+              <>
+                Le résultat ajoute une colonne <code className="text-foreground">prediction</code> (la classe
+                prédite) et <code className="text-foreground">confiance</code> (probabilité de cette classe, entre 0
+                et 1).
+              </>
+            ) : (
+              <>
+                Le résultat ajoute une colonne <code className="text-foreground">prediction</code> (la valeur
+                prédite){" "}
+                {model.cqr && (
+                  <>
+                    ainsi que <code className="text-foreground">intervalle_bas</code>/
+                    <code className="text-foreground">intervalle_haut</code> (fourchette de valeurs probables à{" "}
+                    {Math.round((1 - model.cqr.alpha) * 100)} % de confiance)
+                  </>
+                )}
+                .
+              </>
+            )}{" "}
+            Une valeur manquante dans une cellule n'empêche jamais la prédiction (le modèle compense comme il l'a
+            appris à le faire) — seule une colonne entièrement absente du fichier bloque le traitement.
+          </p>
+          <button
+            type="button"
+            onClick={handleDownloadTemplate}
+            className="flex items-center gap-1.5 text-xs text-primary hover:underline underline-offset-2"
+          >
+            <FileDown size={12} />
+            Télécharger un modèle de fichier vide (CSV, colonnes déjà en place)
+          </button>
+        </div>
 
         {!activeBatch || !ACTIVE_STATUSES.has(activeBatch.status) ? (
           <form onSubmit={handleSubmit} className="space-y-3">

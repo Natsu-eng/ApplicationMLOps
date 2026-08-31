@@ -1,5 +1,5 @@
 import { type ReactNode, useEffect, useState } from "react";
-import { Activity, AlertTriangle, Award, Calculator, ClipboardList, Download, Gauge, History, Scale, ShieldCheck, Sparkles, Trophy, UploadCloud, Wand2 } from "lucide-react";
+import { Activity, AlertTriangle, Award, Calculator, ClipboardList, Download, FileCode, FileJson, Gauge, History, Scale, ShieldCheck, Sparkles, Trophy, UploadCloud, Wand2 } from "lucide-react";
 import {
   ApiError,
   api,
@@ -21,6 +21,7 @@ import { SectionHeader } from "../ui/SectionHeader";
 import { Tabs } from "../ui/Tabs";
 import { formatDateTime, formatMetricValue, formatPercent } from "../../utils/format";
 import { clampUnitScore } from "../../utils/cvScore";
+import { buildModelCard } from "../../utils/modelCard";
 import EvaluationCharts from "./EvaluationCharts";
 import { ShapBeeswarmChart, PermutationImportanceChart } from "./GlobalExplainability";
 import { ModelVerdict } from "./ModelVerdict";
@@ -441,13 +442,14 @@ function ModelComparison({ data, verdict }: { data: LeaderboardResponse | null; 
  * de refléter le nouvel état renvoyé, jamais de logique de démotion ici. */
 function ModelRegistryControls({
   model,
-  jobId,
+  job,
   onUpdate,
 }: {
   model: MLModelDetail;
-  jobId: number;
+  job: TrainingJobSummary;
   onUpdate: (model: MLModelDetail) => void;
 }) {
+  const jobId = job.id;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -461,6 +463,20 @@ function ModelRegistryControls({
     } finally {
       setBusy(false);
     }
+  }
+
+  function handleExportModelCard() {
+    const card = buildModelCard(job, model);
+    const filename = `fiche_modele_${(job.dataset_name ?? "dataset").replace(/[^a-zA-Z0-9_-]/g, "_")}_job${jobId}.json`;
+    const blob = new Blob([JSON.stringify(card, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
   }
 
   const stageLabel =
@@ -497,8 +513,21 @@ function ModelRegistryControls({
             <Download size={14} />
             Exporter l'artefact
           </Button>
+          <Button variant="secondary" size="sm" onClick={handleExportModelCard}>
+            <FileJson size={14} />
+            Fiche modèle (JSON)
+          </Button>
+          <Button variant="secondary" size="sm" onClick={() => api.training.exportDeploymentScript(jobId)}>
+            <FileCode size={14} />
+            Script de déploiement (.py)
+          </Button>
         </div>
       </div>
+      <p className="text-xs text-muted-foreground mt-3">
+        Pour déployer ce modèle en dehors de DataLab Pro : téléchargez l'artefact ET le script de déploiement,
+        placez-les dans le même dossier — le script recharge l'artefact et prédit, sans dépendre de cette
+        plateforme (voir l'en-tête du script pour l'installation des bibliothèques nécessaires).
+      </p>
       {error && <p className="text-xs text-destructive mt-2">{error}</p>}
     </Card>
   );
@@ -877,11 +906,11 @@ export function ModelResultView({ job }: { job: TrainingJobSummary }) {
             <PredictionForm jobId={job.id} taskType={model.task_type} featureSchema={model.feature_schema} />
           )}
 
-          {activeTab === "predire-lot" && <BatchPredictionForm jobId={job.id} />}
+          {activeTab === "predire-lot" && <BatchPredictionForm jobId={job.id} model={model} />}
 
           {activeTab === "details" && (
             <div className="space-y-5">
-              <ModelRegistryControls model={model} jobId={job.id} onUpdate={setModel} />
+              <ModelRegistryControls model={model} job={job} onUpdate={setModel} />
 
               <ModelVersionHistory jobId={job.id} />
 

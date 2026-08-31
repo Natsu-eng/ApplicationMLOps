@@ -51,6 +51,7 @@ from domains.shared.job_watchdog import reconcile_stale_jobs
 from domains.shared.ml_task import detect_task_type
 from domains.shared.model_bundle import InferenceError, load_bundle
 from domains.training.batch_prediction_worker import run_batch_prediction_job
+from domains.training.services.deployment_export import generate_deployment_script
 from domains.training.services.duration_estimate import estimate_training_duration
 from domains.training.services.engine import selection_metric_label
 from domains.training.services.inference import predict_one
@@ -1279,6 +1280,56 @@ def export_model(job_id: int, current_user: User = Depends(get_current_user), db
         )
     filename = f"modele_{job.dataset.name.rsplit('.', 1)[0] if job.dataset else 'export'}_{job.target_column}_job{job.id}.joblib"
     return FileResponse(path=artifact_path, filename=filename, media_type="application/octet-stream")
+
+
+@router.get("/jobs/{job_id}/model/export-script")
+def export_deployment_script(
+    job_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)
+):
+    """Script de déploiement autonome (retour utilisateur direct : "tous les
+    modèles doivent pouvoir être déployés dans d'autres plateformes") — un
+    fichier `.py` prêt à l'emploi à côté de l'artefact (`.../model/export`
+    ci-dessus), aucune dépendance à ce projet. Voir
+    `services/deployment_export.py` pour la génération complète."""
+    job = _get_org_job(job_id, current_user, db)
+    if job.status != "completed" or job.model is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"code": "MODELE_NON_DISPONIBLE", "message": "Cet entraînement n'a pas encore produit de modèle"},
+        )
+    model = job.model
+    artifact_path = Path(model.file_path)
+    if not artifact_path.exists():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "ARTEFACT_INTROUVABLE", "message": "Artefact du modèle introuvable sur le serveur"},
+        )
+    try:
+        bundle = load_bundle(model.file_path)
+    except InferenceError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"code": "ARTEFACT_ILLISIBLE", "message": str(exc)},
+        ) from exc
+
+    dataset_name = job.dataset.name.rsplit(".", 1)[0] if job.dataset else "export"
+    base_name = f"modele_{dataset_name}_{job.target_column}_job{job.id}"
+    artifact_filename = f"{base_name}.joblib"
+    script_filename = f"{base_name}_deploiement.py"
+    script = generate_deployment_script(
+        bundle=bundle,
+        feature_columns=json.loads(model.feature_columns_json),
+        algorithm=model.algorithm,
+        task_type=model.task_type,
+        target_column=model.target_column,
+        artifact_filename=artifact_filename,
+        script_filename=script_filename,
+    )
+    return Response(
+        content=script,
+        media_type="text/x-python",
+        headers={"Content-Disposition": f'attachment; filename="{script_filename}"'},
+    )
 
 
 @router.get("/models/registry", response_model=ModelRegistryResponse)

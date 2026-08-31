@@ -22,6 +22,15 @@ from sqlalchemy.pool import NullPool
 _TEST_DB_PATH = Path(tempfile.gettempdir()) / "datalab_test.db"
 os.environ["DATABASE_URL"] = f"sqlite:///{_TEST_DB_PATH}"
 os.environ["JWT_SECRET_KEY"] = "test-secret-key-not-for-production"
+# Bug réel trouvé en écrivant les tests du script de déploiement autonome —
+# `backend/.env` local a `ENVIRONMENT=production` (le serveur de dev tourne
+# volontairement en mode production pour des essais réalistes, ex. SMTP réel
+# pour la réinitialisation de mot de passe) : sans cette surcharge, le garde-
+# fou `api/core/database.py` ("SQLite en production — démarrage refusé", Phase
+# 1 Axe D) bloquait TOUTE la suite de tests dès l'import de `api.core.*` —
+# jamais rencontré avant que `.env` ne passe à `production` pour d'autres
+# raisons, la suite de tests ne doit JAMAIS dépendre de cette valeur ambiante.
+os.environ["ENVIRONMENT"] = "development"
 # Bug réel trouvé en écrivant les tests de la Phase 1B
 # (test_password_reset.py) — `backend/.env` local contient de VRAIES
 # identifiants SMTP (Gmail, pour tester la fonctionnalité manuellement).
