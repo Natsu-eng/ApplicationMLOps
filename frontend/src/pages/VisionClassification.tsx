@@ -1202,19 +1202,35 @@ function GradCamPanel({
 }) {
   const [explanation, setExplanation] = useState<GradCamExplanation | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  // Résultats d'un upload de PLUSIEURS images externes à la fois (retour
+  // utilisateur direct : "possible d'expliquer plusieurs images en même
+  // temps ?") — distinct de `batchResults` (prop, images déjà dans le
+  // dataset) même si l'affichage réutilise le même motif de grille.
+  const [uploadedBatchResults, setUploadedBatchResults] = useState<GradCamBatchItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   async function handleFile(files: FileList | null) {
-    const file = files?.[0];
-    if (!file) return;
+    const selected = Array.from(files ?? []);
+    if (selected.length === 0) return;
+    if (selected.length > MAX_EXPLAIN_BATCH_SIZE) {
+      setError(`${MAX_EXPLAIN_BATCH_SIZE} images maximum par lot — sélectionnez-en moins.`);
+      return;
+    }
     setError(null);
     setExplanation(null);
-    setPreviewUrl(URL.createObjectURL(file));
+    setUploadedBatchResults(null);
     setIsSubmitting(true);
     try {
-      setExplanation(await api.visionClassification.explain(jobId, file));
+      if (selected.length === 1) {
+        setPreviewUrl(URL.createObjectURL(selected[0]));
+        setExplanation(await api.visionClassification.explain(jobId, selected[0]));
+      } else {
+        setPreviewUrl(null);
+        const res = await api.visionClassification.explainBatch(jobId, selected);
+        setUploadedBatchResults(res.results);
+      }
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Impossible de générer l'explication");
     } finally {
@@ -1266,12 +1282,19 @@ function GradCamPanel({
         <SectionHeader
           icon={Sparkles}
           color="amber"
-          label="Expliquer une image externe"
-          help="Superpose une carte de chaleur sur l'image : les zones les plus chaudes sont celles qui ont le plus influencé la classe prédite par le modèle. Pour expliquer des images déjà dans le dataset, sélectionnez-les depuis l'onglet « Exemples »."
+          label="Expliquer une ou plusieurs images externes"
+          help={`Superpose une carte de chaleur sur l'image : les zones les plus chaudes sont celles qui ont le plus influencé la classe prédite par le modèle. Sélectionnez plusieurs fichiers à la fois pour les expliquer d'un coup (jusqu'à ${MAX_EXPLAIN_BATCH_SIZE}). Pour expliquer des images déjà dans le dataset, sélectionnez-les depuis l'onglet « Exemples ».`}
         />
-        <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={(e) => handleFile(e.target.files)} />
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          multiple
+          className="hidden"
+          onChange={(e) => handleFile(e.target.files)}
+        />
         <Button variant="secondary" size="sm" type="button" onClick={() => fileInputRef.current?.click()}>
-          Choisir une image à expliquer
+          Choisir une ou plusieurs images à expliquer
         </Button>
 
         {isSubmitting && <p className="text-sm text-muted-foreground mt-3">Calcul en cours…</p>}
@@ -1300,6 +1323,35 @@ function GradCamPanel({
               />
               <GradCamColorLegend targetLabel={explanation.target_label} />
             </div>
+          </div>
+        )}
+
+        {uploadedBatchResults && (
+          <div className="mt-4 space-y-3">
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+              {uploadedBatchResults.map((item, i) => (
+                <div key={`${item.relative_path}-${i}`} className="space-y-1.5">
+                  {item.error ? (
+                    <div className="aspect-square rounded-lg border border-destructive/30 bg-destructive/5 flex items-center justify-center p-2">
+                      <p className="text-xs text-destructive text-center">{item.error}</p>
+                    </div>
+                  ) : (
+                    <img
+                      src={item.heatmap_png ?? undefined}
+                      alt={`Grad-CAM pour ${item.relative_path}`}
+                      className="w-full aspect-square object-cover rounded-lg border border-border"
+                    />
+                  )}
+                  <p className="text-caption text-muted-foreground truncate" title={item.relative_path}>
+                    {item.relative_path}
+                  </p>
+                  {item.predicted_label && <Badge variant="primary">{item.predicted_label}</Badge>}
+                </div>
+              ))}
+            </div>
+            {uploadedBatchResults.some((item) => !item.error) && (
+              <GradCamColorLegend targetLabel="classe prédite (par image)" />
+            )}
           </div>
         )}
       </Card>

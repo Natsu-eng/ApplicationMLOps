@@ -601,6 +601,136 @@ def test_explain_batch_shares_the_explain_rate_limit(client, db_session):
     assert blocked.status_code == 429
 
 
+# ── explain-batch (retour utilisateur direct : "possible d'expliquer
+# plusieurs images en même temps ?" — pour des images EXTERNES uploadées,
+# pas déjà dans le dataset) ──────────────────────────────────────────────
+
+
+def test_explain_uploaded_batch_returns_a_result_per_image(client, db_session):
+    headers = _register(client)
+    dataset = _upload_vision_dataset(client, headers)
+    job = _create_job(client, headers, dataset["id"]).json()
+    run_vision_classification_job(job["id"])
+    db_session.expire_all()
+
+    resp = client.post(
+        f"/api/vision/classification/jobs/{job['id']}/explain-batch",
+        headers=headers,
+        files=[
+            ("files", ("a.png", io.BytesIO(_png_bytes(variant=1)), "image/png")),
+            ("files", ("b.png", io.BytesIO(_png_bytes(variant=2)), "image/png")),
+        ],
+    )
+    assert resp.status_code == 200
+    results = resp.json()["results"]
+    assert [r["relative_path"] for r in results] == ["a.png", "b.png"]
+    for r in results:
+        assert r["error"] is None
+        assert r["predicted_label"] in {"classe_0", "classe_1"}
+        assert r["heatmap_png"].startswith("data:image/png;base64,")
+
+
+def test_explain_uploaded_batch_reports_invalid_image_without_failing_the_others(client, db_session):
+    headers = _register(client)
+    dataset = _upload_vision_dataset(client, headers)
+    job = _create_job(client, headers, dataset["id"]).json()
+    run_vision_classification_job(job["id"])
+    db_session.expire_all()
+
+    resp = client.post(
+        f"/api/vision/classification/jobs/{job['id']}/explain-batch",
+        headers=headers,
+        files=[
+            ("files", ("bonne.png", io.BytesIO(_png_bytes()), "image/png")),
+            ("files", ("mauvaise.png", io.BytesIO(b"not an image"), "image/png")),
+        ],
+    )
+    assert resp.status_code == 200
+    results = resp.json()["results"]
+    assert results[0]["error"] is None
+    assert results[0]["predicted_label"] is not None
+    assert results[1]["error"] is not None
+    assert results[1]["predicted_label"] is None
+
+
+def test_explain_uploaded_batch_handles_duplicate_filenames_without_collision(client, db_session):
+    """Deux fichiers uploadés séparément peuvent porter le même nom (ex.
+    deux "photo.jpg" de dossiers différents) — la clé interne (index) ne
+    doit jamais faire perdre un résultat par collision de nom."""
+    headers = _register(client)
+    dataset = _upload_vision_dataset(client, headers)
+    job = _create_job(client, headers, dataset["id"]).json()
+    run_vision_classification_job(job["id"])
+    db_session.expire_all()
+
+    resp = client.post(
+        f"/api/vision/classification/jobs/{job['id']}/explain-batch",
+        headers=headers,
+        files=[
+            ("files", ("photo.jpg", io.BytesIO(_png_bytes(variant=1)), "image/png")),
+            ("files", ("photo.jpg", io.BytesIO(_png_bytes(variant=2)), "image/png")),
+        ],
+    )
+    assert resp.status_code == 200
+    results = resp.json()["results"]
+    assert len(results) == 2
+    assert all(r["relative_path"] == "photo.jpg" for r in results)
+    assert all(r["error"] is None for r in results)
+
+
+def test_explain_uploaded_batch_rejects_more_than_the_max_batch_size(client, db_session):
+    headers = _register(client)
+    dataset = _upload_vision_dataset(client, headers)
+    job = _create_job(client, headers, dataset["id"]).json()
+    run_vision_classification_job(job["id"])
+    db_session.expire_all()
+
+    resp = client.post(
+        f"/api/vision/classification/jobs/{job['id']}/explain-batch",
+        headers=headers,
+        files=[("files", (f"{i}.png", io.BytesIO(_png_bytes(variant=i)), "image/png")) for i in range(13)],
+    )
+    assert resp.status_code == 400
+    assert resp.json()["detail"]["code"] == "LOT_TROP_GRAND"
+
+
+def test_explain_uploaded_batch_404_before_completion(client):
+    headers = _register(client)
+    dataset = _upload_vision_dataset(client, headers)
+    job = _create_job(client, headers, dataset["id"]).json()
+
+    resp = client.post(
+        f"/api/vision/classification/jobs/{job['id']}/explain-batch",
+        headers=headers,
+        files=[("files", ("a.png", io.BytesIO(_png_bytes()), "image/png"))],
+    )
+    assert resp.status_code == 404
+
+
+def test_explain_uploaded_batch_shares_the_explain_rate_limit(client, db_session):
+    headers = _register(client)
+    dataset = _upload_vision_dataset(client, headers)
+    job = _create_job(client, headers, dataset["id"]).json()
+    run_vision_classification_job(job["id"])
+    db_session.expire_all()
+
+    limit = get_settings().explain_rate_limit_max_attempts
+    for _ in range(limit):
+        resp = client.post(
+            f"/api/vision/classification/jobs/{job['id']}/explain-batch",
+            headers=headers,
+            files=[("files", ("a.png", io.BytesIO(_png_bytes()), "image/png"))],
+        )
+        assert resp.status_code == 200
+
+    blocked = client.post(
+        f"/api/vision/classification/jobs/{job['id']}/explain-batch",
+        headers=headers,
+        files=[("files", ("a.png", io.BytesIO(_png_bytes()), "image/png"))],
+    )
+    assert blocked.status_code == 429
+
+
 # ── Mode expert : comparatif de backbones (retour utilisateur direct, parité
 # avec `model_ids` du ML tabulaire) ─────────────────────────────────────────
 

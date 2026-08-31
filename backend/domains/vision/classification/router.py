@@ -715,6 +715,89 @@ def explain_vision_classification_dataset_examples(
     return ExplainDatasetExamplesResponse(results=results)
 
 
+@router.post(
+    "/jobs/{job_id}/explain-batch",
+    response_model=ExplainDatasetExamplesResponse,
+    dependencies=[Depends(_explain_rate_limit)],
+)
+async def explain_vision_classification_uploaded_batch(
+    job_id: int,
+    files: List[UploadFile] = File(...),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Grad-CAM en LOT sur des images EXTERNES uploadées (retour utilisateur
+    direct : "possible d'expliquer plusieurs images en même temps ?" — pour
+    des images qui ne sont PAS dans le dataset, contrairement à
+    `/explain-dataset-examples`). Complémentaire de `/explain` (une seule
+    image externe, conservé pour le cas courant) — même modèle chargé UNE
+    SEULE FOIS pour tout le lot, même plafond `MAX_EXPLAIN_BATCH_SIZE`."""
+    job = _get_org_job(job_id, current_user, db)
+    if job.result is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "RESULTAT_INDISPONIBLE", "message": "Cet entraînement n'a pas encore de résultat"},
+        )
+    if not files:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": "AUCUN_FICHIER", "message": "Aucun fichier fourni"},
+        )
+    if len(files) > MAX_EXPLAIN_BATCH_SIZE:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": "LOT_TROP_GRAND", "message": f"{MAX_EXPLAIN_BATCH_SIZE} images maximum par lot"},
+        )
+
+    # Clé interne = index, jamais le nom de fichier tel quel — deux fichiers
+    # uploadés séparément peuvent porter le même nom (ex. deux "photo.jpg"
+    # de dossiers différents), le nom d'origine reste affiché via `labels`.
+    images: list[tuple[str, Image.Image]] = []
+    labels: dict[str, str] = {}
+    errors: dict[str, str] = {}
+    for i, file in enumerate(files):
+        key = str(i)
+        labels[key] = file.filename or f"image_{i + 1}"
+        content = await file.read()
+        try:
+            image = Image.open(io.BytesIO(content))
+            image.load()
+            images.append((key, image))
+        except (UnidentifiedImageError, OSError):
+            errors[key] = "Impossible de lire cette image"
+
+    artifact = torch.load(job.result.file_path, weights_only=True)
+    try:
+        batch_results = explain_classification_predictions_batch(artifact, images)
+    finally:
+        for _, opened_image in images:
+            opened_image.close()
+
+    by_key = {r.key: r for r in batch_results}
+    results: list[GradCamBatchItemOut] = []
+    for i in range(len(files)):
+        key = str(i)
+        if key in errors:
+            results.append(GradCamBatchItemOut(relative_path=labels[key], error=errors[key]))
+            continue
+        item = by_key[key]
+        if item.error is not None or item.result is None:
+            results.append(
+                GradCamBatchItemOut(relative_path=labels[key], error=item.error or "Explication indisponible")
+            )
+        else:
+            results.append(
+                GradCamBatchItemOut(
+                    relative_path=labels[key],
+                    predicted_label=item.result.predicted_label,
+                    probabilities=item.result.probabilities,
+                    target_label=item.result.target_label,
+                    heatmap_png=item.result.heatmap_png,
+                )
+            )
+    return ExplainDatasetExamplesResponse(results=results)
+
+
 @router.post("/jobs/{job_id}/cancel", response_model=VisionClassificationJobSummary)
 def cancel_vision_classification_job(job_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     """Annule un entraînement Vision (classification) en attente ou en

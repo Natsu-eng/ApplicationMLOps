@@ -1893,6 +1893,12 @@ export const api = {
         method: "POST",
         body: JSON.stringify({ relative_paths: relativePaths }),
       }),
+    // Grad-CAM en lot sur des images EXTERNES uploadées (retour utilisateur
+    // direct : "possible d'expliquer plusieurs images en même temps ?") —
+    // complémentaire d'`explain` (une seule image) et
+    // d'`explainDatasetExamples` (images déjà dans le dataset).
+    explainBatch: (id: number, files: File[]) =>
+      uploadFiles<{ results: GradCamBatchItem[] }>(`/vision/classification/jobs/${id}/explain-batch`, files),
     cancel: (id: number) =>
       request<VisionClassificationJobSummary>(`/vision/classification/jobs/${id}/cancel`, { method: "POST" }),
     rerun: (id: number) =>
