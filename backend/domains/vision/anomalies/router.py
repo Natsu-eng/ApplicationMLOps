@@ -9,13 +9,16 @@ calcul ML dans la requête HTTP. Le dataset source doit être un
 (défense en profondeur)."""
 from __future__ import annotations
 
+import io
 import json
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
+import torch
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, Response, UploadFile, status
 from fastapi.responses import FileResponse, StreamingResponse
+from PIL import Image, UnidentifiedImageError
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session, joinedload
 
@@ -24,6 +27,7 @@ from api.core.database import SessionLocal, get_db
 from api.core.job_queue import redis_conn, vision_queue
 from api.core.models import User, VisionAnomalyExampleRecord, VisionAnomalyJob, VisionDataset
 from api.core.pagination import paginate_by_id
+from api.core.rate_limit import rate_limit_dependency
 from domains.auth.router import get_current_user
 from domains.shared.audit import log_action
 from domains.shared.job_creation import enqueue_or_mark_failed, remember_idempotent_job_id, resolve_idempotent_job_id
@@ -31,8 +35,14 @@ from domains.shared.job_events import stream_job_updates
 from domains.shared.job_lifecycle import ACTIVE_STATUSES, CANCELLED_MESSAGE, try_cancel_rq_job
 from domains.shared.job_quota import ALL_JOB_MODELS, raise_if_quota_exceeded
 from domains.shared.job_watchdog import reconcile_stale_jobs
+from domains.vision.anomalies.services.deployment_export import generate_vision_anomaly_deployment_script
 from domains.vision.anomalies.services.engine import IMAGE_SIZE, MAX_MODELS_PER_COMPARISON
-from domains.vision.anomalies.services.registry import ANOMALY_MODEL_REGISTRY, DEFAULT_ANOMALY_MODEL_ID
+from domains.vision.anomalies.services.inference import VisionAnomalyInferenceError, score_vision_anomaly
+from domains.vision.anomalies.services.registry import (
+    ANOMALY_MODEL_REGISTRY,
+    DEFAULT_ANOMALY_MODEL_ID,
+    get_anomaly_model_spec,
+)
 from domains.vision.localization import DEFAULT_MASK_PERCENTILE
 from domains.vision.shared import ALLOWED_IMAGE_SIZES, AUGMENTATION_PRESET_IDS
 
@@ -127,6 +137,18 @@ class VisionAnomalyResultOut(BaseModel):
     pr_curves: Optional[dict[str, dict[str, List[float]]]] = None
     score_histogram: Optional[dict[str, Any]] = None
     category_breakdown: Optional[List[dict[str, Any]]] = None
+
+
+class VisionAnomalyScoreOut(BaseModel):
+    """Notation d'une NOUVELLE image (Lot 6B, §F.2) — mêmes champs que
+    `VisionAnomalyExampleOut` pour la partie score/heatmap, sans les champs
+    propres à une image déjà présente dans le dataset d'entraînement
+    (relative_path, defect_category, mask_png)."""
+
+    anomaly_score: float
+    threshold: float
+    is_anomaly: bool
+    heatmap_png: str
 
 
 class VisionAnomalyExampleOut(BaseModel):
@@ -437,6 +459,105 @@ def export_vision_anomaly_model(job_id: int, current_user: User = Depends(get_cu
         )
     filename = f"vision_anomalies_job{job.id}.pt"
     return FileResponse(path=artifact_path, filename=filename, media_type="application/octet-stream")
+
+
+@router.get("/jobs/{job_id}/model/export-script")
+def export_vision_anomaly_deployment_script(
+    job_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)
+):
+    """Script de déploiement autonome — même principe que
+    `GET /vision/classification/jobs/{job_id}/model/export-script`, adapté à
+    un autoencodeur : le script embarque les DÉFINITIONS de classe des 3
+    architectures du registre (jamais un import `domains.*`), reconstruit le
+    modèle puis calcule l'erreur de reconstruction comme score."""
+    job = _get_org_job(job_id, current_user, db)
+    if job.status != "completed" or job.result is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"code": "MODELE_NON_DISPONIBLE", "message": "Cet entraînement n'a pas encore produit de modèle"},
+        )
+    artifact_path = Path(job.result.file_path)
+    if not artifact_path.exists():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "ARTEFACT_INTROUVABLE", "message": "Artefact du modèle introuvable sur le serveur"},
+        )
+    spec = get_anomaly_model_spec(job.result.model_id)
+    model_card = json.loads(job.result.model_card_json or "{}")
+    base_name = f"vision_anomalies_job{job.id}"
+    artifact_filename = f"{base_name}.pt"
+    script_filename = f"{base_name}_deploiement.py"
+    script = generate_vision_anomaly_deployment_script(
+        model_id=job.result.model_id,
+        model_label=spec.label,
+        image_size=model_card.get("image_size", IMAGE_SIZE),
+        threshold=job.result.threshold,
+        artifact_filename=artifact_filename,
+        script_filename=script_filename,
+    )
+    return Response(
+        content=script,
+        media_type="text/x-python",
+        headers={"Content-Disposition": f'attachment; filename="{script_filename}"'},
+    )
+
+
+_vision_anomaly_predict_rate_limit = rate_limit_dependency(
+    "vision_anomaly_predict", _settings.explain_rate_limit_max_attempts, _settings.explain_rate_limit_window_seconds,
+    # Même raisonnement que `vision/classification/router.py::_explain_rate_limit`
+    # (échec fermé) — charge un modèle torch complet à chaque appel.
+    fail_open=False,
+)
+
+
+@router.post(
+    "/jobs/{job_id}/predict",
+    response_model=VisionAnomalyScoreOut,
+    dependencies=[Depends(_vision_anomaly_predict_rate_limit)],
+)
+async def predict_vision_anomaly(
+    job_id: int,
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Note une NOUVELLE image avec une détection déjà entraînée (Lot 6B,
+    §F.2) — referme la même boucle que `vision/classification/router.py::
+    explain_vision_classification_prediction` (upload + inférence synchrone,
+    un seul forward pass, de l'ordre de la seconde). Voir
+    `services/inference.py` : un autoencodeur est nativement inductif,
+    aucun artifice type LOF nécessaire (contrairement à la détection
+    d'anomalies tabulaire)."""
+    job = _get_org_job(job_id, current_user, db)
+    if job.result is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "RESULTAT_INDISPONIBLE", "message": "Cet entraînement n'a pas encore de résultat"},
+        )
+
+    content = await file.read()
+    try:
+        image = Image.open(io.BytesIO(content))
+        image.load()
+    except (UnidentifiedImageError, OSError):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": "IMAGE_INVALIDE", "message": "Impossible de lire cette image"},
+        )
+
+    # weights_only=True — même correctif Lot 1.4 que la classification
+    # (§C.2.7/R11) : l'artefact ({"model_id", "threshold", "image_size",
+    # "state_dict"}) ne contient que des types couverts par l'allowlist.
+    artifact = torch.load(job.result.file_path, weights_only=True)
+    try:
+        scored = score_vision_anomaly(artifact, image)
+    except VisionAnomalyInferenceError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": "NOTATION_IMPOSSIBLE", "message": str(exc)},
+        )
+
+    return VisionAnomalyScoreOut(**scored)
 
 
 @router.get("/jobs/{job_id}/examples", response_model=List[VisionAnomalyExampleOut])

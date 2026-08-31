@@ -1175,6 +1175,16 @@ export interface VisionAnomalyExample {
   mask_png: string;
 }
 
+// Lot 6B, §F.2 — noter une NOUVELLE image (contrairement à
+// VisionAnomalyExample, qui décrit une image déjà présente dans le jeu de
+// test d'entraînement).
+export interface VisionAnomalyScore {
+  anomaly_score: number;
+  threshold: number;
+  is_anomaly: boolean;
+  heatmap_png: string;
+}
+
 export interface TrainingJobCreatePayload {
   dataset_id: number;
   target_column: string;
@@ -1903,10 +1913,14 @@ export const api = {
     getJob: (id: number) => request<VisionAnomalyJobSummary>(`/vision/anomalies/jobs/${id}`),
     getResult: (id: number) => request<VisionAnomalyResult>(`/vision/anomalies/jobs/${id}/result`),
     getExamples: (id: number) => request<VisionAnomalyExample[]>(`/vision/anomalies/jobs/${id}/examples`),
+    predict: (id: number, file: File) =>
+      uploadFileWithFields<VisionAnomalyScore>(`/vision/anomalies/jobs/${id}/predict`, file, {}),
     cancel: (id: number) => request<VisionAnomalyJobSummary>(`/vision/anomalies/jobs/${id}/cancel`, { method: "POST" }),
     rerun: (id: number) => request<VisionAnomalyJobSummary>(`/vision/anomalies/jobs/${id}/rerun`, { method: "POST" }),
     remove: (id: number) => request<void>(`/vision/anomalies/jobs/${id}`, { method: "DELETE" }),
     exportModel: (id: number) => downloadModelExport(`/vision/anomalies/jobs/${id}/model/export`, `vision_anomalies_job${id}.pt`),
+    exportDeploymentScript: (id: number) =>
+      downloadModelExport(`/vision/anomalies/jobs/${id}/model/export-script`, `vision_anomalies_job${id}_deploiement.py`),
   },
 
   notifications: {

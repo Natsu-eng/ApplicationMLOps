@@ -408,3 +408,78 @@ def test_result_reflects_the_image_size_actually_used(client, db_session):
 
     result = client.get(f"/api/vision/anomalies/jobs/{job['id']}/result", headers=headers).json()
     assert result["model_card"]["image_size"] == 64
+
+
+# ── /predict, /model/export-script (Lot 6B, §F.2 — noter une NOUVELLE
+# image, jamais seulement consulter le jeu de données d'entraînement) ─────
+
+
+def test_predict_endpoint_scores_new_image_after_completion(client, db_session):
+    headers = _register(client)
+    dataset = _upload_vision_dataset(client, headers, _mvtec_zip_bytes())
+    job = _create_job(client, headers, dataset["id"]).json()
+    run_vision_anomaly_job(job["id"])
+    db_session.expire_all()
+
+    resp = client.post(
+        f"/api/vision/anomalies/jobs/{job['id']}/predict",
+        headers=headers,
+        files={"file": ("probe.png", io.BytesIO(_png_bytes((120, 120, 120), variant=9999)), "image/png")},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["anomaly_score"] >= 0.0
+    assert isinstance(body["is_anomaly"], bool)
+    assert len(body["heatmap_png"]) > 100
+
+
+def test_predict_endpoint_rejects_invalid_image(client, db_session):
+    headers = _register(client)
+    dataset = _upload_vision_dataset(client, headers, _mvtec_zip_bytes())
+    job = _create_job(client, headers, dataset["id"]).json()
+    run_vision_anomaly_job(job["id"])
+    db_session.expire_all()
+
+    resp = client.post(
+        f"/api/vision/anomalies/jobs/{job['id']}/predict",
+        headers=headers,
+        files={"file": ("bogus.png", io.BytesIO(b"not an image"), "image/png")},
+    )
+    assert resp.status_code == 400
+    assert resp.json()["detail"]["code"] == "IMAGE_INVALIDE"
+
+
+def test_predict_endpoint_404_before_completion(client):
+    headers = _register(client)
+    dataset = _upload_vision_dataset(client, headers, _mvtec_zip_bytes())
+    job = _create_job(client, headers, dataset["id"]).json()
+    resp = client.post(
+        f"/api/vision/anomalies/jobs/{job['id']}/predict",
+        headers=headers,
+        files={"file": ("probe.png", io.BytesIO(_png_bytes()), "image/png")},
+    )
+    assert resp.status_code == 404
+    assert resp.json()["detail"]["code"] == "RESULTAT_INDISPONIBLE"
+
+
+def test_export_deployment_script_returns_a_python_file_after_completion(client, db_session):
+    headers = _register(client)
+    dataset = _upload_vision_dataset(client, headers, _mvtec_zip_bytes())
+    job = _create_job(client, headers, dataset["id"]).json()
+    run_vision_anomaly_job(job["id"])
+    db_session.expire_all()
+
+    resp = client.get(f"/api/vision/anomalies/jobs/{job['id']}/model/export-script", headers=headers)
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("text/x-python")
+    assert "class ConvAutoEncoder" in resp.text
+    assert "domains" not in resp.text  # jamais de dépendance à ce projet
+
+
+def test_export_deployment_script_409_before_completion(client):
+    headers = _register(client)
+    dataset = _upload_vision_dataset(client, headers, _mvtec_zip_bytes())
+    job = _create_job(client, headers, dataset["id"]).json()
+    resp = client.get(f"/api/vision/anomalies/jobs/{job['id']}/model/export-script", headers=headers)
+    assert resp.status_code == 409
+    assert resp.json()["detail"]["code"] == "MODELE_NON_DISPONIBLE"

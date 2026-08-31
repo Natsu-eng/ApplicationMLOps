@@ -1,6 +1,6 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { Activity, AlertCircle, AlertTriangle, Ban, ChevronLeft, ChevronRight, Loader2, PlayCircle, RotateCcw, Sparkles, Target, Trash2, Trophy } from "lucide-react";
+import { Activity, AlertCircle, AlertTriangle, Ban, ChevronLeft, ChevronRight, FileCode, FileJson, Loader2, PlayCircle, RotateCcw, Sparkles, Target, Trash2, Trophy } from "lucide-react";
 import {
   Bar,
   BarChart,
@@ -22,6 +22,7 @@ import {
   type VisionAnomalyJobSummary,
   type VisionAnomalyModelOption,
   type VisionAnomalyResult,
+  type VisionAnomalyScore,
   type VisionDatasetDetail,
 } from "../api/client";
 import AppShell from "../components/AppShell";
@@ -43,6 +44,7 @@ import { ModelExportActions } from "../components/ui/ModelExportActions";
 import { VisionDatasetPicker } from "../components/vision/VisionDatasetPicker";
 import { useJobEvents } from "../hooks/useJobEvents";
 import { VisionImage } from "../components/vision/VisionImage";
+import { buildVisionAnomalyModelCard } from "../utils/visionAnomalyModelCard";
 import {
   AUGMENTATION_PRESET_INFO,
   AugmentationPresetPicker,
@@ -292,7 +294,7 @@ export default function VisionAnomalies() {
           </div>
         </Card>
       ) : phase === "results" && activeJob && activeDatasetId ? (
-        <AnomalyVisionResultView jobId={activeJob.id} datasetId={activeDatasetId} />
+        <AnomalyVisionResultView jobId={activeJob.id} datasetId={activeDatasetId} datasetName={activeJob.vision_dataset_name} />
       ) : null}
 
       {phase === "configure" && (
@@ -716,12 +718,20 @@ function AnomalyModelComparisonCard({ candidates }: { candidates: AnomalyModelCo
   );
 }
 
-function AnomalyVisionResultView({ jobId, datasetId }: { jobId: number; datasetId: number }) {
+function AnomalyVisionResultView({
+  jobId,
+  datasetId,
+  datasetName,
+}: {
+  jobId: number;
+  datasetId: number;
+  datasetName: string | null;
+}) {
   const [result, setResult] = useState<VisionAnomalyResult | null>(null);
   const [examples, setExamples] = useState<VisionAnomalyExample[]>([]);
   const [examplesError, setExamplesError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<"performance" | "diagnostics" | "exemples">("performance");
+  const [activeTab, setActiveTab] = useState<"performance" | "diagnostics" | "exemples" | "noter">("performance");
 
   useEffect(() => {
     api.visionAnomalies
@@ -736,6 +746,23 @@ function AnomalyVisionResultView({ jobId, datasetId }: { jobId: number; datasetI
 
   if (error) return <p className="text-sm text-destructive text-center">{error}</p>;
   if (!result) return <p className="text-sm text-muted-foreground text-center">Chargement…</p>;
+
+  // Fiche modèle (retour utilisateur direct : "on peut télécharger le
+  // modèle mais pas un json... qui suit le modèle") — construite
+  // ENTIÈREMENT à partir de `result`, déjà en mémoire, jamais un second
+  // appel réseau. Voir `utils/visionAnomalyModelCard.ts`.
+  function handleExportModelCard() {
+    const card = buildVisionAnomalyModelCard(datasetName, result);
+    const blob = new Blob([JSON.stringify(card, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `vision_anomalies_fiche_modele_job${jobId}.json`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  }
 
   const historyData = result.history.map((h) => ({
     epoch: h.epoch + 1,
@@ -787,30 +814,48 @@ function AnomalyVisionResultView({ jobId, datasetId }: { jobId: number; datasetI
         <AnomalyModelComparisonCard candidates={result.model_card.candidates as AnomalyModelComparisonCandidate[]} />
       )}
 
-      <ModelExportActions
-        onExportArtifact={() => api.visionAnomalies.exportModel(jobId)}
-        exportConfig={{
-          threshold: result.threshold,
-          roc_auc: result.roc_auc,
-          test_accuracy: result.test_accuracy,
-          test_precision: result.test_precision,
-          test_recall: result.test_recall,
-          test_f1: result.test_f1,
-          model_card: result.model_card,
-        }}
-        configFilename={`vision_anomalies_config_job${jobId}.json`}
-      />
+      <div className="flex items-center gap-2 flex-wrap">
+        <ModelExportActions
+          onExportArtifact={() => api.visionAnomalies.exportModel(jobId)}
+          exportConfig={{
+            threshold: result.threshold,
+            roc_auc: result.roc_auc,
+            test_accuracy: result.test_accuracy,
+            test_precision: result.test_precision,
+            test_recall: result.test_recall,
+            test_f1: result.test_f1,
+            model_card: result.model_card,
+          }}
+          configFilename={`vision_anomalies_config_job${jobId}.json`}
+        />
+        <Button variant="secondary" size="sm" onClick={handleExportModelCard}>
+          <FileJson size={14} />
+          Fiche modèle (JSON)
+        </Button>
+        <Button variant="secondary" size="sm" onClick={() => api.visionAnomalies.exportDeploymentScript(jobId)}>
+          <FileCode size={14} />
+          Script de déploiement (.py)
+        </Button>
+      </div>
+      <p className="text-xs text-muted-foreground -mt-2">
+        Pour déployer ce modèle en dehors de DataLab Pro : téléchargez l'artefact ET le script de déploiement,
+        placez-les dans le même dossier — le script recharge l'artefact et note de nouvelles images, sans dépendre
+        de cette plateforme (voir l'en-tête du script pour l'installation des bibliothèques nécessaires).
+      </p>
 
       <Tabs
         items={[
           { id: "performance" as const, label: "Performance", icon: Sparkles },
           { id: "diagnostics" as const, label: "Diagnostics", icon: Activity },
           { id: "exemples" as const, label: "Exemples", icon: AlertTriangle },
+          { id: "noter" as const, label: "Noter une image", icon: Target },
         ]}
         active={activeTab}
         onChange={setActiveTab}
         urlParam="onglet"
       />
+
+      {activeTab === "noter" && <VisionAnomalyScoreForm jobId={jobId} />}
 
       {activeTab === "performance" && (
         <>
@@ -868,6 +913,78 @@ function AnomalyVisionResultView({ jobId, datasetId }: { jobId: number; datasetI
         </div>
       )}
     </div>
+  );
+}
+
+/** Note une NOUVELLE image (Lot 6B, §F.2 — jusqu'ici, ce pilier n'avait
+ * AUCUNE capacité de notation d'une nouvelle image, contrairement à la
+ * classification via l'onglet Grad-CAM) — même pattern que
+ * `VisionClassification.tsx`'s "Expliquer une image externe". */
+function VisionAnomalyScoreForm({ jobId }: { jobId: number }) {
+  const [score, setScore] = useState<VisionAnomalyScore | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  async function handleFile(files: FileList | null) {
+    const file = files?.[0];
+    if (!file) return;
+    setError(null);
+    setScore(null);
+    setPreviewUrl(URL.createObjectURL(file));
+    setIsSubmitting(true);
+    try {
+      setScore(await api.visionAnomalies.predict(jobId, file));
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Impossible de noter cette image");
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  return (
+    <Card className="p-5">
+      <SectionHeader
+        icon={Target}
+        color="amber"
+        label="Noter une nouvelle image"
+        help="Superpose une carte de chaleur sur l'image : les zones les plus chaudes sont celles qui contribuent le plus à l'erreur de reconstruction (donc à l'écart par rapport à une image normale)."
+      />
+      <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={(e) => handleFile(e.target.files)} />
+      <Button variant="secondary" size="sm" type="button" onClick={() => fileInputRef.current?.click()}>
+        Choisir une image à noter
+      </Button>
+
+      {isSubmitting && <p className="text-sm text-muted-foreground mt-3">Calcul en cours…</p>}
+      {error && (
+        <div className="flex items-center gap-2 text-sm text-destructive bg-destructive/10 border border-destructive/20 rounded-lg px-3 py-2 mt-3">
+          <AlertCircle size={15} className="flex-shrink-0" />
+          {error}
+        </div>
+      )}
+
+      {score && previewUrl && (
+        <div className="mt-4 space-y-3">
+          <div className={`rounded-lg border p-3 ${accentSurfaceClass(score.is_anomaly ? "amber" : "teal")}`}>
+            <p className="text-sm text-foreground">
+              {score.is_anomaly ? "Image atypique (anomalie détectée)." : "Image dans la norme."}
+            </p>
+            <p className="text-xs text-muted-foreground mt-1">
+              Score de reconstruction : {score.anomaly_score.toFixed(4)} — seuil de détection :{" "}
+              {score.threshold.toFixed(4)}
+            </p>
+          </div>
+          <div className="max-w-sm">
+            <img
+              src={score.heatmap_png}
+              alt="Image avec carte de chaleur de reconstruction superposée"
+              className="w-full aspect-square object-cover rounded-lg border border-border"
+            />
+          </div>
+        </div>
+      )}
+    </Card>
   );
 }
 
