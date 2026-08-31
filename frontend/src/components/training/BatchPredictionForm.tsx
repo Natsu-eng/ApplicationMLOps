@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
+import writeExcelFile from "write-excel-file/browser";
 import { AlertCircle, Ban, Download, FileDown, History, Loader2, Trash2, UploadCloud } from "lucide-react";
 import { ApiError, api, type BatchPredictionJobSummary, type MLModelDetail } from "../../api/client";
 import { Button } from "../ui/Button";
@@ -111,6 +112,23 @@ export default function BatchPredictionForm({ jobId, model }: { jobId: number; m
     URL.revokeObjectURL(url);
   }
 
+  // Même modèle de fichier, au format Excel (retour utilisateur direct :
+  // "on peut pas télécharger en excel") — le champ d'upload accepte déjà
+  // .xlsx/.xls, seul le modèle de fichier vide manquait dans ce format.
+  // Généré entièrement côté client (`write-excel-file`, aucun appel réseau)
+  // — même en-tête EXACT que le modèle CSV, une seule ligne de titres.
+  async function handleDownloadTemplateExcel() {
+    const blob = await writeExcelFile([model.feature_columns]).toBlob();
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `modele_de_fichier_job${jobId}.xlsx`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  }
+
   const columns: TableColumn<BatchPredictionJobSummary>[] = [
     { key: "input_filename", header: "Fichier", render: (b) => b.input_filename },
     { key: "status", header: "Statut", render: (b) => <JobStatusBadge status={b.status} /> },
@@ -200,14 +218,24 @@ export default function BatchPredictionForm({ jobId, model }: { jobId: number; m
             Une valeur manquante dans une cellule n'empêche jamais la prédiction (le modèle compense comme il l'a
             appris à le faire) — seule une colonne entièrement absente du fichier bloque le traitement.
           </p>
-          <button
-            type="button"
-            onClick={handleDownloadTemplate}
-            className="flex items-center gap-1.5 text-xs text-primary hover:underline underline-offset-2"
-          >
-            <FileDown size={12} />
-            Télécharger un modèle de fichier vide (CSV, colonnes déjà en place)
-          </button>
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+            <button
+              type="button"
+              onClick={handleDownloadTemplate}
+              className="flex items-center gap-1.5 text-xs text-primary hover:underline underline-offset-2"
+            >
+              <FileDown size={12} />
+              Modèle de fichier vide (CSV, colonnes déjà en place)
+            </button>
+            <button
+              type="button"
+              onClick={handleDownloadTemplateExcel}
+              className="flex items-center gap-1.5 text-xs text-primary hover:underline underline-offset-2"
+            >
+              <FileDown size={12} />
+              Modèle de fichier vide (Excel)
+            </button>
+          </div>
         </div>
 
         {!activeBatch || !ACTIVE_STATUSES.has(activeBatch.status) ? (
