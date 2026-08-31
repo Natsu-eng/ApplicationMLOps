@@ -7,6 +7,8 @@ import {
   Boxes,
   ChevronLeft,
   ChevronRight,
+  FileCode,
+  FileJson,
   Loader2,
   PlayCircle,
   RotateCcw,
@@ -51,6 +53,7 @@ import { ModelExportActions } from "../components/ui/ModelExportActions";
 import { VisionDatasetPicker } from "../components/vision/VisionDatasetPicker";
 import { useJobEvents } from "../hooks/useJobEvents";
 import { VisionImage } from "../components/vision/VisionImage";
+import { buildVisionClassificationModelCard } from "../utils/visionClassificationModelCard";
 import {
   AUGMENTATION_PRESET_INFO,
   AugmentationPresetPicker,
@@ -290,7 +293,7 @@ export default function VisionClassification() {
           </div>
         </Card>
       ) : phase === "results" && activeJob && activeDatasetId ? (
-        <ClassificationResultView jobId={activeJob.id} datasetId={activeDatasetId} />
+        <ClassificationResultView jobId={activeJob.id} datasetId={activeDatasetId} datasetName={activeJob.vision_dataset_name} />
       ) : null}
 
       {phase === "configure" && (
@@ -845,7 +848,15 @@ function BackboneComparisonCard({ candidates }: { candidates: BackboneComparison
   );
 }
 
-function ClassificationResultView({ jobId, datasetId }: { jobId: number; datasetId: number }) {
+function ClassificationResultView({
+  jobId,
+  datasetId,
+  datasetName,
+}: {
+  jobId: number;
+  datasetId: number;
+  datasetName: string | null;
+}) {
   const [result, setResult] = useState<VisionClassificationResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<"performance" | "exemples" | "fiabilite" | "gradcam">("performance");
@@ -904,6 +915,23 @@ function ClassificationResultView({ jobId, datasetId }: { jobId: number; dataset
     "Exactitude (validation)": h.val_accuracy,
   }));
 
+  // Fiche modèle (retour utilisateur direct : "on peut télécharger le
+  // modèle mais pas un json... qui suit le modèle") — construite
+  // ENTIÈREMENT à partir de `result`, déjà en mémoire, jamais un second
+  // appel réseau. Voir `utils/visionClassificationModelCard.ts`.
+  function handleExportModelCard() {
+    const card = buildVisionClassificationModelCard(datasetName, result);
+    const blob = new Blob([JSON.stringify(card, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `vision_classification_fiche_modele_job${jobId}.json`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  }
+
   const incorrectExamples = result.examples.filter((e) => !e.correct);
   const correctExamples = result.examples.filter((e) => e.correct);
 
@@ -936,18 +964,34 @@ function ClassificationResultView({ jobId, datasetId }: { jobId: number; dataset
         <BackboneComparisonCard candidates={result.model_card.candidates as BackboneComparisonCandidate[]} />
       )}
 
-      <ModelExportActions
-        onExportArtifact={() => api.visionClassification.exportModel(jobId)}
-        exportConfig={{
-          class_names: result.class_names,
-          test_accuracy: result.test_accuracy,
-          test_precision_macro: result.test_precision_macro,
-          test_recall_macro: result.test_recall_macro,
-          test_f1_macro: result.test_f1_macro,
-          model_card: result.model_card,
-        }}
-        configFilename={`vision_classification_config_job${jobId}.json`}
-      />
+      <div className="flex items-center gap-2 flex-wrap">
+        <ModelExportActions
+          onExportArtifact={() => api.visionClassification.exportModel(jobId)}
+          exportConfig={{
+            class_names: result.class_names,
+            test_accuracy: result.test_accuracy,
+            test_precision_macro: result.test_precision_macro,
+            test_recall_macro: result.test_recall_macro,
+            test_f1_macro: result.test_f1_macro,
+            model_card: result.model_card,
+          }}
+          configFilename={`vision_classification_config_job${jobId}.json`}
+        />
+        <Button variant="secondary" size="sm" onClick={handleExportModelCard}>
+          <FileJson size={14} />
+          Fiche modèle (JSON)
+        </Button>
+        <Button variant="secondary" size="sm" onClick={() => api.visionClassification.exportDeploymentScript(jobId)}>
+          <FileCode size={14} />
+          Script de déploiement (.py)
+        </Button>
+      </div>
+      <p className="text-xs text-muted-foreground -mt-2">
+        Pour déployer ce modèle en dehors de DataLab Pro : téléchargez l'artefact ET le script de déploiement,
+        placez-les dans le même dossier — le script reconstruit l'architecture du réseau et prédit sur de nouvelles
+        images, sans dépendre de cette plateforme (voir l'en-tête du script pour l'installation des bibliothèques
+        nécessaires).
+      </p>
 
       <Tabs
         items={[

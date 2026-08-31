@@ -695,3 +695,42 @@ def test_result_reflects_the_image_size_actually_used(client, db_session):
 
     result = client.get(f"/api/vision/classification/jobs/{job['id']}/result", headers=headers).json()
     assert result["model_card"]["image_size"] == 64
+
+
+# ── /model/export-script (Lot 6B, §F.2 — script de déploiement autonome) ──
+
+
+def test_export_deployment_script_returns_a_python_file_after_completion(client, db_session):
+    headers = _register(client)
+    dataset = _upload_vision_dataset(client, headers)
+    job = _create_job(client, headers, dataset["id"]).json()
+    run_vision_classification_job(job["id"])
+    db_session.expire_all()
+
+    resp = client.get(f"/api/vision/classification/jobs/{job['id']}/model/export-script", headers=headers)
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("text/x-python")
+    assert "def predict(" in resp.text
+    assert "domains" not in resp.text  # jamais de dépendance à ce projet
+
+
+def test_export_deployment_script_reflects_the_actual_backbone_and_image_size(client, db_session):
+    headers = _register(client)
+    dataset = _upload_vision_dataset(client, headers)
+    job = _create_job(client, headers, dataset["id"], backbone_id="resnet18", image_size=64).json()
+    run_vision_classification_job(job["id"])
+    db_session.expire_all()
+
+    resp = client.get(f"/api/vision/classification/jobs/{job['id']}/model/export-script", headers=headers)
+    assert resp.status_code == 200
+    assert '"resnet18"' in resp.text
+    assert "64" in resp.text
+
+
+def test_export_deployment_script_409_before_completion(client):
+    headers = _register(client)
+    dataset = _upload_vision_dataset(client, headers)
+    job = _create_job(client, headers, dataset["id"]).json()
+    resp = client.get(f"/api/vision/classification/jobs/{job['id']}/model/export-script", headers=headers)
+    assert resp.status_code == 409
+    assert resp.json()["detail"]["code"] == "MODELE_NON_DISPONIBLE"

@@ -42,19 +42,24 @@ from domains.shared.job_events import stream_job_updates
 from domains.shared.job_lifecycle import ACTIVE_STATUSES, CANCELLED_MESSAGE, try_cancel_rq_job
 from domains.shared.job_quota import ALL_JOB_MODELS, raise_if_quota_exceeded
 from domains.shared.job_watchdog import reconcile_stale_jobs
+from domains.vision.classification.services.deployment_export import generate_vision_classification_deployment_script
 from domains.vision.classification.services.engine import (
     AUGMENTATION_PRESET_IDS,
     DEFAULT_AUGMENTATION_PRESET,
     IMAGE_SIZE,
     MAX_BACKBONES_PER_COMPARISON,
 )
-from domains.vision.shared import ALLOWED_IMAGE_SIZES
 from domains.vision.classification.services.gradcam import (
     GradCamError,
     explain_classification_prediction,
     explain_classification_predictions_batch,
 )
-from domains.vision.classification.services.registry import CLASSIFICATION_BACKBONE_REGISTRY, DEFAULT_BACKBONE_ID
+from domains.vision.classification.services.registry import (
+    CLASSIFICATION_BACKBONE_REGISTRY,
+    DEFAULT_BACKBONE_ID,
+    get_backbone_spec,
+)
+from domains.vision.shared import ALLOWED_IMAGE_SIZES
 
 router = APIRouter(prefix="/vision/classification", tags=["vision"])
 _settings = get_settings()
@@ -517,6 +522,52 @@ def export_vision_classification_model(job_id: int, current_user: User = Depends
         )
     filename = f"vision_classification_job{job.id}.pt"
     return FileResponse(path=artifact_path, filename=filename, media_type="application/octet-stream")
+
+
+@router.get("/jobs/{job_id}/model/export-script")
+def export_vision_classification_deployment_script(
+    job_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)
+):
+    """Script de déploiement autonome — même principe que
+    `GET /training/jobs/{job_id}/model/export-script` (pilier supervisé),
+    adapté à un artefact PyTorch (`state_dict`, jamais un pipeline
+    scikit-learn autonome) : le script reconstruit d'abord l'ARCHITECTURE du
+    backbone AVANT d'y injecter les poids — voir
+    `services/deployment_export.py` pour le détail."""
+    job = _get_org_job(job_id, current_user, db)
+    if job.status != "completed" or job.result is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"code": "MODELE_NON_DISPONIBLE", "message": "Cet entraînement n'a pas encore produit de modèle"},
+        )
+    artifact_path = Path(job.result.file_path)
+    if not artifact_path.exists():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "ARTEFACT_INTROUVABLE", "message": "Artefact du modèle introuvable sur le serveur"},
+        )
+    spec = get_backbone_spec(job.result.backbone_id)
+    # `image_size` n'est pas une colonne dédiée de `VisionClassificationModel`
+    # — elle vit dans le model_card déjà persisté (engine.py::model_card
+    # ["image_size"]), rétrocompatibilité par absence pour un modèle
+    # entraîné avant le mode expert résolution (toujours 224 alors).
+    model_card = json.loads(job.result.model_card_json or "{}")
+    base_name = f"vision_classification_job{job.id}"
+    artifact_filename = f"{base_name}.pt"
+    script_filename = f"{base_name}_deploiement.py"
+    script = generate_vision_classification_deployment_script(
+        backbone_id=job.result.backbone_id,
+        backbone_label=spec.label,
+        class_names=json.loads(job.result.class_names_json),
+        image_size=model_card.get("image_size", IMAGE_SIZE),
+        artifact_filename=artifact_filename,
+        script_filename=script_filename,
+    )
+    return Response(
+        content=script,
+        media_type="text/x-python",
+        headers={"Content-Disposition": f'attachment; filename="{script_filename}"'},
+    )
 
 
 _explain_rate_limit = rate_limit_dependency(

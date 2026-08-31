@@ -1884,6 +1884,11 @@ export const api = {
     remove: (id: number) => request<void>(`/vision/classification/jobs/${id}`, { method: "DELETE" }),
     exportModel: (id: number) =>
       downloadModelExport(`/vision/classification/jobs/${id}/model/export`, `vision_classification_job${id}.pt`),
+    exportDeploymentScript: (id: number) =>
+      downloadModelExport(
+        `/vision/classification/jobs/${id}/model/export-script`,
+        `vision_classification_job${id}_deploiement.py`,
+      ),
   },
 
   visionAnomalies: {
