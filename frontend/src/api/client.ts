@@ -1747,6 +1747,12 @@ export const api = {
     removeBatchPrediction: (id: number) => request<void>(`/training/batch-predictions/${id}`, { method: "DELETE" }),
     downloadBatchPredictionResult: (id: number, filename: string) =>
       downloadModelExport(`/training/batch-predictions/${id}/download`, filename),
+    // Même résultat, au format Excel (retour utilisateur direct : "on doit
+    // télécharger aussi les prédictions en format excel pour voir
+    // directement") — généré à la volée côté serveur depuis le CSV déjà
+    // stocké, jamais un second fichier persisté.
+    downloadBatchPredictionResultExcel: (id: number, filename: string) =>
+      downloadModelExport(`/training/batch-predictions/${id}/download-excel`, filename),
   },
 
   clustering: {

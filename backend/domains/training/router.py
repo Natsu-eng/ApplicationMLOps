@@ -8,11 +8,13 @@ son état, jamais de calcul ML dans la requête HTTP.
 """
 from __future__ import annotations
 
+import io
 import json
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, List, Optional
 
+import pandas as pd
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, Response, UploadFile, status
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
@@ -1686,6 +1688,41 @@ def download_batch_prediction_result(
         )
     filename = f"predictions_{Path(job.input_filename).stem}.csv"
     return FileResponse(path=output_path, filename=filename, media_type="text/csv")
+
+
+@router.get("/batch-predictions/{batch_job_id}/download-excel")
+def download_batch_prediction_result_excel(
+    batch_job_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)
+):
+    """Même résultat que `.../download`, au format Excel (retour utilisateur
+    direct : "on doit télécharger aussi les prédictions en format excel pour
+    voir directement") — généré à la volée depuis le CSV déjà stocké, jamais
+    un second fichier persisté sur le serveur (même principe que le modèle
+    de fichier vide côté frontend : un format d'affichage, pas une donnée
+    supplémentaire à retenir)."""
+    job = _get_org_batch_job(batch_job_id, current_user, db)
+    if job.status != "completed" or not job.output_file_path:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"code": "RESULTAT_INDISPONIBLE", "message": "Cette prédiction en lot n'a pas encore de résultat"},
+        )
+    output_path = Path(job.output_file_path)
+    if not output_path.exists():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "RESULTAT_INTROUVABLE", "message": "Résultat introuvable sur le serveur"},
+        )
+    result_df = pd.read_csv(output_path)
+    buffer = io.BytesIO()
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+        result_df.to_excel(writer, index=False, sheet_name="Prédictions")
+    buffer.seek(0)
+    filename = f"predictions_{Path(job.input_filename).stem}.xlsx"
+    return StreamingResponse(
+        buffer,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.post("/batch-predictions/{batch_job_id}/cancel", response_model=BatchPredictionJobSummary)

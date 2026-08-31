@@ -129,6 +129,15 @@ export default function BatchPredictionForm({ jobId, model }: { jobId: number; m
     URL.revokeObjectURL(url);
   }
 
+  // Nom de fichier Excel dérivé du fichier d'entrée (même convention que le
+  // backend, `predictions_{stem}.xlsx`) — retire l'extension d'origine
+  // plutôt que de l'accoler telle quelle (le fichier uploadé peut déjà être
+  // un .csv/.xlsx/.xls/.parquet/.json).
+  function excelResultFilename(inputFilename: string) {
+    const stem = inputFilename.replace(/\.[^.]+$/, "");
+    return `predictions_${stem}.xlsx`;
+  }
+
   const columns: TableColumn<BatchPredictionJobSummary>[] = [
     { key: "input_filename", header: "Fichier", render: (b) => b.input_filename },
     { key: "status", header: "Statut", render: (b) => <JobStatusBadge status={b.status} /> },
@@ -141,14 +150,26 @@ export default function BatchPredictionForm({ jobId, model }: { jobId: number; m
       render: (b) => (
         <div className="flex items-center justify-end gap-2">
           {b.status === "completed" && (
-            <button
-              type="button"
-              onClick={() => api.training.downloadBatchPredictionResult(b.id, `predictions_${b.input_filename}`)}
-              className="text-primary hover:text-primary/80"
-              aria-label={`Télécharger le résultat de ${b.input_filename}`}
-            >
-              <Download size={14} />
-            </button>
+            <>
+              <button
+                type="button"
+                onClick={() => api.training.downloadBatchPredictionResult(b.id, `predictions_${b.input_filename}`)}
+                className="text-primary hover:text-primary/80"
+                aria-label={`Télécharger le résultat de ${b.input_filename} (CSV)`}
+                title="Télécharger (CSV)"
+              >
+                <Download size={14} />
+              </button>
+              <button
+                type="button"
+                onClick={() => api.training.downloadBatchPredictionResultExcel(b.id, excelResultFilename(b.input_filename))}
+                className="text-primary hover:text-primary/80"
+                aria-label={`Télécharger le résultat de ${b.input_filename} (Excel)`}
+                title="Télécharger (Excel)"
+              >
+                <FileDown size={14} />
+              </button>
+            </>
           )}
           <button
             type="button"
@@ -293,16 +314,32 @@ export default function BatchPredictionForm({ jobId, model }: { jobId: number; m
               Terminé — {activeBatch.n_rows} ligne{(activeBatch.n_rows ?? 0) > 1 ? "s" : ""} prédite
               {(activeBatch.n_rows ?? 0) > 1 ? "s" : ""}.
             </span>
-            <Button
-              type="button"
-              size="sm"
-              onClick={() =>
-                api.training.downloadBatchPredictionResult(activeBatch.id, `predictions_${activeBatch.input_filename}`)
-              }
-            >
-              <Download size={13} />
-              Télécharger
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button
+                type="button"
+                size="sm"
+                onClick={() =>
+                  api.training.downloadBatchPredictionResult(activeBatch.id, `predictions_${activeBatch.input_filename}`)
+                }
+              >
+                <Download size={13} />
+                Télécharger (CSV)
+              </Button>
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                onClick={() =>
+                  api.training.downloadBatchPredictionResultExcel(
+                    activeBatch.id,
+                    excelResultFilename(activeBatch.input_filename),
+                  )
+                }
+              >
+                <FileDown size={13} />
+                Télécharger (Excel)
+              </Button>
+            </div>
           </div>
         )}
       </Card>

@@ -218,6 +218,41 @@ def test_download_rejects_before_completion(client, db_session):
     assert resp.json()["detail"]["code"] == "RESULTAT_INDISPONIBLE"
 
 
+def test_batch_prediction_end_to_end_produces_a_downloadable_excel(client, db_session):
+    """Retour utilisateur direct : "on doit télécharger aussi les
+    prédictions en format excel pour voir directement" — même résultat que
+    le CSV, généré à la volée, jamais un second fichier persisté."""
+    headers = _register(client)
+    job = _train_and_persist_model(db_session, organization_id=1)
+
+    content = b"id_ligne,x1,x2\nr1,45,18\nr2,55,22\n"
+    create_resp = _upload_predict_batch(client, headers, job.id, content=content)
+    batch_id = create_resp.json()["id"]
+
+    run_batch_prediction_job(batch_id)
+    db_session.expire_all()
+
+    download_resp = client.get(f"/api/training/batch-predictions/{batch_id}/download-excel", headers=headers)
+    assert download_resp.status_code == 200
+    assert download_resp.headers["content-type"] == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    result_df = pd.read_excel(io.BytesIO(download_resp.content))
+    assert list(result_df["id_ligne"]) == ["r1", "r2"]
+    assert "prediction" in result_df.columns
+    assert "intervalle_bas" in result_df.columns
+    assert "intervalle_haut" in result_df.columns
+
+
+def test_download_excel_rejects_before_completion(client, db_session):
+    headers = _register(client)
+    job = _train_and_persist_model(db_session, organization_id=1)
+    create_resp = _upload_predict_batch(client, headers, job.id)
+    batch_id = create_resp.json()["id"]
+
+    resp = client.get(f"/api/training/batch-predictions/{batch_id}/download-excel", headers=headers)
+    assert resp.status_code == 409
+    assert resp.json()["detail"]["code"] == "RESULTAT_INDISPONIBLE"
+
+
 def test_worker_marks_job_failed_on_missing_column(client, db_session):
     headers = _register(client)
     job = _train_and_persist_model(db_session, organization_id=1)
