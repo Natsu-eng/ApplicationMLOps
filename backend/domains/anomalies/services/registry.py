@@ -16,7 +16,7 @@ Pas de sélection utilisateur d'algorithme non plus (voir
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable, Literal, Union
+from typing import Any, Callable, Literal, Union
 
 from sklearn.base import BaseEstimator
 from sklearn.ensemble import IsolationForest
@@ -50,8 +50,27 @@ def _build_isolation_forest(n_samples: int, seed: int, contamination: Contaminat
 def _build_lof(n_samples: int, seed: int, contamination: Contamination = "auto") -> BaseEstimator:
     n_neighbors = max(2, min(20, n_samples - 1))
     # novelty=False : mode détection sur le jeu d'entraînement lui-même
-    # (fit_predict), pas de notion de nouvelle observation dans ce lot.
+    # (fit_predict) — reste le comportement d'ENTRAÎNEMENT, inchangé. La
+    # notation d'une nouvelle observation (voir `services/inference.py`,
+    # Lot 6B, §F.2) passe par une SECONDE instance dédiée (`build_lof_novelty_from`
+    # ci-dessous) : sklearn interdit d'appeler `.predict()` sur de nouvelles
+    # données avec une instance `novelty=False` (`AttributeError` explicite),
+    # et changer ce réglage sur l'instance d'entraînement changerait
+    # silencieusement la sémantique déjà testée de `fit_predict`.
     return LocalOutlierFactor(contamination=contamination, novelty=False, n_neighbors=n_neighbors)
+
+
+def build_lof_novelty_from(fitted_lof: LocalOutlierFactor, X_processed: Any) -> LocalOutlierFactor:
+    """Seconde instance LOF, `novelty=True`, MÊMES hyperparamètres que
+    `fitted_lof` (déjà entraînée en `novelty=False` pour la détection sur le
+    jeu d'entraînement) — réentraînée sur les MÊMES données transformées,
+    uniquement pour noter de nouvelles observations (voir docstring de
+    `_build_lof`). Ne remplace ni ne modifie `fitted_lof`."""
+    params = fitted_lof.get_params()
+    params["novelty"] = True
+    novelty_estimator = LocalOutlierFactor(**params)
+    novelty_estimator.fit(X_processed)
+    return novelty_estimator
 
 
 ANOMALY_REGISTRY: list[AnomalySpec] = [

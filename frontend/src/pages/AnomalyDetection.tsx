@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { AlertCircle, AlertTriangle, Ban, BarChart3, CheckCircle2, Loader2, PlayCircle, RotateCcw, Search, SlidersHorizontal, Trash2 } from "lucide-react";
+import { AlertCircle, AlertTriangle, Ban, BarChart3, CheckCircle2, Download, FileCode, FileJson, Loader2, PlayCircle, RotateCcw, Search, SlidersHorizontal, Target, Trash2 } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip as RechartsTooltip, XAxis, YAxis } from "recharts";
 import {
   ApiError,
@@ -9,6 +9,7 @@ import {
   type AnomalyJobSummary,
   type AnomalyObservation,
   type AnomalyResult,
+  type AnomalyScore,
   type ColumnSchema,
   type DatasetSummary,
 } from "../api/client";
@@ -32,6 +33,7 @@ import { CHART_COLOR_PRIMARY, CHART_GRID_STROKE, CHART_TICK_STYLE_SM, CHART_TOOL
 import { DataQualityWarnings } from "../components/training/DataQualityWarnings";
 import { useJobEvents } from "../hooks/useJobEvents";
 import { assessConsensusQuality } from "../utils/anomalyQuality";
+import { buildAnomalyModelCard } from "../utils/anomalyModelCard";
 import { QUALITY_TONE_ACCENT } from "../utils/qualityAssessment";
 
 const ACTIVE_STATUSES = new Set(["queued", "running"]);
@@ -286,7 +288,7 @@ export default function AnomalyDetection() {
           </div>
         </Card>
       ) : phase === "results" && activeJob ? (
-        <AnomalyResultView jobId={activeJob.id} featureColumns={activeJob.feature_columns} />
+        <AnomalyResultView jobId={activeJob.id} featureColumns={activeJob.feature_columns} datasetName={activeJob.dataset_name} />
       ) : null}
 
       {phase === "configure" && (
@@ -652,13 +654,21 @@ function observationColumns(onOpenDetail: (obs: AnomalyObservation) => void): Ta
   ];
 }
 
-function AnomalyResultView({ jobId, featureColumns }: { jobId: number; featureColumns: string[] }) {
+function AnomalyResultView({
+  jobId,
+  featureColumns,
+  datasetName,
+}: {
+  jobId: number;
+  featureColumns: string[];
+  datasetName: string | null;
+}) {
   const [result, setResult] = useState<AnomalyResult | null>(null);
   const [observations, setObservations] = useState<AnomalyObservation[]>([]);
   const [observationsError, setObservationsError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [detailObservation, setDetailObservation] = useState<AnomalyObservation | null>(null);
-  const [activeTab, setActiveTab] = useState<"distribution" | "observations">("observations");
+  const [activeTab, setActiveTab] = useState<"distribution" | "observations" | "noter">("observations");
 
   useEffect(() => {
     api.anomalies
@@ -685,6 +695,23 @@ function AnomalyResultView({ jobId, featureColumns }: { jobId: number; featureCo
   }));
 
   const quality = assessConsensusQuality(result.anomaly_rate_consensus);
+
+  // Fiche modèle (retour utilisateur direct : "on peut télécharger le
+  // modèle mais pas un json... qui suit le modèle") — construite
+  // ENTIÈREMENT à partir de `result`, déjà en mémoire, jamais un second
+  // appel réseau. Voir `utils/anomalyModelCard.ts`.
+  function handleExportModelCard() {
+    const card = buildAnomalyModelCard(featureColumns, datasetName, result);
+    const blob = new Blob([JSON.stringify(card, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `anomalies_fiche_modele_job${jobId}.json`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  }
 
   return (
     <div className="max-w-4xl mx-auto space-y-5">
@@ -719,26 +746,48 @@ function AnomalyResultView({ jobId, featureColumns }: { jobId: number; featureCo
         </p>
       </Card>
 
-      <ModelExportActions
-        onExportArtifact={() => api.anomalies.exportModel(jobId)}
-        exportConfig={{
-          feature_columns: featureColumns,
-          n_anomalies_consensus: result.n_anomalies_consensus,
-          anomaly_rate_consensus: result.anomaly_rate_consensus,
-          model_card: result.model_card,
-        }}
-        configFilename={`anomalies_config_job${jobId}.json`}
-      />
+      <div className="flex items-center gap-2 flex-wrap">
+        <ModelExportActions
+          onExportArtifact={() => api.anomalies.exportModel(jobId)}
+          exportConfig={{
+            feature_columns: featureColumns,
+            n_anomalies_consensus: result.n_anomalies_consensus,
+            anomaly_rate_consensus: result.anomaly_rate_consensus,
+            model_card: result.model_card,
+          }}
+          configFilename={`anomalies_config_job${jobId}.json`}
+        />
+        <Button variant="secondary" size="sm" onClick={() => api.anomalies.exportScores(jobId)}>
+          <Download size={14} />
+          Exporter les scores (CSV, toutes les lignes)
+        </Button>
+        <Button variant="secondary" size="sm" onClick={handleExportModelCard}>
+          <FileJson size={14} />
+          Fiche modèle (JSON)
+        </Button>
+        <Button variant="secondary" size="sm" onClick={() => api.anomalies.exportDeploymentScript(jobId)}>
+          <FileCode size={14} />
+          Script de déploiement (.py)
+        </Button>
+      </div>
+      <p className="text-xs text-muted-foreground -mt-2">
+        Pour déployer ce modèle en dehors de DataLab Pro : téléchargez l'artefact ET le script de déploiement,
+        placez-les dans le même dossier — le script recharge l'artefact et note de nouvelles observations, sans
+        dépendre de cette plateforme (voir l'en-tête du script pour l'installation des bibliothèques nécessaires).
+      </p>
 
       <Tabs
         items={[
           { id: "observations" as const, label: "Observations", icon: Search },
           { id: "distribution" as const, label: "Distribution des scores", icon: BarChart3 },
+          { id: "noter" as const, label: "Noter une observation", icon: Target },
         ]}
         active={activeTab}
         onChange={setActiveTab}
         urlParam="onglet"
       />
+
+      {activeTab === "noter" && <AnomalyScoreForm jobId={jobId} featureColumns={featureColumns} />}
 
       {activeTab === "distribution" && (
         <>
@@ -847,6 +896,81 @@ function AnomalyResultView({ jobId, featureColumns }: { jobId: number; featureCo
         </Modal>
       )}
     </div>
+  );
+}
+
+/** Note une NOUVELLE observation (Lot 6B, §F.2 — jusqu'ici, comme le
+ * clustering avant lui, une détection entraînée ne pouvait jamais être
+ * réutilisée sur une nouvelle observation) — même pattern que
+ * `Clustering.tsx::ClusterAssignmentForm`. */
+function AnomalyScoreForm({ jobId, featureColumns }: { jobId: number; featureColumns: string[] }) {
+  const [values, setValues] = useState<Record<string, string>>({});
+  const [score, setScore] = useState<AnomalyScore | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  async function handleSubmit(event: FormEvent) {
+    event.preventDefault();
+    setError(null);
+    setScore(null);
+    setIsSubmitting(true);
+    try {
+      const result = await api.anomalies.predict(jobId, values);
+      setScore(result);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Impossible de noter cette observation");
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  return (
+    <Card className="p-5">
+      <SectionHeader
+        icon={Target}
+        color="amber"
+        label="Noter une nouvelle observation"
+        help="Indiquez les valeurs d'une nouvelle observation pour voir si elle ressort comme atypique par rapport aux données déjà analysées, sans relancer une détection complète."
+      />
+      <form onSubmit={handleSubmit} className="space-y-3">
+        <div className="grid sm:grid-cols-2 gap-3">
+          {featureColumns.map((col) => (
+            <div key={col}>
+              <label htmlFor={`score-${col}`} className="block text-xs text-muted-foreground mb-1">
+                {col}
+              </label>
+              <Input
+                id={`score-${col}`}
+                value={values[col] ?? ""}
+                onChange={(e) => setValues((prev) => ({ ...prev, [col]: e.target.value }))}
+                required
+              />
+            </div>
+          ))}
+        </div>
+        {error && (
+          <div className="flex items-center gap-2 text-sm text-destructive bg-destructive/10 border border-destructive/20 rounded-lg px-3 py-2">
+            <AlertCircle size={15} className="flex-shrink-0" />
+            {error}
+          </div>
+        )}
+        <Button type="submit" variant="secondary" size="sm" disabled={isSubmitting}>
+          {isSubmitting ? "Notation…" : "Noter"}
+        </Button>
+      </form>
+      {score && (
+        <div className={`rounded-lg border p-3 mt-3 ${accentSurfaceClass(score.is_anomaly_consensus ? "amber" : "teal")}`}>
+          <p className="text-sm text-foreground">
+            {score.is_anomaly_consensus
+              ? "Observation atypique (consensus des deux méthodes)."
+              : "Observation dans la norme."}
+          </p>
+          <p className="text-xs text-muted-foreground mt-1">
+            Score de consensus : {score.consensus_score.toFixed(2)} — {AGREEMENT_LABELS[score.agreement]}
+          </p>
+        </div>
+      )}
+    </Card>
   );
 }
 

@@ -821,6 +821,19 @@ export interface AnomalyResult {
 
 export type AnomalyAgreement = "both" | "isolation_forest_only" | "lof_only" | "none";
 
+// Lot 6B, §F.2 — noter une NOUVELLE observation (contrairement à
+// AnomalyObservation, qui décrit une ligne du jeu de données d'entraînement
+// déjà classée) : mêmes champs de score, sans rang/déviations détaillées.
+export interface AnomalyScore {
+  consensus_score: number;
+  score_isolation_forest: number;
+  score_lof: number;
+  is_anomaly_isolation_forest: boolean;
+  is_anomaly_lof: boolean;
+  is_anomaly_consensus: boolean;
+  agreement: AnomalyAgreement;
+}
+
 export interface AnomalyObservation {
   row_index: number;
   rank: number;
@@ -1776,10 +1789,22 @@ export const api = {
     getJob: (id: number) => request<AnomalyJobSummary>(`/anomalies/jobs/${id}`),
     getResult: (id: number) => request<AnomalyResult>(`/anomalies/jobs/${id}/result`),
     getObservations: (id: number) => request<AnomalyObservation[]>(`/anomalies/jobs/${id}/observations`),
+    predict: (id: number, data: Record<string, unknown>) =>
+      request<AnomalyScore>(`/anomalies/jobs/${id}/predict`, {
+        method: "POST",
+        body: JSON.stringify({ data }),
+      }),
     cancel: (id: number) => request<AnomalyJobSummary>(`/anomalies/jobs/${id}/cancel`, { method: "POST" }),
     rerun: (id: number) => request<AnomalyJobSummary>(`/anomalies/jobs/${id}/rerun`, { method: "POST" }),
     remove: (id: number) => request<void>(`/anomalies/jobs/${id}`, { method: "DELETE" }),
     exportModel: (id: number) => downloadModelExport(`/anomalies/jobs/${id}/model/export`, `anomalies_job${id}.joblib`),
+    exportDeploymentScript: (id: number) =>
+      downloadModelExport(`/anomalies/jobs/${id}/model/export-script`, `anomalies_job${id}_deploiement.py`),
+    // Note CHAQUE ligne du dataset d'origine (retour utilisateur direct,
+    // même esprit que clustering.exportAssignments) — pas seulement
+    // l'échantillon effectivement utilisé à l'entraînement.
+    exportScores: (id: number) =>
+      downloadModelExport(`/anomalies/jobs/${id}/observations/export`, `anomalies_scores_job${id}.csv`),
   },
 
   visionDatasets: {

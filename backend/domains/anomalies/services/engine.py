@@ -21,7 +21,7 @@ from typing import Any, Callable, Optional
 import numpy as np
 import pandas as pd
 
-from domains.anomalies.services.registry import ANOMALY_REGISTRY
+from domains.anomalies.services.registry import ANOMALY_REGISTRY, build_lof_novelty_from
 from domains.shared.ml_preprocessing import TrainingAbortedError, build_preprocessor
 from domains.shared.stats_utils import sample_if_large
 
@@ -81,7 +81,7 @@ class AnomalyResult:
     pipeline_bundle: dict[str, Any] = field(repr=False)
 
 
-def _agreement_label(is_if: bool, is_lof: bool) -> str:
+def agreement_label(is_if: bool, is_lof: bool) -> str:
     if is_if and is_lof:
         return "both"
     if is_if:
@@ -159,6 +159,11 @@ def train_and_evaluate_anomalies(
     lof_estimator = specs["lof"].build_estimator(n_used, config.seed, config.contamination)
     labels_lof = np.asarray(lof_estimator.fit_predict(X_processed))
     scores_lof = np.asarray(lof_estimator.negative_outlier_factor_)  # plus bas = plus atypique
+    # Instance dédiée à la notation de NOUVELLES observations (Lot 6B, §F.2
+    # — voir `registry.py::build_lof_novelty_from` pour le raisonnement :
+    # `lof_estimator` ci-dessus reste `novelty=False`, jamais réutilisée
+    # pour prédire hors du jeu d'entraînement).
+    lof_novelty_estimator = build_lof_novelty_from(lof_estimator, X_processed)
 
     progress_cb("Calcul du consensus", 75)
     # Rangs percentiles (pas les scores bruts, non comparables entre IF et
@@ -204,7 +209,7 @@ def train_and_evaluate_anomalies(
                 score_lof=float(rank_lof[i]),
                 is_anomaly_isolation_forest=bool(is_anomaly_if[i]),
                 is_anomaly_lof=bool(is_anomaly_lof[i]),
-                agreement=_agreement_label(bool(is_anomaly_if[i]), bool(is_anomaly_lof[i])),
+                agreement=agreement_label(bool(is_anomaly_if[i]), bool(is_anomaly_lof[i])),
                 numeric_deviations=_build_numeric_deviations(row, global_mean, global_std, numeric_cols),
                 categorical_flags=_build_categorical_flags(row, rarity_by_col, categorical_cols),
             )
@@ -241,5 +246,19 @@ def train_and_evaluate_anomalies(
         top_observations=top_observations,
         feature_columns=list(X.columns),
         model_card=model_card,
-        pipeline_bundle={"preprocessor": preprocessor, "isolation_forest": if_estimator, "lof": lof_estimator},
+        pipeline_bundle={
+            "preprocessor": preprocessor,
+            "isolation_forest": if_estimator,
+            "lof": lof_estimator,
+            # Notation de nouvelles observations (Lot 6B, §F.2 — voir
+            # `services/inference.py`) : instance LOF dédiée + scores BRUTS
+            # d'entraînement des deux algorithmes, nécessaires pour situer le
+            # score d'une nouvelle observation au même rang percentile que le
+            # consensus calculé ci-dessus (jamais recalculé à partir de rien —
+            # un rang percentile n'a de sens que relatif à une distribution
+            # de référence, ici celle du jeu d'entraînement).
+            "lof_novelty": lof_novelty_estimator,
+            "scores_if_train": scores_if,
+            "scores_lof_train": scores_lof,
+        },
     )

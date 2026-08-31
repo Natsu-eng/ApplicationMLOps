@@ -11,6 +11,7 @@ Isolation Forest et LOF tournent systématiquement ensemble (voir
 domains/anomalies/services/registry.py)."""
 from __future__ import annotations
 
+import io
 import json
 from datetime import datetime, timezone
 from pathlib import Path
@@ -26,7 +27,9 @@ from api.core.database import SessionLocal, get_db
 from api.core.job_queue import analysis_queue, redis_conn
 from api.core.models import AnomalyJob, AnomalyObservationRecord, Dataset, User
 from api.core.pagination import paginate_by_id
+from domains.anomalies.services.deployment_export import generate_anomaly_deployment_script
 from domains.anomalies.services.engine import DEFAULT_TOP_N, MAX_TOP_N
+from domains.anomalies.services.inference import AnomalyInferenceError, score_anomalies_batch, score_anomaly
 from domains.auth.router import get_current_user
 from domains.shared.audit import log_action
 from domains.shared.dataset_io import DatasetParsingError, read_dataset_dataframe
@@ -35,6 +38,7 @@ from domains.shared.job_events import stream_job_updates
 from domains.shared.job_lifecycle import ACTIVE_STATUSES, CANCELLED_MESSAGE, try_cancel_rq_job
 from domains.shared.job_quota import ALL_JOB_MODELS, raise_if_quota_exceeded
 from domains.shared.job_watchdog import reconcile_stale_jobs
+from domains.shared.model_bundle import InferenceError, load_bundle
 
 router = APIRouter(prefix="/anomalies", tags=["anomalies"])
 _settings = get_settings()
@@ -97,6 +101,22 @@ class AnomalyObservationOut(BaseModel):
     agreement: str
     numeric_deviations: dict[str, Any]
     categorical_flags: dict[str, Any]
+
+
+class AnomalyScoreRequest(BaseModel):
+    data: dict[str, Any]
+
+
+class AnomalyScoreResponse(BaseModel):
+    consensus_score: float
+    score_isolation_forest: float
+    score_lof: float
+    is_anomaly_isolation_forest: bool
+    is_anomaly_lof: bool
+    is_anomaly_consensus: bool
+    # "both" / "isolation_forest_only" / "lof_only" / "none" — même
+    # vocabulaire que `AnomalyObservationOut.agreement`.
+    agreement: str
 
 
 # ── Aides ────────────────────────────────────────────────────────────────
@@ -342,6 +362,129 @@ def export_anomaly_model(job_id: int, current_user: User = Depends(get_current_u
         )
     filename = f"anomalies_{job.dataset.name.rsplit('.', 1)[0] if job.dataset else 'export'}_job{job.id}.joblib"
     return FileResponse(path=artifact_path, filename=filename, media_type="application/octet-stream")
+
+
+@router.get("/jobs/{job_id}/model/export-script")
+def export_anomaly_deployment_script(job_id: int, current_user: User = Depends(get_current_user), db=Depends(get_db)):
+    """Script de déploiement autonome — même principe que
+    `GET /clustering/jobs/{job_id}/model/export-script` : recharge le bundle
+    joblib déjà exportable et reproduit la notation d'anomalies SANS jamais
+    importer un module `domains.*` de ce projet."""
+    job = _get_org_job(job_id, current_user, db)
+    if job.status != "completed" or job.result is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"code": "MODELE_NON_DISPONIBLE", "message": "Cette détection n'a pas encore produit de modèle"},
+        )
+    result = job.result
+    artifact_path = Path(result.file_path)
+    if not artifact_path.exists():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "ARTEFACT_INTROUVABLE", "message": "Artefact du modèle introuvable sur le serveur"},
+        )
+    try:
+        load_bundle(result.file_path)
+    except InferenceError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"code": "ARTEFACT_ILLISIBLE", "message": str(exc)},
+        ) from exc
+    dataset_name = job.dataset.name.rsplit(".", 1)[0] if job.dataset else "export"
+    base_name = f"anomalies_{dataset_name}_job{job.id}"
+    artifact_filename = f"{base_name}.joblib"
+    script_filename = f"{base_name}_deploiement.py"
+    script = generate_anomaly_deployment_script(
+        feature_columns=json.loads(result.feature_columns_json),
+        artifact_filename=artifact_filename,
+        script_filename=script_filename,
+    )
+    return Response(
+        content=script,
+        media_type="text/x-python",
+        headers={"Content-Disposition": f'attachment; filename="{script_filename}"'},
+    )
+
+
+@router.post("/jobs/{job_id}/predict", response_model=AnomalyScoreResponse)
+def predict_anomaly_score(
+    job_id: int,
+    body: AnomalyScoreRequest,
+    current_user: User = Depends(get_current_user),
+    db=Depends(get_db),
+):
+    """Note une NOUVELLE observation avec une détection déjà entraînée (Lot
+    6B, §F.2) — referme la même boucle que `clustering.py::predict_cluster`
+    côté clustering. Voir `services/inference.py` pour le détail (Isolation
+    Forest nativement inductif, LOF via une instance dédiée `novelty=True`)."""
+    job = _get_org_job(job_id, current_user, db)
+    if job.result is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"code": "RESULTAT_INDISPONIBLE", "message": "Cette détection n'a pas encore de résultat"},
+        )
+    result = job.result
+    feature_columns = json.loads(result.feature_columns_json)
+
+    try:
+        bundle = load_bundle(result.file_path)
+        scored = score_anomaly(bundle, feature_columns, body.data)
+    except (InferenceError, AnomalyInferenceError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": "NOTATION_IMPOSSIBLE", "message": str(exc)},
+        ) from exc
+
+    return AnomalyScoreResponse(**scored)
+
+
+@router.get("/jobs/{job_id}/observations/export")
+def export_anomaly_scores(job_id: int, current_user: User = Depends(get_current_user), db=Depends(get_db)):
+    """Note CHAQUE ligne du dataset d'origine, pas seulement l'échantillon
+    effectivement utilisé à l'entraînement — même retour utilisateur que
+    `clustering.py::export_cluster_assignments` ("l'entreprise a 50 000
+    lignes, la plateforme n'en traite que 20 000, comment couvrir le
+    reste ?"). `score_status` reste visible par ligne dans l'export."""
+    job = _get_org_job(job_id, current_user, db)
+    if job.result is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"code": "RESULTAT_INDISPONIBLE", "message": "Cette détection n'a pas encore de résultat"},
+        )
+    if job.dataset is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "DATASET_INTROUVABLE", "message": "Dataset introuvable"},
+        )
+    result = job.result
+    feature_columns = json.loads(result.feature_columns_json)
+
+    try:
+        full_df = read_dataset_dataframe(Path(job.dataset.file_path), Path(job.dataset.file_path).suffix)
+    except DatasetParsingError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"code": "DATASET_LECTURE_ECHEC", "message": str(exc)},
+        ) from exc
+
+    try:
+        bundle = load_bundle(result.file_path)
+    except InferenceError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": "NOTATION_IMPOSSIBLE", "message": str(exc)},
+        ) from exc
+    scored = score_anomalies_batch(bundle, feature_columns, full_df)
+
+    buffer = io.StringIO()
+    scored.to_csv(buffer, index=False)
+    buffer.seek(0)
+    filename = f"anomalies_scores_{job.dataset.name.rsplit('.', 1)[0]}_job{job.id}.csv"
+    return StreamingResponse(
+        iter([buffer.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.get("/jobs/{job_id}/observations", response_model=List[AnomalyObservationOut])

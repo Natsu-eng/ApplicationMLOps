@@ -312,3 +312,91 @@ def test_observations_isolated_between_organizations(client):
     headers_b = _register(client, "b@bureau-b.fr", "Bureau B")
     resp = client.get(f"/api/anomalies/jobs/{job['id']}/observations", headers=headers_b)
     assert resp.status_code == 404
+
+
+# ── /predict, /observations/export, /model/export-script (Lot 6B, §F.2 —
+# noter une NOUVELLE observation, jamais seulement consulter le jeu de
+# données d'entraînement) ─────────────────────────────────────────────────
+
+
+def test_predict_endpoint_scores_new_observation_after_completion(client, db_session):
+    headers = _register(client)
+    dataset = _upload_dataset(client, headers, n=60)
+    job = _create_job(client, headers, dataset["id"]).json()
+
+    run_anomaly_job(job["id"])
+    db_session.expire_all()
+
+    resp = client.post(
+        f"/api/anomalies/jobs/{job['id']}/predict", headers=headers, json={"data": {"x1": 30, "x2": 60}}
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert 0.0 <= body["consensus_score"] <= 1.0
+    assert body["agreement"] in {"both", "isolation_forest_only", "lof_only", "none"}
+    assert isinstance(body["is_anomaly_consensus"], bool)
+
+
+def test_predict_endpoint_rejects_missing_feature(client, db_session):
+    headers = _register(client)
+    dataset = _upload_dataset(client, headers, n=60)
+    job = _create_job(client, headers, dataset["id"]).json()
+
+    run_anomaly_job(job["id"])
+    db_session.expire_all()
+
+    resp = client.post(f"/api/anomalies/jobs/{job['id']}/predict", headers=headers, json={"data": {"x1": 0}})
+    assert resp.status_code == 400
+    assert resp.json()["detail"]["code"] == "NOTATION_IMPOSSIBLE"
+
+
+def test_predict_endpoint_409_before_completion(client):
+    headers = _register(client)
+    dataset = _upload_dataset(client, headers)
+    job = _create_job(client, headers, dataset["id"]).json()
+    resp = client.post(f"/api/anomalies/jobs/{job['id']}/predict", headers=headers, json={"data": {"x1": 0, "x2": 0}})
+    assert resp.status_code == 409
+    assert resp.json()["detail"]["code"] == "RESULTAT_INDISPONIBLE"
+
+
+def test_export_scores_covers_every_row_of_the_original_dataset(client, db_session):
+    """Retour utilisateur direct (même esprit que le clustering) :
+    l'entraînement échantillonne à MAX_ROWS_FOR_ANOMALY, l'export doit
+    pourtant couvrir la totalité du dataset d'origine."""
+    headers = _register(client)
+    dataset = _upload_dataset(client, headers, n=60)
+    job = _create_job(client, headers, dataset["id"]).json()
+
+    run_anomaly_job(job["id"])
+    db_session.expire_all()
+
+    resp = client.get(f"/api/anomalies/jobs/{job['id']}/observations/export", headers=headers)
+    assert resp.status_code == 200
+    lines = resp.text.strip().splitlines()
+    assert len(lines) - 1 == 60  # en-tête + 60 lignes
+    assert "score_status" in lines[0]
+    assert "consensus_score" in lines[0]
+
+
+def test_export_deployment_script_returns_a_python_file_after_completion(client, db_session):
+    headers = _register(client)
+    dataset = _upload_dataset(client, headers, n=60)
+    job = _create_job(client, headers, dataset["id"]).json()
+
+    run_anomaly_job(job["id"])
+    db_session.expire_all()
+
+    resp = client.get(f"/api/anomalies/jobs/{job['id']}/model/export-script", headers=headers)
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("text/x-python")
+    assert "def score(" in resp.text
+    assert "domains" not in resp.text  # jamais de dépendance à ce projet
+
+
+def test_export_deployment_script_409_before_completion(client):
+    headers = _register(client)
+    dataset = _upload_dataset(client, headers)
+    job = _create_job(client, headers, dataset["id"]).json()
+    resp = client.get(f"/api/anomalies/jobs/{job['id']}/model/export-script", headers=headers)
+    assert resp.status_code == 409
+    assert resp.json()["detail"]["code"] == "MODELE_NON_DISPONIBLE"
