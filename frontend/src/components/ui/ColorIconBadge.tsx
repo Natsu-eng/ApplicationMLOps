@@ -54,15 +54,30 @@ export function accentSurfaceClass(color: AccentColor): string {
   return ACCENT_SURFACE_CLASSES[color];
 }
 
-// Encre forte (valeur chiffrée mise en avant, ex. tuile de métrique) — même
-// teinte que le badge, pleine opacité, pour porter un gros nombre en gras
-// sans sacrifier le contraste (chaque --s1…--s4 est calculé ≥4,5:1 en texte
-// sur les 3 fonds du thème, voir themes.css).
+// Encre forte — couleur de TEXTE portant une valeur chiffrée ou un libellé.
+//
+// CORRECTIF (revue finale) : ce bloc pointait vers --s1…--s4, les couleurs de
+// SÉRIE. Elles sont calculées pour des MARQUES DE GRAPHIQUE (seuil 3:1,
+// WCAG 1.4.11), pas pour du texte (4,5:1) — le commentaire précédent
+// affirmait l'inverse, c'était faux. Mesuré sur themes.css :
+//     --s2 : 3,50:1 en ivoire · 3,41:1 en porcelaine
+//     --s3 : 4,06:1 en ivoire · 3,96:1 en porcelaine
+// Un `text-h2` (18px/600) n'est PAS du « texte large » au sens WCAG
+// (il faut ≥24px, ou ≥18,66px ET gras 700) : il exige donc 4,5:1 plein.
+// La tuile « Analyses ML » du tableau de bord affichait ainsi le compte
+// Vision (pilier teal → --s3) à 4,18-4,27:1 dans les deux thèmes clairs.
+//
+// Les jetons --sN-ink gardent exactement la même identité de teinte et
+// n'ajustent que la clarté jusqu'à ≥4,5:1 sur les trois fonds (écart de
+// couleur ΔE2000 ≤ 8,3, invisible en usage ; séparation entre encres
+// préservée : ΔE ≥ 24, ≥ 14 en deutéranopie). En thème sombre, les séries
+// passaient déjà : les encres y sont identiques, le changement est neutre.
+// Les graphiques continuent d'utiliser --s1…--s4 — ne pas les y remplacer.
 const ACCENT_VALUE_TEXT_CLASSES: Record<AccentColor, string> = {
-  blue: "text-accent-1",
-  teal: "text-accent-3",
-  amber: "text-accent-2",
-  violet: "text-accent-4",
+  blue: "text-accent-1-ink",
+  teal: "text-accent-3-ink",
+  amber: "text-accent-2-ink",
+  violet: "text-accent-4-ink",
   rose: "text-destructive",
   neutral: "text-foreground",
 };

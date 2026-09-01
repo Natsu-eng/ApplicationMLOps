@@ -41,11 +41,27 @@ const browser = await chromium.launch();
 const perScreenTheme = {};
 let totalSerious = 0;
 const seriousDetails = [];
+let totalUndecided = 0;
+const undecidedDetails = [];
 
 async function scanPage(page, name, theme) {
   await page.waitForTimeout(700);
   const axeResults = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21aa"]).analyze();
   const serious = axeResults.violations.filter((v) => v.impact === "serious" || v.impact === "critical");
+  // axe classe en `incomplete` — PAS en `violations` — tout contrôle qu'il n'a
+  // pas pu trancher seul, notamment color-contrast quand le fond est composé
+  // par transparence (nos cartes teintées `bg-accent-N/2`). Ne lire que
+  // `violations` faisait donc passer des manquements réels pour un sans-faute :
+  // c'est ainsi que le compte Vision de la tuile « Analyses ML » (4,18:1 en
+  // porcelaine) n'était pas remonté. On les compte à part — ce ne sont pas des
+  // violations avérées — mais on refuse de les ignorer.
+  const undecided = axeResults.incomplete.filter((v) => v.id === "color-contrast");
+  if (undecided.length > 0) {
+    undecidedDetails.push(
+      `${name} ${theme}: ${undecided.map((v) => `${v.id} (${v.nodes.length} noeuds à trancher)`).join(", ")}`,
+    );
+    totalUndecided += undecided.reduce((n, v) => n + v.nodes.length, 0);
+  }
   perScreenTheme[`${name}_${theme}`] = serious.length;
   totalSerious += serious.length;
   if (serious.length > 0) {
@@ -89,5 +105,5 @@ for (const theme of THEMES) {
   await context.close();
 }
 
-console.log(JSON.stringify({ totalSerious, seriousDetails }, null, 2));
+console.log(JSON.stringify({ totalSerious, seriousDetails, totalUndecided, undecidedDetails }, null, 2));
 await browser.close();
