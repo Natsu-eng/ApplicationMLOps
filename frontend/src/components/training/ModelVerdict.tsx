@@ -60,6 +60,36 @@ const DETAIL_LABELS: Record<string, string> = {
 
 const PERCENT_DETAIL_KEYS = new Set(["majority_fraction", "target_coverage", "empirical_coverage"]);
 
+// La question à laquelle CE claim répond — retour utilisateur direct ("des
+// pages qui parlent et qui aident à prendre des décisions") : le titre du
+// claim (déjà la réponse, ex. "Ce modèle surapprend") gagne à être précédé
+// de la question qu'un utilisateur se pose réellement avant de faire
+// confiance à un modèle, plutôt que de rester une affirmation isolée.
+// Purement un habillage d'affichage — `code` existe déjà côté backend
+// (services/verdict.py), aucune donnée nouvelle, aucun second appel réseau.
+const CLAIM_QUESTIONS: Record<string, string> = {
+  surapprentissage_marque: "Surapprend-il ?",
+  surapprentissage_leger: "Surapprend-il ?",
+  pas_de_surapprentissage: "Surapprend-il ?",
+  fiabilite_faible: "Le résultat est-il stable ?",
+  fiabilite_moderee: "Le résultat est-il stable ?",
+  fiabilite_bonne: "Le résultat est-il stable ?",
+  classes_desequilibrees: "Quelle métrique regarder ?",
+  classes_equilibrees: "Quelle métrique regarder ?",
+  ecart_gagnant_non_qualifie: "Le gagnant est-il vraiment meilleur ?",
+  ecart_gagnant_significatif: "Le gagnant est-il vraiment meilleur ?",
+  ecart_gagnant_dans_le_bruit: "Le gagnant est-il vraiment meilleur ?",
+  fuite_verifiee_doublons_retires: "Y a-t-il eu fuite de données ?",
+  fuite_verifiee_aucun_doublon: "Y a-t-il eu fuite de données ?",
+  calibration_mauvaise: "Les probabilités sont-elles fiables ?",
+  calibration_moderee: "Les probabilités sont-elles fiables ?",
+  calibration_bonne: "Les probabilités sont-elles fiables ?",
+  plus_de_donnees_utile: "Plus de données aideraient-elles ?",
+  plateau_atteint: "Plus de données aideraient-elles ?",
+  couverture_insuffisante: "Les intervalles tiennent-ils leur promesse ?",
+  couverture_conforme: "Les intervalles tiennent-ils leur promesse ?",
+};
+
 function formatDetailValue(key: string, value: unknown): string {
   if (typeof value === "number") return PERCENT_DETAIL_KEYS.has(key) ? formatPercent(value) : formatMetricValue(value);
   return String(value);
@@ -89,11 +119,13 @@ function VerdictClaimItem({ claim }: { claim: ModelVerdictData["claims"][number]
   const [open, setOpen] = useState(false);
   const config = LEVEL_CONFIG[claim.level];
   const Icon = config.icon;
+  const question = CLAIM_QUESTIONS[claim.code];
   return (
     <div className={`rounded-lg border ${config.border} bg-muted px-3 py-2.5`}>
       <button type="button" onClick={() => setOpen((v) => !v)} aria-expanded={open} className="w-full flex items-start gap-2 text-left">
         <Icon size={15} className={`flex-shrink-0 mt-0.5 ${config.iconColor}`} />
         <div className="min-w-0 flex-1">
+          {question && <p className="text-caption text-muted-foreground mb-0.5">{question}</p>}
           <div className="flex items-center gap-2 flex-wrap">
             <Badge variant={config.badge}>{LEVEL_LABEL[claim.level]}</Badge>
             <p className="text-sm text-foreground font-medium">{claim.title}</p>
@@ -117,7 +149,12 @@ function VerdictClaimItem({ claim }: { claim: ModelVerdictData["claims"][number]
 export function ModelVerdict({ verdict }: { verdict: ModelVerdictData }) {
   return (
     <Card className="p-5">
-      <SectionHeader icon={Lightbulb} color="amber" label="Verdict" />
+      <SectionHeader
+        icon={Lightbulb}
+        color="amber"
+        label="Verdict"
+        help="Les questions qu'on se pose avant de faire confiance à un modèle — chaque réponse cite le chiffre qui la fonde, jamais une affirmation sans preuve."
+      />
 
       <div className="flex items-start gap-2.5 rounded-lg border border-primary/20 bg-primary/5 px-3 py-2.5 mb-3">
         <Lightbulb size={15} className="flex-shrink-0 mt-0.5 text-primary" />

@@ -259,3 +259,37 @@ def test_every_claim_carries_grounding_details():
     assert len(verdict["claims"]) > 0
     for claim in verdict["claims"]:
         assert claim["details"], f"claim '{claim['code']}' sans donnée de justification"
+
+
+# ── Fuite de données (retour utilisateur : maquette "les 6 questions" —
+# "Y a-t-il eu fuite de données ?" manquait comme affirmation explicite du
+# verdict, alors que la donnée existe déjà dans model_card) ────────────────
+
+
+def test_leakage_claim_reports_duplicates_removed_and_grouping():
+    verdict = compute_verdict(
+        "regression", {"r2_test": 0.8}, {}, [], duplicates_removed=12, anti_leak_grouping=True
+    )
+    claim = next(c for c in verdict["claims"] if c["code"] == "fuite_verifiee_doublons_retires")
+    assert claim["level"] == "info"
+    assert claim["details"] == {"duplicates_removed": 12, "anti_leak_grouping": True}
+    assert "12" in claim["explanation"]
+
+
+def test_leakage_claim_reports_no_duplicates_and_no_grouping():
+    verdict = compute_verdict(
+        "regression", {"r2_test": 0.8}, {}, [], duplicates_removed=0, anti_leak_grouping=False
+    )
+    claim = next(c for c in verdict["claims"] if c["code"] == "fuite_verifiee_aucun_doublon")
+    assert claim["level"] == "info"
+    assert claim["details"] == {"duplicates_removed": 0, "anti_leak_grouping": False}
+    assert "aucune colonne de regroupement" in claim["explanation"]
+
+
+def test_missing_duplicates_removed_omits_leakage_claim():
+    """Job antérieur à ce suivi (rétrocompatibilité par absence) — jamais
+    une affirmation inventée sur des données absentes."""
+    verdict = compute_verdict("regression", {"r2_test": 0.8}, {}, [])
+    codes = {c["code"] for c in verdict["claims"]}
+    assert "fuite_verifiee_doublons_retires" not in codes
+    assert "fuite_verifiee_aucun_doublon" not in codes

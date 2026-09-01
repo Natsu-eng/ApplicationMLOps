@@ -1072,7 +1072,18 @@ def _to_model_detail(model: MLModel, db: Session) -> MLModelDetail:
             .all()
         )
     ]
-    verdict = compute_verdict(model.task_type, metrics, evaluation, candidates, calibration, learning_curve, cqr)
+    model_card = json.loads(model.model_card_json) if model.model_card_json else {}
+    verdict = compute_verdict(
+        model.task_type,
+        metrics,
+        evaluation,
+        candidates,
+        calibration,
+        learning_curve,
+        cqr,
+        duplicates_removed=model_card.get("duplicates_removed"),
+        anti_leak_grouping=model_card.get("anti_leak_grouping"),
+    )
 
     return MLModelDetail(
         id=model.id,
@@ -1085,7 +1096,7 @@ def _to_model_detail(model: MLModel, db: Session) -> MLModelDetail:
         metrics=metrics,
         shap_summary=json.loads(model.shap_summary_json) if model.shap_summary_json else [],
         cqr=cqr,
-        model_card=json.loads(model.model_card_json) if model.model_card_json else {},
+        model_card=model_card,
         evaluation=evaluation,
         feature_engineering=json.loads(model.feature_engineering_json) if model.feature_engineering_json else None,
         shap_beeswarm=json.loads(model.shap_beeswarm_json) if model.shap_beeswarm_json else {},

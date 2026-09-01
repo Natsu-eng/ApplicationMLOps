@@ -280,6 +280,41 @@ def _assess_more_data(learning_curve: Optional[dict[str, Any]]) -> Optional[dict
     )
 
 
+def _assess_leakage(duplicates_removed: Optional[int], anti_leak_grouping: Optional[bool]) -> Optional[dict[str, Any]]:
+    """Rend visible une mesure anti-fuite DÉJÀ appliquée par le pipeline
+    (`ml_training.py` — doublons exacts retirés avant le découpage
+    entraînement/test, regroupement optionnel par `group_column`), jamais
+    une nouvelle vérification : ce claim affiche ce qui a déjà été fait,
+    même esprit que les autres `_assess_*` (aucun recalcul depuis les
+    données brutes). `duplicates_removed is None` = job antérieur à ce
+    suivi (rétrocompatibilité par absence, jamais une affirmation inventée)."""
+    if duplicates_removed is None:
+        return None
+
+    grouping_note = (
+        "un regroupement (même identifiant physique) a aussi empêché qu'une variante de la même observation ne "
+        "se retrouve à la fois dans l'entraînement et le test"
+        if anti_leak_grouping
+        else "aucune colonne de regroupement n'a été fournie — si vos lignes contiennent des variantes d'une "
+        "même observation physique (mesures répétées, etc.), indiquez-en une au prochain entraînement pour "
+        "renforcer ce contrôle"
+    )
+    if duplicates_removed > 0:
+        return _claim(
+            "info", "fuite_verifiee_doublons_retires",
+            "Pas de fuite de données détectée",
+            f"{duplicates_removed} ligne(s) strictement dupliquée(s) ont été retirées avant le découpage "
+            f"entraînement/test (elles auraient sinon pu se retrouver des deux côtés) — {grouping_note}.",
+            {"duplicates_removed": duplicates_removed, "anti_leak_grouping": bool(anti_leak_grouping)},
+        )
+    return _claim(
+        "info", "fuite_verifiee_aucun_doublon",
+        "Pas de fuite de données détectée",
+        f"Aucune ligne strictement dupliquée trouvée dans vos données — {grouping_note}.",
+        {"duplicates_removed": 0, "anti_leak_grouping": bool(anti_leak_grouping)},
+    )
+
+
 def _assess_cqr_coverage(task_type: str, cqr: Optional[dict[str, Any]]) -> Optional[dict[str, Any]]:
     """Classification : pas de CQR, toujours `None` (voir MLModel.cqr_json)."""
     if task_type != "regression" or not cqr:
@@ -339,13 +374,16 @@ def compute_verdict(
     calibration: Optional[dict[str, Any]] = None,
     learning_curve: Optional[dict[str, Any]] = None,
     cqr: Optional[dict[str, Any]] = None,
+    duplicates_removed: Optional[int] = None,
+    anti_leak_grouping: Optional[bool] = None,
 ) -> dict[str, Any]:
     """Point d'entrée — calcule le verdict d'un modèle déjà entraîné à
     partir de données déjà persistées (`metrics_json`, `evaluation_json`,
-    `ModelCandidate`, `calibration_json`, `learning_curve_json`, `cqr_json`).
-    Chaque `claim` omise par une des fonctions `_assess_*` (donnée absente,
-    ex. `cqr` toujours `None` en classification) est simplement omise du
-    résultat — jamais remplacée par une affirmation inventée.
+    `ModelCandidate`, `calibration_json`, `learning_curve_json`, `cqr_json`,
+    `model_card_json`). Chaque `claim` omise par une des fonctions
+    `_assess_*` (donnée absente, ex. `cqr` toujours `None` en classification)
+    est simplement omise du résultat — jamais remplacée par une affirmation
+    inventée.
 
     Retourne `{"claims": [...], "next_action": "..."}`, `claims` triées
     critique > attention > info (même convention que
@@ -355,6 +393,7 @@ def compute_verdict(
         _assess_reliability(task_type, metrics),
         _assess_metric_choice(task_type, evaluation),
         _assess_winner_margin(candidates),
+        _assess_leakage(duplicates_removed, anti_leak_grouping),
         _assess_calibration(task_type, calibration),
         _assess_more_data(learning_curve),
         _assess_cqr_coverage(task_type, cqr),
