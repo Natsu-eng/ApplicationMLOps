@@ -2,7 +2,7 @@
 // Convention reprise de CIAM : pas d'axios, fetch natif ; en dev, VITE_API_URL
 // reste vide et Vite proxy /api, /auth vers localhost:8000 (voir vite.config.ts).
 
-export const BASE_URL = import.meta.env.VITE_API_URL ?? "";
+const BASE_URL = import.meta.env.VITE_API_URL ?? "";
 
 // Préfixe /api (correctif — incident réel de déploiement) : nginx ne
 // proxifie que `location /api/` vers le backend (nginx/nginx.conf), tout le
@@ -14,9 +14,9 @@ const API_PREFIX = "/api";
 
 /** URL absolue (BASE_URL + préfixe /api) pour un chemin donné — unique
  * point de composition, utilisé par les fetch internes (request/
- * uploadFile(WithFields)/exportModel) ET par les rares fetch directs hors
- * de ce client (VisionImage.tsx), pour ne jamais dupliquer le préfixe en
- * dur à deux endroits. */
+ * uploadFile(WithFields)/exportModel) ET par les fetch directs hors de ce
+ * client (ex. VisionImage.tsx), pour ne jamais dupliquer le préfixe en dur
+ * à deux endroits. */
 export function apiUrl(path: string): string {
   return `${BASE_URL}${API_PREFIX}${path}`;
 }
@@ -46,7 +46,7 @@ export function getToken(): string | null {
   return localStorage.getItem(TOKEN_KEY);
 }
 
-export function getRefreshToken(): string | null {
+function getRefreshToken(): string | null {
   return localStorage.getItem(REFRESH_TOKEN_KEY);
 }
 
@@ -948,6 +948,11 @@ export interface VisionClassificationJobCreatePayload {
   freeze_backbone?: boolean;
   unfreeze_after_epoch?: number | null;
   seed?: number;
+  // Mode expert — résolution d'entrée (voir ALLOWED_IMAGE_SIZES,
+  // ImageSizePicker). Toujours envoyée par le wizard, jamais optionnelle
+  // côté backend (défaut IMAGE_SIZE) — déclarée optionnelle ici seulement
+  // par cohérence avec le reste de ce payload, jamais réellement omise.
+  image_size?: number;
   // Lot 6A (correctif I8) — voir ClassificationConfig côté backend pour la
   // justification de chaque défaut.
   class_weighting?: boolean;
@@ -1082,6 +1087,10 @@ export interface VisionAnomalyJobCreatePayload {
   // Mode expert (retour utilisateur direct — parité avec `backbone_ids` de
   // la classification) — quand fourni (≥ 2 entrées), remplace model_id.
   model_ids?: string[];
+  // Mode expert — résolution d'entrée (voir ALLOWED_IMAGE_SIZES,
+  // ImageSizePicker), même parité que le payload de classification
+  // ci-dessus.
+  image_size?: number;
   num_epochs?: number;
   batch_size?: number;
   learning_rate?: number;
@@ -1458,6 +1467,9 @@ export interface MLModelDetail {
   stage: ModelStage;
   promoted_at: string | null;
   created_at: string;
+  // Lot 5 (correctif P1) — numéro de version au sein du problème (dataset +
+  // cible), voir `api/core/models.py::MLModel.version` côté backend.
+  version: number;
 }
 
 // Lot D — leaderboard : tous les modèles comparés par un job, pas

@@ -2,7 +2,7 @@ import { Bar, BarChart, CartesianGrid, Cell, ReferenceLine, ResponsiveContainer,
 import { CHART_BEESWARM_HIGH_VAR, CHART_BEESWARM_LOW_VAR, CHART_GRID_STROKE, CHART_TICK_STYLE, CHART_TOOLTIP_STYLE } from "../../theme/charts";
 import { ChartFallbackTable, ChartFrame } from "./ChartFrame";
 
-export interface ShapBarDatum {
+interface ShapBarDatum {
   feature: string;
   contribution: number;
 }

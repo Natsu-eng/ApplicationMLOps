@@ -2,7 +2,7 @@ import { CartesianGrid, ResponsiveContainer, Scatter, ScatterChart, Tooltip as R
 import { CHART_GRID_STROKE, CHART_SERIES_COLORS, CHART_TICK_STYLE, CHART_TOOLTIP_STYLE } from "../../theme/charts";
 import { ChartFallbackTable, ChartFrame } from "./ChartFrame";
 
-export interface EmbeddingPoint {
+interface EmbeddingPoint {
   x: number;
   y: number;
   group: string;

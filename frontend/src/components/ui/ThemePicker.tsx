@@ -8,7 +8,7 @@ import type { UiTheme } from "../../api/client";
  * contraste minimum est celui que `_design/tune.py` a mesuré pour ce thème
  * (même document) — recalculé mécaniquement à chaque régénération de
  * themes.css, jamais estimé. */
-export const THEME_META: Record<UiTheme, { name: string; tagline: string; minContrast: string }> = {
+const THEME_META: Record<UiTheme, { name: string; tagline: string; minContrast: string }> = {
   graphite: {
     name: "Graphite & Ambre",
     tagline:
@@ -37,7 +37,7 @@ export const THEME_META: Record<UiTheme, { name: string; tagline: string; minCon
   },
 };
 
-export const THEME_ORDER: UiTheme[] = ["graphite", "ivoire", "minuit", "ardoise", "porcelaine"];
+const THEME_ORDER: UiTheme[] = ["graphite", "ivoire", "minuit", "ardoise", "porcelaine"];
 
 /** Aperçu réel d'un thème (fond/carte/accent/texte) — rendu en posant
  * `data-theme` sur un conteneur isolé, jamais des couleurs recopiées à la

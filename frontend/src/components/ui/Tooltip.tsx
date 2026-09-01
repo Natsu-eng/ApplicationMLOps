@@ -3,7 +3,7 @@ import { Info } from "lucide-react";
 
 /** Info-bulle discrète pour expliquer un terme technique en langage clair —
  * destinée aux utilisateurs qui ne sont pas data scientists de métier. */
-export function Tooltip({ text }: { text: string }) {
+function Tooltip({ text }: { text: string }) {
   const [open, setOpen] = useState(false);
 
   return (

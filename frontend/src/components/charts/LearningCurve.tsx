@@ -2,7 +2,7 @@ import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip as
 import { CHART_COLOR_PRIMARY, CHART_COLOR_SECONDARY, CHART_GRID_STROKE, CHART_TICK_STYLE, CHART_TOOLTIP_STYLE } from "../../theme/charts";
 import { ChartFallbackTable, ChartFrame } from "./ChartFrame";
 
-export interface LearningCurvePoint {
+interface LearningCurvePoint {
   size: number;
   train: number;
   validation: number;

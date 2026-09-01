@@ -20,7 +20,7 @@ import type { AccentColor } from "../components/ui/ColorIconBadge";
 
 export type PillarId = "supervised" | "unsupervised" | "vision";
 
-export interface PillarNavItem {
+interface PillarNavItem {
   to: string;
   label: string;
   icon: LucideIcon;

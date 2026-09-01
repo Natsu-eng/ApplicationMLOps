@@ -2,7 +2,7 @@ import { CartesianGrid, ErrorBar, ReferenceLine, ResponsiveContainer, Scatter, S
 import { CHART_COLOR_PRIMARY, CHART_GRID_STROKE, CHART_REFERENCE_STROKE, CHART_TICK_STYLE, CHART_TOOLTIP_STYLE } from "../../theme/charts";
 import { ChartFallbackTable, ChartFrame } from "./ChartFrame";
 
-export interface ScatterPredVsRealPoint {
+interface ScatterPredVsRealPoint {
   actual: number;
   predicted: number;
   /** Demi-largeur de l'intervalle de prédiction (ex. CQR) — optionnel. */

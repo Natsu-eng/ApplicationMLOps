@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useState, type ReactNode } from "react";
 import { AlertTriangle, CheckCircle2, Info, OctagonAlert, X, type LucideIcon } from "lucide-react";
 
-export type ToastVariant = "info" | "success" | "warning" | "danger";
+type ToastVariant = "info" | "success" | "warning" | "danger";
 
 interface ToastItem {
   id: string;

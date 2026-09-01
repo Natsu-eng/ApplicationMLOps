@@ -3,7 +3,7 @@ import { CHART_GRID_STROKE, CHART_REFERENCE_STROKE, CHART_SERIES_COLORS, CHART_T
 import { IsolatableLegend, useSeriesIsolation } from "../ui/ChartLegend";
 import { ChartFallbackTable, ChartFrame } from "./ChartFrame";
 
-export interface CalibrationSeries {
+interface CalibrationSeries {
   name: string;
   points: { predicted: number; observed: number }[];
 }

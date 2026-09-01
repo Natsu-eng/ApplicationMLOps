@@ -701,6 +701,11 @@ function AnomalyResultView({
   // ENTIÈREMENT à partir de `result`, déjà en mémoire, jamais un second
   // appel réseau. Voir `utils/anomalyModelCard.ts`.
   function handleExportModelCard() {
+    // Garde défensive pure — ce bouton n'est rendu que dans la branche où
+    // `result` est déjà non nul (voir plus bas), mais `result` reste
+    // `AnomalyResult | null` dans la fermeture de cette fonction (déclarée
+    // avant le rétrécissement de type par le rendu conditionnel).
+    if (!result) return;
     const card = buildAnomalyModelCard(featureColumns, datasetName, result);
     const blob = new Blob([JSON.stringify(card, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);

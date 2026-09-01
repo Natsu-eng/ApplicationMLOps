@@ -18,7 +18,7 @@ export const AUGMENTATION_PRESET_INFO: Record<AugmentationPreset, { label: strin
 // réduire/augmenter la taille des images 224x224, 128, 64 etc") — même
 // liste que `domains/vision/shared.py::ALLOWED_IMAGE_SIZES`, partagée par
 // les deux wizards Vision.
-export const ALLOWED_IMAGE_SIZES = [64, 96, 128, 160, 192, 224] as const;
+const ALLOWED_IMAGE_SIZES = [64, 96, 128, 160, 192, 224] as const;
 
 /** Sélecteur de résolution d'entrée — mode expert, partagé par les deux
  * wizards Vision. Une résolution plus petite accélère l'entraînement (moins
@@ -145,7 +145,7 @@ export function SplitRatioControl({
  * ratio classe majoritaire/minoritaire et pointe vers le réglage qui aide
  * réellement (pondération de classes, déjà implémentée — I8) plutôt que de
  * juste signaler le problème sans action possible. */
-export function classImbalanceRatio(classDistribution: Record<string, number> | undefined): number | null {
+function classImbalanceRatio(classDistribution: Record<string, number> | undefined): number | null {
   if (!classDistribution) return null;
   const counts = Object.values(classDistribution).filter((n) => n > 0);
   if (counts.length < 2) return null;

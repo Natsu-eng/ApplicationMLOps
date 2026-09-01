@@ -2,7 +2,7 @@ import { Area, AreaChart, CartesianGrid, ReferenceLine, ResponsiveContainer, Too
 import { CHART_COLOR_PRIMARY, CHART_COLOR_WARNING, CHART_GRID_STROKE, CHART_TICK_STYLE, CHART_TOOLTIP_STYLE } from "../../theme/charts";
 import { ChartFallbackTable, ChartFrame } from "./ChartFrame";
 
-export interface DensityPoint {
+interface DensityPoint {
   x: number;
   normal: number;
   anomaly: number;

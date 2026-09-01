@@ -3,7 +3,7 @@
  * d'infrastructure de test de composants React, voir la mémoire de
  * session : la logique non triviale d'un composant s'extrait en fonction
  * pure plutôt que de rester non testée). */
-export type SortDirection = "asc" | "desc";
+type SortDirection = "asc" | "desc";
 
 export interface SortState {
   key: string;

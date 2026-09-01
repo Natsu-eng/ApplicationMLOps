@@ -5,7 +5,7 @@ import { CHART_GRID_STROKE, CHART_REFERENCE_STROKE, CHART_SERIES_COLORS, CHART_T
 import { IsolatableLegend, useSeriesIsolation } from "../ui/ChartLegend";
 import { ChartFallbackTable, ChartFrame } from "./ChartFrame";
 
-export interface RocPrSeries {
+interface RocPrSeries {
   name: string;
   roc: { fpr: number; tpr: number }[];
   pr: { recall: number; precision: number }[];

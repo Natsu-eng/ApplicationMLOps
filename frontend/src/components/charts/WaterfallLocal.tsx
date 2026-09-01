@@ -2,7 +2,7 @@ import { Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer, Tooltip as Rec
 import { CHART_BEESWARM_HIGH_VAR, CHART_BEESWARM_LOW_VAR, CHART_GRID_STROKE, CHART_TICK_STYLE, CHART_TOOLTIP_STYLE } from "../../theme/charts";
 import { ChartFallbackTable, ChartFrame } from "./ChartFrame";
 
-export interface WaterfallStep {
+interface WaterfallStep {
   label: string;
   /** Effet de cette étape (peut être négatif) — la 1ʳᵉ étape est la valeur
    * de base (moyenne du jeu d'entraînement), les suivantes les

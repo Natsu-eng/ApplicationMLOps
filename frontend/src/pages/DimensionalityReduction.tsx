@@ -592,6 +592,11 @@ function DimensionalityResultView({ jobId, datasetName }: { jobId: number; datas
   // ENTIÈREMENT à partir de `result`, déjà en mémoire, jamais un second
   // appel réseau. Voir `utils/dimensionalityModelCard.ts`.
   function handleExportModelCard() {
+    // Garde défensive pure — le rétrécissement de type de la ligne 585
+    // (`if (!result) return`) ne traverse pas la fermeture de cette
+    // fonction imbriquée ; `result` y reste `DimensionalityResult | null`
+    // du point de vue de TypeScript.
+    if (!result) return;
     const card = buildDimensionalityModelCard(datasetName, result);
     const blob = new Blob([JSON.stringify(card, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
