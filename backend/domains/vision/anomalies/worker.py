@@ -119,6 +119,9 @@ def run_vision_anomaly_job(job_id: int) -> None:
                 pr_curves_json=json.dumps(result.pr_curves) if result.pr_curves else None,
                 score_histogram_json=json.dumps(result.score_histogram) if result.score_histogram else None,
                 category_breakdown_json=json.dumps(result.category_breakdown) if result.category_breakdown else None,
+                threshold_candidates_json=(
+                    json.dumps(result.threshold_candidates) if result.threshold_candidates else None
+                ),
                 file_path=str(artifact_path),
             )
             db.add(vision_model)

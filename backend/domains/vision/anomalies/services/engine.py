@@ -178,6 +178,12 @@ class AnomalyVisionResult:
     pr_curves: dict[str, dict[str, list[float]]] = field(default_factory=dict)
     score_histogram: dict[str, Any] = field(default_factory=dict)
     category_breakdown: list[dict[str, Any]] = field(default_factory=list)
+    # Retour utilisateur (maquette de refonte) : "un défaut manqué coûte plus
+    # cher qu'un contrôle inutile ? descendez le seuil — voici le chiffrage"
+    # — quelques seuils candidats, chacun avec le nombre RÉEL de défauts
+    # manqués/fausses alertes sur l'ÉVALUATION (même population que
+    # confusion_matrix ci-dessus), voir `_compute_threshold_candidates`.
+    threshold_candidates: list[dict[str, Any]] = field(default_factory=list)
 
 
 def _build_transform(augmentation_preset: str = "aucune", image_size: int = IMAGE_SIZE) -> transforms.Compose:
@@ -299,6 +305,78 @@ def _compute_category_breakdown(
         {"category": category, "n": len(outcomes), "detection_rate": sum(outcomes) / len(outcomes)}
         for category, outcomes in sorted(by_category.items())
     ]
+
+
+# Nombre de seuils candidats proposés (retour utilisateur, maquette de
+# refonte) — assez pour donner une vraie sensation du compromis, assez peu
+# pour rester lisible dans un tableau.
+_N_THRESHOLD_CANDIDATES = 9
+
+
+def _compute_threshold_candidates(
+    scores: list[float], labels: list[int], current_threshold: float
+) -> list[dict[str, Any]]:
+    """Retour utilisateur (maquette de refonte) : "un défaut manqué coûte
+    plus cher qu'un contrôle inutile ? descendez le seuil de décision — le
+    tableau ci-dessous chiffre l'échange." Quelques seuils répartis sur la
+    plage des scores d'ÉVALUATION (même population que `confusion_matrix`
+    déjà rapportée, jamais la calibration) — comptage EXACT recalculé ici à
+    chaque seuil (jamais une approximation depuis la courbe ROC compressée,
+    voir `_downsample_curve`, qui perdrait en précision). Le seuil
+    actuellement retenu (calibré par le point de Youden) est TOUJOURS inclus
+    et marqué, pour que l'utilisateur compare directement plutôt que de
+    deviner où il se situe parmi les candidats."""
+    scores_arr = np.asarray(scores)
+    labels_arr = np.asarray(labels)
+    n_defect = int((labels_arr == 1).sum())
+    n_normal = int((labels_arr == 0).sum())
+
+    quantiles = np.linspace(0.05, 0.95, _N_THRESHOLD_CANDIDATES)
+    candidate_values = sorted({float(t) for t in np.quantile(scores_arr, quantiles)} | {float(current_threshold)})
+
+    candidates: list[dict[str, Any]] = []
+    for t in candidate_values:
+        predicted = scores_arr > t
+        false_alarms = int((predicted & (labels_arr == 0)).sum())
+        defects_missed = int((~predicted & (labels_arr == 1)).sum())
+        candidates.append({
+            "threshold": t,
+            "is_current": abs(t - current_threshold) < 1e-9,
+            "defects_missed": defects_missed,
+            "defects_missed_pct": defects_missed / n_defect if n_defect else 0.0,
+            "false_alarms": false_alarms,
+            "false_alarms_pct": false_alarms / n_normal if n_normal else 0.0,
+        })
+    return candidates
+
+
+def recompute_confusion_and_metrics(
+    n_normal: int, n_defect: int, false_alarms: int, defects_missed: int
+) -> dict[str, Any]:
+    """Reconstruit `confusion_matrix`/`test_accuracy`/`test_precision`/
+    `test_recall`/`test_f1` à un seuil CANDIDAT (retour utilisateur : choix
+    d'un nouveau seuil de décision) à partir des comptes déjà EXACTS de
+    `_compute_threshold_candidates` — mêmes deux totaux (`n_normal`/
+    `n_defect`) que la matrice de confusion d'origine, seule leur
+    répartition change. Jamais un second passage sur les scores bruts : ils
+    ne sont volontairement pas persistés (voir docstring de la fonction
+    ci-dessus), cette reconstruction algébrique s'en passe entièrement."""
+    tp = n_defect - defects_missed
+    fn = defects_missed
+    fp = false_alarms
+    tn = n_normal - false_alarms
+    total = tp + tn + fp + fn
+    accuracy = (tp + tn) / total if total else 0.0
+    precision = tp / (tp + fp) if (tp + fp) else 0.0
+    recall = tp / (tp + fn) if (tp + fn) else 0.0
+    f1 = 2 * precision * recall / (precision + recall) if (precision + recall) else 0.0
+    return {
+        "confusion_matrix": [[tn, fp], [fn, tp]],
+        "test_accuracy": accuracy,
+        "test_precision": precision,
+        "test_recall": recall,
+        "test_f1": f1,
+    }
 
 
 class _UnlabeledImageDataset(Dataset):
@@ -496,6 +574,7 @@ def train_and_evaluate_anomaly_vision(
     category_breakdown = _compute_category_breakdown(
         evaluation_categories, evaluation_labels, evaluation_predicted_labels
     )
+    threshold_candidates = _compute_threshold_candidates(evaluation_scores, evaluation_labels, threshold)
     conf_matrix = confusion_matrix(evaluation_labels, evaluation_predicted_labels, labels=[0, 1])
 
     progress_cb("Génération des cartes de localisation", 95)
@@ -594,6 +673,7 @@ def train_and_evaluate_anomaly_vision(
         pr_curves=result_pr_curves,
         score_histogram=score_histogram,
         category_breakdown=category_breakdown,
+        threshold_candidates=threshold_candidates,
     )
 
 

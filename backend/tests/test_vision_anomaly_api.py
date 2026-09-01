@@ -6,6 +6,7 @@ import zipfile
 from unittest.mock import patch
 
 import numpy as np
+import pytest
 from PIL import Image
 
 from api.core.config import get_settings
@@ -483,3 +484,89 @@ def test_export_deployment_script_409_before_completion(client):
     resp = client.get(f"/api/vision/anomalies/jobs/{job['id']}/model/export-script", headers=headers)
     assert resp.status_code == 409
     assert resp.json()["detail"]["code"] == "MODELE_NON_DISPONIBLE"
+
+
+# ── PATCH .../model/threshold (retour utilisateur, maquette de refonte) :
+# "un défaut manqué coûte plus cher qu'un contrôle inutile ? descendez le
+# seuil — voici le chiffrage" ─────────────────────────────────────────────
+
+
+def test_choose_threshold_updates_the_active_threshold_and_recomputes_metrics(client, db_session):
+    headers = _register(client)
+    dataset = _upload_vision_dataset(client, headers, _mvtec_zip_bytes())
+    job = _create_job(client, headers, dataset["id"]).json()
+    run_vision_anomaly_job(job["id"])
+    db_session.expire_all()
+
+    before = client.get(f"/api/vision/anomalies/jobs/{job['id']}/result", headers=headers).json()
+    candidates = before["threshold_candidates"]
+    assert candidates
+    other = next(c for c in candidates if not c["is_current"])
+
+    resp = client.patch(
+        f"/api/vision/anomalies/jobs/{job['id']}/model/threshold",
+        headers=headers,
+        json={"threshold": other["threshold"]},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["threshold"] == pytest.approx(other["threshold"])
+    tn, fp = body["confusion_matrix"][0]
+    fn, tp = body["confusion_matrix"][1]
+    assert fn == other["defects_missed"]
+    assert fp == other["false_alarms"]
+    assert body["test_accuracy"] == pytest.approx((tn + tp) / (tn + fp + fn + tp))
+    # Le drapeau is_current a bougé sur le nouveau seuil, jamais resté sur
+    # l'ancien.
+    new_current = next(c for c in body["threshold_candidates"] if c["is_current"])
+    assert new_current["threshold"] == pytest.approx(other["threshold"])
+
+    # Persisté — un second GET reflète le changement, pas seulement la
+    # réponse du PATCH.
+    after = client.get(f"/api/vision/anomalies/jobs/{job['id']}/result", headers=headers).json()
+    assert after["threshold"] == pytest.approx(other["threshold"])
+
+
+def test_choose_threshold_rejects_a_value_outside_the_shown_candidates(client, db_session):
+    headers = _register(client)
+    dataset = _upload_vision_dataset(client, headers, _mvtec_zip_bytes())
+    job = _create_job(client, headers, dataset["id"]).json()
+    run_vision_anomaly_job(job["id"])
+    db_session.expire_all()
+
+    resp = client.patch(
+        f"/api/vision/anomalies/jobs/{job['id']}/model/threshold",
+        headers=headers,
+        json={"threshold": 999.0},
+    )
+    assert resp.status_code == 400
+    assert resp.json()["detail"]["code"] == "SEUIL_INCONNU"
+
+
+def test_choose_threshold_404_before_completion(client):
+    headers = _register(client)
+    dataset = _upload_vision_dataset(client, headers, _mvtec_zip_bytes())
+    job = _create_job(client, headers, dataset["id"]).json()
+    resp = client.patch(
+        f"/api/vision/anomalies/jobs/{job['id']}/model/threshold",
+        headers=headers,
+        json={"threshold": 0.5},
+    )
+    assert resp.status_code == 404
+    assert resp.json()["detail"]["code"] == "RESULTAT_INDISPONIBLE"
+
+
+def test_choose_threshold_404_for_other_organization(client, db_session):
+    headers_a = _register(client, "a@bureau-a.fr", "Bureau A")
+    dataset_a = _upload_vision_dataset(client, headers_a, _mvtec_zip_bytes())
+    job = _create_job(client, headers_a, dataset_a["id"]).json()
+    run_vision_anomaly_job(job["id"])
+    db_session.expire_all()
+
+    headers_b = _register(client, "b@bureau-b.fr", "Bureau B")
+    resp = client.patch(
+        f"/api/vision/anomalies/jobs/{job['id']}/model/threshold",
+        headers=headers_b,
+        json={"threshold": 0.5},
+    )
+    assert resp.status_code == 404

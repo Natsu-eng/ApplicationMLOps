@@ -1147,6 +1147,19 @@ export interface VisionAnomalyResult {
   pr_curves?: Record<string, PrCurve>;
   score_histogram?: { bin_edges: number[]; normal_counts: number[]; defect_counts: number[] } | null;
   category_breakdown?: { category: string; n: number; detection_rate: number }[] | null;
+  // Retour utilisateur (maquette de refonte) : "un défaut manqué coûte plus
+  // cher qu'un contrôle inutile ? descendez le seuil — voici le chiffrage"
+  // — absent sur les modèles entraînés avant ce correctif.
+  threshold_candidates?: VisionAnomalyThresholdCandidate[] | null;
+}
+
+export interface VisionAnomalyThresholdCandidate {
+  threshold: number;
+  is_current: boolean;
+  defects_missed: number;
+  defects_missed_pct: number;
+  false_alarms: number;
+  false_alarms_pct: number;
 }
 
 // Mode expert : comparatif d'architectures (retour utilisateur direct,
@@ -1937,6 +1950,15 @@ export const api = {
     exportModel: (id: number) => downloadModelExport(`/vision/anomalies/jobs/${id}/model/export`, `vision_anomalies_job${id}.pt`),
     exportDeploymentScript: (id: number) =>
       downloadModelExport(`/vision/anomalies/jobs/${id}/model/export-script`, `vision_anomalies_job${id}_deploiement.py`),
+    // Change le seuil de décision opérationnel (retour utilisateur, maquette
+    // de refonte) — le seuil DOIT venir de `threshold_candidates` déjà
+    // affiché, s'applique réellement ensuite à /predict et au script de
+    // déploiement exporté.
+    chooseThreshold: (id: number, threshold: number) =>
+      request<VisionAnomalyResult>(`/vision/anomalies/jobs/${id}/model/threshold`, {
+        method: "PATCH",
+        body: JSON.stringify({ threshold }),
+      }),
   },
 
   notifications: {

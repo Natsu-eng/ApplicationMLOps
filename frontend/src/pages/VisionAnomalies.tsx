@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { Activity, AlertCircle, AlertTriangle, Ban, ChevronLeft, ChevronRight, FileCode, FileJson, Loader2, PlayCircle, RotateCcw, Sparkles, Target, Trash2, Trophy } from "lucide-react";
+import { Activity, AlertCircle, AlertTriangle, Ban, ChevronLeft, ChevronRight, FileCode, FileJson, Loader2, PlayCircle, RotateCcw, SlidersHorizontal, Sparkles, Target, Trash2, Trophy } from "lucide-react";
 import {
   Bar,
   BarChart,
@@ -731,7 +731,9 @@ function AnomalyVisionResultView({
   const [examples, setExamples] = useState<VisionAnomalyExample[]>([]);
   const [examplesError, setExamplesError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<"performance" | "diagnostics" | "exemples" | "noter">("performance");
+  const [activeTab, setActiveTab] = useState<"performance" | "diagnostics" | "exemples" | "noter" | "seuil">(
+    "performance",
+  );
 
   useEffect(() => {
     api.visionAnomalies
@@ -849,6 +851,7 @@ function AnomalyVisionResultView({
           { id: "diagnostics" as const, label: "Diagnostics", icon: Activity },
           { id: "exemples" as const, label: "Exemples", icon: AlertTriangle },
           { id: "noter" as const, label: "Noter une image", icon: Target },
+          { id: "seuil" as const, label: "Seuil de décision", icon: SlidersHorizontal },
         ]}
         active={activeTab}
         onChange={setActiveTab}
@@ -856,6 +859,10 @@ function AnomalyVisionResultView({
       />
 
       {activeTab === "noter" && <VisionAnomalyScoreForm jobId={jobId} />}
+
+      {activeTab === "seuil" && (
+        <ThresholdTradeoffTable jobId={jobId} result={result} onResultUpdated={setResult} />
+      )}
 
       {activeTab === "performance" && (
         <>
@@ -984,6 +991,117 @@ function VisionAnomalyScoreForm({ jobId }: { jobId: number }) {
           </div>
         </div>
       )}
+    </Card>
+  );
+}
+
+/** Onglet "Seuil de décision" (retour utilisateur direct, maquette de
+ * refonte : "un défaut manqué coûte plus cher qu'un contrôle inutile ?
+ * descendez le seuil de décision — le tableau ci-dessous chiffre
+ * l'échange") — chaque seuil candidat vient déjà chiffré par le backend
+ * (`services/engine.py::_compute_threshold_candidates`, comptage EXACT sur
+ * l'évaluation, jamais une approximation). "Appliquer" persiste vraiment le
+ * nouveau seuil : `/predict` et le script de déploiement l'utilisent
+ * ensuite. */
+function ThresholdTradeoffTable({
+  jobId,
+  result,
+  onResultUpdated,
+}: {
+  jobId: number;
+  result: VisionAnomalyResult;
+  onResultUpdated: (result: VisionAnomalyResult) => void;
+}) {
+  const [applyingThreshold, setApplyingThreshold] = useState<number | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const candidates = result.threshold_candidates;
+
+  async function handleApply(threshold: number) {
+    setApplyingThreshold(threshold);
+    setError(null);
+    try {
+      onResultUpdated(await api.visionAnomalies.chooseThreshold(jobId, threshold));
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Impossible d'appliquer ce seuil");
+    } finally {
+      setApplyingThreshold(null);
+    }
+  }
+
+  if (!candidates || candidates.length === 0) {
+    return (
+      <Card className="p-5">
+        <SectionHeader icon={SlidersHorizontal} color="amber" label="Seuil de décision" />
+        <p className="text-sm text-muted-foreground">
+          Ce modèle a été entraîné avant l'ajout de cette fonctionnalité — réentraînez-le pour pouvoir ajuster son
+          seuil de décision.
+        </p>
+      </Card>
+    );
+  }
+
+  const sorted = [...candidates].sort((a, b) => a.threshold - b.threshold);
+
+  return (
+    <Card className="p-5">
+      <SectionHeader
+        icon={SlidersHorizontal}
+        color="amber"
+        label="Seuil de décision"
+        help="Un seuil plus bas classe plus d'images en défaut : moins de défauts manqués, mais plus de fausses alertes. Un défaut manqué coûte-t-il plus cher qu'un contrôle inutile ? Choisissez un seuil plus bas — le tableau chiffre exactement l'échange, sur les mêmes images que la performance déjà rapportée."
+      />
+      {error && (
+        <div className="flex items-center gap-2 text-sm text-destructive bg-destructive/10 border border-destructive/20 rounded-lg px-3 py-2 mb-3">
+          <AlertCircle size={15} className="flex-shrink-0" />
+          {error}
+        </div>
+      )}
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="text-left text-xs text-muted-foreground border-b border-border">
+              <th className="py-2 pr-3 font-medium">Seuil</th>
+              <th className="py-2 pr-3 font-medium">Défauts manqués</th>
+              <th className="py-2 pr-3 font-medium">Fausses alertes</th>
+              <th className="py-2 pr-3 font-medium"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {sorted.map((c) => (
+              <tr
+                key={c.threshold}
+                className={`border-b border-border/50 ${c.is_current ? "bg-primary/5" : ""}`}
+              >
+                <td className="py-2 pr-3 font-mono tabular-nums">
+                  <span className="inline-flex items-center gap-2">
+                    {c.threshold.toFixed(4)}
+                    {c.is_current && <Badge variant="accent">Actuel</Badge>}
+                  </span>
+                </td>
+                <td className="py-2 pr-3">
+                  {c.defects_missed} <span className="text-muted-foreground">({(c.defects_missed_pct * 100).toFixed(0)} %)</span>
+                </td>
+                <td className="py-2 pr-3">
+                  {c.false_alarms} <span className="text-muted-foreground">({(c.false_alarms_pct * 100).toFixed(0)} %)</span>
+                </td>
+                <td className="py-2 pr-3 text-right">
+                  {!c.is_current && (
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      loading={applyingThreshold === c.threshold}
+                      disabled={applyingThreshold !== null}
+                      onClick={() => handleApply(c.threshold)}
+                    >
+                      Appliquer ce seuil
+                    </Button>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </Card>
   );
 }

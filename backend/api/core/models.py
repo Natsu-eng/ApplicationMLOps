@@ -1053,6 +1053,13 @@ class VisionAnomalyModel(Base):
     pr_curves_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     score_histogram_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     category_breakdown_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # Retour utilisateur (maquette de refonte) : "un défaut manqué coûte
+    # plus cher qu'un contrôle inutile ? descendez le seuil — voici le
+    # chiffrage" — quelques seuils candidats avec leur nombre RÉEL de
+    # défauts manqués/fausses alertes (services/engine.py::
+    # _compute_threshold_candidates). NULL sur les modèles entraînés avant
+    # ce correctif, même motif que les colonnes ci-dessus.
+    threshold_candidates_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     file_path: Mapped[str] = mapped_column(String(500), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
 

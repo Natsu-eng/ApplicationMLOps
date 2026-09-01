@@ -25,7 +25,7 @@ from sqlalchemy.orm import Session, joinedload
 from api.core.config import get_settings
 from api.core.database import SessionLocal, get_db
 from api.core.job_queue import redis_conn, vision_queue
-from api.core.models import User, VisionAnomalyExampleRecord, VisionAnomalyJob, VisionDataset
+from api.core.models import User, VisionAnomalyExampleRecord, VisionAnomalyJob, VisionAnomalyModel, VisionDataset
 from api.core.pagination import paginate_by_id
 from api.core.rate_limit import rate_limit_dependency
 from domains.auth.router import get_current_user
@@ -36,7 +36,11 @@ from domains.shared.job_lifecycle import ACTIVE_STATUSES, CANCELLED_MESSAGE, try
 from domains.shared.job_quota import ALL_JOB_MODELS, raise_if_quota_exceeded
 from domains.shared.job_watchdog import reconcile_stale_jobs
 from domains.vision.anomalies.services.deployment_export import generate_vision_anomaly_deployment_script
-from domains.vision.anomalies.services.engine import IMAGE_SIZE, MAX_MODELS_PER_COMPARISON
+from domains.vision.anomalies.services.engine import (
+    IMAGE_SIZE,
+    MAX_MODELS_PER_COMPARISON,
+    recompute_confusion_and_metrics,
+)
 from domains.vision.anomalies.services.inference import VisionAnomalyInferenceError, score_vision_anomaly
 from domains.vision.anomalies.services.registry import (
     ANOMALY_MODEL_REGISTRY,
@@ -137,6 +141,19 @@ class VisionAnomalyResultOut(BaseModel):
     pr_curves: Optional[dict[str, dict[str, List[float]]]] = None
     score_histogram: Optional[dict[str, Any]] = None
     category_breakdown: Optional[List[dict[str, Any]]] = None
+    # Retour utilisateur (maquette de refonte) : "un défaut manqué coûte
+    # plus cher qu'un contrôle inutile ? descendez le seuil — voici le
+    # chiffrage" — None sur les modèles entraînés avant ce correctif.
+    threshold_candidates: Optional[List[dict[str, Any]]] = None
+
+
+class ThresholdChoiceRequest(BaseModel):
+    """Corps de `PATCH .../model/threshold` — le seuil DOIT provenir de
+    `threshold_candidates` déjà affiché (jamais une valeur arbitraire non
+    vérifiée : le chiffrage montré à l'utilisateur doit rester exactement ce
+    qui s'applique ensuite)."""
+
+    threshold: float
 
 
 class VisionAnomalyScoreOut(BaseModel):
@@ -409,15 +426,7 @@ async def stream_vision_anomaly_job_events(job_id: int, current_user: User = Dep
     return StreamingResponse(stream_job_updates(fetch_snapshot), media_type="text/event-stream")
 
 
-@router.get("/jobs/{job_id}/result", response_model=VisionAnomalyResultOut)
-def get_vision_anomaly_result(job_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    job = _get_org_job(job_id, current_user, db)
-    if job.result is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={"code": "RESULTAT_INDISPONIBLE", "message": "Cet entraînement n'a pas encore de résultat"},
-        )
-    result = job.result
+def _to_result_out(result: VisionAnomalyModel) -> VisionAnomalyResultOut:
     return VisionAnomalyResultOut(
         model_id=result.model_id,
         n_train=result.n_train,
@@ -438,7 +447,82 @@ def get_vision_anomaly_result(job_id: int, current_user: User = Depends(get_curr
         pr_curves=json.loads(result.pr_curves_json) if result.pr_curves_json else None,
         score_histogram=json.loads(result.score_histogram_json) if result.score_histogram_json else None,
         category_breakdown=json.loads(result.category_breakdown_json) if result.category_breakdown_json else None,
+        threshold_candidates=(
+            json.loads(result.threshold_candidates_json) if result.threshold_candidates_json else None
+        ),
     )
+
+
+@router.get("/jobs/{job_id}/result", response_model=VisionAnomalyResultOut)
+def get_vision_anomaly_result(job_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    job = _get_org_job(job_id, current_user, db)
+    if job.result is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "RESULTAT_INDISPONIBLE", "message": "Cet entraînement n'a pas encore de résultat"},
+        )
+    return _to_result_out(job.result)
+
+
+@router.patch("/jobs/{job_id}/model/threshold", response_model=VisionAnomalyResultOut)
+def choose_vision_anomaly_threshold(
+    job_id: int,
+    body: ThresholdChoiceRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Change le seuil de décision opérationnel — retour utilisateur direct
+    (maquette de refonte) : "un défaut manqué coûte plus cher qu'un
+    contrôle inutile ? descendez le seuil — voici le chiffrage". S'applique
+    RÉELLEMENT ensuite : `/predict` et le script de déploiement exporté
+    utilisent ce nouveau seuil (persisté sur `result.threshold`), jamais un
+    réglage cosmétique sans effet.
+
+    Le seuil DOIT provenir de `threshold_candidates` déjà montré (jamais une
+    valeur arbitraire) — `test_accuracy`/`test_precision`/`test_recall`/
+    `test_f1`/`confusion_matrix` sont recalculés à partir des comptes déjà
+    exacts de ce candidat (`defects_missed`/`false_alarms`), jamais un
+    second passage sur les scores bruts (non persistés par choix, voir
+    `services/engine.py::_compute_threshold_candidates`)."""
+    job = _get_org_job(job_id, current_user, db)
+    if job.result is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "RESULTAT_INDISPONIBLE", "message": "Cet entraînement n'a pas encore de résultat"},
+        )
+    result = job.result
+    candidates = json.loads(result.threshold_candidates_json) if result.threshold_candidates_json else []
+    chosen = next((c for c in candidates if abs(c["threshold"] - body.threshold) < 1e-9), None)
+    if chosen is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "code": "SEUIL_INCONNU",
+                "message": "Ce seuil ne fait pas partie des seuils proposés pour ce modèle",
+            },
+        )
+
+    current_matrix = json.loads(result.confusion_matrix_json)
+    n_normal = current_matrix[0][0] + current_matrix[0][1]
+    n_defect = current_matrix[1][0] + current_matrix[1][1]
+    recomputed = recompute_confusion_and_metrics(n_normal, n_defect, chosen["false_alarms"], chosen["defects_missed"])
+
+    result.threshold = body.threshold
+    result.confusion_matrix_json = json.dumps(recomputed["confusion_matrix"])
+    result.test_accuracy = recomputed["test_accuracy"]
+    result.test_precision = recomputed["test_precision"]
+    result.test_recall = recomputed["test_recall"]
+    result.test_f1 = recomputed["test_f1"]
+    # Le drapeau `is_current` de la table déjà persistée doit rester
+    # cohérent avec le seuil réellement actif — jamais recalculé, juste
+    # déplacé sur le nouveau choix.
+    for c in candidates:
+        c["is_current"] = abs(c["threshold"] - body.threshold) < 1e-9
+    result.threshold_candidates_json = json.dumps(candidates)
+    db.commit()
+    db.refresh(result)
+
+    return _to_result_out(result)
 
 
 @router.get("/jobs/{job_id}/model/export")

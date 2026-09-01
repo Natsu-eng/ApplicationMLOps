@@ -13,7 +13,9 @@ from domains.vision.anomalies.services.engine import (
     MIN_IMAGES_PER_CATEGORY_FOR_CALIBRATION_SPLIT,
     MIN_TRAIN_GOOD_FOR_TRAINING,
     AnomalyVisionConfig,
+    _compute_threshold_candidates,
     _split_calibration_evaluation,
+    recompute_confusion_and_metrics,
     train_and_compare_anomaly_models,
     train_and_evaluate_anomaly_vision,
 )
@@ -257,6 +259,84 @@ def test_diagnostics_persisted_even_in_biased_fallback_mode(tmp_path):
     assert result.pr_curves
     assert result.score_histogram
     assert result.category_breakdown
+    assert result.threshold_candidates
+
+
+# ── Seuils candidats (retour utilisateur, maquette de refonte) : "un défaut
+# manqué coûte plus cher qu'un contrôle inutile ? descendez le seuil — voici
+# le chiffrage" ─────────────────────────────────────────────────────────────
+
+
+def test_threshold_candidates_include_the_current_threshold_marked(tmp_path):
+    _write_mvtec_dataset(tmp_path, n_test_good=10, n_test_defect=10)
+    config = AnomalyVisionConfig(num_epochs=2, batch_size=4)
+
+    result = train_and_evaluate_anomaly_vision(tmp_path, config, _noop_progress)
+
+    current = [c for c in result.threshold_candidates if c["is_current"]]
+    assert len(current) == 1
+    assert current[0]["threshold"] == pytest.approx(result.threshold)
+    # Toujours au moins le seuil actuel + quelques candidats répartis sur la
+    # plage des scores.
+    assert len(result.threshold_candidates) >= 2
+
+
+def test_threshold_candidates_counts_match_confusion_matrix_at_current_threshold(tmp_path):
+    """Le candidat marqué `is_current` doit chiffrer exactement les mêmes
+    défauts manqués/fausses alertes que `confusion_matrix` déjà rapportée à
+    ce même seuil — sinon le tableau contredirait le résultat affiché
+    ailleurs sur la même page."""
+    _write_mvtec_dataset(tmp_path, n_test_good=10, n_test_defect=10)
+    config = AnomalyVisionConfig(num_epochs=2, batch_size=4)
+
+    result = train_and_evaluate_anomaly_vision(tmp_path, config, _noop_progress)
+
+    tn, fp = result.confusion_matrix[0]
+    fn, tp = result.confusion_matrix[1]
+    current = next(c for c in result.threshold_candidates if c["is_current"])
+    assert current["defects_missed"] == fn
+    assert current["false_alarms"] == fp
+
+
+def test_threshold_candidates_are_monotonic_tradeoff():
+    """Un seuil plus haut (plus strict) ne doit jamais manquer MOINS de
+    défauts qu'un seuil plus bas — vérité mathématique du compromis, pas
+    seulement un artefact de cette implémentation."""
+    rng = np.random.default_rng(0)
+    normal_scores = rng.normal(0.1, 0.05, 200).tolist()
+    defect_scores = rng.normal(0.6, 0.1, 200).tolist()
+    scores = normal_scores + defect_scores
+    labels = [0] * 200 + [1] * 200
+
+    candidates = _compute_threshold_candidates(scores, labels, current_threshold=0.35)
+    ordered = sorted(candidates, key=lambda c: c["threshold"])
+    missed_counts = [c["defects_missed"] for c in ordered]
+    assert missed_counts == sorted(missed_counts)
+
+
+def test_recompute_confusion_and_metrics_matches_manual_counts():
+    # 40 normales, 60 défauts ; à ce seuil : 5 fausses alertes, 12 défauts manqués.
+    recomputed = recompute_confusion_and_metrics(n_normal=40, n_defect=60, false_alarms=5, defects_missed=12)
+
+    tn, fp = recomputed["confusion_matrix"][0]
+    fn, tp = recomputed["confusion_matrix"][1]
+    assert (tn, fp, fn, tp) == (35, 5, 12, 48)
+    assert recomputed["test_accuracy"] == pytest.approx((35 + 48) / 100)
+    assert recomputed["test_precision"] == pytest.approx(48 / (48 + 5))
+    assert recomputed["test_recall"] == pytest.approx(48 / (48 + 12))
+    expected_f1 = 2 * recomputed["test_precision"] * recomputed["test_recall"] / (
+        recomputed["test_precision"] + recomputed["test_recall"]
+    )
+    assert recomputed["test_f1"] == pytest.approx(expected_f1)
+
+
+def test_recompute_confusion_and_metrics_handles_zero_predicted_positive():
+    """Seuil si haut que rien n'est jamais classé défaut — précision à 0
+    plutôt qu'une division par zéro."""
+    recomputed = recompute_confusion_and_metrics(n_normal=40, n_defect=60, false_alarms=0, defects_missed=60)
+    assert recomputed["test_precision"] == 0.0
+    assert recomputed["test_recall"] == 0.0
+    assert recomputed["test_f1"] == 0.0
 
 
 # ── Mode expert : comparatif d'architectures (retour utilisateur direct,
