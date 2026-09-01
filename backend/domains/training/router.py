@@ -1048,7 +1048,7 @@ async def stream_training_job_events(job_id: int, current_user: User = Depends(g
     return StreamingResponse(stream_job_updates(fetch_snapshot), media_type="text/event-stream")
 
 
-def _to_model_detail(model: MLModel, db: Session) -> MLModelDetail:
+def to_model_detail(model: MLModel, db: Session) -> MLModelDetail:
     metrics = json.loads(model.metrics_json)
     evaluation = json.loads(model.evaluation_json) if model.evaluation_json else {}
     calibration = json.loads(model.calibration_json) if model.calibration_json else None
@@ -1119,7 +1119,7 @@ def get_training_job_model(job_id: int, current_user: User = Depends(get_current
             status_code=status.HTTP_409_CONFLICT,
             detail={"code": "MODELE_NON_DISPONIBLE", "message": "Cet entraînement n'a pas encore produit de modèle"},
         )
-    return _to_model_detail(job.model, db)
+    return to_model_detail(job.model, db)
 
 
 @router.post("/jobs/{job_id}/model/promote", response_model=MLModelDetail)
@@ -1191,7 +1191,7 @@ def promote_model(
     )
     db.commit()
     db.refresh(model)
-    return _to_model_detail(model, db)
+    return to_model_detail(model, db)
 
 
 @router.get("/jobs/{job_id}/model/versions", response_model=ModelVersionsResponse)

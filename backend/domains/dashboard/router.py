@@ -16,7 +16,7 @@ autres routers). Réutilise aussi `count_active_jobs`/
 raisonnement, pas une seconde définition qui pourrait diverger."""
 from __future__ import annotations
 
-from typing import List
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
@@ -28,6 +28,7 @@ from api.core.models import (
     ClusteringJob,
     Dataset,
     DimensionalityJob,
+    MLModel,
     TrainingJob,
     User,
     VisionAnomalyJob,
@@ -38,7 +39,7 @@ from domains.anomalies.router import AnomalyJobSummary, to_summary as _anomaly_s
 from domains.clustering.router import ClusteringJobSummary, to_summary as _clustering_summary
 from domains.datasets.router import DatasetSummary, to_summary as _dataset_summary
 from domains.dimensionality.router import DimensionalityJobSummary, to_summary as _dimensionality_summary
-from domains.training.router import TrainingJobSummary, to_summary as _training_summary
+from domains.training.router import TrainingJobSummary, to_model_detail, to_summary as _training_summary
 from domains.vision.anomalies.router import VisionAnomalyJobSummary, to_summary as _vision_anomaly_summary
 from domains.vision.classification.router import VisionClassificationJobSummary, to_summary as _vision_classification_summary
 from domains.shared.job_quota import ALL_JOB_MODELS, count_active_jobs
@@ -63,12 +64,47 @@ class DashboardSummary(BaseModel):
     unsupervised_count: int
     vision_count: int
     active_count: int
+    # Retour utilisateur (maquette de refonte) : "part des modèles dont le
+    # verdict est utilisable" — sur les modèles ML tabulaire réellement en
+    # jeu (staging + production), jamais TOUS les entraînements historiques
+    # (un essai abandonné qui a échoué depuis longtemps n'a pas sa place
+    # dans un indicateur "puis-je faire confiance à ce qui est actif ?").
+    # `None` = aucun modèle en staging/production (jamais un faux 0 %).
+    active_models_reliability_pct: Optional[float] = None
     recent_supervised: List[TrainingJobSummary]
     recent_clustering: List[ClusteringJobSummary]
     recent_dimensionality: List[DimensionalityJobSummary]
     recent_anomalies: List[AnomalyJobSummary]
     recent_vision_classification: List[VisionClassificationJobSummary]
     recent_vision_anomalies: List[VisionAnomalyJobSummary]
+
+
+def _active_models_reliability(db: Session, org_id: int) -> Optional[float]:
+    """Part des modèles ML tabulaire en staging/production dont le verdict
+    ne comporte aucune affirmation "critique" (`services/verdict.py`) —
+    réutilise `training/router.py::to_model_detail` (déjà le point de vérité
+    pour construire un verdict, rendu public ici même correctif que
+    `to_summary`, Lot 8 §Phase 0 — jamais réimporter une fonction privée
+    d'un autre router), aucun second calcul de règles. Population
+    volontairement
+    petite (staging + production seulement, pas tout l'historique
+    d'entraînement) : `compute_verdict` interroge les candidats en base par
+    modèle, coûteux à refaire pour des dizaines d'essais abandonnés sur un
+    endpoint agrégé pensé pour un seul aller-retour (voir docstring du
+    module)."""
+    models = (
+        db.query(MLModel)
+        .filter(MLModel.organization_id == org_id, MLModel.stage.in_(["staging", "production"]))
+        .all()
+    )
+    if not models:
+        return None
+    usable = sum(
+        1
+        for m in models
+        if not any(c["level"] == "critique" for c in to_model_detail(m, db).verdict.get("claims", []))
+    )
+    return usable / len(models)
 
 
 @router.get("/summary", response_model=DashboardSummary)
@@ -95,6 +131,7 @@ def get_dashboard_summary(current_user: User = Depends(get_current_user), db: Se
     unsupervised_count = _count(ClusteringJob) + _count(DimensionalityJob) + _count(AnomalyJob)
     vision_count = _count(VisionClassificationJob) + _count(VisionAnomalyJob)
     active_count = count_active_jobs(db, org_id, ALL_JOB_MODELS)
+    active_models_reliability_pct = _active_models_reliability(db, org_id)
 
     def _recent(model, *relationships):
         return (
@@ -114,6 +151,7 @@ def get_dashboard_summary(current_user: User = Depends(get_current_user), db: Se
         unsupervised_count=unsupervised_count,
         vision_count=vision_count,
         active_count=active_count,
+        active_models_reliability_pct=active_models_reliability_pct,
         recent_supervised=[
             _training_summary(j) for j in _recent(TrainingJob, TrainingJob.dataset, TrainingJob.created_by, TrainingJob.model)
         ],

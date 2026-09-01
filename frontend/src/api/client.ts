@@ -1567,6 +1567,10 @@ export interface DashboardSummary {
   unsupervised_count: number;
   vision_count: number;
   active_count: number;
+  // Part des modèles ML tabulaire en staging/production dont le verdict ne
+  // comporte aucune affirmation "critique" — `null` si aucun modèle n'est
+  // en staging/production (jamais un faux 0 %).
+  active_models_reliability_pct: number | null;
   recent_supervised: TrainingJobSummary[];
   recent_clustering: ClusteringJobSummary[];
   recent_dimensionality: DimensionalityJobSummary[];

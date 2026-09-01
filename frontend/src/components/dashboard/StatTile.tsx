@@ -78,6 +78,7 @@ export function StatTile({
   trend,
   loading = false,
   href,
+  suffix,
 }: {
   icon: LucideIcon;
   label: string;
@@ -104,6 +105,11 @@ export function StatTile({
    * cliquable/focusable au clavier, jamais une zone de clic invisible sans
    * affordance. */
   href?: string;
+  /** Unité accolée à la valeur animée (ex. "%") — retour utilisateur direct
+   * (maquette de refonte, tuile "Fiabilité moyenne") : `value` reste un
+   * NOMBRE (l'animation `useCountUp` l'exige), ce suffixe est purement de
+   * l'affichage, jamais recalculé. */
+  suffix?: string;
 }) {
   const displayValue = useCountUp(value);
   const displaySplitA = useCountUp(split?.[0]?.value);
@@ -154,7 +160,10 @@ export function StatTile({
     <div className="p-4 space-y-2">
       <ColorIconBadge icon={icon} color={color} size="sm" />
       <div className="flex items-baseline gap-2">
-        <p className="text-h1 text-foreground tabular-nums leading-none">{displayValue ?? "—"}</p>
+        <p className="text-h1 text-foreground tabular-nums leading-none">
+          {displayValue ?? "—"}
+          {displayValue !== undefined && suffix}
+        </p>
         {trend && (
           <span
             className={`inline-flex items-center gap-0.5 text-caption tabular-nums flex-shrink-0 ${
@@ -204,9 +213,26 @@ export function StatTile({
  * dans une grille à 4 colonnes strictement égales. Part élargie à nouveau
  * (Lot 16) : le split est passé de 2 à 3 sous-compteurs (pilier Vision
  * ajouté). */
-export function StatTileRow({ children, wide = false }: { children: React.ReactNode; wide?: boolean }) {
+export function StatTileRow({
+  children,
+  wide = false,
+  extraTile = false,
+}: {
+  children: React.ReactNode;
+  wide?: boolean;
+  /** Une 5ᵉ tuile à une seule valeur suit les 4 habituelles (ex. "Fiabilité
+   * des modèles actifs", affichée seulement une fois des modèles promus) —
+   * gabarit dédié plutôt que de laisser un slot vide dans le gabarit à 4
+   * colonnes quand elle est absente. */
+  extraTile?: boolean;
+}) {
+  const gridColsClass = extraTile
+    ? "lg:grid-cols-[0.9fr_1.35fr_0.75fr_0.9fr_0.9fr]"
+    : wide
+      ? "lg:grid-cols-[0.9fr_1.35fr_0.75fr_0.9fr]"
+      : "lg:grid-cols-4";
   return (
-    <div className={`grid gap-4 sm:grid-cols-2 mb-8 ${wide ? "lg:grid-cols-[0.9fr_1.35fr_0.75fr_0.9fr]" : "lg:grid-cols-4"}`}>
+    <div className={`grid gap-4 sm:grid-cols-2 mb-8 ${gridColsClass}`}>
       <style>{`
         @keyframes stat-tile-fade-in {
           from { opacity: 0; transform: translateY(6px); }

@@ -12,6 +12,7 @@ import {
   LayoutDashboard,
   ScatterChart,
   Shapes,
+  ShieldCheck,
   Sparkles,
   Trash2,
   Users,
@@ -279,7 +280,7 @@ export default function Dashboard() {
           Seules les 3 colonnes de la tuile "Analyses ML" portent chacune la
           couleur RÉELLE de leur pilier (`pillarColor`, source unique
           `config/pillars.ts`). */}
-      <StatTileRow wide>
+      <StatTileRow wide extraTile={summary?.active_models_reliability_pct != null}>
         <StatTile icon={Database} label="Datasets" value={summary?.datasets_count} color="neutral" delayMs={0} />
         <StatTile
           icon={Activity}
@@ -295,6 +296,22 @@ export default function Dashboard() {
         />
         <StatTile icon={Activity} label="En cours" value={summary?.active_count} color="neutral" delayMs={120} />
         <StatTile icon={Users} label="Membres de l'équipe" value={summary?.members_count} color="neutral" delayMs={180} />
+        {/* Retour utilisateur (maquette de refonte) : "part des modèles dont
+            le verdict est utilisable" — sur les modèles ML tabulaire en
+            staging/production uniquement (voir dashboard/router.py). Tuile
+            omise tant qu'aucun modèle n'a été promu (`null` ≠ 0 %, jamais un
+            faux zéro qui découragerait avant la première promotion). */}
+        {summary?.active_models_reliability_pct != null && (
+          <StatTile
+            icon={ShieldCheck}
+            label="Fiabilité des modèles actifs"
+            value={Math.round(summary.active_models_reliability_pct * 100)}
+            suffix=" %"
+            color="teal"
+            delayMs={240}
+            href="/training/history"
+          />
+        )}
       </StatTileRow>
 
       {/* Vue d'ensemble visuelle (Lot dashboard-dynamique) — avant ce
