@@ -12,7 +12,7 @@ import {
   Trash2,
   type LucideIcon,
 } from "lucide-react";
-import { api, type JobStatus } from "../api/client";
+import { api, apiErrorReference, type JobStatus } from "../api/client";
 import AppShell from "../components/AppShell";
 import { BulkActionBar } from "../components/ui/BulkActionBar";
 import { Button } from "../components/ui/Button";
@@ -82,6 +82,7 @@ const PERIOD_OPTIONS: { value: string; label: string; days: number | null }[] = 
 export default function AllHistory() {
   const [rows, setRows] = useState<HistoryEntry[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [errorRef, setErrorRef] = useState<string | undefined>(undefined);
   const [search, setSearch] = useState("");
   const [kindFilter, setKindFilter] = useState<JobKind | "all">("all");
   const [statusFilter, setStatusFilter] = useState<JobStatus | "all">("all");
@@ -204,14 +205,18 @@ export default function AllHistory() {
       );
     }
 
-    const failedCount = [supervised, clustering, dimensionality, anomalies, visionClassification, visionAnomalies].filter(
-      (r) => r.status === "rejected",
-    ).length;
+    const settled = [supervised, clustering, dimensionality, anomalies, visionClassification, visionAnomalies];
+    const rejected = settled.filter((r): r is PromiseRejectedResult => r.status === "rejected");
     setError(
-      failedCount > 0
-        ? `${failedCount} type${failedCount > 1 ? "s" : ""} d'analyse n'ont pas pu être chargés — l'historique ci-dessous est peut-être incomplet.`
+      rejected.length > 0
+        ? `${rejected.length} type${rejected.length > 1 ? "s" : ""} d'analyse n'ont pas pu être chargés — l'historique ci-dessous est peut-être incomplet.`
         : null,
     );
+    // Référence de support (5xx uniquement) — au moins un des 6 chargements
+    // en parallèle a échoué avec une vraie erreur serveur : la 1ʳᵉ trouvée
+    // suffit, jamais une liste des 6 (l'utilisateur n'a qu'une action à
+    // faire : réessayer/contacter le support, pas 6).
+    setErrorRef(rejected.map((r) => apiErrorReference(r.reason)).find((ref) => ref !== undefined));
 
     items.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
     setRows(items);
@@ -353,7 +358,7 @@ export default function AllHistory() {
         color="blue"
       />
 
-      {error && <ErrorNote message={error} />}
+      {error && <ErrorNote message={error} reference={errorRef} />}
 
       <Card className="p-5">
         <div className="grid gap-3 sm:grid-cols-2 2xl:grid-cols-5 mb-5">

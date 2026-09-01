@@ -58,6 +58,7 @@ from domains.vision.classification.services.registry import (
     CLASSIFICATION_BACKBONE_REGISTRY,
     DEFAULT_BACKBONE_ID,
     get_backbone_spec,
+    speed_tier,
 )
 from domains.vision.shared import ALLOWED_IMAGE_SIZES
 
@@ -114,6 +115,11 @@ class VisionClassificationJobCreate(BaseModel):
 class BackboneOut(BaseModel):
     id: str
     label: str
+    # Lot 16F (retour utilisateur : catalogue jamais assorti d'une
+    # indication de vitesse) — voir services/registry.py::speed_tier,
+    # seuils appliqués une seule fois ici, jamais recalculés côté client.
+    params_millions: float
+    speed_tier: str
 
 
 class VisionClassificationJobSummary(BaseModel):
@@ -252,7 +258,15 @@ def to_summary(job: VisionClassificationJob) -> VisionClassificationJobSummary:
 
 @router.get("/backbones", response_model=List[BackboneOut])
 def list_backbones():
-    return [BackboneOut(id=s.id, label=s.label) for s in CLASSIFICATION_BACKBONE_REGISTRY]
+    return [
+        BackboneOut(
+            id=s.id,
+            label=s.label,
+            params_millions=s.params_millions,
+            speed_tier=speed_tier(s.params_millions),
+        )
+        for s in CLASSIFICATION_BACKBONE_REGISTRY
+    ]
 
 
 @router.post("/jobs", response_model=VisionClassificationJobSummary, status_code=status.HTTP_201_CREATED)

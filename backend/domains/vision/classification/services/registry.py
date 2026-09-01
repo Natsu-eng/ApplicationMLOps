@@ -44,6 +44,32 @@ class ClassificationBackboneSpec:
     # architecture, jamais devinée dynamiquement (fragile) : déclarée
     # explicitement ici, même esprit que `build_model`/`backbone_children`.
     gradcam_target_layer: Callable[[nn.Module], nn.Module]
+    # Nombre de paramètres (millions, tronc pré-entraîné torchvision, valeur
+    # publiée officielle — https://pytorch.org/vision/stable/models.html —
+    # PAS recalculée dynamiquement : instancier les 7 architectures au seul
+    # import de ce module forcerait le téléchargement des 7 jeux de poids
+    # pré-entraînés (des centaines de Mo) à chaque process qui importe ce
+    # fichier (tests compris), pour une valeur qui ne change jamais tant que
+    # la version de torchvision reste figée (voir requirements.txt). Lot 16F
+    # (retour utilisateur : catalogue jamais assorti d'une indication de
+    # vitesse) — sert à dériver `speed_tier` ci-dessous, jamais affiché seul.
+    params_millions: float
+
+
+# Seuils Lot 16F — jamais un jugement qualitatif arbitraire : bornés sur les
+# 7 entrées réelles du registre ci-dessous (2,3 à 21,8 M de paramètres).
+# "rapide" = le tiers le plus léger du registre (mobile-first), "lent" =
+# au-delà de ResNet34, les 2 architectures les plus profondes.
+_SPEED_TIER_FAST_MAX_PARAMS = 6.0
+_SPEED_TIER_MODERATE_MAX_PARAMS = 12.0
+
+
+def speed_tier(params_millions: float) -> str:
+    if params_millions <= _SPEED_TIER_FAST_MAX_PARAMS:
+        return "rapide"
+    if params_millions <= _SPEED_TIER_MODERATE_MAX_PARAMS:
+        return "modere"
+    return "lent"
 
 
 def _resnet_backbone_children(model: nn.Module) -> list[nn.Module]:
@@ -132,6 +158,7 @@ CLASSIFICATION_BACKBONE_REGISTRY: list[ClassificationBackboneSpec] = [
         build_model=_build_mobilenet_v3_small,
         backbone_children=_mobilenet_backbone_children,
         gradcam_target_layer=lambda model: model.features,
+        params_millions=2.5,
     ),
     ClassificationBackboneSpec(
         id="resnet18",
@@ -139,6 +166,7 @@ CLASSIFICATION_BACKBONE_REGISTRY: list[ClassificationBackboneSpec] = [
         build_model=_build_resnet18,
         backbone_children=_resnet_backbone_children,
         gradcam_target_layer=lambda model: model.layer4,
+        params_millions=11.7,
     ),
     ClassificationBackboneSpec(
         id="resnet34",
@@ -146,6 +174,7 @@ CLASSIFICATION_BACKBONE_REGISTRY: list[ClassificationBackboneSpec] = [
         build_model=_build_resnet34,
         backbone_children=_resnet_backbone_children,
         gradcam_target_layer=lambda model: model.layer4,
+        params_millions=21.8,
     ),
     ClassificationBackboneSpec(
         id="mobilenet_v3_large",
@@ -153,6 +182,7 @@ CLASSIFICATION_BACKBONE_REGISTRY: list[ClassificationBackboneSpec] = [
         build_model=_build_mobilenet_v3_large,
         backbone_children=_mobilenet_backbone_children,
         gradcam_target_layer=lambda model: model.features,
+        params_millions=5.4,
     ),
     ClassificationBackboneSpec(
         id="efficientnet_b0",
@@ -160,6 +190,7 @@ CLASSIFICATION_BACKBONE_REGISTRY: list[ClassificationBackboneSpec] = [
         build_model=_build_efficientnet_b0,
         backbone_children=_efficientnet_backbone_children,
         gradcam_target_layer=lambda model: model.features,
+        params_millions=5.3,
     ),
     ClassificationBackboneSpec(
         id="shufflenet_v2",
@@ -167,6 +198,7 @@ CLASSIFICATION_BACKBONE_REGISTRY: list[ClassificationBackboneSpec] = [
         build_model=_build_shufflenet_v2,
         backbone_children=_resnet_backbone_children,
         gradcam_target_layer=lambda model: model.conv5,
+        params_millions=2.3,
     ),
     ClassificationBackboneSpec(
         id="densenet121",
@@ -174,6 +206,7 @@ CLASSIFICATION_BACKBONE_REGISTRY: list[ClassificationBackboneSpec] = [
         build_model=_build_densenet121,
         backbone_children=_densenet_backbone_children,
         gradcam_target_layer=lambda model: model.features,
+        params_millions=8.0,
     ),
 ]
 

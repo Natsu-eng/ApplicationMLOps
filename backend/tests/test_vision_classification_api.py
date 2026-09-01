@@ -71,6 +71,25 @@ def test_list_backbones(client):
     }
 
 
+def test_list_backbones_includes_a_coherent_speed_indicator(client):
+    """Lot 16F — chaque backbone porte son nombre de paramètres (valeur
+    publiée torchvision, jamais recalculée) et un palier de vitesse dérivé
+    mécaniquement de ce nombre, jamais un jugement arbitraire par backbone."""
+    headers = _register(client)
+    resp = client.get("/api/vision/classification/backbones", headers=headers)
+    by_id = {b["id"]: b for b in resp.json()}
+
+    for backbone in by_id.values():
+        assert backbone["params_millions"] > 0
+        assert backbone["speed_tier"] in {"rapide", "modere", "lent"}
+
+    # Le plus léger du registre (2,5 M, voir registry.py::DEFAULT_BACKBONE_ID)
+    # doit tomber dans le palier le plus rapide, le plus lourd (ResNet34,
+    # 21,8 M) dans le palier le plus lent — non-régression des seuils.
+    assert by_id["mobilenet_v3_small"]["speed_tier"] == "rapide"
+    assert by_id["resnet34"]["speed_tier"] == "lent"
+
+
 def test_create_job_enqueues_and_returns_queued(client):
     headers = _register(client)
     dataset = _upload_vision_dataset(client, headers)

@@ -90,6 +90,20 @@ const MAX_EXPLAIN_BATCH_SIZE = 12;
 // comparatif de backbones (mode expert), affiché ici pour la même raison.
 const MAX_BACKBONES_PER_COMPARISON = 4;
 
+// Lot 16F — palier de vitesse déjà calculé côté serveur (voir
+// services/registry.py::speed_tier), jamais recalculé ici : seul le libellé
+// et la couleur d'affichage sont une décision d'UI.
+const SPEED_TIER_LABELS: Record<VisionBackbone["speed_tier"], string> = {
+  rapide: "Rapide",
+  modere: "Modéré",
+  lent: "Lent",
+};
+const SPEED_TIER_BADGE_VARIANT: Record<VisionBackbone["speed_tier"], "success" | "neutral" | "warning"> = {
+  rapide: "success",
+  modere: "neutral",
+  lent: "warning",
+};
+
 type Phase = "configure" | "progress" | "results" | "failed" | "cancelled";
 
 function phaseOf(job: VisionClassificationJobSummary | null): Phase {
@@ -432,7 +446,8 @@ function ClassificationForm({ onJobCreated }: { onJobCreated: (job: VisionClassi
     }
   }
 
-  const selectedBackboneLabel = backbones.find((b) => b.id === backboneId)?.label ?? "—";
+  const selectedBackbone = backbones.find((b) => b.id === backboneId);
+  const selectedBackboneLabel = selectedBackbone?.label ?? "—";
   const step1Valid = Boolean(
     datasetId && (comparisonMode ? comparisonBackboneIds.size >= 2 : backboneId),
   );
@@ -487,14 +502,26 @@ function ClassificationForm({ onJobCreated }: { onJobCreated: (job: VisionClassi
                     <Select id="vc-backbone" value={backboneId} onChange={(e) => setBackboneId(e.target.value)}>
                       {backbones.map((b) => (
                         <option key={b.id} value={b.id}>
-                          {b.label}
+                          {b.label} — {SPEED_TIER_LABELS[b.speed_tier]} ({b.params_millions.toFixed(1)} M paramètres)
                         </option>
                       ))}
                     </Select>
+                    {selectedBackbone && (
+                      <div className="flex items-center gap-2 mt-1.5">
+                        <Badge variant={SPEED_TIER_BADGE_VARIANT[selectedBackbone.speed_tier]}>
+                          {SPEED_TIER_LABELS[selectedBackbone.speed_tier]}
+                        </Badge>
+                        <span className="text-xs text-muted-foreground">
+                          {selectedBackbone.params_millions.toFixed(1)} M paramètres
+                        </span>
+                      </div>
+                    )}
                     <p className="text-xs text-muted-foreground mt-1">
                       Un modèle plus léger (MobileNet) entraîne plus vite ; un modèle plus profond (ResNet,
                       EfficientNet, DenseNet) peut être plus précis sur un dataset plus riche, au prix d'un
-                      entraînement plus long.
+                      entraînement plus long. Aucun GPU n'est disponible en production aujourd'hui — tout
+                      entraînement tourne sur CPU ; un modèle "Lent" en profitera le plus le jour où un GPU
+                      dédié sera mis en place.
                     </p>
                   </>
                 ) : (
@@ -523,7 +550,10 @@ function ClassificationForm({ onJobCreated }: { onJobCreated: (job: VisionClassi
                               disabled={disabled}
                               onChange={() => toggleComparisonBackbone(b.id)}
                             />
-                            {b.label}
+                            <span className="flex-1">{b.label}</span>
+                            <Badge variant={SPEED_TIER_BADGE_VARIANT[b.speed_tier]}>
+                              {SPEED_TIER_LABELS[b.speed_tier]}
+                            </Badge>
                           </label>
                         );
                       })}

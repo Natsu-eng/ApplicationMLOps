@@ -926,6 +926,10 @@ export interface VisionDatasetImageList {
 export interface VisionBackbone {
   id: string;
   label: string;
+  // Lot 16F — voir domains/vision/classification/services/registry.py::
+  // speed_tier (jamais recalculé côté client).
+  params_millions: number;
+  speed_tier: "rapide" | "modere" | "lent";
 }
 
 // Lot 6A (correctif I9) — "standard" reproduit l'augmentation historique

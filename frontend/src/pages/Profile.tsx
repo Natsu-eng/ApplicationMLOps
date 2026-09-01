@@ -4,6 +4,7 @@ import { useNavigate } from "react-router-dom";
 import {
   ApiError,
   api,
+  apiErrorReference,
   type AuditLogEntry,
   type TeamMember,
 } from "../api/client";
@@ -130,12 +131,14 @@ function ProfileTab() {
 function EditNameForm({ currentName, onSaved }: { currentName: string; onSaved: () => Promise<void> }) {
   const [nom, setNom] = useState(currentName);
   const [error, setError] = useState<string | null>(null);
+  const [errorRef, setErrorRef] = useState<string | undefined>(undefined);
   const [success, setSuccess] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
     setError(null);
+    setErrorRef(undefined);
     setSuccess(false);
     setIsSubmitting(true);
     try {
@@ -144,6 +147,7 @@ function EditNameForm({ currentName, onSaved }: { currentName: string; onSaved: 
       setSuccess(true);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Impossible de mettre à jour le profil");
+      setErrorRef(apiErrorReference(err));
     } finally {
       setIsSubmitting(false);
     }
@@ -157,7 +161,7 @@ function EditNameForm({ currentName, onSaved }: { currentName: string; onSaved: 
         </label>
         <Input id="profile-nom" type="text" required minLength={2} value={nom} onChange={(e) => setNom(e.target.value)} />
       </div>
-      {error && <ErrorNote message={error} />}
+      {error && <ErrorNote message={error} reference={errorRef} />}
       {success && <p className="text-sm text-success">Profil mis à jour.</p>}
       <Button type="submit" disabled={isSubmitting || nom === currentName}>
         {isSubmitting ? "Enregistrement…" : "Enregistrer"}
@@ -173,11 +177,13 @@ function ChangePasswordForm() {
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [errorRef, setErrorRef] = useState<string | undefined>(undefined);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
     setError(null);
+    setErrorRef(undefined);
     if (newPassword !== confirmPassword) {
       setError("La confirmation ne correspond pas au nouveau mot de passe.");
       return;
@@ -198,6 +204,7 @@ function ChangePasswordForm() {
       navigate("/login?password_changed=1");
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Impossible de changer le mot de passe");
+      setErrorRef(apiErrorReference(err));
       setIsSubmitting(false);
     }
   }
@@ -246,7 +253,7 @@ function ChangePasswordForm() {
           onChange={(e) => setConfirmPassword(e.target.value)}
         />
       </div>
-      {error && <ErrorNote message={error} />}
+      {error && <ErrorNote message={error} reference={errorRef} />}
       <p className="text-caption text-muted-foreground">
         Toutes vos sessions ouvertes seront fermées, y compris celle-ci — vous devrez vous reconnecter.
       </p>
@@ -261,13 +268,16 @@ function OrganizationTab() {
   const { user } = useAuth();
   const [members, setMembers] = useState<TeamMember[] | null>(null);
   const [membersError, setMembersError] = useState<string | null>(null);
+  const [membersErrorRef, setMembersErrorRef] = useState<string | undefined>(undefined);
 
   const loadMembers = useCallback(async () => {
     try {
       setMembers(await api.team.members());
       setMembersError(null);
+      setMembersErrorRef(undefined);
     } catch (err) {
       setMembersError(err instanceof ApiError ? err.message : "Impossible de charger l'équipe");
+      setMembersErrorRef(apiErrorReference(err));
     }
   }, []);
 
@@ -292,7 +302,7 @@ function OrganizationTab() {
           )}
         </div>
 
-        {membersError && <ErrorNote message={membersError} />}
+        {membersError && <ErrorNote message={membersError} reference={membersErrorRef} />}
 
         {members === null && !membersError ? (
           <p className="text-sm text-muted-foreground">Chargement…</p>
@@ -348,12 +358,14 @@ function AddMemberForm({ onMemberAdded }: { onMemberAdded: () => void }) {
   const [nom, setNom] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [errorRef, setErrorRef] = useState<string | undefined>(undefined);
   const [success, setSuccess] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
     setError(null);
+    setErrorRef(undefined);
     setSuccess(false);
     setIsSubmitting(true);
     try {
@@ -365,6 +377,7 @@ function AddMemberForm({ onMemberAdded }: { onMemberAdded: () => void }) {
       onMemberAdded();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Impossible d'ajouter ce membre");
+      setErrorRef(apiErrorReference(err));
     } finally {
       setIsSubmitting(false);
     }
@@ -388,7 +401,7 @@ function AddMemberForm({ onMemberAdded }: { onMemberAdded: () => void }) {
           {isSubmitting ? "Ajout…" : "Ajouter"}
         </Button>
       </form>
-      {error && <p className="text-sm text-destructive mt-2">{error}</p>}
+      {error && <ErrorNote message={error} reference={errorRef} />}
       {success && <p className="text-sm text-success mt-2">Membre ajouté.</p>}
     </>
   );
@@ -400,12 +413,16 @@ function AddMemberForm({ onMemberAdded }: { onMemberAdded: () => void }) {
 function AuditLogPanel() {
   const [entries, setEntries] = useState<AuditLogEntry[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [errorRef, setErrorRef] = useState<string | undefined>(undefined);
 
   useEffect(() => {
     api.team
       .auditLog()
       .then(setEntries)
-      .catch((err) => setError(err instanceof ApiError ? err.message : "Journal indisponible"));
+      .catch((err) => {
+        setError(err instanceof ApiError ? err.message : "Journal indisponible");
+        setErrorRef(apiErrorReference(err));
+      });
   }, []);
 
   return (
@@ -416,7 +433,7 @@ function AuditLogPanel() {
         label="Journal d'audit"
         help="Actions sensibles de l'équipe — ajout de membre, suppression de dataset/entraînement/analyse, promotion de modèle. Visible uniquement par le propriétaire de l'organisation."
       />
-      {error && <p className="text-sm text-destructive">{error}</p>}
+      {error && <ErrorNote message={error} reference={errorRef} />}
       {entries === null && !error && <p className="text-sm text-muted-foreground">Chargement…</p>}
       {entries && entries.length === 0 && (
         <p className="text-sm text-muted-foreground">Aucune action enregistrée pour l'instant.</p>
