@@ -6,6 +6,7 @@ import io
 import zipfile
 from unittest.mock import patch
 
+import pytest
 from PIL import Image
 
 from api.core.config import get_settings
@@ -494,6 +495,51 @@ def test_explain_batch_returns_a_result_per_image(client, db_session):
         assert r["error"] is None
         assert r["predicted_label"] in {"classe_0", "classe_1"}
         assert r["heatmap_png"].startswith("data:image/png;base64,")
+
+
+def test_explain_batch_includes_no_synthesis_below_the_minimum_sample_size(client, db_session):
+    """2 images < MIN_IMAGES_FOR_SYNTHESIS (4) — `synthesis` doit rester
+    `None`, jamais un constat forcé sur un échantillon trop petit."""
+    headers = _register(client)
+    dataset = _upload_vision_dataset(client, headers)
+    job = _create_job(client, headers, dataset["id"]).json()
+    run_vision_classification_job(job["id"])
+    db_session.expire_all()
+
+    resp = client.post(
+        f"/api/vision/classification/jobs/{job['id']}/explain-dataset-examples",
+        headers=headers,
+        json={"relative_paths": ["classe_0/img_0.png", "classe_1/img_0.png"]},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["synthesis"] is None
+
+
+def test_explain_batch_includes_a_synthesis_above_the_minimum_sample_size(client, db_session):
+    """Lot Synthèse Grad-CAM — évaluation d'une maquette externe ("pas
+    juste une heatmap par image, une observation transversale"). 5 images
+    >= MIN_IMAGES_FOR_SYNTHESIS (4) : `synthesis` doit être rempli avec des
+    chiffres cohérents entre eux."""
+    headers = _register(client)
+    dataset = _upload_vision_dataset(client, headers)
+    job = _create_job(client, headers, dataset["id"]).json()
+    run_vision_classification_job(job["id"])
+    db_session.expire_all()
+
+    resp = client.post(
+        f"/api/vision/classification/jobs/{job['id']}/explain-dataset-examples",
+        headers=headers,
+        json={"relative_paths": [f"classe_0/img_{i}.png" for i in range(5)]},
+    )
+    assert resp.status_code == 200
+    synthesis = resp.json()["synthesis"]
+    assert synthesis is not None
+    assert synthesis["n_images"] == 5
+    assert 0 <= synthesis["n_border_biased"] <= 5
+    assert synthesis["border_biased_fraction"] == pytest.approx(synthesis["n_border_biased"] / 5)
+    assert 0.0 <= synthesis["area_fraction_border"] <= 1.0
+    assert synthesis["has_notable_pattern"] == (synthesis["border_biased_fraction"] > 0.5)
+    assert str(synthesis["n_images"]) in synthesis["observation"]
 
 
 def test_explain_batch_reports_missing_image_without_failing_the_others(client, db_session):

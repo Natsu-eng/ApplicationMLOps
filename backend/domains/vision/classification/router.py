@@ -51,9 +51,11 @@ from domains.vision.classification.services.engine import (
     MAX_BACKBONES_PER_COMPARISON,
 )
 from domains.vision.classification.services.gradcam import (
+    GradCamAttentionSynthesis,
     GradCamError,
     explain_classification_prediction,
     explain_classification_predictions_batch,
+    synthesize_attention_pattern,
 )
 from domains.vision.classification.services.registry import (
     CLASSIFICATION_BACKBONE_REGISTRY,
@@ -186,8 +188,42 @@ class GradCamBatchItemOut(BaseModel):
     error: Optional[str] = None
 
 
+class GradCamAttentionSynthesisOut(BaseModel):
+    """Constat agrégé sur le lot — voir
+    `domains/vision/classification/services/gradcam.py::synthesize_
+    attention_pattern` pour la méthode. Jamais renvoyé pour un lot trop
+    petit (`ExplainDatasetExamplesResponse.synthesis` reste `None`)."""
+    n_images: int
+    n_border_biased: int
+    border_biased_fraction: float
+    area_fraction_border: float
+    has_notable_pattern: bool
+    observation: str
+
+
 class ExplainDatasetExamplesResponse(BaseModel):
     results: List[GradCamBatchItemOut]
+    # Constat transversal sur le lot entier (Lot Synthèse Grad-CAM) — `None`
+    # si moins de `MIN_IMAGES_FOR_SYNTHESIS` images expliquées avec succès,
+    # jamais un constat forcé sur un échantillon trop petit pour être fiable.
+    synthesis: Optional[GradCamAttentionSynthesisOut] = None
+
+
+def _to_synthesis_out(synthesis: Optional[GradCamAttentionSynthesis]) -> Optional[GradCamAttentionSynthesisOut]:
+    """Convertit `GradCamAttentionSynthesis` (dataclasse du service) en
+    schéma de réponse — partagé par `/explain-dataset-examples` et
+    `/explain-batch`, les deux seuls appelants de `synthesize_attention_
+    pattern`."""
+    if synthesis is None:
+        return None
+    return GradCamAttentionSynthesisOut(
+        n_images=synthesis.n_images,
+        n_border_biased=synthesis.n_border_biased,
+        border_biased_fraction=synthesis.border_biased_fraction,
+        area_fraction_border=synthesis.area_fraction_border,
+        has_notable_pattern=synthesis.has_notable_pattern,
+        observation=synthesis.observation,
+    )
 
 
 class VisionClassificationResultOut(BaseModel):
@@ -727,7 +763,11 @@ def explain_vision_classification_dataset_examples(
                     heatmap_png=item.result.heatmap_png,
                 )
             )
-    return ExplainDatasetExamplesResponse(results=results)
+    synthesis = synthesize_attention_pattern(batch_results)
+    return ExplainDatasetExamplesResponse(
+        results=results,
+        synthesis=_to_synthesis_out(synthesis),
+    )
 
 
 @router.post(
@@ -810,7 +850,11 @@ async def explain_vision_classification_uploaded_batch(
                     heatmap_png=item.result.heatmap_png,
                 )
             )
-    return ExplainDatasetExamplesResponse(results=results)
+    synthesis = synthesize_attention_pattern(batch_results)
+    return ExplainDatasetExamplesResponse(
+        results=results,
+        synthesis=_to_synthesis_out(synthesis),
+    )
 
 
 @router.post("/jobs/{job_id}/cancel", response_model=VisionClassificationJobSummary)

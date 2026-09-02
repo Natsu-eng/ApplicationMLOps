@@ -1080,6 +1080,25 @@ export interface GradCamBatchItem {
   error: string | null;
 }
 
+// Constat transversal sur le lot entier (pas une heatmap de plus) — retour
+// d'évaluation d'une maquette externe : "une observation sur ce qui cloche"
+// plutôt qu'une image à la fois. `null` si moins de 4 images expliquées
+// avec succès (voir backend MIN_IMAGES_FOR_SYNTHESIS) — jamais un constat
+// forcé sur un échantillon trop petit.
+export interface GradCamAttentionSynthesis {
+  n_images: number;
+  n_border_biased: number;
+  border_biased_fraction: number;
+  area_fraction_border: number;
+  has_notable_pattern: boolean;
+  observation: string;
+}
+
+export interface GradCamBatchResponse {
+  results: GradCamBatchItem[];
+  synthesis: GradCamAttentionSynthesis | null;
+}
+
 export interface VisionAnomalyModelOption {
   id: string;
   label: string;
@@ -1943,7 +1962,7 @@ export const api = {
     // utilisateur direct : "Grad-CAM devrait supporter le batch") — zéro
     // upload, un ou plusieurs `relative_path` (voir PredictionExampleOut).
     explainDatasetExamples: (id: number, relativePaths: string[]) =>
-      request<{ results: GradCamBatchItem[] }>(`/vision/classification/jobs/${id}/explain-dataset-examples`, {
+      request<GradCamBatchResponse>(`/vision/classification/jobs/${id}/explain-dataset-examples`, {
         method: "POST",
         body: JSON.stringify({ relative_paths: relativePaths }),
       }),
@@ -1952,7 +1971,7 @@ export const api = {
     // complémentaire d'`explain` (une seule image) et
     // d'`explainDatasetExamples` (images déjà dans le dataset).
     explainBatch: (id: number, files: File[]) =>
-      uploadFiles<{ results: GradCamBatchItem[] }>(`/vision/classification/jobs/${id}/explain-batch`, files),
+      uploadFiles<GradCamBatchResponse>(`/vision/classification/jobs/${id}/explain-batch`, files),
     cancel: (id: number) =>
       request<VisionClassificationJobSummary>(`/vision/classification/jobs/${id}/cancel`, { method: "POST" }),
     rerun: (id: number) =>

@@ -17,6 +17,7 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
+import numpy as np
 import torch
 import torch.nn as nn
 from PIL import Image
@@ -38,6 +39,16 @@ class GradCamResult:
     probabilities: dict[str, float]
     target_label: str  # classe réellement expliquée (= predicted_label si non précisée)
     heatmap_png: str
+    # Part de l'attention Grad-CAM tombant dans la bordure de l'image, et
+    # forme de la carte BRUTE (résolution du dernier bloc convolutif, ex.
+    # 7×7) qui l'a produite — voir `compute_border_attention_fraction`
+    # ci-dessous. Jamais la carte redimensionnée à la taille de l'image
+    # d'origine (coût inutile, la position RELATIVE suffit). Sert
+    # uniquement à `synthesize_attention_pattern` (jamais affichée seule,
+    # un seul chiffre par image n'a pas de sens isolément) — jamais None :
+    # `_run_gradcam` les calcule toujours.
+    border_attention_fraction: float
+    cam_map_shape: tuple[int, ...]
 
 
 @dataclass
@@ -51,6 +62,162 @@ class GradCamBatchItemResult:
     key: str
     result: GradCamResult | None
     error: str | None
+
+
+# ── Synthèse agrégée (constat transversal sur PLUSIEURS images, pas une
+# heatmap de plus) — retour d'évaluation d'une maquette externe : "pas juste
+# une heatmap par image, une observation transversale sur ce qui cloche"
+# (ex. "3 fois sur 4, l'attention porte sur le bord plutôt que la zone
+# usinée"). Jamais un LLM qui commenterait les images — un calcul
+# géométrique exact sur les cartes Grad-CAM déjà produites (même principe
+# que `services/verdict.py` : uniquement des règles déterministes sur des
+# nombres déjà calculés, rien d'inventé).
+#
+# Choix du split "bordure vs centre" plutôt qu'une notion métier ("zone
+# usinée", "objet d'intérêt") : générique à N'IMPORTE QUEL dataset d'images
+# sans connaissance a priori du sujet (contrairement à une segmentation ou
+# une détection d'objet, hors périmètre) — une attention systématiquement
+# concentrée sur la bordure plutôt que le sujet central est un signe de
+# biais connu et documenté en interprétabilité (le modèle capte le cadrage/
+# arrière-plan plutôt que l'objet), pas une garantie absolue : présenté
+# comme une OBSERVATION statistique avec ses chiffres, jamais un diagnostic
+# certain.
+BORDER_RATIO = 0.2
+# Épaisseur de la bordure, en fraction de chaque côté de l'image — ex. 0,2
+# = les 20 % extérieurs sur chaque axe comptent comme "bordure". Valeur
+# fixe documentée (comme `PSI_BINS`/`MIN_CURRENT_ROWS_FOR_DRIFT` dans
+# `domains/shared/drift.py`), jamais recalculée par image.
+
+MIN_IMAGES_FOR_SYNTHESIS = 4
+# En dessous, "X fois sur Y" n'a pas de sens statistique (voir même
+# raisonnement que `MIN_CURRENT_ROWS_FOR_DRIFT`) — `synthesize_attention_
+# pattern` renvoie `None` plutôt qu'un constat sur un échantillon trop
+# petit pour être autre chose que du bruit.
+
+_BORDER_MASK_CACHE: dict[tuple[int, ...], np.ndarray] = {}
+# La forme de `cam_map` est FIXE pour un backbone donné (résolution du
+# dernier bloc convolutif, ex. toujours 7×7 pour un backbone à stride 32
+# sur une entrée 224×224) — recalculer le même masque booléen à chaque
+# image d'un batch de 12 serait un travail identique répété 12 fois pour
+# rien ; le cache est mémoire-négligeable (un booléen par cellule de carte,
+# jamais par pixel d'image).
+
+
+def _border_mask(shape: tuple[int, ...], border_ratio: float) -> np.ndarray:
+    """Masque booléen (True = cellule de bordure) sur une grille `shape`,
+    par POSITION RELATIVE (0..1 sur chaque axe) — indépendant de la
+    résolution réelle de `cam_map`, qui diffère selon le backbone."""
+    cache_key = shape
+    cached = _BORDER_MASK_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+    h, w = shape
+    row_pos = np.linspace(0.0, 1.0, h) if h > 1 else np.array([0.5])
+    col_pos = np.linspace(0.0, 1.0, w) if w > 1 else np.array([0.5])
+    row_is_border = (row_pos < border_ratio) | (row_pos > 1 - border_ratio)
+    col_is_border = (col_pos < border_ratio) | (col_pos > 1 - border_ratio)
+    mask = row_is_border[:, None] | col_is_border[None, :]
+    _BORDER_MASK_CACHE[cache_key] = mask
+    return mask
+
+
+def compute_border_attention_fraction(cam_map: np.ndarray, border_ratio: float = BORDER_RATIO) -> float:
+    """Part de la masse d'attention Grad-CAM (carte déjà post-ReLU, donc
+    ≥ 0 partout) tombant dans la bordure de l'image, sur [0, 1]. `cam_map`
+    est la carte BRUTE (résolution du dernier bloc convolutif), jamais la
+    version redimensionnée — la position relative suffit, redimensionner
+    d'abord ne changerait pas le résultat mais coûterait plus cher.
+
+    0.0 si la carte est entièrement nulle (cas dégénéré : gradient nul,
+    jamais observé en pratique mais géré explicitement plutôt qu'une
+    division par zéro qui remonterait comme une erreur 500 opaque)."""
+    total = float(cam_map.sum())
+    if total <= 0:
+        return 0.0
+    mask = _border_mask(cam_map.shape, border_ratio)
+    return float(cam_map[mask].sum() / total)
+
+
+def _area_fraction_border(shape: tuple[int, ...], border_ratio: float = BORDER_RATIO) -> float:
+    """Part de la carte occupée par la bordure PAR PURE GÉOMÉTRIE (sans
+    aucune attention) — la référence "au hasard" à laquelle comparer
+    `compute_border_attention_fraction` : sur une grille grossière (ex.
+    7×7), la bordure à 20 % occupe déjà une bonne partie de la carte, une
+    comparaison à un seuil fixe (0,5) serait donc trompeuse à résolution
+    grossière. Comparer à CETTE valeur exacte, recalculée pour la forme
+    réelle de la carte, s'auto-calibre quelle que soit la résolution du
+    backbone."""
+    mask = _border_mask(shape, border_ratio)
+    return float(mask.mean())
+
+
+@dataclass
+class GradCamAttentionSynthesis:
+    """Constat agrégé sur un lot d'images déjà expliquées — voir le
+    commentaire de section ci-dessus. `observation` est un gabarit rempli
+    par les chiffres calculés, jamais du texte libre."""
+
+    n_images: int
+    n_border_biased: int
+    border_biased_fraction: float
+    area_fraction_border: float  # ce que donnerait une attention purement au hasard, pour comparaison
+    has_notable_pattern: bool
+    observation: str
+
+
+def synthesize_attention_pattern(items: list[GradCamBatchItemResult]) -> GradCamAttentionSynthesis | None:
+    """Agrège `border_attention_fraction` sur les images expliquées AVEC
+    SUCCÈS d'un lot (les échecs individuels, déjà signalés par `error`,
+    n'ont pas de carte à agréger). `None` si moins de
+    `MIN_IMAGES_FOR_SYNTHESIS` images exploitables — jamais un constat sur
+    un échantillon trop petit.
+
+    Une image est "en biais de bordure" quand sa part d'attention en
+    bordure DÉPASSE ce que donnerait une attention purement uniforme sur
+    cette même carte (`_area_fraction_border`) — over-représentée par
+    rapport au hasard, pas juste "plus de la moitié" (trompeur sur une
+    grille grossière, voir `_area_fraction_border`).
+
+    `has_notable_pattern` = majorité stricte des images en biais de
+    bordure — en dessous, l'observation le dit explicitement plutôt que de
+    forcer un constat sur un pattern qui n'en est pas un."""
+    successful = [item.result for item in items if item.result is not None]
+    n_images = len(successful)
+    if n_images < MIN_IMAGES_FOR_SYNTHESIS:
+        return None
+
+    # `area_fraction_border` est identique pour toutes les images du lot
+    # (même backbone pour tout un batch, donc même forme de carte) —
+    # calculée une seule fois à partir de la forme réellement observée sur
+    # le premier résultat.
+    area_fraction = _area_fraction_border(successful[0].cam_map_shape)
+    n_border_biased = sum(1 for r in successful if r.border_attention_fraction > area_fraction)
+    border_biased_fraction = n_border_biased / n_images
+    has_notable_pattern = border_biased_fraction > 0.5
+
+    if has_notable_pattern:
+        observation = (
+            f"Sur {n_images} images expliquées, {n_border_biased} ({border_biased_fraction * 100:.0f} %) "
+            f"montrent une attention concentrée sur la bordure de l'image plutôt que sur le centre — "
+            f"davantage que si l'attention était uniformément répartie ({area_fraction * 100:.0f} % "
+            f"attendus par pur hasard sur cette carte). Signe possible que le modèle capte le cadrage "
+            f"ou l'arrière-plan plutôt que le sujet lui-même."
+        )
+    else:
+        observation = (
+            f"Sur {n_images} images expliquées, {n_border_biased} ({border_biased_fraction * 100:.0f} %) "
+            f"montrent une attention concentrée sur la bordure plutôt que le centre — pas de biais "
+            f"systématique notable sur cet échantillon."
+        )
+
+    return GradCamAttentionSynthesis(
+        n_images=n_images,
+        n_border_biased=n_border_biased,
+        border_biased_fraction=border_biased_fraction,
+        area_fraction_border=area_fraction,
+        has_notable_pattern=has_notable_pattern,
+        observation=observation,
+    )
 
 
 class _ActivationGradientCapture:
@@ -154,6 +321,12 @@ def _run_gradcam(
         # rouges de l'image superposée sont celles qui ont le plus influencé
         # la prédiction, directement lisibles sur la photo elle-même.
         heatmap_png=overlay_heatmap_on_image(image, cam_original_size),
+        # Sur la carte BRUTE (pas `cam_original_size`) — voir
+        # `compute_border_attention_fraction`, calcul quasi gratuit
+        # (quelques dizaines de cellules), jamais sur l'image pleine
+        # résolution.
+        border_attention_fraction=compute_border_attention_fraction(cam_map),
+        cam_map_shape=cam_map.shape,
     )
 
 

@@ -7,6 +7,7 @@ import {
   Boxes,
   ChevronLeft,
   ChevronRight,
+  Eye,
   FileCode,
   FileJson,
   Loader2,
@@ -24,6 +25,7 @@ import {
   api,
   type AugmentationPreset,
   type BackboneComparisonCandidate,
+  type GradCamAttentionSynthesis,
   type GradCamBatchItem,
   type GradCamExplanation,
   type VisionBackbone,
@@ -897,6 +899,7 @@ function ClassificationResultView({
   // sélection doit survivre en passant de "Exemples" à "Grad-CAM".
   const [selectedForExplain, setSelectedForExplain] = useState<Set<string>>(new Set());
   const [batchExplainResults, setBatchExplainResults] = useState<GradCamBatchItem[] | null>(null);
+  const [batchExplainSynthesis, setBatchExplainSynthesis] = useState<GradCamAttentionSynthesis | null>(null);
   const [batchExplainLoading, setBatchExplainLoading] = useState(false);
   const [batchExplainError, setBatchExplainError] = useState<string | null>(null);
 
@@ -925,6 +928,7 @@ function ClassificationResultView({
     try {
       const res = await api.visionClassification.explainDatasetExamples(jobId, Array.from(selectedForExplain));
       setBatchExplainResults(res.results);
+      setBatchExplainSynthesis(res.synthesis);
       setSelectedForExplain(new Set());
       setActiveTab("gradcam");
     } catch (err) {
@@ -1118,7 +1122,15 @@ function ClassificationResultView({
       {activeTab === "fiabilite" && <ReliabilityTab result={result} />}
 
       {activeTab === "gradcam" && (
-        <GradCamPanel jobId={jobId} batchResults={batchExplainResults} onClearBatch={() => setBatchExplainResults(null)} />
+        <GradCamPanel
+          jobId={jobId}
+          batchResults={batchExplainResults}
+          batchSynthesis={batchExplainSynthesis}
+          onClearBatch={() => {
+            setBatchExplainResults(null);
+            setBatchExplainSynthesis(null);
+          }}
+        />
       )}
     </div>
   );
@@ -1222,9 +1234,30 @@ function GradCamColorLegend({ targetLabel }: { targetLabel: string }) {
   );
 }
 
+/** Constat transversal Grad-CAM (Lot Synthèse) — un chiffre calculé, pas un
+ * commentaire d'image. `null` quand le lot était trop petit (backend
+ * `MIN_IMAGES_FOR_SYNTHESIS`) : rien à afficher, jamais une carte vide. */
+function GradCamSynthesisCard({ synthesis }: { synthesis: GradCamAttentionSynthesis }) {
+  return (
+    <Card className={`p-4 ${accentSurfaceClass(synthesis.has_notable_pattern ? "amber" : "blue")}`}>
+      <div className="flex items-start gap-3">
+        <Eye size={18} className={synthesis.has_notable_pattern ? "text-warning flex-shrink-0 mt-0.5" : "text-primary flex-shrink-0 mt-0.5"} />
+        <div>
+          <p className="text-sm text-foreground/90">{synthesis.observation}</p>
+          <p className="text-caption text-muted-foreground mt-1">
+            Zone "bordure" = les 20 % extérieurs de l'image sur chaque axe. Une observation statistique, pas un
+            diagnostic certain — à recouper avec les images elles-mêmes ci-dessous.
+          </p>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
 function GradCamPanel({
   jobId,
   batchResults,
+  batchSynthesis,
   onClearBatch,
 }: {
   jobId: number;
@@ -1233,6 +1266,7 @@ function GradCamPanel({
    * lot n'a été demandé, indépendant de l'explication par upload ci-dessous
    * (les deux peuvent coexister). */
   batchResults: GradCamBatchItem[] | null;
+  batchSynthesis: GradCamAttentionSynthesis | null;
   onClearBatch: () => void;
 }) {
   const [explanation, setExplanation] = useState<GradCamExplanation | null>(null);
@@ -1242,6 +1276,7 @@ function GradCamPanel({
   // temps ?") — distinct de `batchResults` (prop, images déjà dans le
   // dataset) même si l'affichage réutilise le même motif de grille.
   const [uploadedBatchResults, setUploadedBatchResults] = useState<GradCamBatchItem[] | null>(null);
+  const [uploadedBatchSynthesis, setUploadedBatchSynthesis] = useState<GradCamAttentionSynthesis | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -1256,6 +1291,7 @@ function GradCamPanel({
     setError(null);
     setExplanation(null);
     setUploadedBatchResults(null);
+    setUploadedBatchSynthesis(null);
     setIsSubmitting(true);
     try {
       if (selected.length === 1) {
@@ -1265,6 +1301,7 @@ function GradCamPanel({
         setPreviewUrl(null);
         const res = await api.visionClassification.explainBatch(jobId, selected);
         setUploadedBatchResults(res.results);
+        setUploadedBatchSynthesis(res.synthesis);
       }
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Impossible de générer l'explication");
@@ -1288,6 +1325,11 @@ function GradCamPanel({
               Effacer
             </Button>
           </div>
+          {batchSynthesis && (
+            <div className="mb-4">
+              <GradCamSynthesisCard synthesis={batchSynthesis} />
+            </div>
+          )}
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
             {batchResults.map((item) => (
               <div key={item.relative_path} className="space-y-1.5">
@@ -1363,6 +1405,7 @@ function GradCamPanel({
 
         {uploadedBatchResults && (
           <div className="mt-4 space-y-3">
+            {uploadedBatchSynthesis && <GradCamSynthesisCard synthesis={uploadedBatchSynthesis} />}
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
               {uploadedBatchResults.map((item, i) => (
                 <div key={`${item.relative_path}-${i}`} className="space-y-1.5">

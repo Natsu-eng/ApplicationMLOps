@@ -10,13 +10,18 @@ import numpy as np
 import pytest
 from PIL import Image
 
-from domains.vision.classification.services.registry import CLASSIFICATION_BACKBONE_REGISTRY
 from domains.vision.classification.services.engine import ClassificationConfig, train_and_evaluate_classification
 from domains.vision.classification.services.gradcam import (
+    MIN_IMAGES_FOR_SYNTHESIS,
+    GradCamBatchItemResult,
     GradCamError,
+    GradCamResult,
+    compute_border_attention_fraction,
     explain_classification_prediction,
     explain_classification_predictions_batch,
+    synthesize_attention_pattern,
 )
+from domains.vision.classification.services.registry import CLASSIFICATION_BACKBONE_REGISTRY
 
 
 def _write_classification_dataset(root, n_per_class=10, size=(80, 80)):
@@ -90,9 +95,8 @@ def test_explain_with_explicit_target_label(trained_artifact):
 
 def test_explain_rejects_unknown_target_label(trained_artifact):
     artifact, sample_image_path = trained_artifact
-    with Image.open(sample_image_path) as image:
-        with pytest.raises(GradCamError):
-            explain_classification_prediction(artifact, image, target_label="vert")
+    with Image.open(sample_image_path) as image, pytest.raises(GradCamError):
+        explain_classification_prediction(artifact, image, target_label="vert")
 
 
 def test_all_registered_backbones_support_gradcam():
@@ -239,3 +243,102 @@ def test_explain_falls_back_to_224_for_artifacts_predating_the_image_size_field(
         explanation = explain_classification_prediction(artifact_without_image_size, image)
 
     assert explanation.predicted_label in {"rouge", "bleu"}
+
+
+# ── Synthèse agrégée (retour d'évaluation d'une maquette externe : "pas
+# juste une heatmap par image, une observation transversale sur ce qui
+# cloche") ─────────────────────────────────────────────────────────────
+
+
+def test_border_attention_fraction_is_high_for_a_border_concentrated_map():
+    cam = np.zeros((7, 7))
+    cam[0, :] = 1.0  # toute l'attention sur la première rangée (bordure)
+    fraction = compute_border_attention_fraction(cam)
+    assert fraction == pytest.approx(1.0)
+
+
+def test_border_attention_fraction_is_zero_for_a_center_concentrated_map():
+    cam = np.zeros((7, 7))
+    cam[3, 3] = 1.0  # toute l'attention sur la cellule centrale exacte
+    fraction = compute_border_attention_fraction(cam)
+    assert fraction == pytest.approx(0.0)
+
+
+def test_border_attention_fraction_handles_an_all_zero_map_without_crashing():
+    cam = np.zeros((7, 7))
+    assert compute_border_attention_fraction(cam) == 0.0
+
+
+def _fake_item(key: str, border_fraction: float | None, shape=(7, 7)) -> GradCamBatchItemResult:
+    if border_fraction is None:
+        return GradCamBatchItemResult(key=key, result=None, error="échec simulé")
+    result = GradCamResult(
+        predicted_label="rouge",
+        probabilities={"rouge": 0.9, "bleu": 0.1},
+        target_label="rouge",
+        heatmap_png="data:image/png;base64,",
+        border_attention_fraction=border_fraction,
+        cam_map_shape=shape,
+    )
+    return GradCamBatchItemResult(key=key, result=result, error=None)
+
+
+def test_synthesis_returns_none_below_the_minimum_sample_size():
+    items = [_fake_item(str(i), 1.0) for i in range(MIN_IMAGES_FOR_SYNTHESIS - 1)]
+    assert synthesize_attention_pattern(items) is None
+
+
+def test_synthesis_detects_a_majority_border_bias():
+    # Bordure maximale (1.0) pour tous — largement au-dessus de la
+    # référence "au hasard" (~0,82 sur une grille 7x7 à 20 % de bordure).
+    items = [_fake_item(str(i), 1.0) for i in range(MIN_IMAGES_FOR_SYNTHESIS)]
+    synthesis = synthesize_attention_pattern(items)
+    assert synthesis is not None
+    assert synthesis.n_images == MIN_IMAGES_FOR_SYNTHESIS
+    assert synthesis.n_border_biased == MIN_IMAGES_FOR_SYNTHESIS
+    assert synthesis.border_biased_fraction == pytest.approx(1.0)
+    assert synthesis.has_notable_pattern is True
+    assert str(MIN_IMAGES_FOR_SYNTHESIS) in synthesis.observation
+
+
+def test_synthesis_reports_no_notable_pattern_when_attention_stays_central():
+    # Bordure nulle (0.0) pour tous — bien en dessous de la référence "au
+    # hasard", jamais classée en biais de bordure.
+    items = [_fake_item(str(i), 0.0) for i in range(MIN_IMAGES_FOR_SYNTHESIS)]
+    synthesis = synthesize_attention_pattern(items)
+    assert synthesis is not None
+    assert synthesis.n_border_biased == 0
+    assert synthesis.has_notable_pattern is False
+
+
+def test_synthesis_ignores_failed_items_when_counting_the_sample():
+    successful = [_fake_item(str(i), 1.0) for i in range(MIN_IMAGES_FOR_SYNTHESIS)]
+    failed = [_fake_item("echec", None)]
+    synthesis = synthesize_attention_pattern(successful + failed)
+    assert synthesis is not None
+    assert synthesis.n_images == MIN_IMAGES_FOR_SYNTHESIS  # l'échec n'est pas compté
+
+
+def test_synthesis_over_a_real_batch_of_explained_images(trained_artifact):
+    """Bout-en-bout — la synthèse doit fonctionner sur de VRAIES cartes
+    Grad-CAM produites par un modèle réellement entraîné, pas seulement sur
+    des données synthétiques."""
+    artifact, sample_image_path = trained_artifact
+    root = sample_image_path.parent.parent
+    paths = [
+        (f"rouge/{i}.png", root / "rouge" / f"{i}.png") for i in range(3)
+    ] + [
+        (f"bleu/{i}.png", root / "bleu" / f"{i}.png") for i in range(3)
+    ]
+    images = [(key, Image.open(path)) for key, path in paths]
+    try:
+        results = explain_classification_predictions_batch(artifact, images)
+    finally:
+        for _, image in images:
+            image.close()
+
+    synthesis = synthesize_attention_pattern(results)
+    assert synthesis is not None
+    assert synthesis.n_images == 6
+    assert 0.0 <= synthesis.border_biased_fraction <= 1.0
+    assert 0.0 <= synthesis.area_fraction_border <= 1.0
