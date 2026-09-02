@@ -45,6 +45,7 @@ from domains.shared.dataset_io import (
     read_dataset_dataframe,
     validate_extension,
 )
+from domains.shared.drift import MAX_PREDICTIONS_FOR_DRIFT, MIN_CURRENT_ROWS_FOR_DRIFT, compute_drift_report
 from domains.shared.feature_engineering import CURRENT_SPEC_VERSION
 from domains.shared.job_creation import enqueue_or_mark_failed, remember_idempotent_job_id, resolve_idempotent_job_id
 from domains.shared.job_events import stream_job_updates
@@ -410,6 +411,23 @@ class PredictionHistoryEntry(BaseModel):
 
 class PredictionHistoryResponse(BaseModel):
     entries: List[PredictionHistoryEntry]
+
+
+class DriftFeatureOut(BaseModel):
+    """Une variable du rapport de dérive — voir `domains/shared/drift.py`
+    pour la méthode (PSI) et les seuils de `severity`."""
+    feature: str
+    psi: float
+    severity: str
+
+
+class DriftReportOut(BaseModel):
+    n_predictions_analyzed: int
+    insufficient_data: bool
+    features: List[DriftFeatureOut]
+    n_significant: int
+    n_moderate: int
+    min_predictions_required: int
 
 
 class BatchPredictionJobSummary(BaseModel):
@@ -1510,6 +1528,64 @@ def list_job_predictions(
             created_at=row.created_at,
         ))
     return PredictionHistoryResponse(entries=entries)
+
+
+@router.get("/jobs/{job_id}/model/drift", response_model=DriftReportOut)
+def get_model_drift(
+    job_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Dérive des données (data drift) — compare la distribution des
+    variables d'entrée réellement envoyées en production
+    (`Prediction.input_json`, les plus récentes d'abord) à celle du
+    dataset d'entraînement, variable par variable (PSI, voir
+    `domains/shared/drift.py`).
+
+    Manque identifié en évaluant une maquette externe (dont le texte
+    anticipe "le plus ancien n'a pas été revérifié — contrôler sa dérive")
+    face à notre propre tableau de bord ("Fiabilité des modèles actifs",
+    `domains/dashboard/router.py`), qui n'offrait jusqu'ici aucun moyen de
+    le faire — première fonctionnalité de suivi POST-déploiement du
+    produit (verdict/seuil/fiabilité s'arrêtaient tous à l'instant du
+    déploiement)."""
+    job = _get_org_job(job_id, current_user, db)
+    if job.model is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"code": "MODELE_NON_DISPONIBLE", "message": "Cet entraînement n'a pas encore produit de modèle"},
+        )
+    model = job.model
+    feature_columns = json.loads(model.feature_columns_json)
+
+    rows = (
+        db.query(Prediction)
+        .filter(Prediction.ml_model_id == model.id, Prediction.organization_id == current_user.organization_id)
+        .order_by(Prediction.id.desc())
+        .limit(MAX_PREDICTIONS_FOR_DRIFT)
+        .all()
+    )
+    if len(rows) < MIN_CURRENT_ROWS_FOR_DRIFT:
+        return DriftReportOut(
+            n_predictions_analyzed=len(rows),
+            insufficient_data=True,
+            features=[],
+            n_significant=0,
+            n_moderate=0,
+            min_predictions_required=MIN_CURRENT_ROWS_FOR_DRIFT,
+        )
+
+    current_df = pd.DataFrame([json.loads(row.input_json) for row in rows])
+    try:
+        reference_df = read_dataset_dataframe(Path(job.dataset.file_path), Path(job.dataset.file_path).suffix)
+    except (DatasetParsingError, UnsupportedFileType) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"code": "DATASET_LECTURE_ECHEC", "message": str(exc)},
+        ) from exc
+
+    report = compute_drift_report(reference_df, current_df, feature_columns)
+    return DriftReportOut(**report, min_predictions_required=MIN_CURRENT_ROWS_FOR_DRIFT)
 
 
 # ── Prédiction en lot (retour utilisateur : "batch prediction" — upload

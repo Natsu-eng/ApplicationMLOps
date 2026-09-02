@@ -1564,6 +1564,23 @@ export interface PredictionHistoryEntry {
   created_at: string;
 }
 
+// Dérive des données — voir backend/domains/shared/drift.py (PSI). severity
+// : "stable" / "modere" / "significatif".
+export interface DriftFeature {
+  feature: string;
+  psi: number;
+  severity: "stable" | "modere" | "significatif";
+}
+
+export interface DriftReport {
+  n_predictions_analyzed: number;
+  insufficient_data: boolean;
+  features: DriftFeature[];
+  n_significant: number;
+  n_moderate: number;
+  min_predictions_required: number;
+}
+
 // Prédiction en lot (retour utilisateur : "batch prediction" — upload d'un
 // fichier, prédictions pour toutes les lignes) — même forme que
 // TrainingJobSummary (statut/progression/erreur), traitée par le frontend
@@ -1746,6 +1763,7 @@ export const api = {
       }),
     predictions: (jobId: number, limit = 50) =>
       request<{ entries: PredictionHistoryEntry[] }>(`/training/jobs/${jobId}/predictions?limit=${limit}`),
+    getDrift: (jobId: number) => request<DriftReport>(`/training/jobs/${jobId}/model/drift`),
     cancel: (id: number) => request<TrainingJobSummary>(`/training/jobs/${id}/cancel`, { method: "POST" }),
     rerun: (id: number) => request<TrainingJobSummary>(`/training/jobs/${id}/rerun`, { method: "POST" }),
     remove: (id: number) => request<void>(`/training/jobs/${id}`, { method: "DELETE" }),

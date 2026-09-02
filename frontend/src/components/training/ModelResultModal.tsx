@@ -1,5 +1,5 @@
 import { type ReactNode, useEffect, useState } from "react";
-import { Activity, AlertTriangle, Award, Calculator, ClipboardList, Download, FileCode, FileJson, Gauge, History, Scale, ShieldCheck, Sparkles, Trophy, UploadCloud, Wand2 } from "lucide-react";
+import { Activity, AlertTriangle, Award, Calculator, ClipboardList, Download, FileCode, FileJson, Gauge, History, Scale, ShieldCheck, Sparkles, Trophy, UploadCloud, Wand2, Waves } from "lucide-react";
 import {
   ApiError,
   api,
@@ -24,6 +24,7 @@ import { clampUnitScore } from "../../utils/cvScore";
 import { buildModelCard } from "../../utils/modelCard";
 import EvaluationCharts from "./EvaluationCharts";
 import { ShapBeeswarmChart, PermutationImportanceChart } from "./GlobalExplainability";
+import { DriftPanel } from "./DriftPanel";
 import { ModelVerdict } from "./ModelVerdict";
 import { CalibrationChart, LearningCurveChart } from "./ReliabilityDiagnostics";
 import PredictionForm from "./PredictionForm";
@@ -34,6 +35,7 @@ const RESULT_TABS = [
   { id: "comparaison", label: "Comparaison", icon: Scale },
   { id: "explicabilite", label: "Explicabilité", icon: Sparkles },
   { id: "fiabilite", label: "Fiabilité", icon: Activity },
+  { id: "derive", label: "Dérive", icon: Waves },
   { id: "predire", label: "Prédire", icon: Calculator },
   { id: "predire-lot", label: "Prédiction en lot", icon: UploadCloud },
   { id: "details", label: "Détails", icon: ClipboardList },
@@ -901,6 +903,8 @@ export function ModelResultView({ job }: { job: TrainingJobSummary }) {
               )}
             </div>
           )}
+
+          {activeTab === "derive" && <DriftPanel jobId={job.id} />}
 
           {activeTab === "predire" && (
             <PredictionForm jobId={job.id} taskType={model.task_type} featureSchema={model.feature_schema} />
