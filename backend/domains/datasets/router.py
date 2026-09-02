@@ -473,7 +473,7 @@ def get_dataset_eda(
     except KeyError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"code": "COLONNE_INTROUVABLE", "message": str(exc)},
+            detail={"code": ErrorCode.COLONNE_INTROUVABLE, "message": str(exc)},
         )
     return EdaResponse(
         row_count=len(df),
@@ -514,7 +514,7 @@ def get_dataset_histogram(
     except KeyError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"code": "COLONNE_INTROUVABLE", "message": str(exc)},
+            detail={"code": ErrorCode.COLONNE_INTROUVABLE, "message": str(exc)},
         )
     return HistogramResponse(**histogram)
 
@@ -572,7 +572,7 @@ def get_dataset_quality_check(
     except KeyError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"code": "COLONNE_INTROUVABLE", "message": str(exc)},
+            detail={"code": ErrorCode.COLONNE_INTROUVABLE, "message": str(exc)},
         )
     return DataQualityResponse(warnings=[DataWarning(**w) for w in warnings])
 
@@ -648,7 +648,7 @@ def get_dataset_feature_engineering_suggestions(
     except KeyError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"code": "COLONNE_INTROUVABLE", "message": str(exc)},
+            detail={"code": ErrorCode.COLONNE_INTROUVABLE, "message": str(exc)},
         )
     return FeatureEngineeringSuggestionsResponse(
         suggestions=[FeatureEngineeringSuggestion(**s) for s in suggestions]
@@ -683,7 +683,7 @@ def get_dataset_feature_by_target(
     except KeyError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"code": "COLONNE_INTROUVABLE", "message": str(exc)},
+            detail={"code": ErrorCode.COLONNE_INTROUVABLE, "message": str(exc)},
         )
     except ValueError as exc:
         raise HTTPException(

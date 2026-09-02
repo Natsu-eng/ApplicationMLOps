@@ -252,7 +252,10 @@ def create_dimensionality_job(
     if unknown:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"code": "COLONNES_INCONNUES", "message": f"Colonnes absentes du dataset : {', '.join(sorted(unknown))}"},
+            detail={
+                "code": ErrorCode.COLONNES_INCONNUES,
+                "message": f"Colonnes absentes du dataset : {', '.join(sorted(unknown))}",
+            },
         )
 
     try:
@@ -430,7 +433,7 @@ def export_dimensionality_deployment_script(
     except InferenceError as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"code": "ARTEFACT_ILLISIBLE", "message": str(exc)},
+            detail={"code": ErrorCode.ARTEFACT_ILLISIBLE, "message": str(exc)},
         ) from exc
     dataset_name = job.dataset.name.rsplit(".", 1)[0] if job.dataset else "export"
     base_name = f"projection_{dataset_name}_job{job.id}"
@@ -685,7 +688,10 @@ def cancel_dimensionality_job(job_id: int, current_user: User = Depends(get_curr
     if job.status not in ACTIVE_STATUSES:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail={"code": "JOB_NON_ANNULABLE", "message": "Cette réduction de dimension n'est plus en attente ni en cours"},
+            detail={
+                "code": ErrorCode.JOB_NON_ANNULABLE,
+                "message": "Cette réduction de dimension n'est plus en attente ni en cours",
+            },
         )
     try_cancel_rq_job(job.rq_job_id, analysis_queue)
     job.status = "cancelled"

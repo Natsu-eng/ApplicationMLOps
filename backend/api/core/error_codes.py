@@ -27,13 +27,16 @@ quel client sans avoir à parcourir le code source.
 Migration des littéraux existants vers `ErrorCode.XXX`, priorisée par
 ordre de risque de divergence (le code le plus dupliqué d'abord) :
 - `RESULTAT_INDISPONIBLE` (19 sites, 6 fichiers) — migré 2026-09-02.
-- Reste une dette explicite, priorisée pour la suite : `MODELE_NON_DISPONIBLE`
-  (16), `DATASET_LECTURE_ECHEC` (15), `ARTEFACT_INTROUVABLE` (12),
-  `DATASET_NON_PRET` (11), `DATASET_INTROUVABLE` (10), et 34 autres codes
-  dupliqués à moindre fréquence (153 sites au total, tous domaines
-  confondus) — non traités dans ce lot pour rester dans un diff vérifiable
+- `DATASET_LECTURE_ECHEC` (19), `MODELE_NON_DISPONIBLE` (17),
+  `ARTEFACT_INTROUVABLE` (12), `DATASET_NON_PRET` (11),
+  `DATASET_INTROUVABLE` (10) — migrés 2026-09-02 (2ᵉ lot, 69 sites, 7
+  fichiers).
+- Reste une dette explicite, priorisée pour la suite : 34 autres codes
+  dupliqués à moindre fréquence (89 sites au total, tous domaines
+  confondus, le plus fréquent restant `JOB_NON_ANNULABLE` à 6 sites) —
+  non traités dans ce lot pour rester dans un diff vérifiable
   intégralement (tests rejoués + ruff/mypy comparés ligne à ligne) plutôt
-  que de migrer les 39 codes d'un coup avec un risque de régression
+  que de migrer les 34 codes d'un coup avec un risque de régression
   proportionnellement plus difficile à auditer."""
 
 from __future__ import annotations

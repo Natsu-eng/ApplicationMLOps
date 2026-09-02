@@ -687,7 +687,10 @@ def cancel_vision_anomaly_job(job_id: int, current_user: User = Depends(get_curr
     if job.status not in ACTIVE_STATUSES:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail={"code": "JOB_NON_ANNULABLE", "message": "Cet entraînement n'est plus en attente ni en cours"},
+            detail={
+                "code": ErrorCode.JOB_NON_ANNULABLE,
+                "message": "Cet entraînement n'est plus en attente ni en cours",
+            },
         )
     try_cancel_rq_job(job.rq_job_id, vision_queue)
     job.status = "cancelled"
