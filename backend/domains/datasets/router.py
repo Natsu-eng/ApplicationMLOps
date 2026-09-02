@@ -22,6 +22,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from api.core.config import get_settings
 from api.core.database import get_db
+from api.core.error_codes import ErrorCode
 from api.core.models import AnomalyJob, ClusteringJob, Dataset, DimensionalityJob, TrainingJob, User
 from api.core.pagination import paginate_by_id
 from api.core.rate_limit import rate_limit_dependency
@@ -269,7 +270,7 @@ def _get_org_dataset(dataset_id: int, current_user: User, db: Session) -> Datase
     if dataset is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail={"code": "DATASET_INTROUVABLE", "message": "Dataset introuvable"},
+            detail={"code": ErrorCode.DATASET_INTROUVABLE, "message": "Dataset introuvable"},
         )
     return dataset
 
@@ -418,7 +419,7 @@ def preview_dataset(
     if dataset.status != "ready":
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail={"code": "DATASET_NON_PRET", "message": "Ce dataset n'a pas pu être analysé"},
+            detail={"code": ErrorCode.DATASET_NON_PRET, "message": "Ce dataset n'a pas pu être analysé"},
         )
     extension = Path(dataset.file_path).suffix
     try:
@@ -426,7 +427,7 @@ def preview_dataset(
     except DatasetParsingError as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"code": "DATASET_LECTURE_ECHEC", "message": str(exc)},
+            detail={"code": ErrorCode.DATASET_LECTURE_ECHEC, "message": str(exc)},
         )
     limit = max(1, min(limit, 500))
     rows = sample_rows(df, limit)
@@ -459,7 +460,7 @@ def get_dataset_eda(
     if dataset.status != "ready":
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail={"code": "DATASET_NON_PRET", "message": "Ce dataset n'a pas pu être analysé"},
+            detail={"code": ErrorCode.DATASET_NON_PRET, "message": "Ce dataset n'a pas pu être analysé"},
         )
     try:
         df = read_dataset_dataframe(Path(dataset.file_path), Path(dataset.file_path).suffix)
@@ -467,7 +468,7 @@ def get_dataset_eda(
     except DatasetParsingError as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"code": "DATASET_LECTURE_ECHEC", "message": str(exc)},
+            detail={"code": ErrorCode.DATASET_LECTURE_ECHEC, "message": str(exc)},
         )
     except KeyError as exc:
         raise HTTPException(
@@ -500,7 +501,7 @@ def get_dataset_histogram(
     if dataset.status != "ready":
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail={"code": "DATASET_NON_PRET", "message": "Ce dataset n'a pas pu être analysé"},
+            detail={"code": ErrorCode.DATASET_NON_PRET, "message": "Ce dataset n'a pas pu être analysé"},
         )
     try:
         df = read_dataset_dataframe(Path(dataset.file_path), Path(dataset.file_path).suffix)
@@ -508,7 +509,7 @@ def get_dataset_histogram(
     except DatasetParsingError as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"code": "DATASET_LECTURE_ECHEC", "message": str(exc)},
+            detail={"code": ErrorCode.DATASET_LECTURE_ECHEC, "message": str(exc)},
         )
     except KeyError as exc:
         raise HTTPException(
@@ -557,7 +558,7 @@ def get_dataset_quality_check(
     if dataset.status != "ready":
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail={"code": "DATASET_NON_PRET", "message": "Ce dataset n'a pas pu être analysé"},
+            detail={"code": ErrorCode.DATASET_NON_PRET, "message": "Ce dataset n'a pas pu être analysé"},
         )
     try:
         df = read_dataset_dataframe(Path(dataset.file_path), Path(dataset.file_path).suffix)
@@ -566,7 +567,7 @@ def get_dataset_quality_check(
     except DatasetParsingError as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"code": "DATASET_LECTURE_ECHEC", "message": str(exc)},
+            detail={"code": ErrorCode.DATASET_LECTURE_ECHEC, "message": str(exc)},
         )
     except KeyError as exc:
         raise HTTPException(
@@ -589,14 +590,14 @@ def get_dataset_target_suggestions(
     if dataset.status != "ready":
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail={"code": "DATASET_NON_PRET", "message": "Ce dataset n'a pas pu être analysé"},
+            detail={"code": ErrorCode.DATASET_NON_PRET, "message": "Ce dataset n'a pas pu être analysé"},
         )
     try:
         df = read_dataset_dataframe(Path(dataset.file_path), Path(dataset.file_path).suffix)
     except DatasetParsingError as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"code": "DATASET_LECTURE_ECHEC", "message": str(exc)},
+            detail={"code": ErrorCode.DATASET_LECTURE_ECHEC, "message": str(exc)},
         )
     suggestions = suggest_target_columns(df)
     return TargetSuggestionsResponse(
@@ -633,7 +634,7 @@ def get_dataset_feature_engineering_suggestions(
     if dataset.status != "ready":
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail={"code": "DATASET_NON_PRET", "message": "Ce dataset n'a pas pu être analysé"},
+            detail={"code": ErrorCode.DATASET_NON_PRET, "message": "Ce dataset n'a pas pu être analysé"},
         )
     try:
         df = read_dataset_dataframe(Path(dataset.file_path), Path(dataset.file_path).suffix)
@@ -642,7 +643,7 @@ def get_dataset_feature_engineering_suggestions(
     except DatasetParsingError as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"code": "DATASET_LECTURE_ECHEC", "message": str(exc)},
+            detail={"code": ErrorCode.DATASET_LECTURE_ECHEC, "message": str(exc)},
         )
     except KeyError as exc:
         raise HTTPException(
@@ -669,7 +670,7 @@ def get_dataset_feature_by_target(
     if dataset.status != "ready":
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail={"code": "DATASET_NON_PRET", "message": "Ce dataset n'a pas pu être analysé"},
+            detail={"code": ErrorCode.DATASET_NON_PRET, "message": "Ce dataset n'a pas pu être analysé"},
         )
     try:
         df = read_dataset_dataframe(Path(dataset.file_path), Path(dataset.file_path).suffix)
@@ -677,7 +678,7 @@ def get_dataset_feature_by_target(
     except DatasetParsingError as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"code": "DATASET_LECTURE_ECHEC", "message": str(exc)},
+            detail={"code": ErrorCode.DATASET_LECTURE_ECHEC, "message": str(exc)},
         )
     except KeyError as exc:
         raise HTTPException(

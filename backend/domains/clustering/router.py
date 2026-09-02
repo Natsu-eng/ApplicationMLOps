@@ -244,12 +244,12 @@ def create_clustering_job(
     if dataset is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail={"code": "DATASET_INTROUVABLE", "message": "Dataset introuvable"},
+            detail={"code": ErrorCode.DATASET_INTROUVABLE, "message": "Dataset introuvable"},
         )
     if dataset.status != "ready":
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail={"code": "DATASET_NON_PRET", "message": "Ce dataset n'a pas pu être analysé"},
+            detail={"code": ErrorCode.DATASET_NON_PRET, "message": "Ce dataset n'a pas pu être analysé"},
         )
 
     schema_columns = [c["name"] for c in json.loads(dataset.columns_json or "[]")]
@@ -282,7 +282,7 @@ def create_clustering_job(
     except DatasetParsingError as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"code": "DATASET_LECTURE_ECHEC", "message": str(exc)},
+            detail={"code": ErrorCode.DATASET_LECTURE_ECHEC, "message": str(exc)},
         )
 
     config = {
@@ -404,13 +404,16 @@ def export_clustering_model(job_id: int, current_user: User = Depends(get_curren
     if job.status != "completed" or job.result is None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail={"code": "MODELE_NON_DISPONIBLE", "message": "Ce clustering n'a pas encore produit de modèle"},
+            detail={
+                "code": ErrorCode.MODELE_NON_DISPONIBLE,
+                "message": "Ce clustering n'a pas encore produit de modèle",
+            },
         )
     artifact_path = Path(job.result.file_path)
     if not artifact_path.exists():
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail={"code": "ARTEFACT_INTROUVABLE", "message": "Artefact du modèle introuvable sur le serveur"},
+            detail={"code": ErrorCode.ARTEFACT_INTROUVABLE, "message": "Artefact du modèle introuvable sur le serveur"},
         )
     filename = f"clustering_{job.dataset.name.rsplit('.', 1)[0] if job.dataset else 'export'}_job{job.id}.joblib"
     return FileResponse(path=artifact_path, filename=filename, media_type="application/octet-stream")
@@ -428,14 +431,17 @@ def export_clustering_deployment_script(
     if job.status != "completed" or job.result is None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail={"code": "MODELE_NON_DISPONIBLE", "message": "Ce clustering n'a pas encore produit de modèle"},
+            detail={
+                "code": ErrorCode.MODELE_NON_DISPONIBLE,
+                "message": "Ce clustering n'a pas encore produit de modèle",
+            },
         )
     result = job.result
     artifact_path = Path(result.file_path)
     if not artifact_path.exists():
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail={"code": "ARTEFACT_INTROUVABLE", "message": "Artefact du modèle introuvable sur le serveur"},
+            detail={"code": ErrorCode.ARTEFACT_INTROUVABLE, "message": "Artefact du modèle introuvable sur le serveur"},
         )
     try:
         bundle = load_bundle(result.file_path)
@@ -577,7 +583,7 @@ def get_clustering_drift(
     except (DatasetParsingError, UnsupportedFileType) as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"code": "DATASET_LECTURE_ECHEC", "message": str(exc)},
+            detail={"code": ErrorCode.DATASET_LECTURE_ECHEC, "message": str(exc)},
         ) from exc
 
     report = compute_drift_report(reference_df, current_df, feature_columns)
@@ -604,7 +610,7 @@ def export_cluster_assignments(job_id: int, current_user: User = Depends(get_cur
     if job.dataset is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail={"code": "DATASET_INTROUVABLE", "message": "Dataset introuvable"},
+            detail={"code": ErrorCode.DATASET_INTROUVABLE, "message": "Dataset introuvable"},
         )
     result = job.result
     feature_columns = json.loads(result.feature_columns_json)
@@ -614,7 +620,7 @@ def export_cluster_assignments(job_id: int, current_user: User = Depends(get_cur
     except DatasetParsingError as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"code": "DATASET_LECTURE_ECHEC", "message": str(exc)},
+            detail={"code": ErrorCode.DATASET_LECTURE_ECHEC, "message": str(exc)},
         ) from exc
 
     try:

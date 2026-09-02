@@ -722,7 +722,7 @@ def get_duration_estimate(
     if dataset is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail={"code": "DATASET_INTROUVABLE", "message": "Dataset introuvable"},
+            detail={"code": ErrorCode.DATASET_INTROUVABLE, "message": "Dataset introuvable"},
         )
     estimate = estimate_training_duration(
         db, current_user.organization_id, dataset.row_count or 0, n_models, optuna_trials, cv_folds
@@ -785,12 +785,12 @@ def create_training_job(
     if dataset is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail={"code": "DATASET_INTROUVABLE", "message": "Dataset introuvable"},
+            detail={"code": ErrorCode.DATASET_INTROUVABLE, "message": "Dataset introuvable"},
         )
     if dataset.status != "ready":
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail={"code": "DATASET_NON_PRET", "message": "Ce dataset n'a pas pu être analysé"},
+            detail={"code": ErrorCode.DATASET_NON_PRET, "message": "Ce dataset n'a pas pu être analysé"},
         )
 
     schema_columns = [c["name"] for c in json.loads(dataset.columns_json or "[]")]
@@ -831,7 +831,7 @@ def create_training_job(
     except DatasetParsingError as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"code": "DATASET_LECTURE_ECHEC", "message": str(exc)},
+            detail={"code": ErrorCode.DATASET_LECTURE_ECHEC, "message": str(exc)},
         )
 
     task_type = body.task_type or detect_task_type(df[body.target_column])
@@ -1137,7 +1137,10 @@ def get_training_job_model(job_id: int, current_user: User = Depends(get_current
     if job.status != "completed" or job.model is None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail={"code": "MODELE_NON_DISPONIBLE", "message": "Cet entraînement n'a pas encore produit de modèle"},
+            detail={
+                "code": ErrorCode.MODELE_NON_DISPONIBLE,
+                "message": "Cet entraînement n'a pas encore produit de modèle",
+            },
         )
     return to_model_detail(job.model, db)
 
@@ -1180,7 +1183,10 @@ def promote_model(
     if job.status != "completed" or job.model is None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail={"code": "MODELE_NON_DISPONIBLE", "message": "Cet entraînement n'a pas encore produit de modèle"},
+            detail={
+                "code": ErrorCode.MODELE_NON_DISPONIBLE,
+                "message": "Cet entraînement n'a pas encore produit de modèle",
+            },
         )
     model = job.model
 
@@ -1303,13 +1309,16 @@ def export_model(job_id: int, current_user: User = Depends(get_current_user), db
     if job.status != "completed" or job.model is None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail={"code": "MODELE_NON_DISPONIBLE", "message": "Cet entraînement n'a pas encore produit de modèle"},
+            detail={
+                "code": ErrorCode.MODELE_NON_DISPONIBLE,
+                "message": "Cet entraînement n'a pas encore produit de modèle",
+            },
         )
     artifact_path = Path(job.model.file_path)
     if not artifact_path.exists():
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail={"code": "ARTEFACT_INTROUVABLE", "message": "Artefact du modèle introuvable sur le serveur"},
+            detail={"code": ErrorCode.ARTEFACT_INTROUVABLE, "message": "Artefact du modèle introuvable sur le serveur"},
         )
     filename = f"modele_{job.dataset.name.rsplit('.', 1)[0] if job.dataset else 'export'}_{job.target_column}_job{job.id}.joblib"
     return FileResponse(path=artifact_path, filename=filename, media_type="application/octet-stream")
@@ -1328,14 +1337,17 @@ def export_deployment_script(
     if job.status != "completed" or job.model is None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail={"code": "MODELE_NON_DISPONIBLE", "message": "Cet entraînement n'a pas encore produit de modèle"},
+            detail={
+                "code": ErrorCode.MODELE_NON_DISPONIBLE,
+                "message": "Cet entraînement n'a pas encore produit de modèle",
+            },
         )
     model = job.model
     artifact_path = Path(model.file_path)
     if not artifact_path.exists():
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail={"code": "ARTEFACT_INTROUVABLE", "message": "Artefact du modèle introuvable sur le serveur"},
+            detail={"code": ErrorCode.ARTEFACT_INTROUVABLE, "message": "Artefact du modèle introuvable sur le serveur"},
         )
     try:
         bundle = load_bundle(model.file_path)
@@ -1459,7 +1471,10 @@ def predict_with_model(
     if job.status != "completed" or job.model is None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail={"code": "MODELE_NON_DISPONIBLE", "message": "Cet entraînement n'a pas encore produit de modèle"},
+            detail={
+                "code": ErrorCode.MODELE_NON_DISPONIBLE,
+                "message": "Cet entraînement n'a pas encore produit de modèle",
+            },
         )
     model: MLModel = job.model
     feature_columns = json.loads(model.feature_columns_json)
@@ -1554,7 +1569,10 @@ def get_model_drift(
     if job.model is None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail={"code": "MODELE_NON_DISPONIBLE", "message": "Cet entraînement n'a pas encore produit de modèle"},
+            detail={
+                "code": ErrorCode.MODELE_NON_DISPONIBLE,
+                "message": "Cet entraînement n'a pas encore produit de modèle",
+            },
         )
     model = job.model
     feature_columns = json.loads(model.feature_columns_json)
@@ -1582,7 +1600,7 @@ def get_model_drift(
     except (DatasetParsingError, UnsupportedFileType) as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"code": "DATASET_LECTURE_ECHEC", "message": str(exc)},
+            detail={"code": ErrorCode.DATASET_LECTURE_ECHEC, "message": str(exc)},
         ) from exc
 
     report = compute_drift_report(reference_df, current_df, feature_columns)
@@ -1618,7 +1636,10 @@ async def create_batch_prediction_job(
     if job.status != "completed" or job.model is None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail={"code": "MODELE_NON_DISPONIBLE", "message": "Cet entraînement n'a pas encore produit de modèle"},
+            detail={
+                "code": ErrorCode.MODELE_NON_DISPONIBLE,
+                "message": "Cet entraînement n'a pas encore produit de modèle",
+            },
         )
 
     existing_batch_id = resolve_idempotent_job_id(redis_conn, current_user.organization_id, request)

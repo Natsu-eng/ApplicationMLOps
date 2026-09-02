@@ -563,13 +563,16 @@ def export_vision_classification_model(job_id: int, current_user: User = Depends
     if job.status != "completed" or job.result is None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail={"code": "MODELE_NON_DISPONIBLE", "message": "Cet entraînement n'a pas encore produit de modèle"},
+            detail={
+                "code": ErrorCode.MODELE_NON_DISPONIBLE,
+                "message": "Cet entraînement n'a pas encore produit de modèle",
+            },
         )
     artifact_path = Path(job.result.file_path)
     if not artifact_path.exists():
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail={"code": "ARTEFACT_INTROUVABLE", "message": "Artefact du modèle introuvable sur le serveur"},
+            detail={"code": ErrorCode.ARTEFACT_INTROUVABLE, "message": "Artefact du modèle introuvable sur le serveur"},
         )
     filename = f"vision_classification_job{job.id}.pt"
     return FileResponse(path=artifact_path, filename=filename, media_type="application/octet-stream")
@@ -589,13 +592,16 @@ def export_vision_classification_deployment_script(
     if job.status != "completed" or job.result is None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail={"code": "MODELE_NON_DISPONIBLE", "message": "Cet entraînement n'a pas encore produit de modèle"},
+            detail={
+                "code": ErrorCode.MODELE_NON_DISPONIBLE,
+                "message": "Cet entraînement n'a pas encore produit de modèle",
+            },
         )
     artifact_path = Path(job.result.file_path)
     if not artifact_path.exists():
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail={"code": "ARTEFACT_INTROUVABLE", "message": "Artefact du modèle introuvable sur le serveur"},
+            detail={"code": ErrorCode.ARTEFACT_INTROUVABLE, "message": "Artefact du modèle introuvable sur le serveur"},
         )
     spec = get_backbone_spec(job.result.backbone_id)
     # `image_size` n'est pas une colonne dédiée de `VisionClassificationModel`
