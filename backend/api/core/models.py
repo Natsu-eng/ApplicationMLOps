@@ -631,6 +631,33 @@ class ClusterCandidateRecord(Base):
     clustering_job: Mapped["ClusteringJob"] = relationship("ClusteringJob")
 
 
+class ClusterPredictionLog(Base):
+    """Une observation soumise à `POST /clustering/jobs/{id}/predict` (Lot
+    Dérive) — même raisonnement que `Prediction` côté supervisé : sans
+    trace, impossible de comparer plus tard ce qui a été réellement soumis
+    en production à la distribution du dataset d'entraînement (voir
+    `domains/shared/drift.py`). Table DÉDIÉE au clustering (jamais fusionnée
+    avec `Prediction`) — même motif que `ClusterModel` vs `MLModel` : un
+    clustering n'a ni cible ni notion de version/registre, un lien direct
+    au job suffit (contrairement à `Prediction.ml_model_id`, qui suit un
+    modèle précis à travers ses versions)."""
+
+    __tablename__ = "cluster_prediction_logs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    organization_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    clustering_job_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("clustering_jobs.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    input_json: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+    organization: Mapped["Organization"] = relationship("Organization")
+    clustering_job: Mapped["ClusteringJob"] = relationship("ClusteringJob")
+
+
 class DimensionalityJob(Base):
     """Un calcul de réduction de dimension (Lot 13, ML non supervisé) —
     même mécanisme de tâche de fond que `ClusteringJob` (RQ, `training_queue`
@@ -710,6 +737,27 @@ class DimensionalityModel(Base):
 
     organization: Mapped["Organization"] = relationship("Organization")
     dimensionality_job: Mapped["DimensionalityJob"] = relationship("DimensionalityJob", back_populates="result")
+
+
+class DimensionalityProjectionLog(Base):
+    """Une observation soumise à `POST /dimensionality/jobs/{id}/project`
+    (Lot Dérive) — même raisonnement que `ClusterPredictionLog`/
+    `Prediction`."""
+
+    __tablename__ = "dimensionality_projection_logs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    organization_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    dimensionality_job_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("dimensionality_jobs.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    input_json: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+    organization: Mapped["Organization"] = relationship("Organization")
+    dimensionality_job: Mapped["DimensionalityJob"] = relationship("DimensionalityJob")
 
 
 class DimensionalityPoint(Base):
@@ -813,6 +861,30 @@ class AnomalyModel(Base):
 
     organization: Mapped["Organization"] = relationship("Organization")
     anomaly_job: Mapped["AnomalyJob"] = relationship("AnomalyJob", back_populates="result")
+
+
+class AnomalyScoreLog(Base):
+    """Une observation soumise à `POST /anomalies/jobs/{id}/predict` (Lot
+    Dérive) — même raisonnement que `ClusterPredictionLog`/`Prediction`.
+    Jamais fusionnée avec `AnomalyObservationRecord` : celle-ci journalise
+    les requêtes de notation d'une NOUVELLE observation en production,
+    l'autre les observations les plus atypiques DU DATASET D'ENTRAÎNEMENT
+    lui-même — deux populations et deux moments distincts."""
+
+    __tablename__ = "anomaly_score_logs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    organization_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    anomaly_job_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("anomaly_jobs.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    input_json: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+    organization: Mapped["Organization"] = relationship("Organization")
+    anomaly_job: Mapped["AnomalyJob"] = relationship("AnomalyJob")
 
 
 class AnomalyObservationRecord(Base):

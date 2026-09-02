@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { AlertCircle, AlertTriangle, Ban, BarChart3, CheckCircle2, Download, FileCode, FileJson, Loader2, PlayCircle, RotateCcw, Search, SlidersHorizontal, Target, Trash2 } from "lucide-react";
+import { AlertCircle, AlertTriangle, Ban, BarChart3, CheckCircle2, Download, FileCode, FileJson, Loader2, PlayCircle, RotateCcw, Search, SlidersHorizontal, Target, Trash2, Waves } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip as RechartsTooltip, XAxis, YAxis } from "recharts";
 import {
   ApiError,
@@ -31,6 +31,7 @@ import { useConfirmAction } from "../hooks/useConfirmAction";
 import { useIdempotencyKey } from "../hooks/useIdempotencyKey";
 import { CHART_COLOR_PRIMARY, CHART_GRID_STROKE, CHART_TICK_STYLE_SM, CHART_TOOLTIP_STYLE } from "../theme/charts";
 import { DataQualityWarnings } from "../components/training/DataQualityWarnings";
+import { DriftPanel } from "../components/shared/DriftPanel";
 import { useJobEvents } from "../hooks/useJobEvents";
 import { assessConsensusQuality } from "../utils/anomalyQuality";
 import { buildAnomalyModelCard } from "../utils/anomalyModelCard";
@@ -668,7 +669,7 @@ function AnomalyResultView({
   const [observationsError, setObservationsError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [detailObservation, setDetailObservation] = useState<AnomalyObservation | null>(null);
-  const [activeTab, setActiveTab] = useState<"distribution" | "observations" | "noter">("observations");
+  const [activeTab, setActiveTab] = useState<"distribution" | "observations" | "noter" | "derive">("observations");
 
   useEffect(() => {
     api.anomalies
@@ -786,6 +787,7 @@ function AnomalyResultView({
           { id: "observations" as const, label: "Observations", icon: Search },
           { id: "distribution" as const, label: "Distribution des scores", icon: BarChart3 },
           { id: "noter" as const, label: "Noter une observation", icon: Target },
+          { id: "derive" as const, label: "Dérive", icon: Waves },
         ]}
         active={activeTab}
         onChange={setActiveTab}
@@ -793,6 +795,8 @@ function AnomalyResultView({
       />
 
       {activeTab === "noter" && <AnomalyScoreForm jobId={jobId} featureColumns={featureColumns} />}
+
+      {activeTab === "derive" && <DriftPanel pillar="anomalies" jobId={jobId} />}
 
       {activeTab === "distribution" && (
         <>

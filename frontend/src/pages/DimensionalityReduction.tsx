@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { AlertCircle, Ban, Download, FileCode, FileJson, Info, ListChecks, Loader2, PlayCircle, RotateCcw, ScatterChart as ScatterChartIcon, Sparkles, Target, Trash2 } from "lucide-react";
+import { AlertCircle, Ban, Download, FileCode, FileJson, Info, ListChecks, Loader2, PlayCircle, RotateCcw, ScatterChart as ScatterChartIcon, Sparkles, Target, Trash2, Waves } from "lucide-react";
 import {
   CartesianGrid,
   Legend,
@@ -40,6 +40,7 @@ import { useIdempotencyKey } from "../hooks/useIdempotencyKey";
 import { CHART_GRID_STROKE, CHART_SERIES_COLORS, CHART_TICK_STYLE, CHART_TOOLTIP_STYLE } from "../theme/charts";
 import { binIndexForValue, computeQuantileEdges, formatBinLabel } from "../utils/quantileBins";
 import { DataQualityWarnings } from "../components/training/DataQualityWarnings";
+import { DriftPanel } from "../components/shared/DriftPanel";
 import { useJobEvents } from "../hooks/useJobEvents";
 import { assessTrustworthinessQuality } from "../utils/dimensionalityQuality";
 import { buildDimensionalityModelCard } from "../utils/dimensionalityModelCard";
@@ -557,7 +558,7 @@ function DimensionalityResultView({ jobId, datasetName }: { jobId: number; datas
   const [error, setError] = useState<string | null>(null);
   const [colorByColumn, setColorByColumn] = useState<string>(COLOR_NONE);
   const [colorByData, setColorByData] = useState<DimensionalityColorByResponse | null>(null);
-  const [activeTab, setActiveTab] = useState<"projection" | "contributions">("projection");
+  const [activeTab, setActiveTab] = useState<"projection" | "contributions" | "derive">("projection");
 
   useEffect(() => {
     api.dimensionality
@@ -707,17 +708,18 @@ function DimensionalityResultView({ jobId, datasetName }: { jobId: number; datas
         supportsNewPoints={result.algorithm_id !== "tsne"}
       />
 
-      {result.algorithm_id === "pca" && result.loadings.length > 0 && (
-        <Tabs
-          items={[
-            { id: "projection" as const, label: "Projection en 2D", icon: Sparkles },
-            { id: "contributions" as const, label: "Variables contributives", icon: ListChecks },
-          ]}
-          active={activeTab}
-          onChange={setActiveTab}
-          urlParam="onglet"
-        />
-      )}
+      <Tabs
+        items={[
+          { id: "projection" as const, label: "Projection en 2D", icon: Sparkles },
+          ...(result.algorithm_id === "pca" && result.loadings.length > 0
+            ? [{ id: "contributions" as const, label: "Variables contributives", icon: ListChecks }]
+            : []),
+          { id: "derive" as const, label: "Dérive", icon: Waves },
+        ]}
+        active={activeTab}
+        onChange={setActiveTab}
+        urlParam="onglet"
+      />
 
       {activeTab === "projection" && (
       <Card className="p-5">
@@ -774,6 +776,8 @@ function DimensionalityResultView({ jobId, datasetName }: { jobId: number; datas
           />
         </div>
       )}
+
+      {activeTab === "derive" && <DriftPanel pillar="dimensionality" jobId={jobId} />}
     </div>
   );
 }

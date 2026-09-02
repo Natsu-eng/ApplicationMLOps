@@ -22,6 +22,7 @@ import {
   Target,
   Trash2,
   Trophy,
+  Waves,
   Zap,
 } from "lucide-react";
 import {
@@ -53,6 +54,7 @@ import { ModelExportActions } from "../components/ui/ModelExportActions";
 import { buildClusteringModelCard } from "../utils/clusteringModelCard";
 import { DataQualityWarnings } from "../components/training/DataQualityWarnings";
 import { ClusterProfileGrid } from "../components/clustering/ClusterProfileGrid";
+import { DriftPanel } from "../components/shared/DriftPanel";
 import { useJobEvents } from "../hooks/useJobEvents";
 import { useConfirmAction } from "../hooks/useConfirmAction";
 import { useIdempotencyKey } from "../hooks/useIdempotencyKey";
@@ -662,7 +664,7 @@ function ClusteringResultView({ job }: { job: ClusteringJobSummary }) {
   const [candidates, setCandidates] = useState<ClusterCandidate[]>([]);
   const [candidatesError, setCandidatesError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<"comparaison" | "profils" | "assigner">("profils");
+  const [activeTab, setActiveTab] = useState<"comparaison" | "profils" | "assigner" | "derive">("profils");
   // Comparaison détaillée du top 3 (retour utilisateur direct : "propose
   // les 3 meilleurs modèles, résultats propres pour chaque, laisse le
   // choix à l'utilisateur") — clé = rang (string, contrainte de `Tabs<T
@@ -845,6 +847,7 @@ function ClusteringResultView({ job }: { job: ClusteringJobSummary }) {
           { id: "profils" as const, label: "Profils de segments", icon: Sparkles },
           { id: "comparaison" as const, label: "Comparaison", icon: ListChecks },
           { id: "assigner" as const, label: "Assigner", icon: Target },
+          { id: "derive" as const, label: "Dérive", icon: Waves },
         ]}
         active={activeTab}
         onChange={setActiveTab}
@@ -970,6 +973,8 @@ function ClusteringResultView({ job }: { job: ClusteringJobSummary }) {
       )}
 
       {activeTab === "assigner" && <ClusterAssignmentForm jobId={jobId} featureColumns={job.feature_columns} />}
+
+      {activeTab === "derive" && <DriftPanel pillar="clustering" jobId={jobId} />}
 
       <Card className="p-4 flex items-center justify-between gap-3 flex-wrap">
         <div className="flex items-start gap-3">

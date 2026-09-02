@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, List, Optional
 
+import pandas as pd
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
@@ -25,14 +26,15 @@ from api.core.config import get_settings
 from api.core.database import SessionLocal, get_db
 from api.core.error_codes import ErrorCode
 from api.core.job_queue import analysis_queue, redis_conn
-from api.core.models import ClusterCandidateRecord, ClusteringJob, Dataset, User
+from api.core.models import ClusterCandidateRecord, ClusteringJob, ClusterPredictionLog, Dataset, User
 from api.core.pagination import paginate_by_id
 from domains.auth.router import get_current_user
 from domains.clustering.services.deployment_export import generate_clustering_deployment_script
 from domains.clustering.services.inference import ClusterInferenceError, assign_cluster, assign_clusters_batch
 from domains.clustering.services.registry import CLUSTER_REGISTRY, DEFAULT_ALGORITHM_IDS
 from domains.shared.audit import log_action
-from domains.shared.dataset_io import DatasetParsingError, read_dataset_dataframe
+from domains.shared.dataset_io import DatasetParsingError, UnsupportedFileType, read_dataset_dataframe
+from domains.shared.drift import MAX_PREDICTIONS_FOR_DRIFT, MIN_CURRENT_ROWS_FOR_DRIFT, compute_drift_report
 from domains.shared.job_creation import enqueue_or_mark_failed, remember_idempotent_job_id, resolve_idempotent_job_id
 from domains.shared.job_events import stream_job_updates
 from domains.shared.job_lifecycle import ACTIVE_STATUSES, CANCELLED_MESSAGE, try_cancel_rq_job
@@ -493,9 +495,93 @@ def predict_cluster(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={"code": "ASSIGNATION_IMPOSSIBLE", "message": str(exc)},
-        )
+        ) from exc
+
+    # Lot Dérive — journalise l'observation soumise (voir ClusterPredictionLog)
+    # AVANT de renvoyer la réponse, même endroit que Prediction côté
+    # supervisé : une assignation ratée (exception ci-dessus) n'a rien à
+    # journaliser, il n'y a pas eu d'observation "réellement soumise en
+    # production" au sens de la dérive.
+    db.add(ClusterPredictionLog(
+        organization_id=current_user.organization_id,
+        clustering_job_id=job.id,
+        input_json=json.dumps(body.data),
+    ))
+    db.commit()
 
     return ClusterPredictionResponse(**assignment)
+
+
+class DriftFeatureOut(BaseModel):
+    """Une variable du rapport de dérive — voir `domains/shared/drift.py`
+    pour la méthode (PSI) et les seuils de `severity`."""
+    feature: str
+    psi: float
+    severity: str
+
+
+class DriftReportOut(BaseModel):
+    n_predictions_analyzed: int
+    insufficient_data: bool
+    features: List[DriftFeatureOut]
+    n_significant: int
+    n_moderate: int
+    min_predictions_required: int
+
+
+@router.get("/jobs/{job_id}/drift", response_model=DriftReportOut)
+def get_clustering_drift(
+    job_id: int,
+    current_user: User = Depends(get_current_user),
+    db=Depends(get_db),
+):
+    """Dérive des données — compare la distribution des variables
+    réellement soumises à `/predict` (les plus récentes d'abord) à celle
+    du dataset d'entraînement, variable par variable (PSI, voir
+    `domains/shared/drift.py`). Même fonctionnalité que
+    `domains/training/router.py::get_model_drift`, adaptée au clustering
+    (pas de `MLModel`/registre de versions ici — un lien direct au job
+    suffit, voir `ClusterPredictionLog`)."""
+    job = _get_org_job(job_id, current_user, db)
+    if job.result is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"code": ErrorCode.RESULTAT_INDISPONIBLE, "message": "Ce clustering n'a pas encore de résultat"},
+        )
+    result = job.result
+    feature_columns = json.loads(result.feature_columns_json)
+
+    rows = (
+        db.query(ClusterPredictionLog)
+        .filter(
+            ClusterPredictionLog.clustering_job_id == job.id,
+            ClusterPredictionLog.organization_id == current_user.organization_id,
+        )
+        .order_by(ClusterPredictionLog.id.desc())
+        .limit(MAX_PREDICTIONS_FOR_DRIFT)
+        .all()
+    )
+    if len(rows) < MIN_CURRENT_ROWS_FOR_DRIFT:
+        return DriftReportOut(
+            n_predictions_analyzed=len(rows),
+            insufficient_data=True,
+            features=[],
+            n_significant=0,
+            n_moderate=0,
+            min_predictions_required=MIN_CURRENT_ROWS_FOR_DRIFT,
+        )
+
+    current_df = pd.DataFrame([json.loads(row.input_json) for row in rows])
+    try:
+        reference_df = read_dataset_dataframe(Path(job.dataset.file_path), Path(job.dataset.file_path).suffix)
+    except (DatasetParsingError, UnsupportedFileType) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"code": "DATASET_LECTURE_ECHEC", "message": str(exc)},
+        ) from exc
+
+    report = compute_drift_report(reference_df, current_df, feature_columns)
+    return DriftReportOut(**report, min_predictions_required=MIN_CURRENT_ROWS_FOR_DRIFT)
 
 
 @router.get("/jobs/{job_id}/assignments/export")

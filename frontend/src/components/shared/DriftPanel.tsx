@@ -6,6 +6,21 @@ import { Card } from "../ui/Card";
 import { ErrorNote } from "../ui/ErrorNote";
 import { SectionHeader } from "../ui/SectionHeader";
 
+// Un pilier par domaine exposant GET .../jobs/{id}/drift — voir chaque
+// `api.<pilier>.getDrift`. Fixé ici (plutôt qu'une closure passée par
+// l'appelant) pour que `jobId`/`pillar` restent une dépendance PRIMITIVE de
+// l'effet ci-dessous : une fonction inline recréée à chaque rendu du parent
+// aurait redéclenché l'appel réseau à chaque rendu, pas seulement au
+// changement de job.
+const DRIFT_FETCHERS = {
+  training: (jobId: number) => api.training.getDrift(jobId),
+  clustering: (jobId: number) => api.clustering.getDrift(jobId),
+  dimensionality: (jobId: number) => api.dimensionality.getDrift(jobId),
+  anomalies: (jobId: number) => api.anomalies.getDrift(jobId),
+} as const satisfies Record<string, (jobId: number) => Promise<DriftReport>>;
+
+type DriftPillar = keyof typeof DRIFT_FETCHERS;
+
 const SEVERITY_LABEL: Record<DriftReport["features"][number]["severity"], string> = {
   stable: "Stable",
   modere: "Modérée",
@@ -18,29 +33,35 @@ const SEVERITY_VARIANT: Record<DriftReport["features"][number]["severity"], "suc
   significatif: "danger",
 };
 
-/** Dérive des données — première fonctionnalité de suivi POST-déploiement
- * du produit (verdict/seuil/fiabilité s'arrêtent tous à l'instant du
- * déploiement). Compare la distribution des variables réellement envoyées
- * en production à celle du dataset d'entraînement (PSI, voir
- * backend/domains/shared/drift.py) — répond à la question que le tableau
- * de bord pose déjà sans jamais permettre d'y répondre ("le plus ancien
- * n'a pas été revérifié — contrôler sa dérive"). Chargée à part (pas dans
- * `MLModelDetail`) : nécessite de relire le dataset d'entraînement, plus
- * coûteux que le reste de la fiche modèle. */
-export function DriftPanel({ jobId }: { jobId: number }) {
+/** Dérive des données — première fonctionnalité de suivi POST-déploiement du
+ * produit (verdict/seuil/fiabilité s'arrêtent tous à l'instant du
+ * déploiement). Compare la distribution des variables réellement envoyées en
+ * production à celle du dataset d'entraînement (PSI, voir
+ * backend/domains/shared/drift.py) — répond à la question que le tableau de
+ * bord pose déjà sans jamais permettre d'y répondre ("le plus ancien n'a pas
+ * été revérifié — contrôler sa dérive").
+ *
+ * Partagé par les 4 piliers tabulaires (entraînement supervisé, clustering,
+ * réduction de dimension, détection d'anomalies) — même logique PSI côté
+ * serveur, seule la route d'API diffère : `fetchDrift` l'encapsule plutôt
+ * que de dupliquer ce composant 4 fois. Chargé à part (jamais dans la
+ * réponse déjà volumineuse du résultat) : nécessite de relire le dataset
+ * d'entraînement, plus coûteux que le reste de la fiche résultat. */
+export function DriftPanel({ pillar, jobId }: { pillar: DriftPillar; jobId: number }) {
   const [report, setReport] = useState<DriftReport | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [errorRef, setErrorRef] = useState<string | undefined>(undefined);
 
   useEffect(() => {
-    api.training
-      .getDrift(jobId)
+    setReport(null);
+    setError(null);
+    DRIFT_FETCHERS[pillar](jobId)
       .then(setReport)
       .catch((err) => {
         setError(err instanceof ApiError ? err.message : "Impossible de calculer la dérive");
         setErrorRef(apiErrorReference(err));
       });
-  }, [jobId]);
+  }, [pillar, jobId]);
 
   if (error) return <ErrorNote message={error} reference={errorRef} />;
   if (report === null) return <p className="text-sm text-muted-foreground">Calcul en cours…</p>;
@@ -56,10 +77,10 @@ export function DriftPanel({ jobId }: { jobId: number }) {
         />
         <p className="text-sm text-muted-foreground mt-2">
           {report.n_predictions_analyzed === 0
-            ? "Aucune prédiction enregistrée pour ce modèle pour l'instant."
+            ? "Aucune prédiction enregistrée pour l'instant."
             : `Seulement ${report.n_predictions_analyzed} prédiction${report.n_predictions_analyzed > 1 ? "s" : ""} enregistrée${report.n_predictions_analyzed > 1 ? "s" : ""}.`}{" "}
           Au moins {report.min_predictions_required} sont nécessaires pour un calcul fiable — revenez une fois ce
-          modèle davantage utilisé en prédiction.
+          modèle davantage utilisé.
         </p>
       </Card>
     );
@@ -73,10 +94,10 @@ export function DriftPanel({ jobId }: { jobId: number }) {
         icon={Waves}
         color="blue"
         label="Dérive des données"
-        help="Compare la distribution de chaque variable, telle qu'envoyée récemment en prédiction, à celle du dataset d'entraînement — un score élevé signale un écart qui peut expliquer une baisse de qualité, même sans connaître le résultat réel."
+        help="Compare la distribution de chaque variable, telle qu'envoyée récemment, à celle du dataset d'entraînement — un score élevé signale un écart qui peut expliquer une baisse de qualité, même sans connaître le résultat réel."
       />
       <p className="text-sm text-muted-foreground mt-2 mb-4">
-        Basé sur les {report.n_predictions_analyzed} prédictions les plus récentes.{" "}
+        Basé sur les {report.n_predictions_analyzed} observations les plus récentes.{" "}
         {hasIssue ? (
           <span className="text-foreground">
             {report.n_significant > 0 &&

@@ -24,7 +24,7 @@ import { clampUnitScore } from "../../utils/cvScore";
 import { buildModelCard } from "../../utils/modelCard";
 import EvaluationCharts from "./EvaluationCharts";
 import { ShapBeeswarmChart, PermutationImportanceChart } from "./GlobalExplainability";
-import { DriftPanel } from "./DriftPanel";
+import { DriftPanel } from "../shared/DriftPanel";
 import { ModelVerdict } from "./ModelVerdict";
 import { CalibrationChart, LearningCurveChart } from "./ReliabilityDiagnostics";
 import PredictionForm from "./PredictionForm";
@@ -904,7 +904,7 @@ export function ModelResultView({ job }: { job: TrainingJobSummary }) {
             </div>
           )}
 
-          {activeTab === "derive" && <DriftPanel jobId={job.id} />}
+          {activeTab === "derive" && <DriftPanel pillar="training" jobId={job.id} />}
 
           {activeTab === "predire" && (
             <PredictionForm jobId={job.id} taskType={model.task_type} featureSchema={model.feature_schema} />

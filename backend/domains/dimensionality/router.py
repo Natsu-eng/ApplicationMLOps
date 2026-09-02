@@ -23,7 +23,7 @@ from api.core.config import get_settings
 from api.core.database import SessionLocal, get_db
 from api.core.error_codes import ErrorCode
 from api.core.job_queue import analysis_queue, redis_conn
-from api.core.models import Dataset, DimensionalityJob, DimensionalityPoint, User
+from api.core.models import Dataset, DimensionalityJob, DimensionalityPoint, DimensionalityProjectionLog, User
 from api.core.pagination import paginate_by_id
 from domains.auth.router import get_current_user
 from domains.dimensionality.services.deployment_export import generate_dimensionality_deployment_script
@@ -34,7 +34,8 @@ from domains.dimensionality.services.inference import (
 )
 from domains.dimensionality.services.registry import DEFAULT_ALGORITHM_ID, DIMENSIONALITY_REGISTRY
 from domains.shared.audit import log_action
-from domains.shared.dataset_io import DatasetParsingError, read_dataset_dataframe
+from domains.shared.dataset_io import DatasetParsingError, UnsupportedFileType, read_dataset_dataframe
+from domains.shared.drift import MAX_PREDICTIONS_FOR_DRIFT, MIN_CURRENT_ROWS_FOR_DRIFT, compute_drift_report
 from domains.shared.job_creation import enqueue_or_mark_failed, remember_idempotent_job_id, resolve_idempotent_job_id
 from domains.shared.job_events import stream_job_updates
 from domains.shared.job_lifecycle import ACTIVE_STATUSES, CANCELLED_MESSAGE, try_cancel_rq_job
@@ -479,7 +480,87 @@ def project_new_point(
             detail={"code": "PROJECTION_IMPOSSIBLE", "message": str(exc)},
         ) from exc
 
+    # Lot Dérive — voir clustering.py::predict_cluster pour le raisonnement
+    # complet (journalise seulement une projection réussie).
+    db.add(DimensionalityProjectionLog(
+        organization_id=current_user.organization_id,
+        dimensionality_job_id=job.id,
+        input_json=json.dumps(body.data),
+    ))
+    db.commit()
+
     return DimensionalityProjectionResponse(**projected)
+
+
+class DriftFeatureOut(BaseModel):
+    """Une variable du rapport de dérive — voir `domains/shared/drift.py`
+    pour la méthode (PSI) et les seuils de `severity`."""
+    feature: str
+    psi: float
+    severity: str
+
+
+class DriftReportOut(BaseModel):
+    n_predictions_analyzed: int
+    insufficient_data: bool
+    features: List[DriftFeatureOut]
+    n_significant: int
+    n_moderate: int
+    min_predictions_required: int
+
+
+@router.get("/jobs/{job_id}/drift", response_model=DriftReportOut)
+def get_dimensionality_drift(
+    job_id: int,
+    current_user: User = Depends(get_current_user),
+    db=Depends(get_db),
+):
+    """Dérive des données — voir
+    `domains/training/router.py::get_model_drift` /
+    `domains/clustering/router.py::get_clustering_drift` pour le
+    raisonnement complet, identique ici (variables réellement soumises à
+    `/project` comparées au dataset d'entraînement, voir
+    `DimensionalityProjectionLog`)."""
+    job = _get_org_job(job_id, current_user, db)
+    if job.result is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"code": ErrorCode.RESULTAT_INDISPONIBLE, "message": "Ce calcul n'a pas encore de résultat"},
+        )
+    result = job.result
+    feature_columns = json.loads(result.feature_columns_json)
+
+    rows = (
+        db.query(DimensionalityProjectionLog)
+        .filter(
+            DimensionalityProjectionLog.dimensionality_job_id == job.id,
+            DimensionalityProjectionLog.organization_id == current_user.organization_id,
+        )
+        .order_by(DimensionalityProjectionLog.id.desc())
+        .limit(MAX_PREDICTIONS_FOR_DRIFT)
+        .all()
+    )
+    if len(rows) < MIN_CURRENT_ROWS_FOR_DRIFT:
+        return DriftReportOut(
+            n_predictions_analyzed=len(rows),
+            insufficient_data=True,
+            features=[],
+            n_significant=0,
+            n_moderate=0,
+            min_predictions_required=MIN_CURRENT_ROWS_FOR_DRIFT,
+        )
+
+    current_df = pd.DataFrame([json.loads(row.input_json) for row in rows])
+    try:
+        reference_df = read_dataset_dataframe(Path(job.dataset.file_path), Path(job.dataset.file_path).suffix)
+    except (DatasetParsingError, UnsupportedFileType) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"code": "DATASET_LECTURE_ECHEC", "message": str(exc)},
+        ) from exc
+
+    report = compute_drift_report(reference_df, current_df, feature_columns)
+    return DriftReportOut(**report, min_predictions_required=MIN_CURRENT_ROWS_FOR_DRIFT)
 
 
 @router.get("/jobs/{job_id}/points/export")

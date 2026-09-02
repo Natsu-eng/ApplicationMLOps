@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, List, Optional
 
+import pandas as pd
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
@@ -26,14 +27,15 @@ from api.core.config import get_settings
 from api.core.database import SessionLocal, get_db
 from api.core.error_codes import ErrorCode
 from api.core.job_queue import analysis_queue, redis_conn
-from api.core.models import AnomalyJob, AnomalyObservationRecord, Dataset, User
+from api.core.models import AnomalyJob, AnomalyObservationRecord, AnomalyScoreLog, Dataset, User
 from api.core.pagination import paginate_by_id
 from domains.anomalies.services.deployment_export import generate_anomaly_deployment_script
 from domains.anomalies.services.engine import DEFAULT_TOP_N, MAX_TOP_N
 from domains.anomalies.services.inference import AnomalyInferenceError, score_anomalies_batch, score_anomaly
 from domains.auth.router import get_current_user
 from domains.shared.audit import log_action
-from domains.shared.dataset_io import DatasetParsingError, read_dataset_dataframe
+from domains.shared.dataset_io import DatasetParsingError, UnsupportedFileType, read_dataset_dataframe
+from domains.shared.drift import MAX_PREDICTIONS_FOR_DRIFT, MIN_CURRENT_ROWS_FOR_DRIFT, compute_drift_report
 from domains.shared.job_creation import enqueue_or_mark_failed, remember_idempotent_job_id, resolve_idempotent_job_id
 from domains.shared.job_events import stream_job_updates
 from domains.shared.job_lifecycle import ACTIVE_STATUSES, CANCELLED_MESSAGE, try_cancel_rq_job
@@ -436,7 +438,87 @@ def predict_anomaly_score(
             detail={"code": "NOTATION_IMPOSSIBLE", "message": str(exc)},
         ) from exc
 
+    # Lot Dérive — voir clustering.py::predict_cluster pour le raisonnement
+    # complet (journalise seulement une notation réussie).
+    db.add(AnomalyScoreLog(
+        organization_id=current_user.organization_id,
+        anomaly_job_id=job.id,
+        input_json=json.dumps(body.data),
+    ))
+    db.commit()
+
     return AnomalyScoreResponse(**scored)
+
+
+class DriftFeatureOut(BaseModel):
+    """Une variable du rapport de dérive — voir `domains/shared/drift.py`
+    pour la méthode (PSI) et les seuils de `severity`."""
+    feature: str
+    psi: float
+    severity: str
+
+
+class DriftReportOut(BaseModel):
+    n_predictions_analyzed: int
+    insufficient_data: bool
+    features: List[DriftFeatureOut]
+    n_significant: int
+    n_moderate: int
+    min_predictions_required: int
+
+
+@router.get("/jobs/{job_id}/drift", response_model=DriftReportOut)
+def get_anomaly_drift(
+    job_id: int,
+    current_user: User = Depends(get_current_user),
+    db=Depends(get_db),
+):
+    """Dérive des données — voir
+    `domains/training/router.py::get_model_drift` /
+    `domains/clustering/router.py::get_clustering_drift` pour le
+    raisonnement complet, identique ici (variables réellement soumises à
+    `/predict` comparées au dataset d'entraînement, voir
+    `AnomalyScoreLog`)."""
+    job = _get_org_job(job_id, current_user, db)
+    if job.result is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"code": ErrorCode.RESULTAT_INDISPONIBLE, "message": "Cette détection n'a pas encore de résultat"},
+        )
+    result = job.result
+    feature_columns = json.loads(result.feature_columns_json)
+
+    rows = (
+        db.query(AnomalyScoreLog)
+        .filter(
+            AnomalyScoreLog.anomaly_job_id == job.id,
+            AnomalyScoreLog.organization_id == current_user.organization_id,
+        )
+        .order_by(AnomalyScoreLog.id.desc())
+        .limit(MAX_PREDICTIONS_FOR_DRIFT)
+        .all()
+    )
+    if len(rows) < MIN_CURRENT_ROWS_FOR_DRIFT:
+        return DriftReportOut(
+            n_predictions_analyzed=len(rows),
+            insufficient_data=True,
+            features=[],
+            n_significant=0,
+            n_moderate=0,
+            min_predictions_required=MIN_CURRENT_ROWS_FOR_DRIFT,
+        )
+
+    current_df = pd.DataFrame([json.loads(row.input_json) for row in rows])
+    try:
+        reference_df = read_dataset_dataframe(Path(job.dataset.file_path), Path(job.dataset.file_path).suffix)
+    except (DatasetParsingError, UnsupportedFileType) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"code": "DATASET_LECTURE_ECHEC", "message": str(exc)},
+        ) from exc
+
+    report = compute_drift_report(reference_df, current_df, feature_columns)
+    return DriftReportOut(**report, min_predictions_required=MIN_CURRENT_ROWS_FOR_DRIFT)
 
 
 @router.get("/jobs/{job_id}/observations/export")
