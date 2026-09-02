@@ -214,25 +214,66 @@ def test_classification_never_emits_cqr_claim():
     assert not any(c["code"].startswith("couverture_") for c in verdict["claims"])
 
 
-# ── Synthèse (next_action) et tri ───────────────────────────────────────────
+# ── Synthèse (next_actions) et tri ──────────────────────────────────────────
+# Retour d'évaluation d'une maquette externe : "3 actions suivantes classées
+# par ce que le diagnostic suggère" — enrichi depuis une simple phrase
+# unique (`next_action`) vers une liste priorisée (`next_actions`).
 
-def test_next_action_prioritizes_overfitting_over_other_issues():
+def test_next_actions_prioritizes_overfitting_over_other_issues():
     cqr = {"target_coverage": 0.80, "empirical_coverage": 0.5}  # génère aussi une alerte
     verdict = compute_verdict(
         "regression",
         {"r2_train": 0.95, "r2_test": 0.70, "delta_r2": 0.25},
         {}, [], cqr=cqr,
     )
-    assert "surapprentissage" in verdict["next_action"].lower() or "complexité" in verdict["next_action"].lower()
+    first_action = verdict["next_actions"][0]["action"].lower()
+    assert "surapprentissage" in first_action or "complexité" in first_action
+    assert verdict["next_actions"][0]["code"] == "surapprentissage_marque"
 
 
-def test_next_action_default_when_no_issues():
+def test_next_actions_default_when_no_issues():
     verdict = compute_verdict(
         "regression",
         {"r2_train": 0.81, "r2_test": 0.80, "delta_r2": 0.01, "r2_bootstrap": {"mean": 0.8, "ci_low": 0.79, "ci_high": 0.81}},
         {}, [],
     )
-    assert "prêt" in verdict["next_action"].lower() or "production" in verdict["next_action"].lower()
+    assert len(verdict["next_actions"]) == 1
+    assert verdict["next_actions"][0]["code"] == "aucune_alerte"
+    action = verdict["next_actions"][0]["action"].lower()
+    assert "prêt" in action or "production" in action
+
+
+def test_next_actions_returns_up_to_three_ranked_by_priority():
+    """Plusieurs signaux déclenchés simultanément — jusqu'à 3 actions,
+    dans l'ordre de `_NEXT_ACTION_PRIORITY` (surapprentissage d'abord),
+    jamais un remplissage artificiel au-delà des signaux réellement
+    présents."""
+    cqr = {"target_coverage": 0.80, "empirical_coverage": 0.5}  # couverture_insuffisante
+    candidates = [
+        {"algorithm": "A", "rank": 1, "selection_score": 0.80, "fold_scores": [0.79, 0.80, 0.81]},
+        {"algorithm": "B", "rank": 2, "selection_score": 0.799, "fold_scores": [0.795, 0.80, 0.805]},
+    ]  # écart_gagnant_dans_le_bruit
+    verdict = compute_verdict(
+        "regression",
+        {"r2_train": 0.95, "r2_test": 0.70, "delta_r2": 0.25},  # surapprentissage_marque
+        {}, candidates, cqr=cqr,
+    )
+    codes = [a["code"] for a in verdict["next_actions"]]
+    assert len(codes) <= 3
+    assert codes[0] == "surapprentissage_marque"  # priorité la plus haute en premier
+    assert len(codes) == len(set(codes))  # jamais deux fois le même code
+
+
+def test_next_actions_never_padded_below_three():
+    """Un seul signal déclenché — une seule action renvoyée, jamais
+    complétée artificiellement pour atteindre 3."""
+    verdict = compute_verdict(
+        "regression",
+        {"r2_train": 0.85, "r2_test": 0.77, "delta_r2": 0.08},  # surapprentissage_leger, seul signal
+        {}, [],
+    )
+    assert len(verdict["next_actions"]) == 1
+    assert verdict["next_actions"][0]["code"] == "surapprentissage_leger"
 
 
 def test_claims_sorted_critique_before_attention_before_info():

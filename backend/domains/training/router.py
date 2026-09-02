@@ -208,9 +208,10 @@ class MLModelDetail(BaseModel):
     calibration: Optional[dict[str, Any]] = None
     learning_curve: Optional[dict[str, Any]] = None
     # Lot 3 (correctif I1, AUDIT_DATALAB_2026-08-16.md §E.3) — verdict en
-    # langage clair, {"claims": [...], "next_action": "..."}, voir
-    # services/model_verdict.py. Toujours présent (calculé à la volée,
-    # jamais persisté — les règles peuvent évoluer sans backfill).
+    # langage clair, {"claims": [...], "next_actions": [{"code":,
+    # "action":}, ...]}, voir services/verdict.py. Toujours présent
+    # (calculé à la volée, jamais persisté — les règles peuvent évoluer
+    # sans backfill).
     verdict: dict[str, Any]
     # Lot 9 — registre de modèles versionné. `None` = jamais promu.
     stage: Optional[str] = None

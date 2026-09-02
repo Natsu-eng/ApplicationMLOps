@@ -156,9 +156,26 @@ export function ModelVerdict({ verdict }: { verdict: ModelVerdictData }) {
         help="Les questions qu'on se pose avant de faire confiance à un modèle — chaque réponse cite le chiffre qui la fonde, jamais une affirmation sans preuve."
       />
 
-      <div className="flex items-start gap-2.5 rounded-lg border border-primary/20 bg-primary/5 px-3 py-2.5 mb-3">
-        <Lightbulb size={15} className="flex-shrink-0 mt-0.5 text-primary" />
-        <p className="text-sm text-foreground">{verdict.next_action}</p>
+      {/* Jusqu'à 3 actions classées par priorité (retour d'évaluation d'une
+          maquette externe : "3 actions suivantes classées par ce que le
+          diagnostic suggère") — jamais complétées artificiellement, une
+          seule ligne si un seul signal a été détecté. */}
+      <div className="space-y-1.5 mb-3">
+        {verdict.next_actions.map((next, i) => (
+          <div
+            key={next.code}
+            className="flex items-start gap-2.5 rounded-lg border border-primary/20 bg-primary/5 px-3 py-2.5"
+          >
+            {verdict.next_actions.length > 1 ? (
+              <span className="flex-shrink-0 mt-0.5 w-4 h-4 rounded-full bg-primary/15 text-primary text-[10px] font-semibold flex items-center justify-center">
+                {i + 1}
+              </span>
+            ) : (
+              <Lightbulb size={15} className="flex-shrink-0 mt-0.5 text-primary" />
+            )}
+            <p className="text-sm text-foreground">{next.action}</p>
+          </div>
+        ))}
       </div>
 
       <div className="space-y-2">

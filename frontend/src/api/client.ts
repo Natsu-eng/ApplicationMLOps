@@ -1458,9 +1458,20 @@ export interface VerdictClaim {
   details: Record<string, unknown>;
 }
 
+// Une action suggérée — `code` = code du claim qui l'a déclenchée (ou
+// "aucune_alerte" pour l'action par défaut) — voir
+// backend/domains/training/services/verdict.py::_synthesize_next_actions.
+export interface NextAction {
+  code: string;
+  action: string;
+}
+
 export interface ModelVerdictData {
   claims: VerdictClaim[];
-  next_action: string;
+  // Jusqu'à 3, classées par priorité — jamais complétées artificiellement
+  // en dessous de 3 (retour d'évaluation d'une maquette externe : "3
+  // actions suivantes classées par ce que le diagnostic suggère").
+  next_actions: NextAction[];
 }
 
 export interface MLModelDetail {

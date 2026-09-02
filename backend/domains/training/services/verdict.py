@@ -354,13 +354,34 @@ _NEXT_ACTION_PRIORITY = [
 
 _DEFAULT_NEXT_ACTION = "Aucun signal d'alerte détecté — ce modèle est prêt à être utilisé ; envisagez de le promouvoir en production si les résultats vous conviennent."
 
+# Nombre d'actions renvoyées au maximum (retour d'évaluation d'une maquette
+# externe : "3 actions suivantes classées par ce que le diagnostic
+# suggère", pas une seule) — jamais complété artificiellement en dessous
+# de ce nombre : si un seul signal déclenche une action, une seule est
+# renvoyée (voir `_synthesize_next_actions`, jamais un remplissage inventé
+# pour atteindre 3).
+MAX_NEXT_ACTIONS = 3
 
-def _synthesize_next_action(claims: list[dict[str, Any]]) -> str:
+
+def _synthesize_next_actions(claims: list[dict[str, Any]]) -> list[dict[str, str]]:
+    """Jusqu'à `MAX_NEXT_ACTIONS` actions, dans le même ordre de priorité
+    que `_NEXT_ACTION_PRIORITY` (surapprentissage/fiabilité d'abord, les
+    raffinements — calibration, couverture CQR — ensuite) — une entrée par
+    code de `claims` réellement présent, jamais plus d'une par code (la
+    boucle ci-dessous ne visite chaque code qu'une fois).
+
+    `code="aucune_alerte"` (jamais un code de claim réel, donc jamais en
+    collision) pour la seule action par défaut, quand aucun signal ne
+    déclenche d'action — permet au frontend de la styliser différemment
+    (ex. jamais une icône d'alerte) sans dupliquer la logique de
+    correspondance code -> action."""
     codes_present = {c["code"] for c in claims}
-    for code, action in _NEXT_ACTION_PRIORITY:
-        if code in codes_present:
-            return action
-    return _DEFAULT_NEXT_ACTION
+    actions = [
+        {"code": code, "action": action} for code, action in _NEXT_ACTION_PRIORITY if code in codes_present
+    ][:MAX_NEXT_ACTIONS]
+    if not actions:
+        return [{"code": "aucune_alerte", "action": _DEFAULT_NEXT_ACTION}]
+    return actions
 
 
 _LEVEL_ORDER = {"critique": 0, "attention": 1, "info": 2}
@@ -385,9 +406,11 @@ def compute_verdict(
     est simplement omise du résultat — jamais remplacée par une affirmation
     inventée.
 
-    Retourne `{"claims": [...], "next_action": "..."}`, `claims` triées
-    critique > attention > info (même convention que
-    `services/data_quality.py::analyze_data_quality`)."""
+    Retourne `{"claims": [...], "next_actions": [{"code":, "action":}, ...]}`
+    (jusqu'à `MAX_NEXT_ACTIONS`, voir `_synthesize_next_actions` — enrichi
+    depuis une simple phrase unique, retour d'évaluation d'une maquette
+    externe), `claims` triées critique > attention > info (même convention
+    que `services/data_quality.py::analyze_data_quality`)."""
     assessors = [
         _assess_overfitting(task_type, metrics),
         _assess_reliability(task_type, metrics),
@@ -400,4 +423,4 @@ def compute_verdict(
     ]
     claims = [c for c in assessors if c is not None]
     claims.sort(key=lambda c: _LEVEL_ORDER.get(c["level"], 99))
-    return {"claims": claims, "next_action": _synthesize_next_action(claims)}
+    return {"claims": claims, "next_actions": _synthesize_next_actions(claims)}
