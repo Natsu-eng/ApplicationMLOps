@@ -24,6 +24,7 @@ from sqlalchemy.orm import joinedload
 
 from api.core.config import get_settings
 from api.core.database import SessionLocal, get_db
+from api.core.error_codes import ErrorCode
 from api.core.job_queue import analysis_queue, redis_conn
 from api.core.models import AnomalyJob, AnomalyObservationRecord, Dataset, User
 from api.core.pagination import paginate_by_id
@@ -326,7 +327,7 @@ def get_anomaly_result(job_id: int, current_user: User = Depends(get_current_use
     if job.result is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail={"code": "RESULTAT_INDISPONIBLE", "message": "Cette détection n'a pas encore de résultat"},
+            detail={"code": ErrorCode.RESULTAT_INDISPONIBLE, "message": "Cette détection n'a pas encore de résultat"},
         )
     result = job.result
     return AnomalyResultOut(
@@ -421,7 +422,7 @@ def predict_anomaly_score(
     if job.result is None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail={"code": "RESULTAT_INDISPONIBLE", "message": "Cette détection n'a pas encore de résultat"},
+            detail={"code": ErrorCode.RESULTAT_INDISPONIBLE, "message": "Cette détection n'a pas encore de résultat"},
         )
     result = job.result
     feature_columns = json.loads(result.feature_columns_json)
@@ -449,7 +450,7 @@ def export_anomaly_scores(job_id: int, current_user: User = Depends(get_current_
     if job.result is None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail={"code": "RESULTAT_INDISPONIBLE", "message": "Cette détection n'a pas encore de résultat"},
+            detail={"code": ErrorCode.RESULTAT_INDISPONIBLE, "message": "Cette détection n'a pas encore de résultat"},
         )
     if job.dataset is None:
         raise HTTPException(

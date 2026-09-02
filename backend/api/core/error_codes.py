@@ -1,34 +1,40 @@
 """Catalogue central des codes d'erreur — Phase 3 (AUDIT_BACKEND_2026-08-23.md,
-Axe I, §5).
+Axe I, §5), mis à jour lors du chantier de migration (2026-09-02, voir
+`_backend/RAPPORT-FINAL.md`, "ce qui a été laissé de côté").
 
-Avant ce correctif : 65 codes distincts (`"code": "..."`) semés comme des
-littéraux indépendants dans 13 fichiers routeurs, sans aucun point de
-vérité — certains recopiés à l'identique jusqu'à 6 fois (`DATASET_INTROUVABLE`,
-`JOB_NON_ANNULABLE`, `ARTEFACT_INTROUVABLE`...), avec le risque qu'une
-future faute de frappe dans une seule des copies fasse silencieusement
-diverger deux domaines qui étaient censés renvoyer le même code pour la
-même situation. Aucun endroit où lister "tous les codes d'erreur que cette
-API peut renvoyer" — ni pour un développeur frontend, ni pour la doc
-OpenAPI (`/openapi.json` ne portait aucune trace de ces codes, entièrement
-absents du schéma malgré `responses={"detail": {"code","message"}}`
-systématique sur toute erreur, voir `api/main.py`).
+Avant la Phase 3 : des dizaines de codes distincts (`"code": "..."`) semés
+comme des littéraux indépendants dans les fichiers routeurs, sans aucun
+point de vérité — certains recopiés à l'identique jusqu'à 19 fois
+(`RESULTAT_INDISPONIBLE`), avec le risque qu'une future faute de frappe
+dans une seule des copies fasse silencieusement diverger deux domaines
+qui étaient censés renvoyer le même code pour la même situation. Aucun
+endroit où lister "tous les codes d'erreur que cette API peut renvoyer"
+— ni pour un développeur frontend, ni pour la doc OpenAPI (`/openapi.json`
+ne portait aucune trace de ces codes, entièrement absents du schéma
+malgré `responses={"detail": {"code","message"}}` systématique sur toute
+erreur, voir `api/main.py`).
 
-Ce module ne remplace PAS encore tous les littéraux existants (56 sites
-d'appel pour les 13 codes réellement dupliqués, largement plus pour les
-codes à usage unique par domaine — une migration complète représenterait
-un diff de plusieurs centaines de lignes sans rapport direct avec le reste
-de cette phase, et exigerait de rejouer la suite complète —60+ min— pour
-chaque lot de fichiers touchés). Il établit le POINT DE VÉRITÉ : la liste
-ci-dessous est exhaustive à la date de la Phase 3 (vérifiée par
-`grep -rhoE '"code":\\s*"[A-Z_0-9]+"' api domains`, recoupée avec les 3
-codes synthétisés par les gestionnaires d'erreur globaux d'`api/main.py`),
-et `api/main.py::custom_openapi` l'expose désormais dans
+Ce module établit le POINT DE VÉRITÉ : la liste ci-dessous est exhaustive
+(revérifiée le 2026-09-02, 17 codes manquants ajoutés — apparus depuis la
+Phase 3 dans des domaines développés ensuite, comme `SEUIL_INCONNU`) par
+`grep -rhoE '"code":\\s*"[A-Z_0-9]+"' api domains`, recoupée avec les 6
+codes synthétisés par les gestionnaires d'erreur globaux d'`api/main.py`
+(jamais trouvés par ce grep puisqu'ils référencent déjà `ErrorCode.XXX`,
+pas un littéral). `api/main.py::custom_openapi` l'expose dans
 `/openapi.json` (extension `x-error-codes`) — consultable par n'importe
-quel client sans avoir à parcourir le code source. La migration des
-littéraux existants vers `ErrorCode.XXX` reste une dette explicite,
-priorisée par ordre de risque de divergence (les 13 codes dupliqués
-d'abord) — voir `_backend/RAPPORT-FINAL.md`, "ce qui a été laissé de
-côté"."""
+quel client sans avoir à parcourir le code source.
+
+Migration des littéraux existants vers `ErrorCode.XXX`, priorisée par
+ordre de risque de divergence (le code le plus dupliqué d'abord) :
+- `RESULTAT_INDISPONIBLE` (19 sites, 6 fichiers) — migré 2026-09-02.
+- Reste une dette explicite, priorisée pour la suite : `MODELE_NON_DISPONIBLE`
+  (16), `DATASET_LECTURE_ECHEC` (15), `ARTEFACT_INTROUVABLE` (12),
+  `DATASET_NON_PRET` (11), `DATASET_INTROUVABLE` (10), et 34 autres codes
+  dupliqués à moindre fréquence (153 sites au total, tous domaines
+  confondus) — non traités dans ce lot pour rester dans un diff vérifiable
+  intégralement (tests rejoués + ruff/mypy comparés ligne à ligne) plutôt
+  que de migrer les 39 codes d'un coup avec un risque de régression
+  proportionnellement plus difficile à auditer."""
 
 from __future__ import annotations
 
@@ -94,20 +100,33 @@ class ErrorCode(str, Enum):
     # ── Jobs — communs aux 6 domaines d'entraînement/analyse ────────────
     JOB_NON_ANNULABLE = "JOB_NON_ANNULABLE"
     ARTEFACT_INTROUVABLE = "ARTEFACT_INTROUVABLE"
+    ARTEFACT_ILLISIBLE = "ARTEFACT_ILLISIBLE"
     RESULTAT_INDISPONIBLE = "RESULTAT_INDISPONIBLE"
+    RESULTAT_INTROUVABLE = "RESULTAT_INTROUVABLE"
     MODELE_NON_DISPONIBLE = "MODELE_NON_DISPONIBLE"
     MODELE_INCONNU = "MODELE_INCONNU"
     MODELES_INCONNUS = "MODELES_INCONNUS"
+    MODELE_NON_SELECTIONNE = "MODELE_NON_SELECTIONNE"
     ALGORITHME_INCONNU = "ALGORITHME_INCONNU"
     ALGORITHMES_INCONNUS = "ALGORITHMES_INCONNUS"
     AUCUN_MODELE_COMPATIBLE = "AUCUN_MODELE_COMPATIBLE"
     COMPARAISON_INSUFFISANTE = "COMPARAISON_INSUFFISANTE"
+    COMPARATIF_MODELES_INVALIDE = "COMPARATIF_MODELES_INVALIDE"
+    COMPARATIF_BACKBONES_INVALIDE = "COMPARATIF_BACKBONES_INVALIDE"
     STAGE_INVALIDE = "STAGE_INVALIDE"
     TACHE_NON_SUPPORTEE = "TACHE_NON_SUPPORTEE"
     LIMITE_INDISPONIBLE = "LIMITE_INDISPONIBLE"
     QUOTA_ENTRAINEMENTS_ATTEINT = "QUOTA_ENTRAINEMENTS_ATTEINT"
     FILE_INDISPONIBLE = "FILE_INDISPONIBLE"
     PREDICTION_IMPOSSIBLE = "PREDICTION_IMPOSSIBLE"
+    PREDICTION_LOT_INTROUVABLE = "PREDICTION_LOT_INTROUVABLE"
+    PREDICTION_LOT_NON_ANNULABLE = "PREDICTION_LOT_NON_ANNULABLE"
+    PROJECTION_IMPOSSIBLE = "PROJECTION_IMPOSSIBLE"
+    NOTATION_IMPOSSIBLE = "NOTATION_IMPOSSIBLE"
+    HYPERPARAMETRE_INCONNU = "HYPERPARAMETRE_INCONNU"
+    HYPERPARAMETRE_INVALIDE = "HYPERPARAMETRE_INVALIDE"
+    HYPERPARAMETRE_HORS_BORNES = "HYPERPARAMETRE_HORS_BORNES"
+    SEUIL_INCONNU = "SEUIL_INCONNU"
 
     # ── Identifiants "introuvable" par domaine (jamais fusionnés — un
     # attaquant ne doit pas pouvoir distinguer "id invalide" de "id d'un
@@ -127,6 +146,12 @@ class ErrorCode(str, Enum):
     IMAGE_INTROUVABLE = "IMAGE_INTROUVABLE"
     IMAGE_INVALIDE = "IMAGE_INVALIDE"
     AUGMENTATION_PRESET_INCONNU = "AUGMENTATION_PRESET_INCONNU"
+    TAILLE_IMAGE_INCONNUE = "TAILLE_IMAGE_INCONNUE"
+    AUCUN_FICHIER = "AUCUN_FICHIER"
+    LOT_TROP_GRAND = "LOT_TROP_GRAND"
+
+    # ── Notifications (domains/notifications) ───────────────────────────
+    NOTIFICATION_INTROUVABLE = "NOTIFICATION_INTROUVABLE"
 
 
 #: Description humaine (français), pour l'extension OpenAPI `x-error-codes`

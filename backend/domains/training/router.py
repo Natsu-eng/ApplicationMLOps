@@ -22,6 +22,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from api.core.config import get_settings
 from api.core.database import SessionLocal, get_db
+from api.core.error_codes import ErrorCode
 from api.core.job_queue import analysis_queue, redis_conn, training_queue
 from api.core.models import (
     AuditLog,
@@ -1689,7 +1690,10 @@ def download_batch_prediction_result(
     if job.status != "completed" or not job.output_file_path:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail={"code": "RESULTAT_INDISPONIBLE", "message": "Cette prédiction en lot n'a pas encore de résultat"},
+            detail={
+                "code": ErrorCode.RESULTAT_INDISPONIBLE,
+                "message": "Cette prédiction en lot n'a pas encore de résultat",
+            },
         )
     output_path = Path(job.output_file_path)
     if not output_path.exists():
@@ -1715,7 +1719,10 @@ def download_batch_prediction_result_excel(
     if job.status != "completed" or not job.output_file_path:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail={"code": "RESULTAT_INDISPONIBLE", "message": "Cette prédiction en lot n'a pas encore de résultat"},
+            detail={
+                "code": ErrorCode.RESULTAT_INDISPONIBLE,
+                "message": "Cette prédiction en lot n'a pas encore de résultat",
+            },
         )
     output_path = Path(job.output_file_path)
     if not output_path.exists():

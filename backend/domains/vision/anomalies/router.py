@@ -24,6 +24,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from api.core.config import get_settings
 from api.core.database import SessionLocal, get_db
+from api.core.error_codes import ErrorCode
 from api.core.job_queue import redis_conn, vision_queue
 from api.core.models import User, VisionAnomalyExampleRecord, VisionAnomalyJob, VisionAnomalyModel, VisionDataset
 from api.core.pagination import paginate_by_id
@@ -459,7 +460,7 @@ def get_vision_anomaly_result(job_id: int, current_user: User = Depends(get_curr
     if job.result is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail={"code": "RESULTAT_INDISPONIBLE", "message": "Cet entraînement n'a pas encore de résultat"},
+            detail={"code": ErrorCode.RESULTAT_INDISPONIBLE, "message": "Cet entraînement n'a pas encore de résultat"},
         )
     return _to_result_out(job.result)
 
@@ -488,7 +489,7 @@ def choose_vision_anomaly_threshold(
     if job.result is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail={"code": "RESULTAT_INDISPONIBLE", "message": "Cet entraînement n'a pas encore de résultat"},
+            detail={"code": ErrorCode.RESULTAT_INDISPONIBLE, "message": "Cet entraînement n'a pas encore de résultat"},
         )
     result = job.result
     candidates = json.loads(result.threshold_candidates_json) if result.threshold_candidates_json else []
@@ -616,7 +617,7 @@ async def predict_vision_anomaly(
     if job.result is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail={"code": "RESULTAT_INDISPONIBLE", "message": "Cet entraînement n'a pas encore de résultat"},
+            detail={"code": ErrorCode.RESULTAT_INDISPONIBLE, "message": "Cet entraînement n'a pas encore de résultat"},
         )
 
     content = await file.read()
@@ -650,7 +651,7 @@ def get_vision_anomaly_examples(job_id: int, current_user: User = Depends(get_cu
     if job.result is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail={"code": "RESULTAT_INDISPONIBLE", "message": "Cet entraînement n'a pas encore de résultat"},
+            detail={"code": ErrorCode.RESULTAT_INDISPONIBLE, "message": "Cet entraînement n'a pas encore de résultat"},
         )
     examples = (
         db.query(VisionAnomalyExampleRecord)

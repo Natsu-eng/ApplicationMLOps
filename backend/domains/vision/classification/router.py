@@ -31,6 +31,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from api.core.config import get_settings
 from api.core.database import SessionLocal, get_db
+from api.core.error_codes import ErrorCode
 from api.core.job_queue import redis_conn, vision_queue
 from api.core.models import User, VisionClassificationJob, VisionDataset
 from api.core.pagination import paginate_by_id
@@ -492,7 +493,7 @@ def get_vision_classification_result(job_id: int, current_user: User = Depends(g
     if job.result is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail={"code": "RESULTAT_INDISPONIBLE", "message": "Cet entraînement n'a pas encore de résultat"},
+            detail={"code": ErrorCode.RESULTAT_INDISPONIBLE, "message": "Cet entraînement n'a pas encore de résultat"},
         )
     result = job.result
     return VisionClassificationResultOut(
@@ -611,7 +612,7 @@ async def explain_vision_classification_prediction(
     if job.result is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail={"code": "RESULTAT_INDISPONIBLE", "message": "Cet entraînement n'a pas encore de résultat"},
+            detail={"code": ErrorCode.RESULTAT_INDISPONIBLE, "message": "Cet entraînement n'a pas encore de résultat"},
         )
 
     content = await file.read()
@@ -677,7 +678,7 @@ def explain_vision_classification_dataset_examples(
     if job.result is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail={"code": "RESULTAT_INDISPONIBLE", "message": "Cet entraînement n'a pas encore de résultat"},
+            detail={"code": ErrorCode.RESULTAT_INDISPONIBLE, "message": "Cet entraînement n'a pas encore de résultat"},
         )
 
     # Même garde-fou anti-traversée de répertoire que
@@ -750,7 +751,7 @@ async def explain_vision_classification_uploaded_batch(
     if job.result is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail={"code": "RESULTAT_INDISPONIBLE", "message": "Cet entraînement n'a pas encore de résultat"},
+            detail={"code": ErrorCode.RESULTAT_INDISPONIBLE, "message": "Cet entraînement n'a pas encore de résultat"},
         )
     if not files:
         raise HTTPException(
