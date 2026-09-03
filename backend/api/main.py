@@ -34,7 +34,8 @@ from api.core.observability import (
     metrics_response,
 )
 from domains.anomalies.router import router as anomalies_router
-from domains.auth.router import feedback_router, users_router
+from domains.auth.feedback_router import router as feedback_router
+from domains.auth.preferences_router import router as users_router
 from domains.auth.router import router as auth_router
 from domains.clustering.router import router as clustering_router
 from domains.dashboard.router import router as dashboard_router

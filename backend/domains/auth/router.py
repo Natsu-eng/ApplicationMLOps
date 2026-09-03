@@ -32,7 +32,7 @@ from api.core.mailer import (
     send_password_changed_notification_email,
     send_password_reset_email,
 )
-from api.core.models import AuditLog, Feedback, Organization, PasswordResetToken, User
+from api.core.models import AuditLog, Organization, PasswordResetToken, User
 from api.core.password_policy import validate_password_strength
 from api.core.rate_limit import get_client_ip, is_rate_limited, rate_limit_dependency, reset_rate_limit
 from api.core.security import (
@@ -110,25 +110,6 @@ class UserProfile(BaseModel):
 
 class UserSelfUpdate(BaseModel):
     nom: Optional[str] = Field(None, min_length=2, max_length=100)
-
-
-VALID_UI_THEMES = {"graphite", "ivoire", "minuit", "ardoise", "porcelaine"}
-
-
-class UserPreferences(BaseModel):
-    ui_theme: str
-
-    model_config = {"from_attributes": True}
-
-
-class UserPreferencesUpdate(BaseModel):
-    ui_theme: str = Field(..., description="graphite | ivoire | minuit | ardoise | porcelaine")
-
-    @model_validator(mode="after")
-    def _valid_theme(self) -> "UserPreferencesUpdate":
-        if self.ui_theme not in VALID_UI_THEMES:
-            raise ValueError(f"Thème inconnu : {self.ui_theme!r} (attendu : {', '.join(sorted(VALID_UI_THEMES))})")
-        return self
 
 
 class ChangePasswordRequest(BaseModel):
@@ -673,105 +654,6 @@ def confirm_password_reset(
     revoke_all_refresh_tokens(redis_conn, user.id)
     if mailer_configured():
         background_tasks.add_task(_send_password_changed_notification_task, user.email, client_ip)
-
-
-# ── Préférences d'interface (Lot UI — refonte visuelle) ─────────────────────
-# Routeur séparé (préfixe /users plutôt que /auth) : le thème n'est pas une
-# information d'identité/authentification, et le chemin est fixé par la
-# mission (GET/PATCH /api/users/me/preferences). Réutilise `get_current_user`
-# et le modèle `User` déjà importés dans ce fichier plutôt que de dupliquer
-# un domaine entier pour deux endpoints.
-users_router = APIRouter(prefix="/users", tags=["préférences"])
-
-
-@users_router.get("/me/preferences", response_model=UserPreferences)
-def get_preferences(current_user: User = Depends(get_current_user)):
-    return current_user
-
-
-@users_router.patch("/me/preferences", response_model=UserPreferences)
-def update_preferences(
-    body: UserPreferencesUpdate,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    current_user.ui_theme = body.ui_theme
-    db.commit()
-    db.refresh(current_user)
-    return current_user
-
-
-# ── Retour utilisateur (Lot 10, refonte UI) ──────────────────────────────────
-# Retour utilisateur direct pendant la mission : « ajoute un formulaire pour
-# renseigner ce problème » plutôt qu'un simple lien mailto vers un support qui
-# n'existe pas pour cette app. Stocké tel quel (table `Feedback`), jamais
-# traité automatiquement — consultable par les administrateurs de LEUR
-# organisation uniquement (même isolation que le reste de l'app).
-
-class FeedbackCreate(BaseModel):
-    page: str = Field(..., min_length=1, max_length=300)
-    message: str = Field(..., min_length=1, max_length=4000)
-
-
-class FeedbackOut(BaseModel):
-    id: int
-    page: str
-    message: str
-    author_name: str
-    created_at: datetime
-
-    class Config:
-        from_attributes = True
-
-
-feedback_router = APIRouter(prefix="/feedback", tags=["retour utilisateur"])
-
-
-@feedback_router.post("", response_model=FeedbackOut, status_code=status.HTTP_201_CREATED)
-def create_feedback(
-    body: FeedbackCreate,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    entry = Feedback(
-        organization_id=current_user.organization_id,
-        user_id=current_user.id,
-        page=body.page,
-        message=body.message,
-    )
-    db.add(entry)
-    db.commit()
-    db.refresh(entry)
-    return FeedbackOut(
-        id=entry.id, page=entry.page, message=entry.message,
-        author_name=current_user.nom, created_at=entry.created_at,
-    )
-
-
-@feedback_router.get("", response_model=List[FeedbackOut])
-def list_feedback(
-    owner: User = Depends(require_owner),
-    db: Session = Depends(get_db),
-):
-    """Retours de MON organisation uniquement — jamais ceux d'une autre.
-
-    Correctif (Phase 1, AUDIT_BACKEND_2026-08-23.md, Axe B) : le commentaire
-    de section ci-dessus affirme un accès réservé aux administrateurs
-    depuis le Lot 10, mais la route utilisait `get_current_user` — tout
-    membre ordinaire pouvait donc lire les retours de ses collègues.
-    Aucun IDOR cross-tenant (le filtre `organization_id` était déjà
-    correct), seulement un rôle mal appliqué."""
-    entries = (
-        db.query(Feedback)
-        .filter(Feedback.organization_id == owner.organization_id)
-        .order_by(Feedback.created_at.desc())
-        .limit(200)
-        .all()
-    )
-    return [
-        FeedbackOut(id=e.id, page=e.page, message=e.message, author_name=e.author.nom, created_at=e.created_at)
-        for e in entries
-    ]
 
 
 # ── Endpoints — équipe (organisation) ────────────────────────────────────────
