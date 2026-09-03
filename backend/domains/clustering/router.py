@@ -256,7 +256,10 @@ def create_clustering_job(
     if not body.feature_columns:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"code": "COLONNES_MANQUANTES", "message": "Sélectionnez au moins une variable pour le clustering"},
+            detail={
+                "code": ErrorCode.COLONNES_MANQUANTES,
+                "message": "Sélectionnez au moins une variable pour le clustering",
+            },
         )
     unknown = set(body.feature_columns) - set(schema_columns)
     if unknown:

@@ -249,7 +249,7 @@ def create_vision_anomaly_job(
     if body.model_id not in _VALID_MODEL_IDS:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"code": "MODELE_INCONNU", "message": f"Modèle inconnu : {body.model_id}"},
+            detail={"code": ErrorCode.MODELE_INCONNU, "message": f"Modèle inconnu : {body.model_id}"},
         )
     if body.model_ids is not None:
         if len(body.model_ids) < 2 or len(body.model_ids) > MAX_MODELS_PER_COMPARISON:
@@ -269,13 +269,13 @@ def create_vision_anomaly_job(
         if unknown:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail={"code": "MODELE_INCONNU", "message": f"Modèle(s) inconnu(s) : {', '.join(unknown)}"},
+                detail={"code": ErrorCode.MODELE_INCONNU, "message": f"Modèle(s) inconnu(s) : {', '.join(unknown)}"},
             )
     if body.augmentation_preset not in AUGMENTATION_PRESET_IDS:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={
-                "code": "AUGMENTATION_PRESET_INCONNU",
+                "code": ErrorCode.AUGMENTATION_PRESET_INCONNU,
                 "message": f"Preset d'augmentation inconnu : {body.augmentation_preset!r}",
             },
         )
@@ -283,7 +283,7 @@ def create_vision_anomaly_job(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={
-                "code": "TAILLE_IMAGE_INCONNUE",
+                "code": ErrorCode.TAILLE_IMAGE_INCONNUE,
                 "message": f"Taille d'image invalide : {body.image_size} (voir {ALLOWED_IMAGE_SIZES})",
             },
         )
@@ -301,12 +301,12 @@ def create_vision_anomaly_job(
     if dataset is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail={"code": "VISION_DATASET_INTROUVABLE", "message": "Dataset d'images introuvable"},
+            detail={"code": ErrorCode.VISION_DATASET_INTROUVABLE, "message": "Dataset d'images introuvable"},
         )
     if dataset.status != "ready":
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail={"code": "VISION_DATASET_NON_PRET", "message": "Ce dataset n'a pas pu être validé"},
+            detail={"code": ErrorCode.VISION_DATASET_NON_PRET, "message": "Ce dataset n'a pas pu être validé"},
         )
     if dataset.structure_type != "mvtec_ad":
         raise HTTPException(
@@ -645,7 +645,7 @@ async def predict_vision_anomaly(
     except VisionAnomalyInferenceError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"code": "NOTATION_IMPOSSIBLE", "message": str(exc)},
+            detail={"code": ErrorCode.NOTATION_IMPOSSIBLE, "message": str(exc)},
         )
 
     return VisionAnomalyScoreOut(**scored)

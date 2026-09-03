@@ -555,7 +555,10 @@ def _validate_hyperparameter_overrides(
         if spec is None:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail={"code": "MODELE_INCONNU", "message": f"Modèle inconnu pour les hyperparamètres : {model_id}"},
+                detail={
+                    "code": ErrorCode.MODELE_INCONNU,
+                    "message": f"Modèle inconnu pour les hyperparamètres : {model_id}",
+                },
             )
         if model_id not in effective_model_ids:
             raise HTTPException(
@@ -613,7 +616,7 @@ def _get_org_job(job_id: int, current_user: User, db: Session) -> TrainingJob:
     if job is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail={"code": "TRAINING_JOB_INTROUVABLE", "message": "Entraînement introuvable"},
+            detail={"code": ErrorCode.TRAINING_JOB_INTROUVABLE, "message": "Entraînement introuvable"},
         )
     return job
 
@@ -1002,7 +1005,10 @@ def compare_training_jobs(
     if missing:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail={"code": "TRAINING_JOB_INTROUVABLE", "message": f"Entraînement(s) introuvable(s) : {missing}"},
+            detail={
+                "code": ErrorCode.TRAINING_JOB_INTROUVABLE,
+                "message": f"Entraînement(s) introuvable(s) : {missing}",
+            },
         )
     if len(unique_ids) < 2:
         raise HTTPException(
@@ -1054,7 +1060,7 @@ async def stream_training_job_events(job_id: int, current_user: User = Depends(g
         if job is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail={"code": "TRAINING_JOB_INTROUVABLE", "message": "Entraînement introuvable"},
+                detail={"code": ErrorCode.TRAINING_JOB_INTROUVABLE, "message": "Entraînement introuvable"},
             )
     finally:
         db.close()

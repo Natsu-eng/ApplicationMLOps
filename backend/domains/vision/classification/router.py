@@ -357,7 +357,7 @@ def create_vision_classification_job(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={
-                "code": "AUGMENTATION_PRESET_INCONNU",
+                "code": ErrorCode.AUGMENTATION_PRESET_INCONNU,
                 "message": f"Preset d'augmentation inconnu : {body.augmentation_preset!r}",
             },
         )
@@ -365,7 +365,7 @@ def create_vision_classification_job(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={
-                "code": "TAILLE_IMAGE_INCONNUE",
+                "code": ErrorCode.TAILLE_IMAGE_INCONNUE,
                 "message": f"Taille d'image invalide : {body.image_size} (voir {ALLOWED_IMAGE_SIZES})",
             },
         )
@@ -391,12 +391,12 @@ def create_vision_classification_job(
     if dataset is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail={"code": "VISION_DATASET_INTROUVABLE", "message": "Dataset d'images introuvable"},
+            detail={"code": ErrorCode.VISION_DATASET_INTROUVABLE, "message": "Dataset d'images introuvable"},
         )
     if dataset.status != "ready":
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail={"code": "VISION_DATASET_NON_PRET", "message": "Ce dataset n'a pas pu être validé"},
+            detail={"code": ErrorCode.VISION_DATASET_NON_PRET, "message": "Ce dataset n'a pas pu être validé"},
         )
     if dataset.structure_type != "classification":
         raise HTTPException(

@@ -25,18 +25,31 @@ pas un littéral). `api/main.py::custom_openapi` l'expose dans
 quel client sans avoir à parcourir le code source.
 
 Migration des littéraux existants vers `ErrorCode.XXX`, priorisée par
-ordre de risque de divergence (le code le plus dupliqué d'abord) :
-- `RESULTAT_INDISPONIBLE` (19 sites, 6 fichiers) — migré 2026-09-02.
+ordre de risque de divergence (le code le plus dupliqué d'abord), 4 lots
+vérifiés individuellement (ruff + mypy comparés ligne à ligne + suite de
+tests complète rejouée avant chaque commit) :
+- `RESULTAT_INDISPONIBLE` (19 sites, 6 fichiers) — migré 2026-09-02
+  (1er lot).
 - `DATASET_LECTURE_ECHEC` (19), `MODELE_NON_DISPONIBLE` (17),
   `ARTEFACT_INTROUVABLE` (12), `DATASET_NON_PRET` (11),
   `DATASET_INTROUVABLE` (10) — migrés 2026-09-02 (2ᵉ lot, 69 sites, 7
   fichiers).
-- Reste une dette explicite, priorisée pour la suite : 34 autres codes
-  dupliqués à moindre fréquence (89 sites au total, tous domaines
-  confondus, le plus fréquent restant `JOB_NON_ANNULABLE` à 6 sites) —
-  non traités dans ce lot pour rester dans un diff vérifiable
-  intégralement (tests rejoués + ruff/mypy comparés ligne à ligne) plutôt
-  que de migrer les 34 codes d'un coup avec un risque de régression
+- `JOB_NON_ANNULABLE`, `COLONNES_INCONNUES`, `COLONNE_INTROUVABLE`,
+  `ARTEFACT_ILLISIBLE` — migrés 2026-09-03 (3ᵉ lot, 21 sites).
+- `VISION_DATASET_NON_PRET`, `VISION_DATASET_INTROUVABLE`,
+  `TRAINING_JOB_INTROUVABLE`, `TAILLE_IMAGE_INCONNUE`,
+  `NOTATION_IMPOSSIBLE`, `MODELE_INCONNU`, `COLONNES_MANQUANTES`,
+  `AUGMENTATION_PRESET_INCONNU` — migrés 2026-09-03 (4ᵉ lot, 24 sites,
+  7 fichiers : anomalies, clustering, dimensionality, training,
+  vision/anomalies, vision/classification, vision/datasets).
+- Au total : 18 codes migrés, ~133 sites au moment de chaque migration
+  (le compte vivant augmente ensuite avec les fonctionnalités ajoutées
+  après-coup, ex. `RESULTAT_INDISPONIBLE` compte 22 sites aujourd'hui).
+- Reste une dette explicite, priorisée pour la suite : 22 autres codes
+  dupliqués (44 sites au total, tous domaines confondus, tous désormais
+  à fréquence 2 — plus aucun code à fréquence ≥3) — non traités dans ce
+  lot pour rester dans un diff vérifiable intégralement plutôt que de
+  migrer les 22 codes d'un coup avec un risque de régression
   proportionnellement plus difficile à auditer."""
 
 from __future__ import annotations

@@ -23,6 +23,7 @@ from sqlalchemy.orm import Session
 
 from api.core.config import get_settings
 from api.core.database import get_db
+from api.core.error_codes import ErrorCode
 from api.core.models import User, VisionDataset
 from api.core.rate_limit import rate_limit_dependency
 from api.core.storage import delete_vision_dataset_dir, vision_dataset_dir
@@ -145,7 +146,7 @@ def _get_org_dataset(dataset_id: int, current_user: User, db: Session) -> Vision
     if dataset is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail={"code": "VISION_DATASET_INTROUVABLE", "message": "Dataset d'images introuvable"},
+            detail={"code": ErrorCode.VISION_DATASET_INTROUVABLE, "message": "Dataset d'images introuvable"},
         )
     return dataset
 
@@ -384,13 +385,16 @@ def get_augmentation_preview(
     if preset not in AUGMENTATION_PRESET_IDS:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"code": "AUGMENTATION_PRESET_INCONNU", "message": f"Preset d'augmentation inconnu : {preset!r}"},
+            detail={
+                "code": ErrorCode.AUGMENTATION_PRESET_INCONNU,
+                "message": f"Preset d'augmentation inconnu : {preset!r}",
+            },
         )
     if image_size is not None and image_size not in ALLOWED_IMAGE_SIZES:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={
-                "code": "TAILLE_IMAGE_INCONNUE",
+                "code": ErrorCode.TAILLE_IMAGE_INCONNUE,
                 "message": f"Taille d'image invalide : {image_size} (voir {ALLOWED_IMAGE_SIZES})",
             },
         )
@@ -398,7 +402,7 @@ def get_augmentation_preview(
     if dataset.status != "ready":
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail={"code": "VISION_DATASET_NON_PRET", "message": "Ce dataset n'a pas pu être validé"},
+            detail={"code": ErrorCode.VISION_DATASET_NON_PRET, "message": "Ce dataset n'a pas pu être validé"},
         )
 
     base_dir = Path(dataset.storage_dir).resolve()

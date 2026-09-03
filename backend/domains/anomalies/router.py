@@ -210,7 +210,7 @@ def create_anomaly_job(
     if not body.feature_columns:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"code": "COLONNES_MANQUANTES", "message": "Sélectionnez au moins une variable"},
+            detail={"code": ErrorCode.COLONNES_MANQUANTES, "message": "Sélectionnez au moins une variable"},
         )
     unknown = set(body.feature_columns) - set(schema_columns)
     if unknown:
@@ -444,7 +444,7 @@ def predict_anomaly_score(
     except (InferenceError, AnomalyInferenceError) as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"code": "NOTATION_IMPOSSIBLE", "message": str(exc)},
+            detail={"code": ErrorCode.NOTATION_IMPOSSIBLE, "message": str(exc)},
         ) from exc
 
     # Lot Dérive — voir clustering.py::predict_cluster pour le raisonnement
@@ -564,7 +564,7 @@ def export_anomaly_scores(job_id: int, current_user: User = Depends(get_current_
     except InferenceError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"code": "NOTATION_IMPOSSIBLE", "message": str(exc)},
+            detail={"code": ErrorCode.NOTATION_IMPOSSIBLE, "message": str(exc)},
         ) from exc
     scored = score_anomalies_batch(bundle, feature_columns, full_df)
 
