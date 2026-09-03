@@ -11,7 +11,18 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    Float,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    false,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from api.core.database import Base
@@ -60,6 +71,29 @@ class User(Base):
     # mécanisme qui permet de fermer TOUTES les sessions d'un coup sans
     # énumérer chaque jeton émis.
     token_valid_after: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Mot de passe provisoire à changer obligatoirement à la première
+    # connexion. Un membre ajouté par le propriétaire reçoit un mot de passe
+    # que CELUI-CI a choisi et connaît donc — sans cet indicateur, il le
+    # connaissait indéfiniment et pouvait se connecter au compte de son
+    # collaborateur. Passe à False dès que l'intéressé choisit le sien.
+    # server_default="false" : les comptes existants ne sont pas impactés
+    # (leur mot de passe a déjà été choisi par eux, ou l'a été avant ce
+    # correctif — on ne les force pas rétroactivement).
+    # `false()` et non la chaîne "false" : SQLAlchemy rend alors `0` sur
+    # SQLite et `false` sur PostgreSQL. Écrite en chaîne, la valeur par
+    # défaut était stockée par SQLite comme le TEXTE 'false' — donc
+    # *truthy* en Python : tout compte nouvellement créé se retrouvait
+    # bloqué en "mot de passe provisoire" en dev/test, alors que la
+    # production PostgreSQL, elle, fonctionnait. Bug de portabilité attrapé
+    # par les tests, invisible autrement.
+    must_change_password: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=false()
+    )
+    # Date de révocation de l'accès (NULL = compte jamais désactivé). Sert
+    # à afficher DEPUIS QUAND un accès est coupé — utile en audit et pour
+    # une politique de rétention. Distinct de `actif`, qui ne dit que
+    # l'état courant : réactiver remet cette date à NULL.
+    deactivated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
     organization: Mapped["Organization"] = relationship("Organization", back_populates="users")
 

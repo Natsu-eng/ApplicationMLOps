@@ -338,6 +338,12 @@ export interface UserProfile {
   actif: boolean;
   created_at: string;
   last_login: string | null;
+  /** Mot de passe provisoire non encore remplacé : l'API refuse tout appel
+   *  hors profil / changement de mot de passe / déconnexion tant que c'est
+   *  vrai (voir `get_current_user` côté backend). L'interface doit donc
+   *  imposer l'écran de changement plutôt que laisser l'utilisateur se
+   *  heurter à des 403 incompréhensibles. */
+  must_change_password: boolean;
 }
 
 // Lot UI (Fondations) — thème d'interface persisté côté serveur, sur le
@@ -380,6 +386,11 @@ export interface TeamMember {
   role: "owner" | "member";
   actif: boolean;
   created_at: string;
+  /** Depuis quand l'accès est révoqué — null si le compte est actif. */
+  deactivated_at: string | null;
+  /** Le membre utilise encore le mot de passe provisoire fixé par le
+   *  propriétaire, qui le connaît donc toujours. */
+  must_change_password: boolean;
 }
 
 export interface RegisterPayload {

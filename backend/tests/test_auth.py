@@ -1,6 +1,8 @@
 """Tests du router auth (Lot 1) — inscription, connexion, équipe, isolation."""
 from __future__ import annotations
 
+import time
+
 
 def test_register_creates_organization_and_owner(client):
     resp = client.post(
@@ -155,10 +157,10 @@ def test_owner_can_add_member_but_member_cannot(client):
     )
     assert add_resp.status_code == 201
 
-    member_login = client.post(
-        "/api/auth/login", data={"username": "membre@bureau.fr", "password": "motdepasse123"}
-    ).json()
-    member_headers = {"Authorization": f"Bearer {member_login['access_token']}"}
+    # Le membre doit d'abord remplacer le mot de passe provisoire fixé par
+    # le propriétaire — sinon l'API lui renvoie AUTH_MDP_PROVISOIRE et non
+    # le refus de rôle que ce test vise.
+    member_headers = _onboard_member(client, "membre@bureau.fr")
 
     forbidden = client.post(
         "/api/auth/team/members",
@@ -192,10 +194,40 @@ def test_team_isolation_between_organizations(client):
 # inactif. Ces tests garantissent que la coupure est réelle et IMMÉDIATE.
 
 MDP = "motdepasse123"
+# Mot de passe que le membre choisit lui-même, distinct du provisoire fixé
+# par le propriétaire (le serveur refuse de réutiliser l'ancien).
+MDP_FINAL = "monmotdepasse456"
+
+
+def _onboard_member(client, email: str, temporary: str = MDP, final: str = MDP_FINAL) -> dict:
+    """Connecte un membre fraîchement créé et lui fait choisir SON mot de
+    passe — parcours réel depuis que le mot de passe provisoire fixé par le
+    propriétaire doit être remplacé avant tout usage de la plateforme.
+    Renvoie les en-têtes d'un membre pleinement opérationnel."""
+    first = client.post("/api/auth/login", data={"username": email, "password": temporary}).json()
+    headers = {"Authorization": f"Bearer {first['access_token']}"}
+    resp = client.patch(
+        "/api/auth/me/password",
+        headers=headers,
+        json={"current_password": temporary, "new_password": final, "new_password_confirm": final},
+    )
+    assert resp.status_code == 204, resp.text
+    # Changer son mot de passe révoque toutes les sessions : il faut se
+    # reconnecter. La pause n'est pas un contournement de test mais une
+    # propriété réelle du système : `iat` d'un JWT est en secondes entières
+    # alors que `token_valid_after` porte des microsecondes, donc un jeton
+    # émis dans la MÊME seconde que la révocation est rejeté (choix
+    # délibéré, voir `get_current_user` — se tromper du côté sûr). Un
+    # humain met de toute façon plus d'une seconde à ressaisir ses
+    # identifiants ; un script, non.
+    time.sleep(1.05)
+    again = client.post("/api/auth/login", data={"username": email, "password": final}).json()
+    return {"Authorization": f"Bearer {again['access_token']}"}
 
 
 def _owner_and_member(client, org="Bureau", owner_email="owner@bureau.fr", member_email="membre@bureau.fr"):
-    """Crée une organisation, son owner et un membre déjà connecté."""
+    """Crée une organisation, son owner et un membre déjà intégré (mot de
+    passe provisoire remplacé par le sien)."""
     owner = client.post(
         "/api/auth/register",
         json={"email": owner_email, "nom": "Owner", "password": MDP, "organization_name": org},
@@ -206,8 +238,7 @@ def _owner_and_member(client, org="Bureau", owner_email="owner@bureau.fr", membe
         headers=owner_headers,
         json={"email": member_email, "nom": "Membre", "password": MDP},
     ).json()
-    login = client.post("/api/auth/login", data={"username": member_email, "password": MDP}).json()
-    return owner_headers, created["id"], {"Authorization": f"Bearer {login['access_token']}"}
+    return owner_headers, created["id"], _onboard_member(client, member_email)
 
 
 def test_deactivation_revokes_an_already_issued_token_immediately(client):
@@ -235,7 +266,7 @@ def test_deactivated_member_cannot_log_in_again(client):
     # interdit — distinction volontaire côté endpoint de connexion. Ce
     # message existait depuis toujours mais était jusqu'ici inatteignable,
     # faute d'un moyen de désactiver qui que ce soit.
-    resp = client.post("/api/auth/login", data={"username": "membre@bureau.fr", "password": MDP})
+    resp = client.post("/api/auth/login", data={"username": "membre@bureau.fr", "password": MDP_FINAL})
     assert resp.status_code == 403
     assert resp.json()["detail"]["code"] == "AUTH_COMPTE_DESACTIVE"
 
@@ -248,7 +279,9 @@ def test_reactivated_member_can_log_in_again(client):
     resp = client.patch(f"/api/auth/team/members/{member_id}", headers=owner_headers, json={"actif": True})
     assert resp.status_code == 200
     assert resp.json()["actif"] is True
-    assert client.post("/api/auth/login", data={"username": "membre@bureau.fr", "password": MDP}).status_code == 200
+    assert client.post(
+        "/api/auth/login", data={"username": "membre@bureau.fr", "password": MDP_FINAL}
+    ).status_code == 200
 
 
 def test_ordinary_member_cannot_deactivate_anyone(client):
@@ -462,3 +495,99 @@ def test_setting_the_same_role_is_a_noop_without_audit_entry(client):
     assert resp.status_code == 200
     actions = [e["action"] for e in client.get("/api/auth/team/audit-log", headers=owner_headers).json()]
     assert "member.demoted" not in actions
+
+
+# ── Mot de passe provisoire + date de révocation ────────────────────────────
+# Le propriétaire choisit le mot de passe d'un membre qu'il ajoute : il le
+# connaît donc. Sans changement forcé, il le connaissait INDÉFINIMENT et
+# pouvait se connecter au compte de son collaborateur. L'enforcement est
+# côté serveur (`get_current_user`), pas seulement dans l'interface.
+
+
+def test_new_member_is_locked_out_of_the_api_until_they_choose_a_password(client):
+    """Le cœur du correctif : tant que le mot de passe provisoire n'est pas
+    remplacé, l'API entière est fermée — pas seulement l'écran masqué."""
+    owner = client.post(
+        "/api/auth/register",
+        json={"email": "owner@mdp.fr", "nom": "Owner", "password": MDP, "organization_name": "Bureau"},
+    ).json()
+    owner_headers = {"Authorization": f"Bearer {owner['access_token']}"}
+    client.post(
+        "/api/auth/team/members",
+        headers=owner_headers,
+        json={"email": "neo@mdp.fr", "nom": "Neo", "password": MDP},
+    )
+
+    login = client.post("/api/auth/login", data={"username": "neo@mdp.fr", "password": MDP})
+    assert login.status_code == 200  # la connexion elle-même reste permise
+    headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+
+    # Chemins exemptés : savoir qui l'on est, pour que l'interface sache
+    # quel écran afficher.
+    me = client.get("/api/auth/me", headers=headers)
+    assert me.status_code == 200
+    assert me.json()["must_change_password"] is True
+
+    # Tout le reste est fermé, y compris hors du domaine auth.
+    assert client.get("/api/datasets", headers=headers).status_code == 403
+    refused = client.get("/api/auth/team/members", headers=headers)
+    assert refused.status_code == 403
+    assert refused.json()["detail"]["code"] == "AUTH_MDP_PROVISOIRE"
+
+    # Après avoir choisi le sien, tout se débloque.
+    assert client.patch(
+        "/api/auth/me/password",
+        headers=headers,
+        json={"current_password": MDP, "new_password": MDP_FINAL, "new_password_confirm": MDP_FINAL},
+    ).status_code == 204
+
+    relogin = client.post("/api/auth/login", data={"username": "neo@mdp.fr", "password": MDP_FINAL}).json()
+    new_headers = {"Authorization": f"Bearer {relogin['access_token']}"}
+    assert client.get("/api/datasets", headers=new_headers).status_code == 200
+    assert client.get("/api/auth/me", headers=new_headers).json()["must_change_password"] is False
+
+
+def test_self_registered_owner_is_never_forced_to_change_password(client):
+    """Le propriétaire a choisi son mot de passe lui-même à l'inscription :
+    personne d'autre ne le connaît, rien à forcer."""
+    owner = client.post(
+        "/api/auth/register",
+        json={"email": "solo@mdp.fr", "nom": "Solo", "password": MDP, "organization_name": "Bureau"},
+    ).json()
+    headers = {"Authorization": f"Bearer {owner['access_token']}"}
+    assert client.get("/api/auth/me", headers=headers).json()["must_change_password"] is False
+    assert client.get("/api/datasets", headers=headers).status_code == 200
+
+
+def test_owner_sees_which_members_still_use_the_temporary_password(client):
+    """Transparence : le propriétaire doit pouvoir relancer les retardataires."""
+    owner_headers, member_id, _ = _owner_and_member(client)
+    members = {m["id"]: m for m in client.get("/api/auth/team/members", headers=owner_headers).json()}
+    # Le membre de la fixture a déjà choisi son mot de passe.
+    assert members[member_id]["must_change_password"] is False
+
+    client.post(
+        "/api/auth/team/members",
+        headers=owner_headers,
+        json={"email": "retard@bureau.fr", "nom": "Retard", "password": MDP},
+    )
+    listed = client.get("/api/auth/team/members", headers=owner_headers).json()
+    retard = [m for m in listed if m["email"] == "retard@bureau.fr"][0]
+    assert retard["must_change_password"] is True
+
+
+def test_deactivation_records_the_date_and_reactivation_clears_it(client):
+    """`actif` ne dit que l'état courant ; `deactivated_at` dit DEPUIS QUAND,
+    ce qu'exige un audit sérieux et une politique de rétention."""
+    owner_headers, member_id, _ = _owner_and_member(client)
+
+    before = client.get("/api/auth/team/members", headers=owner_headers).json()
+    assert [m["deactivated_at"] for m in before if m["id"] == member_id] == [None]
+
+    revoked = client.patch(f"/api/auth/team/members/{member_id}", headers=owner_headers, json={"actif": False})
+    assert revoked.status_code == 200
+    assert revoked.json()["deactivated_at"] is not None
+
+    restored = client.patch(f"/api/auth/team/members/{member_id}", headers=owner_headers, json={"actif": True})
+    assert restored.status_code == 200
+    assert restored.json()["deactivated_at"] is None

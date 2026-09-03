@@ -96,6 +96,7 @@ class ErrorCode(str, Enum):
     AUTH_EMAIL_DEJA_UTILISE = "AUTH_EMAIL_DEJA_UTILISE"
     AUTH_IDENTIFIANTS_INCORRECTS = "AUTH_IDENTIFIANTS_INCORRECTS"
     AUTH_MDP_ACTUEL_INCORRECT = "AUTH_MDP_ACTUEL_INCORRECT"
+    AUTH_MDP_PROVISOIRE = "AUTH_MDP_PROVISOIRE"
     AUTH_MDP_TROP_FAIBLE = "AUTH_MDP_TROP_FAIBLE"
     AUTH_MEMBRE_INTROUVABLE = "AUTH_MEMBRE_INTROUVABLE"
     AUTH_OWNER_REQUIS = "AUTH_OWNER_REQUIS"
@@ -209,6 +210,11 @@ ERROR_CODE_DESCRIPTIONS: dict[str, str] = {
     ErrorCode.AUTH_AUTO_DESACTIVATION_INTERDITE: (
         "Un propriétaire ne peut pas désactiver son propre compte — son organisation n'aurait plus "
         "personne pour gérer l'équipe."
+    ),
+    ErrorCode.AUTH_MDP_PROVISOIRE: (
+        "Le compte utilise encore le mot de passe provisoire fixé par la personne qui l'a créé, qui "
+        "le connaît donc. L'API reste fermée (hormis la consultation du profil, le changement de mot "
+        "de passe et la déconnexion) jusqu'à ce que le titulaire choisisse le sien."
     ),
     ErrorCode.AUTH_DERNIER_PROPRIETAIRE: (
         "Action refusée : l'organisation se retrouverait sans aucun propriétaire actif, donc sans "

@@ -104,6 +104,11 @@ class UserProfile(BaseModel):
     actif: bool
     created_at: datetime
     last_login: Optional[datetime] = None
+    # Permet à l'interface d'imposer l'écran de changement de mot de passe :
+    # l'API refuse déjà tout le reste (voir `get_current_user`), autant le
+    # dire clairement plutôt que de laisser l'utilisateur se heurter à des
+    # 403 sans comprendre.
+    must_change_password: bool = False
 
     model_config = {"from_attributes": True}
 
@@ -144,6 +149,13 @@ class TeamMemberProfile(BaseModel):
     role: str
     actif: bool
     created_at: datetime
+    # Depuis quand l'accès est coupé (None = compte actif, ou désactivé
+    # avant que cette date ne soit conservée).
+    deactivated_at: Optional[datetime] = None
+    # Le membre n'a pas encore remplacé le mot de passe provisoire : le
+    # propriétaire qui l'a créé le connaît toujours. Affiché pour qu'il
+    # puisse relancer l'intéressé.
+    must_change_password: bool = False
 
     model_config = {"from_attributes": True}
 
@@ -171,7 +183,22 @@ _TOKEN_INVALIDE = HTTPException(
 )
 
 
+# Seuls chemins accessibles tant qu'un mot de passe PROVISOIRE n'a pas été
+# remplacé : savoir qui l'on est (l'interface a besoin de l'indicateur pour
+# afficher le bon écran), changer justement ce mot de passe, et se
+# déconnecter. Tout le reste de l'API est fermé — l'enforcement est ici,
+# côté serveur, et non dans l'interface : un membre qui ignorerait l'écran
+# laisserait sinon le mot de passe connu de son propriétaire valable
+# indéfiniment, ce qui viderait le correctif de son sens.
+_PASSWORD_CHANGE_EXEMPT_PATHS = frozenset({
+    "/api/auth/me",
+    "/api/auth/me/password",
+    "/api/auth/logout",
+})
+
+
 def get_current_user(
+    request: Request,
     token: str = Depends(oauth2_scheme),
     db: Session = Depends(get_db),
 ) -> User:
@@ -198,8 +225,31 @@ def get_current_user(
     valid_after = _as_aware_utc(user.token_valid_after)
     if valid_after is not None:
         iat = payload.get("iat")
+        # Comparaison STRICTE, seuil non tronqué — volontaire. `iat` est un
+        # entier de secondes (spec JWT) alors que `token_valid_after` porte
+        # des microsecondes : dans la seconde de la révocation, un jeton
+        # émis AVANT et un jeton émis APRÈS ont le même `iat` et sont donc
+        # indiscernables. Il faut choisir lequel des deux on sacrifie.
+        # Tronquer le seuil ferait survivre les anciens jetons — essayé,
+        # et `test_confirm_reset_with_valid_token_changes_password_and_
+        # revokes_sessions` l'a immédiatement rattrapé : une session volée
+        # survivait au geste censé la chasser. On garde donc le rejet
+        # strict, qui se trompe du côté sûr. Conséquence acceptée : se
+        # reconnecter dans la même seconde qu'un changement de mot de passe
+        # donne un jeton refusé, il faut recommencer une seconde plus tard.
         if iat is None or iat < valid_after.timestamp():
             raise _TOKEN_INVALIDE
+    if user.must_change_password and request.url.path not in _PASSWORD_CHANGE_EXEMPT_PATHS:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "code": ErrorCode.AUTH_MDP_PROVISOIRE,
+                "message": (
+                    "Mot de passe provisoire : choisissez le vôtre avant d'utiliser la plateforme — "
+                    "celui qui vous a été communiqué est connu de la personne qui a créé votre compte"
+                ),
+            },
+        )
     return user
 
 
@@ -395,6 +445,10 @@ def change_own_password(
     client_ip = get_client_ip(request)
     current_user.hashed_password = hash_password(body.new_password)
     current_user.token_valid_after = datetime.now(timezone.utc)
+    # Le mot de passe provisoire choisi par le propriétaire vient d'être
+    # remplacé par celui de l'intéressé : la connaissance qu'en avait le
+    # propriétaire devient sans valeur, le compte est débloqué.
+    current_user.must_change_password = False
     log_action(
         db, current_user.organization_id, current_user.id, "auth.password_changed",
         details={"ip": client_ip},
@@ -691,6 +745,12 @@ def add_team_member(
         role="member",
         organization_id=owner.organization_id,
         actif=True,
+        # Le propriétaire choisit ce mot de passe, il le connaît donc. Sans
+        # cet indicateur il le connaissait indéfiniment et pouvait se
+        # connecter au compte de son collaborateur : l'intéressé doit en
+        # choisir un autre avant tout usage de la plateforme (voir
+        # `get_current_user`).
+        must_change_password=True,
     )
     db.add(member)
     db.flush()  # obtient member.id avant l'écriture du journal, même transaction
@@ -866,6 +926,12 @@ def set_team_member_status(
     member.actif = body.actif
     if not body.actif:
         member.token_valid_after = datetime.now(timezone.utc)
+        member.deactivated_at = datetime.now(timezone.utc)
+    else:
+        # Réactivation : la date de révocation n'a plus de sens. On ne
+        # conserve pas l'historique des révocations successives ici — le
+        # journal d'audit le fait déjà, avec l'auteur de chaque geste.
+        member.deactivated_at = None
 
     log_action(
         db, owner.organization_id, owner.id,

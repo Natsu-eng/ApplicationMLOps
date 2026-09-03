@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { Navigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
+import ForcePasswordChange from "./auth/ForcePasswordChange";
 
 /** Silhouette de l'application pendant la vérification de session (revue
  * design). Remplace un « Chargement… » nu au centre d'un écran vide, qui
@@ -76,7 +77,7 @@ function AppSkeleton() {
 
 /** Bloque l'accès aux pages qui exigent une session valide — redirige vers /login sinon. */
 export default function ProtectedRoute({ children }: { children: ReactNode }) {
-  const { isAuth, isLoading } = useAuth();
+  const { isAuth, isLoading, user } = useAuth();
 
   if (isLoading) {
     return <AppSkeleton />;
@@ -84,6 +85,14 @@ export default function ProtectedRoute({ children }: { children: ReactNode }) {
 
   if (!isAuth) {
     return <Navigate to="/login" replace />;
+  }
+
+  // Mot de passe provisoire non remplacé : le serveur refuse déjà tout le
+  // reste de l'API (AUTH_MDP_PROVISOIRE). Intercepté ici, au point de
+  // passage unique des pages authentifiées, pour expliquer la situation au
+  // lieu de laisser l'utilisateur enchaîner des 403 incompréhensibles.
+  if (user?.must_change_password) {
+    return <ForcePasswordChange />;
   }
 
   return <>{children}</>;

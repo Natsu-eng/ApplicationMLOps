@@ -23,7 +23,10 @@ valeurs hors liste, et ce rejet ne doit pas laisser la préférence dans un
 """
 from __future__ import annotations
 
+import time
+
 MDP = "motdepasse123"
+MDP_FINAL = "monmotdepasse456"
 
 
 def _register(client, email: str, org: str, nom: str = "Test") -> dict:
@@ -37,16 +40,34 @@ def _register(client, email: str, org: str, nom: str = "Test") -> dict:
 
 
 def _add_member(client, owner_headers: dict, email: str, nom: str = "Membre") -> dict:
-    """Ajoute un membre ordinaire (non-owner) et renvoie ses en-têtes."""
+    """Ajoute un membre ordinaire (non-owner), lui fait remplacer le mot de
+    passe provisoire fixé par le propriétaire, et renvoie ses en-têtes.
+
+    Ce remplacement n'est pas cosmétique : tant qu'il n'a pas eu lieu, l'API
+    refuse tout appel avec AUTH_MDP_PROVISOIRE (voir `get_current_user`) —
+    un membre non intégré ne pourrait donc ni lire ses préférences ni
+    déposer un retour."""
     resp = client.post(
         "/api/auth/team/members",
         headers=owner_headers,
         json={"email": email, "nom": nom, "password": MDP},
     )
     assert resp.status_code == 201, resp.text
-    login = client.post("/api/auth/login", data={"username": email, "password": MDP})
-    assert login.status_code == 200, login.text
-    return {"Authorization": f"Bearer {login.json()['access_token']}"}
+    first = client.post("/api/auth/login", data={"username": email, "password": MDP})
+    assert first.status_code == 200, first.text
+    changed = client.patch(
+        "/api/auth/me/password",
+        headers={"Authorization": f"Bearer {first.json()['access_token']}"},
+        json={"current_password": MDP, "new_password": MDP_FINAL, "new_password_confirm": MDP_FINAL},
+    )
+    assert changed.status_code == 204, changed.text
+    # Le changement révoque toutes les sessions : reconnexion obligatoire.
+    # Pause d'une seconde : un jeton émis dans la même seconde que la
+    # révocation est rejeté (granularité de `iat`, voir get_current_user).
+    time.sleep(1.05)
+    again = client.post("/api/auth/login", data={"username": email, "password": MDP_FINAL})
+    assert again.status_code == 200, again.text
+    return {"Authorization": f"Bearer {again.json()['access_token']}"}
 
 
 # ── Préférences d'interface ──────────────────────────────────────────────────

@@ -4,6 +4,7 @@ d'entraînements concurrents par organisation. Portée technique volontaire
 from __future__ import annotations
 
 import io
+import time
 from unittest.mock import patch
 
 from api.core.config import get_settings
@@ -132,9 +133,10 @@ def test_audit_log_records_anomaly_job_deleted(client):
 
 
 def test_audit_log_records_model_promotion(client, db_session):
+    import json as _json
+
     from api.core.models import MLModel, TrainingJob
     from domains.training.services.versioning import next_version
-    import json as _json
 
     headers = _register(client)
     dataset = _upload_dataset(client, headers)
@@ -166,13 +168,33 @@ def test_audit_log_restricted_to_owner(client):
         headers=headers,
         json={"email": "membre@bureau.fr", "nom": "Membre", "password": "motdepasse123"},
     )
-    member_login = client.post(
+    # Le membre remplace d'abord le mot de passe provisoire fixé par le
+    # propriétaire : sans cela il serait refusé par la garde
+    # AUTH_MDP_PROVISOIRE, et ce test vérifierait le mauvais mécanisme —
+    # il passerait au vert sans jamais éprouver le contrôle de rôle.
+    first = client.post(
         "/api/auth/login", data={"username": "membre@bureau.fr", "password": "motdepasse123"}
+    ).json()
+    client.patch(
+        "/api/auth/me/password",
+        headers={"Authorization": f"Bearer {first['access_token']}"},
+        json={
+            "current_password": "motdepasse123",
+            "new_password": "sonpropremdp456",
+            "new_password_confirm": "sonpropremdp456",
+        },
+    )
+    # Un jeton émis dans la même seconde que la révocation est rejeté
+    # (granularité de `iat`, voir `get_current_user`).
+    time.sleep(1.05)
+    member_login = client.post(
+        "/api/auth/login", data={"username": "membre@bureau.fr", "password": "sonpropremdp456"}
     ).json()
     member_headers = {"Authorization": f"Bearer {member_login['access_token']}"}
 
     resp = client.get("/api/auth/team/audit-log", headers=member_headers)
     assert resp.status_code == 403
+    assert resp.json()["detail"]["code"] == "AUTH_OWNER_REQUIS"
 
 
 def test_audit_log_isolated_between_organizations(client):
