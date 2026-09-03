@@ -67,6 +67,10 @@ notebooks/*.parquet
 .pytest_cache/
 .coverage
 
+# Caches d'outils d'analyse statique (regénérés à chaque exécution)
+.mypy_cache/
+.ruff_cache/
+
 # Jupyter Notebooks
 .ipynb_checkpoints/
 
