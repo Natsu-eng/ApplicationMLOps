@@ -42,8 +42,10 @@ class FeedbackOut(BaseModel):
     author_name: str
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    # `model_config` plutôt que `class Config` (déprécié depuis Pydantic V2,
+    # supprimé en V3) — aligne ce schéma sur tous les autres du projet
+    # (UserProfile, TeamMemberProfile, UserPreferences...).
+    model_config = {"from_attributes": True}
 
 
 # ── Endpoints ────────────────────────────────────────────────────────────────
