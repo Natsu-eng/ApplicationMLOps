@@ -811,3 +811,91 @@ def test_estimate_duration_isolated_between_organizations(client):
     headers_b = _register(client, "b@bureau-b.fr", "Bureau B")
     resp = client.get(f"/api/training/estimate-duration?dataset_id={dataset_a['id']}", headers=headers_b)
     assert resp.status_code == 404
+
+
+# ── Colonne de regroupement : jamais aussi une variable explicative ──────────
+# Le split est groupé (`GroupShuffleSplit`) : les valeurs de la colonne de
+# groupe présentes en test sont par construction absentes du train. L'utiliser
+# EN PLUS comme variable est au mieux inutile, au pire un identifiant que le
+# modèle mémorise pli par pli. Le produit le promet déjà à l'utilisateur
+# (message `colonne_groupe_exclue`) et le frontend le fait — ces tests
+# garantissent que l'API le tient SEULE, sans dépendre de son appelant.
+
+
+def _upload_grouped_dataset(client, headers):
+    """Dataset à colonne de regroupement explicite (`groupe`)."""
+    rows = "\n".join(f"{i},{i * 2},g{i % 5},{i * 3}" for i in range(50))
+    content = f"x1,x2,groupe,cible\n{rows}\n".encode()
+    resp = client.post("/api/datasets", headers=headers, files={"file": ("g.csv", io.BytesIO(content), "text/csv")})
+    return resp.json()
+
+
+@patch("domains.training.router.training_queue")
+def test_group_column_excluded_from_features_when_feature_columns_omitted(mock_queue, client, db_session):
+    """`feature_columns` est optionnel : omis, le défaut serveur retenait
+    TOUTES les colonnes sauf la cible — donc la colonne de groupe aussi."""
+    mock_queue.enqueue.return_value.id = "fake-rq-id"
+    headers = _register(client)
+    dataset = _upload_grouped_dataset(client, headers)
+
+    job = client.post(
+        "/api/training/jobs",
+        headers=headers,
+        json={"dataset_id": dataset["id"], "target_column": "cible", "group_column": "groupe"},
+    ).json()
+
+    job_row = db_session.query(TrainingJob).filter(TrainingJob.id == job["id"]).first()
+    stored = json.loads(job_row.feature_columns_json)
+    assert "groupe" not in stored
+    assert sorted(stored) == ["x1", "x2"]
+    # Le groupement lui-même reste bien actif — il lit le DataFrame complet.
+    assert job_row.group_column == "groupe"
+
+
+@patch("domains.training.router.training_queue")
+def test_group_column_excluded_even_when_explicitly_listed_as_feature(mock_queue, client, db_session):
+    """Cas d'un appelant direct de l'API (ou d'un job rejoué créé avant ce
+    correctif) qui liste explicitement la colonne de groupe en variable."""
+    mock_queue.enqueue.return_value.id = "fake-rq-id"
+    headers = _register(client)
+    dataset = _upload_grouped_dataset(client, headers)
+
+    job = client.post(
+        "/api/training/jobs",
+        headers=headers,
+        json={
+            "dataset_id": dataset["id"],
+            "target_column": "cible",
+            "group_column": "groupe",
+            "feature_columns": ["x1", "x2", "groupe"],
+        },
+    ).json()
+
+    stored = json.loads(
+        db_session.query(TrainingJob).filter(TrainingJob.id == job["id"]).first().feature_columns_json
+    )
+    assert "groupe" not in stored
+    assert sorted(stored) == ["x1", "x2"]
+
+
+@patch("domains.training.router.training_queue")
+def test_create_job_rejects_when_group_column_is_the_only_feature(mock_queue, client):
+    """Retirer la colonne de groupe ne doit jamais laisser partir un
+    entraînement sans aucune variable explicative."""
+    mock_queue.enqueue.return_value.id = "fake-rq-id"
+    headers = _register(client)
+    dataset = _upload_grouped_dataset(client, headers)
+
+    resp = client.post(
+        "/api/training/jobs",
+        headers=headers,
+        json={
+            "dataset_id": dataset["id"],
+            "target_column": "cible",
+            "group_column": "groupe",
+            "feature_columns": ["groupe"],
+        },
+    )
+    assert resp.status_code == 400
+    assert resp.json()["detail"]["code"] == "COLONNES_MANQUANTES"
+    mock_queue.enqueue.assert_not_called()

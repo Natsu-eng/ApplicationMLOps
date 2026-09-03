@@ -611,6 +611,37 @@ def create_training_job(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={"code": "COLONNE_GROUPE_INTROUVABLE", "message": f"Colonne de groupe '{body.group_column}' absente du dataset"},
         )
+    if body.group_column:
+        # La colonne de regroupement ne doit JAMAIS servir aussi de variable
+        # explicative. Le split étant groupé (`GroupShuffleSplit`, voir
+        # `domains/shared/ml_preprocessing.py::split_dataset`), ses valeurs
+        # présentes en test sont par construction TOUTES absentes du train :
+        # au mieux inutile, au pire un identifiant à forte cardinalité que le
+        # modèle mémorise fold par fold.
+        #
+        # C'est déjà ce que le produit PROMET à l'utilisateur — message
+        # `colonne_groupe_exclue` (`domains/shared/data_quality.py`) : « elle
+        # n'est pas analysée comme variable prédictive » — et ce que fait le
+        # frontend (`Training.tsx`, liste filtrée). Appliqué ici pour que
+        # l'API le garantisse SEULE, sans dépendre de son appelant :
+        # `feature_columns` est optionnel, et le défaut calculé ci-dessus
+        # n'excluait que la cible, donc un appel sans `feature_columns`
+        # embarquait la colonne de groupe parmi les variables.
+        #
+        # Le groupement lui-même n'en souffre pas : `split_dataset` lit
+        # `df[group_column]` sur le DataFrame complet, jamais `X`.
+        feature_columns = [c for c in feature_columns if c != body.group_column]
+        if not feature_columns:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "code": ErrorCode.COLONNES_MANQUANTES,
+                    "message": (
+                        "Aucune variable explicative : la colonne de regroupement "
+                        f"'{body.group_column}' ne peut pas servir aussi de variable"
+                    ),
+                },
+            )
 
     if body.model_ids is not None:
         unknown_models = set(body.model_ids) - set(MODEL_REGISTRY.keys())

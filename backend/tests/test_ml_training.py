@@ -165,6 +165,44 @@ def test_make_cv_groupkfold_ignores_seed_deterministically():
     assert cv.__class__.__name__ == "GroupKFold"
 
 
+def test_make_cv_classification_with_groups_stays_stratified():
+    """Classification + colonne de groupe : les groupes doivent être
+    respectés SANS abandonner la stratification.
+
+    Avant ce correctif, `_make_cv` renvoyait `GroupKFold` pour les deux
+    types de tâche dès qu'une colonne de groupe était fournie — la
+    répartition des classes entre plis n'était alors plus garantie du tout.
+    La régression, elle, garde `GroupKFold` (aucune classe à stratifier),
+    vérifié par le test ci-dessus."""
+    groups = np.array([0, 0, 1, 1, 2, 2])
+    cv = _make_cv("classification", 3, groups, seed=7)
+    assert cv.__class__.__name__ == "StratifiedGroupKFold"
+
+
+def test_make_cv_classification_folds_keep_both_classes_without_splitting_groups():
+    """Preuve FONCTIONNELLE du correctif, pas seulement le nom de la classe.
+
+    Ce jeu de données est construit pour que `GroupKFold` produise au moins
+    un pli de validation privé d'une des deux classes, là où
+    `StratifiedGroupKFold` y parvient — tout en gardant, dans les deux cas,
+    des groupes strictement disjoints entre entraînement et validation.
+    Il échoue donc sur l'implémentation précédente et passe sur celle-ci."""
+    groups = np.array(
+        [0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 4, 4, 4, 4,
+         5, 5, 5, 5, 6, 6, 6, 6, 7, 7, 7, 8, 8, 8, 8]
+    )
+    y = np.array(
+        [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1,
+         1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 0, 0, 0, 0]
+    )
+    X = np.zeros((len(y), 1))
+
+    cv = _make_cv("classification", 3, groups, seed=7)
+    for train_idx, val_idx in cv.split(X, y, groups=groups):
+        assert set(y[val_idx]) == {0, 1}, "un pli de validation ne contient qu'une seule classe"
+        assert not (set(groups[train_idx]) & set(groups[val_idx])), "un groupe est à cheval train/validation"
+
+
 # ── Lot A — non-fuite préprocesseur/CV et calibration CQR groupée ──
 
 

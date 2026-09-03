@@ -84,8 +84,8 @@ from sklearn.model_selection import (
     GroupKFold,
     GroupShuffleSplit,
     KFold,
+    StratifiedGroupKFold,
     StratifiedKFold,
-    cross_val_score,
     cross_validate,
     learning_curve,
     train_test_split,
@@ -219,14 +219,28 @@ def selection_metric_label(task_type: str) -> str:
 
 
 def _make_cv(task_type: str, cv_folds: int, groups: Optional[np.ndarray], seed: int):
-    """GroupKFold si une colonne de groupe est fournie (anti-fuite jusque dans
-    la CV, sans notion de seed — GroupKFold est déterministe par construction,
-    pas de `shuffle`) — sinon StratifiedKFold (classification) ou KFold
-    (régression), toutes deux mélangées avec `seed` (AUDIT_ROADMAP.md, H6 :
-    avant ce correctif, `random_state=42` était figé en dur, indépendant du
-    seed choisi par l'utilisateur — changer le seed ne faisait jamais varier
-    les folds de CV)."""
+    """Anti-fuite jusque dans la CV quand une colonne de groupe est fournie :
+
+    - classification → `StratifiedGroupKFold`, qui respecte les groupes ET
+      conserve la répartition des classes d'un pli à l'autre. Auparavant
+      `GroupKFold` était utilisé pour les deux tâches, ce qui abandonnait
+      purement et simplement la stratification en classification : la
+      composition des plis pouvait varier fortement, rendant `cv_score` plus
+      bruité, et à l'extrême un pli pouvait ne contenir aucun exemple d'une
+      classe rare (même mode de défaillance que celui déjà rattrapé au
+      niveau du split train/test, voir le message d'erreur dédié dans
+      `train_and_evaluate`). `shuffle=True` + `random_state=seed` pour rester
+      cohérent avec les deux branches non groupées ci-dessous.
+    - régression → `GroupKFold` (pas de classes à stratifier), sans notion de
+      seed : déterministe par construction, il n'accepte pas `shuffle`.
+
+    Sinon StratifiedKFold (classification) ou KFold (régression), toutes deux
+    mélangées avec `seed` (AUDIT_ROADMAP.md, H6 : avant ce correctif,
+    `random_state=42` était figé en dur, indépendant du seed choisi par
+    l'utilisateur — changer le seed ne faisait jamais varier les folds de CV)."""
     if groups is not None:
+        if task_type == "classification":
+            return StratifiedGroupKFold(n_splits=cv_folds, shuffle=True, random_state=seed)
         return GroupKFold(n_splits=cv_folds)
     if task_type == "classification":
         return StratifiedKFold(n_splits=cv_folds, shuffle=True, random_state=seed)
