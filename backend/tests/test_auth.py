@@ -308,3 +308,157 @@ def test_deactivation_is_recorded_in_the_audit_log(client):
     assert len(deactivations) == 1
     assert deactivations[0]["target_id"] == member_id
     assert deactivations[0]["details"]["email"] == "membre@bureau.fr"
+
+
+# ── Succession du propriétaire (promotion / rétrogradation) ─────────────────
+# Jusqu'ici `register` créait l'UNIQUE owner et aucun endpoint ne changeait
+# un rôle : le départ de ce propriétaire bloquait définitivement
+# l'organisation. Invariant désormais protégé : au moins un propriétaire
+# ACTIF en permanence — sur les deux chemins qui pourraient le violer
+# (rétrogradation ET révocation d'accès).
+
+
+def _owner_id_of(client, headers) -> int:
+    return [m["id"] for m in client.get("/api/auth/team/members", headers=headers).json()
+            if m["role"] == "owner"][0]
+
+
+def test_owner_promotes_a_member_who_can_then_manage_the_team(client):
+    owner_headers, member_id, member_headers = _owner_and_member(client)
+    # Avant promotion, le membre ne peut pas gérer l'équipe.
+    assert client.post(
+        "/api/auth/team/members",
+        headers=member_headers,
+        json={"email": "x@bureau.fr", "nom": "Xx", "password": MDP},
+    ).status_code == 403
+
+    resp = client.patch(f"/api/auth/team/members/{member_id}/role", headers=owner_headers, json={"role": "owner"})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["role"] == "owner"
+
+    # Le jeton déjà émis porte l'ancien rôle, mais l'autorisation est relue
+    # en base à chaque requête : le pouvoir est effectif immédiatement, sans
+    # que le successeur ait à se reconnecter.
+    assert client.post(
+        "/api/auth/team/members",
+        headers=member_headers,
+        json={"email": "x@bureau.fr", "nom": "Xx", "password": MDP},
+    ).status_code == 201
+
+
+def test_full_succession_owner_promotes_then_steps_down(client):
+    """Le scénario réel du départ : promouvoir son successeur, puis se
+    rétrograder soi-même. L'organisation reste gérable de bout en bout."""
+    owner_headers, member_id, member_headers = _owner_and_member(client)
+    owner_id = _owner_id_of(client, owner_headers)
+
+    client.patch(f"/api/auth/team/members/{member_id}/role", headers=owner_headers, json={"role": "owner"})
+    # L'ancien propriétaire se rétrograde lui-même — autorisé, puisqu'un
+    # autre propriétaire actif existe désormais.
+    resp = client.patch(f"/api/auth/team/members/{owner_id}/role", headers=owner_headers, json={"role": "member"})
+    assert resp.status_code == 200
+    assert resp.json()["role"] == "member"
+
+    # Il n'a plus les droits ; le successeur, si.
+    assert client.get("/api/auth/team/audit-log", headers=owner_headers).status_code == 403
+    assert client.get("/api/auth/team/audit-log", headers=member_headers).status_code == 200
+
+
+def test_cannot_demote_the_last_active_owner(client):
+    owner_headers, _, _ = _owner_and_member(client)
+    owner_id = _owner_id_of(client, owner_headers)
+
+    resp = client.patch(f"/api/auth/team/members/{owner_id}/role", headers=owner_headers, json={"role": "member"})
+    assert resp.status_code == 400
+    assert resp.json()["detail"]["code"] == "AUTH_DERNIER_PROPRIETAIRE"
+    # L'organisation reste gérable.
+    assert client.get("/api/auth/team/audit-log", headers=owner_headers).status_code == 200
+
+
+def test_revoking_a_co_owner_always_leaves_an_active_owner(client):
+    """La révocation ne peut PAS orpheliner l'organisation, par construction.
+
+    Il n'y a volontairement aucune garde « dernier propriétaire actif » sur
+    la révocation (contrairement à la rétrogradation) : elle serait du code
+    mort. `require_owner` impose un auteur propriétaire ACTIF, et on ne peut
+    pas se révoquer soi-même — l'auteur survit donc toujours à l'opération.
+    Ce test fixe ce raisonnement : révoquer un co-propriétaire est permis, et
+    l'organisation reste gérable après."""
+    owner_headers, member_id, _ = _owner_and_member(client)
+    client.patch(f"/api/auth/team/members/{member_id}/role", headers=owner_headers, json={"role": "owner"})
+
+    resp = client.patch(f"/api/auth/team/members/{member_id}", headers=owner_headers, json={"actif": False})
+    assert resp.status_code == 200
+
+    members = client.get("/api/auth/team/members", headers=owner_headers).json()
+    actifs = [m for m in members if m["role"] == "owner" and m["actif"]]
+    assert len(actifs) == 1
+    assert client.get("/api/auth/team/audit-log", headers=owner_headers).status_code == 200
+
+
+def test_sole_owner_cannot_revoke_their_own_access(client):
+    """L'autre moitié du raisonnement ci-dessus : le seul chemin qui aurait
+    pu orpheliner l'organisation par révocation est fermé en amont."""
+    owner_headers, _, _ = _owner_and_member(client)
+    owner_id = _owner_id_of(client, owner_headers)
+
+    resp = client.patch(f"/api/auth/team/members/{owner_id}", headers=owner_headers, json={"actif": False})
+    assert resp.status_code == 400
+    assert resp.json()["detail"]["code"] == "AUTH_AUTO_DESACTIVATION_INTERDITE"
+
+
+def test_a_deactivated_owner_does_not_count_as_active(client):
+    """Subtilité qui rend l'invariant correct : un propriétaire désactivé ne
+    gère plus rien, il ne doit donc pas autoriser la rétrogradation du seul
+    propriétaire encore actif."""
+    owner_headers, member_id, _ = _owner_and_member(client)
+    owner_id = _owner_id_of(client, owner_headers)
+
+    # Le membre devient propriétaire, puis on lui révoque l'accès.
+    client.patch(f"/api/auth/team/members/{member_id}/role", headers=owner_headers, json={"role": "owner"})
+    client.patch(f"/api/auth/team/members/{member_id}", headers=owner_headers, json={"actif": False})
+
+    # Il reste 2 propriétaires en base, mais UN SEUL actif : la rétrogradation
+    # du propriétaire actif doit être refusée.
+    resp = client.patch(f"/api/auth/team/members/{owner_id}/role", headers=owner_headers, json={"role": "member"})
+    assert resp.status_code == 400
+    assert resp.json()["detail"]["code"] == "AUTH_DERNIER_PROPRIETAIRE"
+
+
+def test_ordinary_member_cannot_change_roles(client):
+    owner_headers, member_id, member_headers = _owner_and_member(client)
+    resp = client.patch(f"/api/auth/team/members/{member_id}/role", headers=member_headers, json={"role": "owner"})
+    assert resp.status_code == 403
+    assert resp.json()["detail"]["code"] == "AUTH_OWNER_REQUIS"
+
+
+def test_cannot_change_role_of_a_member_of_another_organization(client):
+    _, member_a_id, _ = _owner_and_member(client)
+    headers_b = {
+        "Authorization": "Bearer " + client.post(
+            "/api/auth/register",
+            json={"email": "b@org-b.fr", "nom": "Bb", "password": MDP, "organization_name": "Org B"},
+        ).json()["access_token"]
+    }
+    resp = client.patch(f"/api/auth/team/members/{member_a_id}/role", headers=headers_b, json={"role": "owner"})
+    assert resp.status_code == 404
+    assert resp.json()["detail"]["code"] == "AUTH_MEMBRE_INTROUVABLE"
+
+
+def test_role_changes_are_recorded_in_the_audit_log(client):
+    owner_headers, member_id, _ = _owner_and_member(client)
+    client.patch(f"/api/auth/team/members/{member_id}/role", headers=owner_headers, json={"role": "owner"})
+    client.patch(f"/api/auth/team/members/{member_id}/role", headers=owner_headers, json={"role": "member"})
+
+    actions = [e["action"] for e in client.get("/api/auth/team/audit-log", headers=owner_headers).json()]
+    assert "member.promoted" in actions
+    assert "member.demoted" in actions
+
+
+def test_setting_the_same_role_is_a_noop_without_audit_entry(client):
+    """Ne jamais polluer le journal d'audit avec un non-changement."""
+    owner_headers, member_id, _ = _owner_and_member(client)
+    resp = client.patch(f"/api/auth/team/members/{member_id}/role", headers=owner_headers, json={"role": "member"})
+    assert resp.status_code == 200
+    actions = [e["action"] for e in client.get("/api/auth/team/audit-log", headers=owner_headers).json()]
+    assert "member.demoted" not in actions

@@ -92,6 +92,7 @@ class ErrorCode(str, Enum):
     # ── Authentification / équipe (domains/auth) ────────────────────────
     AUTH_AUTO_DESACTIVATION_INTERDITE = "AUTH_AUTO_DESACTIVATION_INTERDITE"
     AUTH_COMPTE_DESACTIVE = "AUTH_COMPTE_DESACTIVE"
+    AUTH_DERNIER_PROPRIETAIRE = "AUTH_DERNIER_PROPRIETAIRE"
     AUTH_EMAIL_DEJA_UTILISE = "AUTH_EMAIL_DEJA_UTILISE"
     AUTH_IDENTIFIANTS_INCORRECTS = "AUTH_IDENTIFIANTS_INCORRECTS"
     AUTH_MDP_ACTUEL_INCORRECT = "AUTH_MDP_ACTUEL_INCORRECT"
@@ -208,6 +209,11 @@ ERROR_CODE_DESCRIPTIONS: dict[str, str] = {
     ErrorCode.AUTH_AUTO_DESACTIVATION_INTERDITE: (
         "Un propriétaire ne peut pas désactiver son propre compte — son organisation n'aurait plus "
         "personne pour gérer l'équipe."
+    ),
+    ErrorCode.AUTH_DERNIER_PROPRIETAIRE: (
+        "Action refusée : l'organisation se retrouverait sans aucun propriétaire actif, donc sans "
+        "personne pour gérer l'équipe — état irréversible sans intervention en base. Promouvez "
+        "d'abord un autre membre."
     ),
     ErrorCode.NON_TROUVE: "Aucune route ne correspond à cette URL.",
     ErrorCode.TROP_DE_REQUETES: "Limite de fréquence atteinte — réessayez plus tard.",

@@ -15,7 +15,7 @@ import logging
 import secrets
 import time
 from datetime import datetime, timedelta, timezone
-from typing import List, Optional
+from typing import List, Literal, Optional
 from urllib.parse import quote
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
@@ -703,8 +703,97 @@ def add_team_member(
     return member
 
 
+def _count_other_active_owners(db: Session, organization_id: int, excluding_user_id: int) -> int:
+    """Nombre de propriétaires ACTIFS de l'organisation, hors celui visé.
+
+    Sert d'invariant unique à deux endroits (révocation d'accès et
+    rétrogradation) : une organisation doit conserver en permanence au
+    moins un propriétaire actif. Sans cette garde, deux chemins mènent au
+    même cul-de-sac — plus personne pour gérer l'équipe, lire les retours
+    ou promouvoir qui que ce soit, état irréversible sans intervention
+    directe en base. Un propriétaire désactivé ne compte pas : il ne peut
+    plus se connecter, donc il ne gère plus rien."""
+    return (
+        db.query(User)
+        .filter(
+            User.organization_id == organization_id,
+            User.role == "owner",
+            User.actif.is_(True),
+            User.id != excluding_user_id,
+        )
+        .count()
+    )
+
+
 class TeamMemberStatusUpdate(BaseModel):
     actif: bool
+
+
+class TeamMemberRoleUpdate(BaseModel):
+    role: Literal["owner", "member"]
+
+
+@router.patch("/team/members/{member_id}/role", response_model=TeamMemberProfile)
+def set_team_member_role(
+    member_id: int,
+    body: TeamMemberRoleUpdate,
+    owner: User = Depends(require_owner),
+    db: Session = Depends(get_db),
+):
+    """[Owner] Promeut un membre propriétaire, ou rétrograde un propriétaire.
+
+    Répond à un blocage total : jusqu'ici `register` créait l'UNIQUE
+    propriétaire d'une organisation, `add_team_member` ne créait que des
+    `member`, et aucun endpoint ne changeait un rôle. Si ce propriétaire
+    quittait l'entreprise ou perdait son accès, plus personne ne pouvait
+    gérer l'équipe ni lire les retours — organisation définitivement
+    bloquée, seule une écriture directe en base la débloquait.
+
+    La succession se fait donc en deux temps, tous deux couverts ici :
+    promouvoir son successeur, puis se rétrograder soi-même (autorisé —
+    c'est précisément le scénario du départ) ou se faire révoquer par lui.
+
+    Invariant protégé : il reste TOUJOURS au moins un propriétaire actif
+    (voir `_count_other_active_owners`). Promouvoir est donc toujours sûr ;
+    seule la rétrogradation peut être refusée.
+
+    Promouvoir un membre désactivé est permis : ça ne casse pas
+    l'invariant (il n'est pas compté comme actif) et ça laisse préparer
+    une succession avant de réactiver le compte."""
+    member = (
+        db.query(User)
+        .filter(User.id == member_id, User.organization_id == owner.organization_id)
+        .first()
+    )
+    if member is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": ErrorCode.AUTH_MEMBRE_INTROUVABLE, "message": "Membre introuvable"},
+        )
+    if member.role == body.role:
+        return member  # déjà dans cet état — pas d'entrée d'audit pour un non-changement
+
+    if body.role == "member" and _count_other_active_owners(db, owner.organization_id, member.id) == 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "code": ErrorCode.AUTH_DERNIER_PROPRIETAIRE,
+                "message": (
+                    "Impossible de rétrograder le dernier propriétaire actif — promouvez d'abord "
+                    "un autre membre, sinon plus personne ne pourrait gérer cette organisation"
+                ),
+            },
+        )
+
+    member.role = body.role
+    log_action(
+        db, owner.organization_id, owner.id,
+        "member.promoted" if body.role == "owner" else "member.demoted",
+        target_type="user", target_id=member.id, details={"email": member.email, "nom": member.nom},
+    )
+    db.commit()
+    db.refresh(member)
+    return member
 
 
 @router.patch("/team/members/{member_id}", response_model=TeamMemberProfile)
@@ -764,7 +853,16 @@ def set_team_member_status(
                 "message": "Vous ne pouvez pas modifier l'accès de votre propre compte de propriétaire",
             },
         )
-
+    # Pas de garde "dernier propriétaire actif" ICI, contrairement à
+    # `set_team_member_role` — et ce n'est pas un oubli. Révoquer ne peut
+    # PAS orpheliner l'organisation, par construction : `require_owner`
+    # impose que l'auteur soit un propriétaire ACTIF (`get_current_user`
+    # refuse un compte inactif), et le garde-fou ci-dessus impose que la
+    # cible soit quelqu'un d'autre. Il reste donc toujours au moins un
+    # propriétaire actif après l'opération : l'auteur lui-même. Une garde
+    # supplémentaire ici serait du code mort déguisé en protection —
+    # rassurant à la lecture, jamais exécuté. La rétrogradation, elle, EST
+    # concernée : un propriétaire peut se rétrograder lui-même.
     member.actif = body.actif
     if not body.actif:
         member.token_valid_after = datetime.now(timezone.utc)

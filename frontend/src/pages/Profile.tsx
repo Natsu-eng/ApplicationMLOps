@@ -28,6 +28,8 @@ const AUDIT_ACTION_LABELS: Record<string, string> = {
   "member.added": "Membre ajouté",
   "member.deactivated": "Accès d'un membre désactivé",
   "member.reactivated": "Accès d'un membre réactivé",
+  "member.promoted": "Membre promu propriétaire",
+  "member.demoted": "Propriétaire rétrogradé membre",
   "dataset.deleted": "Dataset supprimé",
   "training_job.deleted": "Entraînement supprimé",
   "model.promoted": "Modèle promu",
@@ -268,7 +270,7 @@ function ChangePasswordForm() {
 }
 
 function OrganizationTab() {
-  const { user } = useAuth();
+  const { user, refreshUser } = useAuth();
   const [members, setMembers] = useState<TeamMember[] | null>(null);
   const [membersError, setMembersError] = useState<string | null>(null);
   const [membersErrorRef, setMembersErrorRef] = useState<string | undefined>(undefined);
@@ -277,6 +279,11 @@ function OrganizationTab() {
   // dans l'app, plutôt qu'une modale dédiée pour une action réversible.
   const confirmToggle = useConfirmAction<number>();
   const [togglingId, setTogglingId] = useState<number | null>(null);
+  // Succession : promouvoir un membre propriétaire, ou se rétrograder une
+  // fois son successeur en place. Confirmation à deux clics également —
+  // céder ses droits n'est pas anodin.
+  const confirmRole = useConfirmAction<number>();
+  const [roleChangingId, setRoleChangingId] = useState<number | null>(null);
 
   const loadMembers = useCallback(async () => {
     try {
@@ -303,6 +310,27 @@ function OrganizationTab() {
       setMembersErrorRef(apiErrorReference(err));
     } finally {
       setTogglingId(null);
+    }
+  }
+
+  async function changeMemberRole(member: TeamMember) {
+    const nextRole = member.role === "owner" ? "member" : "owner";
+    setRoleChangingId(member.id);
+    try {
+      await api.team.setMemberRole(member.id, nextRole);
+      setMembersError(null);
+      setMembersErrorRef(undefined);
+      await loadMembers();
+      // Se rétrograder soi-même retire ses propres droits : le contexte
+      // d'authentification porte encore l'ancien rôle, il faut le relire
+      // sinon l'interface continuerait d'afficher des actions désormais
+      // refusées par le serveur.
+      if (member.id === user?.id) await refreshUser();
+    } catch (err) {
+      setMembersError(err instanceof ApiError ? err.message : "Impossible de modifier ce rôle");
+      setMembersErrorRef(apiErrorReference(err));
+    } finally {
+      setRoleChangingId(null);
     }
   }
 
@@ -350,6 +378,29 @@ function OrganizationTab() {
                   {/* Le propriétaire ne peut pas se désactiver lui-même : son
                       organisation n'aurait plus personne pour gérer l'équipe
                       (l'API le refuse aussi, ceci n'est que le reflet UI). */}
+                  {/* Changement de rôle : proposé AUSSI sur sa propre ligne —
+                      se rétrograder après avoir promu son successeur est
+                      précisément le scénario du départ. Le serveur refuse de
+                      rétrograder le dernier propriétaire actif. */}
+                  {user.role === "owner" && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      loading={roleChangingId === member.id}
+                      onClick={() => confirmRole.trigger(member.id, () => changeMemberRole(member))}
+                      onMouseLeave={confirmRole.reset}
+                    >
+                      {confirmRole.isPending(member.id)
+                        ? member.role === "owner"
+                          ? member.id === user.id
+                            ? "Confirmer — vous perdrez vos droits ?"
+                            : "Confirmer la rétrogradation ?"
+                          : "Confirmer la promotion ?"
+                        : member.role === "owner"
+                          ? "Rétrograder"
+                          : "Promouvoir propriétaire"}
+                    </Button>
+                  )}
                   {user.role === "owner" && member.id !== user.id && (
                     <Button
                       variant={member.actif ? "destructive" : "secondary"}
@@ -379,6 +430,10 @@ function OrganizationTab() {
             les sessions déjà ouvertes. Ce n'est pas une suppression : son compte, ses datasets, ses
             entraînements et sa trace dans le journal d'audit sont conservés, et l'accès peut être
             rétabli à tout moment.
+            <br />
+            Avant de quitter l'organisation, <strong>promouvez votre successeur propriétaire</strong>,
+            puis rétrogradez-vous. Une organisation conserve toujours au moins un propriétaire actif :
+            rétrograder le dernier est refusé, sans quoi plus personne ne pourrait gérer l'équipe.
           </p>
         )}
       </Card>

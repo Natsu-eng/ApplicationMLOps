@@ -1725,6 +1725,16 @@ export const api = {
         method: "PATCH",
         body: JSON.stringify({ actif }),
       }),
+    // Promeut un membre propriétaire, ou rétrograde un propriétaire (owner
+    // uniquement). Le serveur garantit qu'il reste toujours au moins un
+    // propriétaire ACTIF : rétrograder le dernier est refusé (400
+    // AUTH_DERNIER_PROPRIETAIRE), sans quoi l'organisation deviendrait
+    // ingérable sans intervention en base.
+    setMemberRole: (memberId: number, role: "owner" | "member") =>
+      request<TeamMember>(`/auth/team/members/${memberId}/role`, {
+        method: "PATCH",
+        body: JSON.stringify({ role }),
+      }),
     // Lot 10 — journal d'audit (owner uniquement, 403 sinon).
     auditLog: () => request<AuditLogEntry[]>("/auth/team/audit-log"),
   },
