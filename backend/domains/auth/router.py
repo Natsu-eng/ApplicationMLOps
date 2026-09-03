@@ -703,6 +703,88 @@ def add_team_member(
     return member
 
 
+class TeamMemberStatusUpdate(BaseModel):
+    actif: bool
+
+
+@router.patch("/team/members/{member_id}", response_model=TeamMemberProfile)
+def set_team_member_status(
+    member_id: int,
+    body: TeamMemberStatusUpdate,
+    owner: User = Depends(require_owner),
+    db: Session = Depends(get_db),
+):
+    """[Owner] Désactive ou réactive un membre de SON organisation.
+
+    Comble un vrai trou d'offboarding : jusqu'ici `User.actif` n'était
+    écrit qu'à la création (toujours `True`) et jamais repassé à `False`.
+    Toute la moitié LECTURE du mécanisme existait pourtant déjà —
+    `get_current_user` refuse un compte inactif, et un message dédié
+    invite l'utilisateur à « contacter le propriétaire de votre
+    organisation » — mais aucun endpoint ne permettait au propriétaire
+    d'agir. Concrètement, un collaborateur parti conservait un accès
+    complet aux datasets, modèles et prédictions de l'organisation, sans
+    autre recours qu'une modification directe en base.
+
+    DÉSACTIVATION plutôt que suppression, délibérément : datasets,
+    entraînements et journal d'audit référencent l'utilisateur
+    (`Dataset.uploaded_by`, `created_by` des jobs, `AuditLog.user_id`).
+    Le supprimer détruirait en cascade du travail dont l'organisation a
+    encore besoin, et surtout la trace d'audit — dont c'est précisément
+    la raison d'être. Le compte reste, sans accès ; l'action est
+    réversible (`actif: true`).
+
+    Coupure IMMÉDIATE, pas à l'expiration du jeton : `token_valid_after`
+    invalide les jetons d'accès déjà émis (voir `get_current_user`) et
+    `revoke_all_refresh_tokens` empêche d'en regénérer — même mécanisme
+    que le changement de mot de passe. Sans cela l'accès survivrait
+    jusqu'à la fin de validité du jeton en cours, ce qui viderait la
+    désactivation de son sens le jour où elle sert vraiment.
+
+    La réactivation ne touche PAS `token_valid_after` : les anciens
+    jetons, émis avant la désactivation, restent définitivement
+    invalides — la personne se reconnecte."""
+    member = (
+        db.query(User)
+        .filter(User.id == member_id, User.organization_id == owner.organization_id)
+        .first()
+    )
+    if member is None:
+        # 404 (et non 403) pour un compte d'une AUTRE organisation :
+        # ne jamais révéler l'existence d'un utilisateur hors de la sienne.
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": ErrorCode.AUTH_MEMBRE_INTROUVABLE, "message": "Membre introuvable"},
+        )
+    if member.id == owner.id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "code": ErrorCode.AUTH_AUTO_DESACTIVATION_INTERDITE,
+                "message": "Vous ne pouvez pas modifier l'accès de votre propre compte de propriétaire",
+            },
+        )
+
+    member.actif = body.actif
+    if not body.actif:
+        member.token_valid_after = datetime.now(timezone.utc)
+
+    log_action(
+        db, owner.organization_id, owner.id,
+        "member.reactivated" if body.actif else "member.deactivated",
+        target_type="user", target_id=member.id, details={"email": member.email, "nom": member.nom},
+    )
+    db.commit()
+    db.refresh(member)
+
+    # APRÈS le commit : ne jamais révoquer les jetons d'un changement qui
+    # n'a pas été persisté (une transaction annulée laisserait la personne
+    # déconnectée alors qu'elle est toujours active).
+    if not body.actif:
+        revoke_all_refresh_tokens(redis_conn, member.id)
+    return member
+
+
 class AuditLogEntry(BaseModel):
     id: int
     action: str

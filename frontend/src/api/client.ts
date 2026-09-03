@@ -1716,6 +1716,15 @@ export const api = {
         method: "POST",
         body: JSON.stringify(data),
       }),
+    // Désactive/réactive un membre (owner uniquement, 403 sinon). Jamais
+    // une suppression : datasets, entraînements et journal d'audit
+    // référencent l'utilisateur — le compte est conservé, son accès est
+    // révoqué immédiatement côté serveur (jetons en cours invalidés).
+    setMemberActive: (memberId: number, actif: boolean) =>
+      request<TeamMember>(`/auth/team/members/${memberId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ actif }),
+      }),
     // Lot 10 — journal d'audit (owner uniquement, 403 sinon).
     auditLog: () => request<AuditLogEntry[]>("/auth/team/audit-log"),
   },

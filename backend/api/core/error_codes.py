@@ -90,11 +90,13 @@ class ErrorCode(str, Enum):
     TROP_DE_REQUETES = "TROP_DE_REQUETES"
 
     # ── Authentification / équipe (domains/auth) ────────────────────────
+    AUTH_AUTO_DESACTIVATION_INTERDITE = "AUTH_AUTO_DESACTIVATION_INTERDITE"
     AUTH_COMPTE_DESACTIVE = "AUTH_COMPTE_DESACTIVE"
     AUTH_EMAIL_DEJA_UTILISE = "AUTH_EMAIL_DEJA_UTILISE"
     AUTH_IDENTIFIANTS_INCORRECTS = "AUTH_IDENTIFIANTS_INCORRECTS"
     AUTH_MDP_ACTUEL_INCORRECT = "AUTH_MDP_ACTUEL_INCORRECT"
     AUTH_MDP_TROP_FAIBLE = "AUTH_MDP_TROP_FAIBLE"
+    AUTH_MEMBRE_INTROUVABLE = "AUTH_MEMBRE_INTROUVABLE"
     AUTH_OWNER_REQUIS = "AUTH_OWNER_REQUIS"
     AUTH_RESET_TOKEN_INVALIDE = "AUTH_RESET_TOKEN_INVALIDE"
     AUTH_TOKEN_INVALIDE = "AUTH_TOKEN_INVALIDE"
@@ -195,6 +197,18 @@ ERROR_CODE_DESCRIPTIONS: dict[str, str] = {
     ErrorCode.ERREUR_INTERNE: "Erreur serveur inattendue — contactez le support avec le request_id fourni.",
     ErrorCode.VALIDATION_ECHOUEE: "La requête ne respecte pas le schéma attendu (voir le détail des champs).",
     ErrorCode.AUTH_NON_AUTHENTIFIE: "Jeton d'authentification absent, invalide ou expiré.",
+    ErrorCode.AUTH_COMPTE_DESACTIVE: (
+        "Ce compte a été désactivé par le propriétaire de son organisation — l'accès est révoqué "
+        "immédiatement, mais le compte et sa trace d'audit sont conservés."
+    ),
+    ErrorCode.AUTH_MEMBRE_INTROUVABLE: (
+        "Aucun membre de VOTRE organisation ne porte cet identifiant (un compte d'une autre "
+        "organisation renvoie le même code : l'existence d'un compte tiers n'est jamais révélée)."
+    ),
+    ErrorCode.AUTH_AUTO_DESACTIVATION_INTERDITE: (
+        "Un propriétaire ne peut pas désactiver son propre compte — son organisation n'aurait plus "
+        "personne pour gérer l'équipe."
+    ),
     ErrorCode.NON_TROUVE: "Aucune route ne correspond à cette URL.",
     ErrorCode.TROP_DE_REQUETES: "Limite de fréquence atteinte — réessayez plus tard.",
     ErrorCode.QUOTA_ENTRAINEMENTS_ATTEINT: "Nombre maximal de jobs actifs simultanés atteint pour l'organisation.",

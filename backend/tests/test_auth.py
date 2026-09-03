@@ -183,3 +183,128 @@ def test_team_isolation_between_organizations(client):
     members = client.get("/api/auth/team/members", headers=headers_b).json()
     assert len(members) == 1
     assert members[0]["email"] == "b@bureau-b.fr"
+
+
+# ── Désactivation d'un membre (offboarding) ─────────────────────────────────
+# `User.actif` n'était jusqu'ici écrit qu'à la création (toujours True) :
+# aucun endpoint ne permettait au propriétaire de couper l'accès d'un
+# collaborateur parti, alors que get_current_user refusait déjà un compte
+# inactif. Ces tests garantissent que la coupure est réelle et IMMÉDIATE.
+
+MDP = "motdepasse123"
+
+
+def _owner_and_member(client, org="Bureau", owner_email="owner@bureau.fr", member_email="membre@bureau.fr"):
+    """Crée une organisation, son owner et un membre déjà connecté."""
+    owner = client.post(
+        "/api/auth/register",
+        json={"email": owner_email, "nom": "Owner", "password": MDP, "organization_name": org},
+    ).json()
+    owner_headers = {"Authorization": f"Bearer {owner['access_token']}"}
+    created = client.post(
+        "/api/auth/team/members",
+        headers=owner_headers,
+        json={"email": member_email, "nom": "Membre", "password": MDP},
+    ).json()
+    login = client.post("/api/auth/login", data={"username": member_email, "password": MDP}).json()
+    return owner_headers, created["id"], {"Authorization": f"Bearer {login['access_token']}"}
+
+
+def test_deactivation_revokes_an_already_issued_token_immediately(client):
+    """Le cœur du correctif : le jeton DÉJÀ ÉMIS du membre doit cesser de
+    fonctionner à la seconde où le propriétaire le désactive — pas à
+    l'expiration du jeton, sinon la désactivation ne sert à rien le jour
+    où elle sert vraiment."""
+    owner_headers, member_id, member_headers = _owner_and_member(client)
+    assert client.get("/api/auth/me", headers=member_headers).status_code == 200
+
+    resp = client.patch(f"/api/auth/team/members/{member_id}", headers=owner_headers, json={"actif": False})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["actif"] is False
+
+    assert client.get("/api/auth/me", headers=member_headers).status_code == 401
+    members = client.get("/api/auth/team/members", headers=owner_headers).json()
+    assert [m["actif"] for m in members if m["id"] == member_id] == [False]
+
+
+def test_deactivated_member_cannot_log_in_again(client):
+    owner_headers, member_id, _ = _owner_and_member(client)
+    client.patch(f"/api/auth/team/members/{member_id}", headers=owner_headers, json={"actif": False})
+
+    # 403 et non 401 : les identifiants sont bons, c'est le COMPTE qui est
+    # interdit — distinction volontaire côté endpoint de connexion. Ce
+    # message existait depuis toujours mais était jusqu'ici inatteignable,
+    # faute d'un moyen de désactiver qui que ce soit.
+    resp = client.post("/api/auth/login", data={"username": "membre@bureau.fr", "password": MDP})
+    assert resp.status_code == 403
+    assert resp.json()["detail"]["code"] == "AUTH_COMPTE_DESACTIVE"
+
+
+def test_reactivated_member_can_log_in_again(client):
+    """L'action est réversible — une désactivation n'est pas une suppression."""
+    owner_headers, member_id, _ = _owner_and_member(client)
+    client.patch(f"/api/auth/team/members/{member_id}", headers=owner_headers, json={"actif": False})
+
+    resp = client.patch(f"/api/auth/team/members/{member_id}", headers=owner_headers, json={"actif": True})
+    assert resp.status_code == 200
+    assert resp.json()["actif"] is True
+    assert client.post("/api/auth/login", data={"username": "membre@bureau.fr", "password": MDP}).status_code == 200
+
+
+def test_ordinary_member_cannot_deactivate_anyone(client):
+    """Réservé au propriétaire — un membre ne coupe l'accès de personne,
+    ni celui d'un collègue, ni celui du propriétaire."""
+    owner_headers, member_id, member_headers = _owner_and_member(client)
+    owner_id = [m["id"] for m in client.get("/api/auth/team/members", headers=owner_headers).json()
+                if m["role"] == "owner"][0]
+
+    for target in (member_id, owner_id):
+        resp = client.patch(f"/api/auth/team/members/{target}", headers=member_headers, json={"actif": False})
+        assert resp.status_code == 403
+        assert resp.json()["detail"]["code"] == "AUTH_OWNER_REQUIS"
+
+    # Le propriétaire n'a rien perdu au passage.
+    assert client.get("/api/auth/me", headers=owner_headers).status_code == 200
+
+
+def test_owner_cannot_deactivate_their_own_account(client):
+    """Sinon l'organisation n'aurait plus personne pour gérer l'équipe."""
+    owner_headers, _, _ = _owner_and_member(client)
+    owner_id = [m["id"] for m in client.get("/api/auth/team/members", headers=owner_headers).json()
+                if m["role"] == "owner"][0]
+
+    resp = client.patch(f"/api/auth/team/members/{owner_id}", headers=owner_headers, json={"actif": False})
+    assert resp.status_code == 400
+    assert resp.json()["detail"]["code"] == "AUTH_AUTO_DESACTIVATION_INTERDITE"
+    assert client.get("/api/auth/me", headers=owner_headers).status_code == 200
+
+
+def test_cannot_deactivate_a_member_of_another_organization(client):
+    """Isolation multi-tenant — et 404 plutôt que 403 : l'existence d'un
+    compte d'une autre organisation n'est jamais révélée."""
+    _, member_a_id, member_a_headers = _owner_and_member(client)
+    headers_b = {
+        "Authorization": "Bearer " + client.post(
+            "/api/auth/register",
+            json={"email": "b@org-b.fr", "nom": "Bb", "password": MDP, "organization_name": "Org B"},
+        ).json()["access_token"]
+    }
+
+    resp = client.patch(f"/api/auth/team/members/{member_a_id}", headers=headers_b, json={"actif": False})
+    assert resp.status_code == 404
+    assert resp.json()["detail"]["code"] == "AUTH_MEMBRE_INTROUVABLE"
+    # Le membre de l'organisation A n'a pas été touché.
+    assert client.get("/api/auth/me", headers=member_a_headers).status_code == 200
+
+
+def test_deactivation_is_recorded_in_the_audit_log(client):
+    """Traçabilité : couper l'accès de quelqu'un doit laisser une trace
+    consultable par le propriétaire."""
+    owner_headers, member_id, _ = _owner_and_member(client)
+    client.patch(f"/api/auth/team/members/{member_id}", headers=owner_headers, json={"actif": False})
+
+    entries = client.get("/api/auth/team/audit-log", headers=owner_headers).json()
+    deactivations = [e for e in entries if e["action"] == "member.deactivated"]
+    assert len(deactivations) == 1
+    assert deactivations[0]["target_id"] == member_id
+    assert deactivations[0]["details"]["email"] == "membre@bureau.fr"

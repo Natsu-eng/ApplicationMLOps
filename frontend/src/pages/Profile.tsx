@@ -20,11 +20,14 @@ import { Input } from "../components/ui/Input";
 import { PageHeader } from "../components/ui/PageHeader";
 import { SectionHeader } from "../components/ui/SectionHeader";
 import { Tabs, type TabItem } from "../components/ui/Tabs";
+import { useConfirmAction } from "../hooks/useConfirmAction";
 import { ThemePickerGrid } from "../components/ui/ThemePicker";
 import { formatDateTime } from "../utils/format";
 
 const AUDIT_ACTION_LABELS: Record<string, string> = {
   "member.added": "Membre ajouté",
+  "member.deactivated": "Accès d'un membre désactivé",
+  "member.reactivated": "Accès d'un membre réactivé",
   "dataset.deleted": "Dataset supprimé",
   "training_job.deleted": "Entraînement supprimé",
   "model.promoted": "Modèle promu",
@@ -269,6 +272,11 @@ function OrganizationTab() {
   const [members, setMembers] = useState<TeamMember[] | null>(null);
   const [membersError, setMembersError] = useState<string | null>(null);
   const [membersErrorRef, setMembersErrorRef] = useState<string | undefined>(undefined);
+  // Désactivation/réactivation d'un membre (départ d'un collaborateur).
+  // Confirmation à deux clics — même motif que les suppressions ailleurs
+  // dans l'app, plutôt qu'une modale dédiée pour une action réversible.
+  const confirmToggle = useConfirmAction<number>();
+  const [togglingId, setTogglingId] = useState<number | null>(null);
 
   const loadMembers = useCallback(async () => {
     try {
@@ -280,6 +288,23 @@ function OrganizationTab() {
       setMembersErrorRef(apiErrorReference(err));
     }
   }, []);
+
+  async function toggleMemberAccess(member: TeamMember) {
+    setTogglingId(member.id);
+    try {
+      await api.team.setMemberActive(member.id, !member.actif);
+      setMembersError(null);
+      setMembersErrorRef(undefined);
+      await loadMembers();
+    } catch (err) {
+      setMembersError(
+        err instanceof ApiError ? err.message : "Impossible de modifier l'accès de ce membre",
+      );
+      setMembersErrorRef(apiErrorReference(err));
+    } finally {
+      setTogglingId(null);
+    }
+  }
 
   useEffect(() => {
     loadMembers();
@@ -309,18 +334,52 @@ function OrganizationTab() {
         ) : (
           <ul className="divide-y divide-border">
             {members?.map((member) => (
-              <li key={member.id} className="py-2.5 flex items-center justify-between">
+              <li key={member.id} className="py-2.5 flex items-center justify-between gap-3">
                 <div className="flex items-center gap-3 min-w-0">
                   <Avatar name={member.nom} size="sm" />
                   <div className="min-w-0">
-                    <p className="text-sm text-foreground/90 truncate">{member.nom}</p>
+                    <p className={`text-sm truncate ${member.actif ? "text-foreground/90" : "text-muted-foreground line-through"}`}>
+                      {member.nom}
+                    </p>
                     <p className="text-xs text-muted-foreground truncate">{member.email}</p>
                   </div>
                 </div>
-                <RoleBadge role={member.role} />
+                <div className="flex items-center gap-2 shrink-0">
+                  {!member.actif && <Badge variant="danger">Accès révoqué</Badge>}
+                  <RoleBadge role={member.role} />
+                  {/* Le propriétaire ne peut pas se désactiver lui-même : son
+                      organisation n'aurait plus personne pour gérer l'équipe
+                      (l'API le refuse aussi, ceci n'est que le reflet UI). */}
+                  {user.role === "owner" && member.id !== user.id && (
+                    <Button
+                      variant={member.actif ? "destructive" : "secondary"}
+                      size="sm"
+                      loading={togglingId === member.id}
+                      onClick={() => confirmToggle.trigger(member.id, () => toggleMemberAccess(member))}
+                      onMouseLeave={confirmToggle.reset}
+                    >
+                      {confirmToggle.isPending(member.id)
+                        ? member.actif
+                          ? "Confirmer la révocation ?"
+                          : "Confirmer la réactivation ?"
+                        : member.actif
+                          ? "Révoquer l'accès"
+                          : "Réactiver"}
+                    </Button>
+                  )}
+                </div>
               </li>
             ))}
           </ul>
+        )}
+
+        {user.role === "owner" && (
+          <p className="mt-4 text-xs text-muted-foreground border-t border-border pt-3">
+            Révoquer l'accès d'un membre coupe sa connexion <strong>immédiatement</strong>, y compris
+            les sessions déjà ouvertes. Ce n'est pas une suppression : son compte, ses datasets, ses
+            entraînements et sa trace dans le journal d'audit sont conservés, et l'accès peut être
+            rétabli à tout moment.
+          </p>
         )}
       </Card>
 
