@@ -154,7 +154,7 @@ def _get_org_job(job_id: int, current_user: User, db) -> ClusteringJob:
     if job is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail={"code": "CLUSTERING_JOB_INTROUVABLE", "message": "Entraînement de clustering introuvable"},
+            detail={"code": ErrorCode.CLUSTERING_JOB_INTROUVABLE, "message": "Entraînement de clustering introuvable"},
         )
     return job
 
@@ -359,7 +359,10 @@ async def stream_clustering_job_events(job_id: int, current_user: User = Depends
         if job is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail={"code": "CLUSTERING_JOB_INTROUVABLE", "message": "Entraînement de clustering introuvable"},
+                detail={
+                    "code": ErrorCode.CLUSTERING_JOB_INTROUVABLE,
+                    "message": "Entraînement de clustering introuvable",
+                },
             )
     finally:
         db.close()
@@ -506,7 +509,7 @@ def predict_cluster(
     except (InferenceError, ClusterInferenceError) as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"code": "ASSIGNATION_IMPOSSIBLE", "message": str(exc)},
+            detail={"code": ErrorCode.ASSIGNATION_IMPOSSIBLE, "message": str(exc)},
         ) from exc
 
     # Lot Dérive — journalise l'observation soumise (voir ClusterPredictionLog)
@@ -634,7 +637,7 @@ def export_cluster_assignments(job_id: int, current_user: User = Depends(get_cur
     except InferenceError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"code": "ASSIGNATION_IMPOSSIBLE", "message": str(exc)},
+            detail={"code": ErrorCode.ASSIGNATION_IMPOSSIBLE, "message": str(exc)},
         ) from exc
     assigned = assign_clusters_batch(bundle, feature_columns, full_df)
 

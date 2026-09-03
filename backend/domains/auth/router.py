@@ -25,6 +25,7 @@ from sqlalchemy.orm import Session
 
 from api.core.config import get_settings
 from api.core.database import get_db
+from api.core.error_codes import ErrorCode
 from api.core.job_queue import redis_conn
 from api.core.mailer import (
     mailer_configured,
@@ -207,7 +208,7 @@ def get_current_user(
     if user is None or not user.actif:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail={"code": "AUTH_UTILISATEUR_INTROUVABLE_OU_DESACTIVE", "message": "Utilisateur introuvable ou désactivé"},
+            detail={"code": ErrorCode.AUTH_UTILISATEUR_INTROUVABLE_OU_DESACTIVE, "message": "Utilisateur introuvable ou désactivé"},
         )
     # Correctif Phase 1 (AUDIT_BACKEND_2026-08-23.md §A.4) — un jeton émis
     # AVANT la dernière révocation en masse (changement de mot de passe,
@@ -247,7 +248,7 @@ def register(body: RegisterRequest, db: Session = Depends(get_db)):
     if db.query(User).filter(User.email == body.email).first():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"code": "AUTH_EMAIL_DEJA_UTILISE", "message": "Email déjà utilisé"},
+            detail={"code": ErrorCode.AUTH_EMAIL_DEJA_UTILISE, "message": "Email déjà utilisé"},
         )
 
     organization = Organization(name=body.organization_name)
@@ -347,7 +348,7 @@ def refresh_tokens(body: RefreshRequest, db: Session = Depends(get_db)):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail={
-                "code": "AUTH_UTILISATEUR_INTROUVABLE_OU_DESACTIVE",
+                "code": ErrorCode.AUTH_UTILISATEUR_INTROUVABLE_OU_DESACTIVE,
                 "message": "Utilisateur introuvable ou désactivé",
             },
         )
@@ -408,7 +409,7 @@ def change_own_password(
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"code": "AUTH_MDP_TROP_FAIBLE", "message": str(exc)},
+            detail={"code": ErrorCode.AUTH_MDP_TROP_FAIBLE, "message": str(exc)},
         ) from exc
     client_ip = get_client_ip(request)
     current_user.hashed_password = hash_password(body.new_password)
@@ -624,14 +625,20 @@ def confirm_password_reset(
     if not reset or expires_at is None or expires_at <= now:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"code": "AUTH_RESET_TOKEN_INVALIDE", "message": "Lien de réinitialisation invalide ou expiré"},
+            detail={
+                "code": ErrorCode.AUTH_RESET_TOKEN_INVALIDE,
+                "message": "Lien de réinitialisation invalide ou expiré",
+            },
         )
 
     user = db.query(User).filter(User.id == reset.user_id).first()
     if not user or not user.actif:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"code": "AUTH_RESET_TOKEN_INVALIDE", "message": "Lien de réinitialisation invalide ou expiré"},
+            detail={
+                "code": ErrorCode.AUTH_RESET_TOKEN_INVALIDE,
+                "message": "Lien de réinitialisation invalide ou expiré",
+            },
         )
 
     try:
@@ -639,7 +646,7 @@ def confirm_password_reset(
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"code": "AUTH_MDP_TROP_FAIBLE", "message": str(exc)},
+            detail={"code": ErrorCode.AUTH_MDP_TROP_FAIBLE, "message": str(exc)},
         ) from exc
 
     client_ip = get_client_ip(request)
@@ -793,7 +800,7 @@ def add_team_member(
     if db.query(User).filter(User.email == body.email).first():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"code": "AUTH_EMAIL_DEJA_UTILISE", "message": "Email déjà utilisé"},
+            detail={"code": ErrorCode.AUTH_EMAIL_DEJA_UTILISE, "message": "Email déjà utilisé"},
         )
     member = User(
         email=body.email,

@@ -144,7 +144,7 @@ def _get_org_job(job_id: int, current_user: User, db) -> DimensionalityJob:
     if job is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail={"code": "DIMENSIONALITY_JOB_INTROUVABLE", "message": "Calcul de réduction de dimension introuvable"},
+            detail={"code": ErrorCode.DIMENSIONALITY_JOB_INTROUVABLE, "message": "Calcul de réduction de dimension introuvable"},
         )
     return job
 
@@ -336,7 +336,7 @@ async def stream_dimensionality_job_events(job_id: int, current_user: User = Dep
         if job is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail={"code": "DIMENSIONALITY_JOB_INTROUVABLE", "message": "Calcul de réduction de dimension introuvable"},
+                detail={"code": ErrorCode.DIMENSIONALITY_JOB_INTROUVABLE, "message": "Calcul de réduction de dimension introuvable"},
             )
     finally:
         db.close()
@@ -480,7 +480,7 @@ def project_new_point(
     except (InferenceError, DimensionalityInferenceError) as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"code": "PROJECTION_IMPOSSIBLE", "message": str(exc)},
+            detail={"code": ErrorCode.PROJECTION_IMPOSSIBLE, "message": str(exc)},
         ) from exc
 
     # Lot Dérive — voir clustering.py::predict_cluster pour le raisonnement
@@ -599,7 +599,7 @@ def export_dimensionality_points(job_id: int, current_user: User = Depends(get_c
     except InferenceError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"code": "PROJECTION_IMPOSSIBLE", "message": str(exc)},
+            detail={"code": ErrorCode.PROJECTION_IMPOSSIBLE, "message": str(exc)},
         ) from exc
     projected = project_points_batch(bundle, feature_columns, full_df)
 

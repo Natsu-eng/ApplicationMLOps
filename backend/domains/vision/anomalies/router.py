@@ -191,7 +191,10 @@ def _get_org_job(job_id: int, current_user: User, db: Session) -> VisionAnomalyJ
     if job is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail={"code": "VISION_ANOMALY_JOB_INTROUVABLE", "message": "Détection d'anomalies visuelles introuvable"},
+            detail={
+                "code": ErrorCode.VISION_ANOMALY_JOB_INTROUVABLE,
+                "message": "Détection d'anomalies visuelles introuvable",
+            },
         )
     return job
 
@@ -256,14 +259,17 @@ def create_vision_anomaly_job(
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail={
-                    "code": "COMPARATIF_MODELES_INVALIDE",
+                    "code": ErrorCode.COMPARATIF_MODELES_INVALIDE,
                     "message": f"Comparatif : entre 2 et {MAX_MODELS_PER_COMPARISON} architectures requises",
                 },
             )
         if len(set(body.model_ids)) != len(body.model_ids):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail={"code": "COMPARATIF_MODELES_INVALIDE", "message": "Architectures en double dans le comparatif"},
+                detail={
+                    "code": ErrorCode.COMPARATIF_MODELES_INVALIDE,
+                    "message": "Architectures en double dans le comparatif",
+                },
             )
         unknown = [m for m in body.model_ids if m not in _VALID_MODEL_IDS]
         if unknown:
@@ -312,7 +318,7 @@ def create_vision_anomaly_job(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={
-                "code": "VISION_DATASET_STRUCTURE_INVALIDE",
+                "code": ErrorCode.VISION_DATASET_STRUCTURE_INVALIDE,
                 "message": "Ce dataset n'a pas une structure normal/défaut (train/good + test/good + test/<defaut>)",
             },
         )
@@ -400,7 +406,7 @@ async def stream_vision_anomaly_job_events(job_id: int, current_user: User = Dep
         if job is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail={"code": "VISION_ANOMALY_JOB_INTROUVABLE", "message": "Détection d'anomalies visuelles introuvable"},
+                detail={"code": ErrorCode.VISION_ANOMALY_JOB_INTROUVABLE, "message": "Détection d'anomalies visuelles introuvable"},
             )
     finally:
         db.close()
@@ -633,7 +639,7 @@ async def predict_vision_anomaly(
     except (UnidentifiedImageError, OSError):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"code": "IMAGE_INVALIDE", "message": "Impossible de lire cette image"},
+            detail={"code": ErrorCode.IMAGE_INVALIDE, "message": "Impossible de lire cette image"},
         )
 
     # weights_only=True — même correctif Lot 1.4 que la classification

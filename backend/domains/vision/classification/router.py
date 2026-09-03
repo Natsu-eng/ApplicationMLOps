@@ -265,7 +265,7 @@ def _get_org_job(job_id: int, current_user: User, db: Session) -> VisionClassifi
     if job is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail={"code": "VISION_CLASSIFICATION_JOB_INTROUVABLE", "message": "Entraînement de classification introuvable"},
+            detail={"code": ErrorCode.VISION_CLASSIFICATION_JOB_INTROUVABLE, "message": "Entraînement de classification introuvable"},
         )
     return job
 
@@ -331,27 +331,33 @@ def create_vision_classification_job(
     if body.backbone_id not in _VALID_BACKBONE_IDS:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"code": "BACKBONE_INCONNU", "message": f"Backbone inconnu : {body.backbone_id}"},
+            detail={"code": ErrorCode.BACKBONE_INCONNU, "message": f"Backbone inconnu : {body.backbone_id}"},
         )
     if body.backbone_ids is not None:
         if len(body.backbone_ids) < 2 or len(body.backbone_ids) > MAX_BACKBONES_PER_COMPARISON:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail={
-                    "code": "COMPARATIF_BACKBONES_INVALIDE",
+                    "code": ErrorCode.COMPARATIF_BACKBONES_INVALIDE,
                     "message": f"Comparatif : entre 2 et {MAX_BACKBONES_PER_COMPARISON} backbones requis",
                 },
             )
         if len(set(body.backbone_ids)) != len(body.backbone_ids):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail={"code": "COMPARATIF_BACKBONES_INVALIDE", "message": "Backbones en double dans le comparatif"},
+                detail={
+                    "code": ErrorCode.COMPARATIF_BACKBONES_INVALIDE,
+                    "message": "Backbones en double dans le comparatif",
+                },
             )
         unknown = [b for b in body.backbone_ids if b not in _VALID_BACKBONE_IDS]
         if unknown:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail={"code": "BACKBONE_INCONNU", "message": f"Backbone(s) inconnu(s) : {', '.join(unknown)}"},
+                detail={
+                    "code": ErrorCode.BACKBONE_INCONNU,
+                    "message": f"Backbone(s) inconnu(s) : {', '.join(unknown)}",
+                },
             )
     if body.augmentation_preset not in AUGMENTATION_PRESET_IDS:
         raise HTTPException(
@@ -402,7 +408,7 @@ def create_vision_classification_job(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={
-                "code": "VISION_DATASET_STRUCTURE_INVALIDE",
+                "code": ErrorCode.VISION_DATASET_STRUCTURE_INVALIDE,
                 "message": "Ce dataset n'a pas une structure de classification (dossiers de classes)",
             },
         )
@@ -496,7 +502,7 @@ async def stream_vision_classification_job_events(job_id: int, current_user: Use
         if job is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail={"code": "VISION_CLASSIFICATION_JOB_INTROUVABLE", "message": "Entraînement de classification introuvable"},
+                detail={"code": ErrorCode.VISION_CLASSIFICATION_JOB_INTROUVABLE, "message": "Entraînement de classification introuvable"},
             )
     finally:
         db.close()
@@ -664,7 +670,7 @@ async def explain_vision_classification_prediction(
     except (UnidentifiedImageError, OSError):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"code": "IMAGE_INVALIDE", "message": "Impossible de lire cette image"},
+            detail={"code": ErrorCode.IMAGE_INVALIDE, "message": "Impossible de lire cette image"},
         )
 
     # Lot 1.4 (§C.2.7/R11, AUDIT_DATALAB_2026-08-16.md) — weights_only=True

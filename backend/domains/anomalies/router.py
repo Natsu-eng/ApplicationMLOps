@@ -134,7 +134,7 @@ def _get_org_job(job_id: int, current_user: User, db) -> AnomalyJob:
     if job is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail={"code": "ANOMALY_JOB_INTROUVABLE", "message": "Détection d'anomalies introuvable"},
+            detail={"code": ErrorCode.ANOMALY_JOB_INTROUVABLE, "message": "Détection d'anomalies introuvable"},
         )
     return job
 
@@ -303,7 +303,7 @@ async def stream_anomaly_job_events(job_id: int, current_user: User = Depends(ge
         if job is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail={"code": "ANOMALY_JOB_INTROUVABLE", "message": "Détection d'anomalies introuvable"},
+                detail={"code": ErrorCode.ANOMALY_JOB_INTROUVABLE, "message": "Détection d'anomalies introuvable"},
             )
     finally:
         db.close()

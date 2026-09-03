@@ -24,10 +24,13 @@ pas un littéral). `api/main.py::custom_openapi` l'expose dans
 `/openapi.json` (extension `x-error-codes`) — consultable par n'importe
 quel client sans avoir à parcourir le code source.
 
-Migration des littéraux existants vers `ErrorCode.XXX`, priorisée par
-ordre de risque de divergence (le code le plus dupliqué d'abord), 4 lots
-vérifiés individuellement (ruff + mypy comparés ligne à ligne + suite de
-tests complète rejouée avant chaque commit) :
+Migration TERMINÉE (2026-09-03) des littéraux existants vers
+`ErrorCode.XXX` : plus un seul `"code": "..."` dupliqué dans `api` ou
+`domains` (vérifié par la même commande grep que ci-dessus, filtrée aux
+codes apparaissant ≥ 2 fois — résultat vide). 5 lots, chacun vérifié
+individuellement (ruff + mypy comparés ligne à ligne contre le HEAD
+précédent + suite de tests complète rejouée avant chaque commit), du
+code le plus dupliqué au moins dupliqué :
 - `RESULTAT_INDISPONIBLE` (19 sites, 6 fichiers) — migré 2026-09-02
   (1er lot).
 - `DATASET_LECTURE_ECHEC` (19), `MODELE_NON_DISPONIBLE` (17),
@@ -42,15 +45,27 @@ tests complète rejouée avant chaque commit) :
   `AUGMENTATION_PRESET_INCONNU` — migrés 2026-09-03 (4ᵉ lot, 24 sites,
   7 fichiers : anomalies, clustering, dimensionality, training,
   vision/anomalies, vision/classification, vision/datasets).
-- Au total : 18 codes migrés, ~133 sites au moment de chaque migration
-  (le compte vivant augmente ensuite avec les fonctionnalités ajoutées
-  après-coup, ex. `RESULTAT_INDISPONIBLE` compte 22 sites aujourd'hui).
-- Reste une dette explicite, priorisée pour la suite : 22 autres codes
-  dupliqués (44 sites au total, tous domaines confondus, tous désormais
-  à fréquence 2 — plus aucun code à fréquence ≥3) — non traités dans ce
-  lot pour rester dans un diff vérifiable intégralement plutôt que de
-  migrer les 22 codes d'un coup avec un risque de régression
-  proportionnellement plus difficile à auditer."""
+- `VISION_DATASET_STRUCTURE_INVALIDE`, `VISION_CLASSIFICATION_JOB_INTROUVABLE`,
+  `VISION_ANOMALY_JOB_INTROUVABLE`, `RESULTAT_INTROUVABLE`,
+  `PROJECTION_IMPOSSIBLE`, `PREDICTION_LOT_INTROUVABLE`,
+  `IMAGE_INVALIDE`, `HYPERPARAMETRE_INVALIDE`,
+  `DIMENSIONALITY_JOB_INTROUVABLE`, `DATASET_TROP_VOLUMINEUX`,
+  `DATASET_FORMAT_NON_SUPPORTE`, `DATASET_FICHIER_VIDE`,
+  `COMPARATIF_MODELES_INVALIDE`, `COMPARATIF_BACKBONES_INVALIDE`,
+  `CLUSTERING_JOB_INTROUVABLE`, `BACKBONE_INCONNU`,
+  `AUTH_UTILISATEUR_INTROUVABLE_OU_DESACTIVE`,
+  `AUTH_RESET_TOKEN_INVALIDE`, `AUTH_MDP_TROP_FAIBLE`,
+  `AUTH_EMAIL_DEJA_UTILISE`, `ASSIGNATION_IMPOSSIBLE`,
+  `ANOMALY_JOB_INTROUVABLE` — migrés 2026-09-03 (5ᵉ et dernier lot,
+  44 sites, 8 fichiers : les 7 du lot précédent + auth et datasets).
+- Au total : 40 codes migrés sur ces 5 lots, ~177 sites au moment de
+  chaque migration (le compte vivant continue d'augmenter ensuite avec
+  les fonctionnalités ajoutées après-coup, ex. `RESULTAT_INDISPONIBLE`
+  compte 22 sites aujourd'hui).
+
+Les codes à un seul site (jamais dupliqués) restent volontairement des
+littéraux `"code": "XXX"` — les migrer n'éliminerait aucun risque de
+divergence puisqu'il n'existe qu'une seule copie à faire diverger."""
 
 from __future__ import annotations
 

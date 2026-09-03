@@ -316,20 +316,20 @@ async def upload_dataset(
     except UnsupportedFileType as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"code": "DATASET_FORMAT_NON_SUPPORTE", "message": str(exc)},
+            detail={"code": ErrorCode.DATASET_FORMAT_NON_SUPPORTE, "message": str(exc)},
         )
 
     content = await file.read()
     if len(content) == 0:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"code": "DATASET_FICHIER_VIDE", "message": "Le fichier est vide"},
+            detail={"code": ErrorCode.DATASET_FICHIER_VIDE, "message": "Le fichier est vide"},
         )
     if len(content) > _MAX_UPLOAD_BYTES:
         raise HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
             detail={
-                "code": "DATASET_TROP_VOLUMINEUX",
+                "code": ErrorCode.DATASET_TROP_VOLUMINEUX,
                 "message": f"Fichier trop volumineux (max {_settings.max_upload_size_mb} Mo)",
             },
         )

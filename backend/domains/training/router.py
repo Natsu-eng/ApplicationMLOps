@@ -584,7 +584,7 @@ def _validate_hyperparameter_overrides(
                     raise HTTPException(
                         status_code=status.HTTP_400_BAD_REQUEST,
                         detail={
-                            "code": "HYPERPARAMETRE_INVALIDE",
+                            "code": ErrorCode.HYPERPARAMETRE_INVALIDE,
                             "message": f"{name} doit être l'une de {list(meta.choices or ())}",
                         },
                     )
@@ -593,7 +593,7 @@ def _validate_hyperparameter_overrides(
                     raise HTTPException(
                         status_code=status.HTTP_400_BAD_REQUEST,
                         detail={
-                            "code": "HYPERPARAMETRE_INVALIDE",
+                            "code": ErrorCode.HYPERPARAMETRE_INVALIDE,
                             "message": f"« {name} » doit être un nombre pour « {spec.label(task_type)} »",
                         },
                     )
@@ -633,7 +633,7 @@ def _get_org_batch_job(batch_job_id: int, current_user: User, db: Session) -> Ba
     if job is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail={"code": "PREDICTION_LOT_INTROUVABLE", "message": "Prédiction en lot introuvable"},
+            detail={"code": ErrorCode.PREDICTION_LOT_INTROUVABLE, "message": "Prédiction en lot introuvable"},
         )
     return job
 
@@ -1675,21 +1675,21 @@ async def create_batch_prediction_job(
     except UnsupportedFileType as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"code": "DATASET_FORMAT_NON_SUPPORTE", "message": str(exc)},
+            detail={"code": ErrorCode.DATASET_FORMAT_NON_SUPPORTE, "message": str(exc)},
         ) from exc
 
     content = await file.read()
     if len(content) == 0:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"code": "DATASET_FICHIER_VIDE", "message": "Le fichier est vide"},
+            detail={"code": ErrorCode.DATASET_FICHIER_VIDE, "message": "Le fichier est vide"},
         )
     max_upload_bytes = _settings.max_upload_size_mb * 1024 * 1024
     if len(content) > max_upload_bytes:
         raise HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
             detail={
-                "code": "DATASET_TROP_VOLUMINEUX",
+                "code": ErrorCode.DATASET_TROP_VOLUMINEUX,
                 "message": f"Fichier trop volumineux (max {_settings.max_upload_size_mb} Mo)",
             },
         )
@@ -1768,7 +1768,7 @@ async def stream_batch_prediction_job_events(batch_job_id: int, current_user: Us
         if job is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail={"code": "PREDICTION_LOT_INTROUVABLE", "message": "Prédiction en lot introuvable"},
+                detail={"code": ErrorCode.PREDICTION_LOT_INTROUVABLE, "message": "Prédiction en lot introuvable"},
             )
     finally:
         db.close()
@@ -1812,7 +1812,7 @@ def download_batch_prediction_result(
     if not output_path.exists():
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail={"code": "RESULTAT_INTROUVABLE", "message": "Résultat introuvable sur le serveur"},
+            detail={"code": ErrorCode.RESULTAT_INTROUVABLE, "message": "Résultat introuvable sur le serveur"},
         )
     filename = f"predictions_{Path(job.input_filename).stem}.csv"
     return FileResponse(path=output_path, filename=filename, media_type="text/csv")
@@ -1841,7 +1841,7 @@ def download_batch_prediction_result_excel(
     if not output_path.exists():
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail={"code": "RESULTAT_INTROUVABLE", "message": "Résultat introuvable sur le serveur"},
+            detail={"code": ErrorCode.RESULTAT_INTROUVABLE, "message": "Résultat introuvable sur le serveur"},
         )
     result_df = pd.read_csv(output_path)
     buffer = io.BytesIO()
