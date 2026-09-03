@@ -39,6 +39,7 @@ from domains.auth.preferences_router import router as users_router
 from domains.auth.router import router as auth_router
 from domains.clustering.router import router as clustering_router
 from domains.dashboard.router import router as dashboard_router
+from domains.datasets.analysis_router import router as datasets_analysis_router
 from domains.datasets.router import router as datasets_router
 from domains.dimensionality.router import router as dimensionality_router
 from domains.notifications.router import router as notifications_router
@@ -253,6 +254,7 @@ app.include_router(auth_router, prefix="/api")
 app.include_router(users_router, prefix="/api")
 app.include_router(feedback_router, prefix="/api")
 app.include_router(datasets_router, prefix="/api")
+app.include_router(datasets_analysis_router, prefix="/api")
 app.include_router(training_router, prefix="/api")
 # Prédiction en lot et registre de modèles — extraits de `training_router`
 # lors du découpage (mêmes URL `/training/...`, voir
