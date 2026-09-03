@@ -39,7 +39,8 @@ from domains.anomalies.router import AnomalyJobSummary, to_summary as _anomaly_s
 from domains.clustering.router import ClusteringJobSummary, to_summary as _clustering_summary
 from domains.datasets.router import DatasetSummary, to_summary as _dataset_summary
 from domains.dimensionality.router import DimensionalityJobSummary, to_summary as _dimensionality_summary
-from domains.training.router import TrainingJobSummary, to_model_detail, to_summary as _training_summary
+from domains.training.model_registry_router import to_model_detail
+from domains.training.router import TrainingJobSummary, to_summary as _training_summary
 from domains.vision.anomalies.router import VisionAnomalyJobSummary, to_summary as _vision_anomaly_summary
 from domains.vision.classification.router import VisionClassificationJobSummary, to_summary as _vision_classification_summary
 from domains.shared.job_quota import ALL_JOB_MODELS, count_active_jobs

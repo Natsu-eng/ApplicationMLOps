@@ -12,7 +12,7 @@ from unittest.mock import patch
 
 from api.core.config import get_settings
 from api.core.models import MLModel, ModelCandidate, TrainingJob
-from domains.training.router import _headline_metric
+from domains.training.dependencies import headline_metric
 from domains.training.services.versioning import next_version
 
 
@@ -673,7 +673,7 @@ def test_headline_metric_uses_selection_score_not_accuracy_for_classification():
     afficher `cv_score` (le score qui a réellement départagé les candidats,
     voir `_classification_selection_score`), jamais `accuracy`."""
     metrics = {"accuracy": 0.95, "cv_score": 0.61, "roc_auc": 0.60}
-    headline = _headline_metric("classification", metrics)
+    headline = headline_metric("classification", metrics)
     assert headline == {"name": "cv_score", "value": 0.61}
 
 
@@ -682,7 +682,7 @@ def test_headline_metric_regression_unchanged():
     régression garde r2_test, déjà la bonne métrique (pas de piège
     d'accuracy en régression)."""
     metrics = {"r2_test": 0.87, "cv_score": 0.85}
-    headline = _headline_metric("regression", metrics)
+    headline = headline_metric("regression", metrics)
     assert headline == {"name": "r2_test", "value": 0.87}
 
 
