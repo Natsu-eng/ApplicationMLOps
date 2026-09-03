@@ -89,7 +89,7 @@ def _train_and_persist_model(db, organization_id: int) -> TrainingJob:
 
 
 def _upload_predict_batch(client, headers, job_id, content=b"x1,x2\n45,18\n55,22\n", filename="a_predire.csv"):
-    with patch("domains.training.router.analysis_queue") as mock_queue:
+    with patch("domains.training.batch_prediction_router.analysis_queue") as mock_queue:
         mock_queue.enqueue.return_value.id = "fake-rq-id"
         return client.post(
             f"/api/training/jobs/{job_id}/predict-batch",

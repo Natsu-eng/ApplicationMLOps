@@ -8,14 +8,13 @@ son état, jamais de calcul ML dans la requête HTTP.
 """
 from __future__ import annotations
 
-import io
 import json
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, List, Optional
 
 import pandas as pd
-from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, Response, UploadFile, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session, joinedload
@@ -23,10 +22,9 @@ from sqlalchemy.orm import Session, joinedload
 from api.core.config import get_settings
 from api.core.database import SessionLocal, get_db
 from api.core.error_codes import ErrorCode
-from api.core.job_queue import analysis_queue, redis_conn, training_queue
+from api.core.job_queue import redis_conn, training_queue
 from api.core.models import (
     AuditLog,
-    BatchPredictionJob,
     Dataset,
     MLModel,
     ModelCandidate,
@@ -35,15 +33,12 @@ from api.core.models import (
     User,
 )
 from api.core.pagination import paginate_by_id
-from api.core.rate_limit import rate_limit_dependency
-from api.core.storage import batch_prediction_input_file_path
 from domains.auth.router import get_current_user
 from domains.shared.audit import log_action
 from domains.shared.dataset_io import (
     DatasetParsingError,
     UnsupportedFileType,
     read_dataset_dataframe,
-    validate_extension,
 )
 from domains.shared.drift import MAX_PREDICTIONS_FOR_DRIFT, MIN_CURRENT_ROWS_FOR_DRIFT, compute_drift_report
 from domains.shared.feature_engineering import CURRENT_SPEC_VERSION
@@ -54,7 +49,7 @@ from domains.shared.job_quota import ALL_JOB_MODELS, raise_if_quota_exceeded
 from domains.shared.job_watchdog import reconcile_stale_jobs
 from domains.shared.ml_task import detect_task_type
 from domains.shared.model_bundle import InferenceError, load_bundle
-from domains.training.batch_prediction_worker import run_batch_prediction_job
+from domains.training.dependencies import get_org_training_job
 from domains.training.services.deployment_export import generate_deployment_script
 from domains.training.services.duration_estimate import estimate_training_duration
 from domains.training.services.engine import selection_metric_label
@@ -431,26 +426,6 @@ class DriftReportOut(BaseModel):
     min_predictions_required: int
 
 
-class BatchPredictionJobSummary(BaseModel):
-    """Prédiction en lot (retour utilisateur : "batch prediction" — upload
-    d'un fichier, prédictions pour toutes les lignes) — même forme que
-    `TrainingJobSummary`/`VisionClassificationJobSummary` (statut/
-    progression/erreur), pour un traitement UI cohérent avec les autres
-    types de job."""
-    id: int
-    training_job_id: int
-    input_filename: str
-    status: str
-    progress_step: Optional[str] = None
-    progress_percent: int
-    error_message: Optional[str] = None
-    n_rows: Optional[int] = None
-    created_by: Optional[str] = None
-    created_at: datetime
-    started_at: Optional[datetime] = None
-    finished_at: Optional[datetime] = None
-
-
 # ── Aides internes ───────────────────────────────────────────────────────────
 
 def _headline_metric(task_type: str, metrics: dict[str, Any]) -> dict[str, Any]:
@@ -605,63 +580,6 @@ def _validate_hyperparameter_overrides(
                             "message": f"{name} doit être entre {meta.low} et {meta.high}",
                         },
                     )
-
-
-def _get_org_job(job_id: int, current_user: User, db: Session) -> TrainingJob:
-    job = (
-        db.query(TrainingJob)
-        .filter(TrainingJob.id == job_id, TrainingJob.organization_id == current_user.organization_id)
-        .first()
-    )
-    if job is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={"code": ErrorCode.TRAINING_JOB_INTROUVABLE, "message": "Entraînement introuvable"},
-        )
-    return job
-
-
-def _get_org_batch_job(batch_job_id: int, current_user: User, db: Session) -> BatchPredictionJob:
-    job = (
-        db.query(BatchPredictionJob)
-        .filter(
-            BatchPredictionJob.id == batch_job_id,
-            BatchPredictionJob.organization_id == current_user.organization_id,
-        )
-        .first()
-    )
-    if job is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={"code": ErrorCode.PREDICTION_LOT_INTROUVABLE, "message": "Prédiction en lot introuvable"},
-        )
-    return job
-
-
-def _to_batch_summary(job: BatchPredictionJob) -> BatchPredictionJobSummary:
-    return BatchPredictionJobSummary(
-        id=job.id,
-        training_job_id=job.training_job_id,
-        input_filename=job.input_filename,
-        status=job.status,
-        progress_step=job.progress_step,
-        progress_percent=job.progress_percent,
-        error_message=job.error_message,
-        n_rows=job.n_rows,
-        created_by=job.created_by.nom if job.created_by else None,
-        created_at=job.created_at,
-        started_at=job.started_at,
-        finished_at=job.finished_at,
-    )
-
-
-_batch_prediction_upload_rate_limit = rate_limit_dependency(
-    "batch_prediction_upload", _settings.upload_rate_limit_max_attempts, _settings.upload_rate_limit_window_seconds,
-    # Même raisonnement que `datasets.py::_upload_rate_limit` — échec fermé :
-    # l'upload lit un fichier entier en mémoire, jamais laissé passer sans
-    # limite parce que Redis est momentanément indisponible.
-    fail_open=False,
-)
 
 
 # ── Endpoints ────────────────────────────────────────────────────────────────
@@ -1044,7 +962,7 @@ def compare_training_jobs(
 
 @router.get("/jobs/{job_id}", response_model=TrainingJobSummary)
 def get_training_job(job_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    return to_summary(_get_org_job(job_id, current_user, db))
+    return to_summary(get_org_training_job(job_id, current_user, db))
 
 
 @router.get("/jobs/{job_id}/events")
@@ -1148,7 +1066,7 @@ def to_model_detail(model: MLModel, db: Session) -> MLModelDetail:
 
 @router.get("/jobs/{job_id}/model", response_model=MLModelDetail)
 def get_training_job_model(job_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    job = _get_org_job(job_id, current_user, db)
+    job = get_org_training_job(job_id, current_user, db)
     if job.status != "completed" or job.model is None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -1194,7 +1112,7 @@ def promote_model(
                 "message": f"Statut inconnu : {body.stage!r} (attendu : none/staging/production/archived)",
             },
         )
-    job = _get_org_job(job_id, current_user, db)
+    job = get_org_training_job(job_id, current_user, db)
     if job.status != "completed" or job.model is None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -1241,7 +1159,7 @@ def list_model_versions(job_id: int, current_user: User = Depends(get_current_us
     le modèle de ce job (Lot 5, correctif P1) — la plus récente d'abord.
     Permet de retrouver le job_id d'une version antérieure pour la
     repromouvoir (rollback, voir promote_model)."""
-    job = _get_org_job(job_id, current_user, db)
+    job = get_org_training_job(job_id, current_user, db)
     if job.model is None:
         return ModelVersionsResponse(entries=[])
     rows = (
@@ -1277,7 +1195,7 @@ def get_model_history(job_id: int, current_user: User = Depends(get_current_user
     "model.promoted", déjà écrite par promote_model depuis le Lot 9),
     jamais un second mécanisme de journalisation parallèle. Le plus
     récent d'abord."""
-    job = _get_org_job(job_id, current_user, db)
+    job = get_org_training_job(job_id, current_user, db)
     if job.model is None:
         return ModelHistoryResponse(entries=[])
     version_by_model_id = {
@@ -1320,7 +1238,7 @@ def export_model(job_id: int, current_user: User = Depends(get_current_user), db
     plateforme (chargement via `joblib.load` dans un environnement Python
     équivalent — mêmes versions de scikit-learn/lightgbm/xgboost/catboost/
     shap que `backend/requirements.txt`, non garanties par cet export)."""
-    job = _get_org_job(job_id, current_user, db)
+    job = get_org_training_job(job_id, current_user, db)
     if job.status != "completed" or job.model is None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -1348,7 +1266,7 @@ def export_deployment_script(
     fichier `.py` prêt à l'emploi à côté de l'artefact (`.../model/export`
     ci-dessus), aucune dépendance à ce projet. Voir
     `services/deployment_export.py` pour la génération complète."""
-    job = _get_org_job(job_id, current_user, db)
+    job = get_org_training_job(job_id, current_user, db)
     if job.status != "completed" or job.model is None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -1439,7 +1357,7 @@ def get_job_candidates(job_id: int, current_user: User = Depends(get_current_use
     voir `services/ml_training.py`) — `candidates` renvoie alors `[]`, pas un
     404/409, pour que le frontend affiche proprement le seul gagnant déjà
     disponible via `GET /jobs/{id}/model`."""
-    job = _get_org_job(job_id, current_user, db)
+    job = get_org_training_job(job_id, current_user, db)
     rows = (
         db.query(ModelCandidate)
         .filter(ModelCandidate.training_job_id == job.id, ModelCandidate.organization_id == current_user.organization_id)
@@ -1482,7 +1400,7 @@ def predict_with_model(
     recalculable, voir `PredictionHistoryEntry`), modèle, utilisateur,
     date. Une prédiction en échec (`InferenceError`) n'a rien à
     persister — il n'y a pas de sortie."""
-    job = _get_org_job(job_id, current_user, db)
+    job = get_org_training_job(job_id, current_user, db)
     if job.status != "completed" or job.model is None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -1533,7 +1451,7 @@ def list_job_predictions(
     suffisant tant que la rétention (`services/prediction_retention.py`)
     plafonne déjà la taille de cette table dans le temps ; à harmoniser
     avec `api/core/pagination.py` si les deux lots fusionnent."""
-    job = _get_org_job(job_id, current_user, db)
+    job = get_org_training_job(job_id, current_user, db)
     if job.model is None:
         return PredictionHistoryResponse(entries=[])
     rows = (
@@ -1580,7 +1498,7 @@ def get_model_drift(
     le faire — première fonctionnalité de suivi POST-déploiement du
     produit (verdict/seuil/fiabilité s'arrêtaient tous à l'instant du
     déploiement)."""
-    job = _get_org_job(job_id, current_user, db)
+    job = get_org_training_job(job_id, current_user, db)
     if job.model is None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -1622,279 +1540,12 @@ def get_model_drift(
     return DriftReportOut(**report, min_predictions_required=MIN_CURRENT_ROWS_FOR_DRIFT)
 
 
-# ── Prédiction en lot (retour utilisateur : "batch prediction" — upload
-# d'un fichier, prédictions pour toutes les lignes) ─────────────────────────
-
-
-@router.post(
-    "/jobs/{job_id}/predict-batch",
-    response_model=BatchPredictionJobSummary,
-    status_code=status.HTTP_201_CREATED,
-    dependencies=[Depends(_batch_prediction_upload_rate_limit)],
-)
-async def create_batch_prediction_job(
-    job_id: int,
-    request: Request,
-    file: UploadFile = File(...),
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    """Lance une prédiction en lot avec le modèle de ce job — upload d'un
-    fichier (csv/xlsx/xls/parquet/json, mêmes formats que l'upload de
-    dataset), une prédiction par ligne, résultat téléchargeable une fois le
-    job terminé (`GET /training/batch-predictions/{id}/download`).
-
-    Tâche de fond (`analysis_queue`) — jamais de calcul dans la requête HTTP,
-    la taille du fichier n'est pas bornée à l'avance (contrairement à
-    `POST /jobs/{id}/predict`, une seule observation)."""
-    job = _get_org_job(job_id, current_user, db)
-    if job.status != "completed" or job.model is None:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail={
-                "code": ErrorCode.MODELE_NON_DISPONIBLE,
-                "message": "Cet entraînement n'a pas encore produit de modèle",
-            },
-        )
-
-    existing_batch_id = resolve_idempotent_job_id(redis_conn, current_user.organization_id, request)
-    if existing_batch_id is not None:
-        existing = (
-            db.query(BatchPredictionJob)
-            .filter(
-                BatchPredictionJob.id == existing_batch_id,
-                BatchPredictionJob.organization_id == current_user.organization_id,
-            )
-            .first()
-        )
-        if existing is not None:
-            return _to_batch_summary(existing)
-
-    try:
-        extension = validate_extension(file.filename or "")
-    except UnsupportedFileType as exc:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"code": ErrorCode.DATASET_FORMAT_NON_SUPPORTE, "message": str(exc)},
-        ) from exc
-
-    content = await file.read()
-    if len(content) == 0:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"code": ErrorCode.DATASET_FICHIER_VIDE, "message": "Le fichier est vide"},
-        )
-    max_upload_bytes = _settings.max_upload_size_mb * 1024 * 1024
-    if len(content) > max_upload_bytes:
-        raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail={
-                "code": ErrorCode.DATASET_TROP_VOLUMINEUX,
-                "message": f"Fichier trop volumineux (max {_settings.max_upload_size_mb} Mo)",
-            },
-        )
-
-    reconcile_stale_jobs(
-        db, current_user.organization_id, _settings.stale_job_timeout_minutes, model=BatchPredictionJob
-    )
-    raise_if_quota_exceeded(db, current_user.organization_id, ALL_JOB_MODELS, _settings.max_concurrent_jobs_per_org)
-
-    batch_job = BatchPredictionJob(
-        organization_id=current_user.organization_id,
-        training_job_id=job.id,
-        created_by_id=current_user.id,
-        input_filename=file.filename or "fichier",
-        input_file_path="",
-        status="queued",
-        request_id=request.state.request_id,
-    )
-    db.add(batch_job)
-    db.flush()
-
-    target_path = batch_prediction_input_file_path(current_user.organization_id, batch_job.id, extension)
-    target_path.write_bytes(content)
-    batch_job.input_file_path = str(target_path)
-    db.commit()
-    db.refresh(batch_job)
-
-    remember_idempotent_job_id(redis_conn, current_user.organization_id, request, batch_job.id)
-    log_action(
-        db, current_user.organization_id, current_user.id, "batch_prediction_job.created",
-        target_type="batch_prediction_job", target_id=batch_job.id,
-    )
-
-    enqueue_or_mark_failed(db, batch_job, analysis_queue, run_batch_prediction_job, 600)
-
-    return _to_batch_summary(batch_job)
-
-
-@router.get("/batch-predictions", response_model=List[BatchPredictionJobSummary])
-def list_batch_prediction_jobs(
-    response: Response,
-    limit: Optional[int] = Query(None, ge=1, le=500),
-    cursor: Optional[int] = Query(None, description="id de la dernière ligne de la page précédente"),
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    query = (
-        db.query(BatchPredictionJob)
-        .options(joinedload(BatchPredictionJob.created_by))
-        .filter(BatchPredictionJob.organization_id == current_user.organization_id)
-        .order_by(BatchPredictionJob.id.desc())
-    )
-    jobs = paginate_by_id(query, BatchPredictionJob.id, response, cursor, limit)
-    return [_to_batch_summary(j) for j in jobs]
-
-
-@router.get("/batch-predictions/{batch_job_id}", response_model=BatchPredictionJobSummary)
-def get_batch_prediction_job(
-    batch_job_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)
-):
-    return _to_batch_summary(_get_org_batch_job(batch_job_id, current_user, db))
-
-
-@router.get("/batch-predictions/{batch_job_id}/events")
-async def stream_batch_prediction_job_events(batch_job_id: int, current_user: User = Depends(get_current_user)):
-    """Notifications de progression par SSE — voir
-    `training.py::stream_training_job_events` pour le raisonnement complet."""
-    organization_id = current_user.organization_id
-    db = SessionLocal()
-    try:
-        job = (
-            db.query(BatchPredictionJob)
-            .filter(BatchPredictionJob.id == batch_job_id, BatchPredictionJob.organization_id == organization_id)
-            .first()
-        )
-        if job is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail={"code": ErrorCode.PREDICTION_LOT_INTROUVABLE, "message": "Prédiction en lot introuvable"},
-            )
-    finally:
-        db.close()
-
-    def fetch_snapshot():
-        session = SessionLocal()
-        try:
-            row = (
-                session.query(BatchPredictionJob)
-                .filter(BatchPredictionJob.id == batch_job_id, BatchPredictionJob.organization_id == organization_id)
-                .first()
-            )
-            if row is None:
-                return None
-            return {
-                "status": row.status,
-                "progress_percent": row.progress_percent,
-                "progress_step": row.progress_step,
-                "error_message": row.error_message,
-            }
-        finally:
-            session.close()
-
-    return StreamingResponse(stream_job_updates(fetch_snapshot), media_type="text/event-stream")
-
-
-@router.get("/batch-predictions/{batch_job_id}/download")
-def download_batch_prediction_result(
-    batch_job_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)
-):
-    job = _get_org_batch_job(batch_job_id, current_user, db)
-    if job.status != "completed" or not job.output_file_path:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail={
-                "code": ErrorCode.RESULTAT_INDISPONIBLE,
-                "message": "Cette prédiction en lot n'a pas encore de résultat",
-            },
-        )
-    output_path = Path(job.output_file_path)
-    if not output_path.exists():
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={"code": ErrorCode.RESULTAT_INTROUVABLE, "message": "Résultat introuvable sur le serveur"},
-        )
-    filename = f"predictions_{Path(job.input_filename).stem}.csv"
-    return FileResponse(path=output_path, filename=filename, media_type="text/csv")
-
-
-@router.get("/batch-predictions/{batch_job_id}/download-excel")
-def download_batch_prediction_result_excel(
-    batch_job_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)
-):
-    """Même résultat que `.../download`, au format Excel (retour utilisateur
-    direct : "on doit télécharger aussi les prédictions en format excel pour
-    voir directement") — généré à la volée depuis le CSV déjà stocké, jamais
-    un second fichier persisté sur le serveur (même principe que le modèle
-    de fichier vide côté frontend : un format d'affichage, pas une donnée
-    supplémentaire à retenir)."""
-    job = _get_org_batch_job(batch_job_id, current_user, db)
-    if job.status != "completed" or not job.output_file_path:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail={
-                "code": ErrorCode.RESULTAT_INDISPONIBLE,
-                "message": "Cette prédiction en lot n'a pas encore de résultat",
-            },
-        )
-    output_path = Path(job.output_file_path)
-    if not output_path.exists():
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={"code": ErrorCode.RESULTAT_INTROUVABLE, "message": "Résultat introuvable sur le serveur"},
-        )
-    result_df = pd.read_csv(output_path)
-    buffer = io.BytesIO()
-    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-        result_df.to_excel(writer, index=False, sheet_name="Prédictions")
-    buffer.seek(0)
-    filename = f"predictions_{Path(job.input_filename).stem}.xlsx"
-    return StreamingResponse(
-        buffer,
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
-    )
-
-
-@router.post("/batch-predictions/{batch_job_id}/cancel", response_model=BatchPredictionJobSummary)
-def cancel_batch_prediction_job(
-    batch_job_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)
-):
-    job = _get_org_batch_job(batch_job_id, current_user, db)
-    if job.status not in ACTIVE_STATUSES:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail={"code": "PREDICTION_LOT_NON_ANNULABLE", "message": "Cette prédiction en lot n'est plus en cours"},
-        )
-    try_cancel_rq_job(job.rq_job_id, analysis_queue)
-    job.status = "cancelled"
-    job.error_message = CANCELLED_MESSAGE
-    job.finished_at = datetime.now(timezone.utc)
-    db.commit()
-    db.refresh(job)
-    return _to_batch_summary(job)
-
-
-@router.delete("/batch-predictions/{batch_job_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_batch_prediction_job(
-    batch_job_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)
-):
-    job = _get_org_batch_job(batch_job_id, current_user, db)
-    if job.status in ACTIVE_STATUSES:
-        try_cancel_rq_job(job.rq_job_id, analysis_queue)
-    if job.output_file_path:
-        Path(job.output_file_path).unlink(missing_ok=True)
-    Path(job.input_file_path).unlink(missing_ok=True)
-    db.delete(job)
-    db.commit()
-
-
 @router.post("/jobs/{job_id}/cancel", response_model=TrainingJobSummary)
 def cancel_training_job(job_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     """Annule un entraînement en attente ou en cours (Lot 7, §J.2) —
     contrairement à `DELETE /jobs/{id}`, garde une trace consultable
     (`status="cancelled"`) plutôt que de supprimer le job."""
-    job = _get_org_job(job_id, current_user, db)
+    job = get_org_training_job(job_id, current_user, db)
     if job.status not in ACTIVE_STATUSES:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -1926,7 +1577,7 @@ def rerun_training_job(
     d'origine et réutilise SA validation complète (dataset toujours prêt,
     colonnes toujours présentes...) — jamais une copie partielle de cette
     logique, qui divergerait avec le temps."""
-    job = _get_org_job(job_id, current_user, db)
+    job = get_org_training_job(job_id, current_user, db)
     config = json.loads(job.config_json)
     fe = json.loads(job.feature_engineering_json) if job.feature_engineering_json else None
     body = TrainingJobCreate(
@@ -1966,7 +1617,7 @@ def delete_training_job(job_id: int, current_user: User = Depends(get_current_us
     toute façon `training_worker.py` gère déjà l'absence du job en base sans
     planter, donc une annulation ratée n'est jamais dangereuse).
     """
-    job = _get_org_job(job_id, current_user, db)
+    job = get_org_training_job(job_id, current_user, db)
 
     if job.status in ACTIVE_STATUSES:
         try_cancel_rq_job(job.rq_job_id, training_queue)

@@ -41,6 +41,7 @@ from domains.dashboard.router import router as dashboard_router
 from domains.datasets.router import router as datasets_router
 from domains.dimensionality.router import router as dimensionality_router
 from domains.notifications.router import router as notifications_router
+from domains.training.batch_prediction_router import router as batch_prediction_router
 from domains.training.router import router as training_router
 from domains.vision.anomalies.router import router as vision_anomalies_router
 from domains.vision.classification.router import router as vision_classification_router
@@ -251,6 +252,9 @@ app.include_router(users_router, prefix="/api")
 app.include_router(feedback_router, prefix="/api")
 app.include_router(datasets_router, prefix="/api")
 app.include_router(training_router, prefix="/api")
+# Prédiction en lot — extrait de `training_router` lors du découpage (mêmes
+# URL `/training/...`, voir `domains/training/batch_prediction_router.py`).
+app.include_router(batch_prediction_router, prefix="/api")
 app.include_router(clustering_router, prefix="/api")
 app.include_router(dimensionality_router, prefix="/api")
 app.include_router(anomalies_router, prefix="/api")
