@@ -1,10 +1,22 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   Activity,
+  Boxes,
+  Brain,
   Building2,
   Database,
+  Eye,
+  Gauge,
+  KeyRound,
+  Layers,
+  ListChecks,
+  Radar,
+  ScanSearch,
   ShieldCheck,
+  Sparkles,
+  TriangleAlert,
   Users,
+  type LucideIcon,
 } from "lucide-react";
 
 import {
@@ -21,10 +33,13 @@ import {
 import AppShell from "../components/AppShell";
 import { Badge } from "../components/ui/Badge";
 import { Card } from "../components/ui/Card";
+import { ColorIconBadge, type AccentColor } from "../components/ui/ColorIconBadge";
 import { ErrorNote } from "../components/ui/ErrorNote";
 import { PageHeader } from "../components/ui/PageHeader";
 import { Segmented } from "../components/ui/Segmented";
+import { Table, type TableColumn } from "../components/ui/Table";
 import { Tabs, type TabItem } from "../components/ui/Tabs";
+import { pillarColor } from "../config/pillars";
 import { useAuth } from "../contexts/AuthContext";
 import { formatDateTime } from "../utils/format";
 
@@ -38,7 +53,14 @@ import { formatDateTime } from "../utils/format";
  *
  * La page ne se protège pas elle-même : le serveur renvoie 403 sur chaque
  * route `/admin` à un compte ordinaire. Ce qui suit sert à ne pas afficher
- * une page vide et incompréhensible à qui n'y a pas droit. */
+ * une page vide et incompréhensible à qui n'y a pas droit.
+ *
+ * COULEUR : suit la règle posée dans `config/pillars.ts` — une donnée qui
+ * n'appartient à AUCUN pilier reste `neutral`, jamais une teinte de pilier
+ * empruntée pour faire joli. Les seules couleurs vives ici portent donc un
+ * sens : l'identité d'un pilier réel (`pillarColor`), ou un statut
+ * (`rose` = échec, `amber` = attente), et uniquement quand la valeur
+ * concernée est non nulle — un compteur à zéro n'est pas une alerte. */
 
 type TabId = "overview" | "organizations" | "users" | "activity";
 
@@ -48,6 +70,20 @@ const TABS: TabItem<TabId>[] = [
   { id: "users", label: "Comptes", icon: Users },
   { id: "activity", label: "Activité", icon: Database },
 ];
+
+/** Les 7 types de job du backend se répartissent sur les 3 piliers PRODUIT.
+ * La couleur vient donc de `pillarColor()` — source unique — plutôt que
+ * d'une teinte choisie ici, et l'icône distingue les types au sein d'un
+ * même pilier. */
+const JOB_PILLARS: Record<string, { icon: LucideIcon; color: AccentColor }> = {
+  TrainingJob: { icon: Brain, color: pillarColor("supervised") },
+  BatchPredictionJob: { icon: Layers, color: pillarColor("supervised") },
+  ClusteringJob: { icon: Boxes, color: pillarColor("unsupervised") },
+  DimensionalityJob: { icon: Radar, color: pillarColor("unsupervised") },
+  AnomalyJob: { icon: ScanSearch, color: pillarColor("unsupervised") },
+  VisionClassificationJob: { icon: Eye, color: pillarColor("vision") },
+  VisionAnomalyJob: { icon: TriangleAlert, color: pillarColor("vision") },
+};
 
 function formatBytes(bytes: number): string {
   if (bytes <= 0) return "0 o";
@@ -130,20 +166,35 @@ function useAdminResource<T>(load: () => Promise<T>, deps: unknown[] = []) {
   return { data, error, errorRef };
 }
 
-function StatCard({ label, value, hint }: { label: string; value: string; hint?: string }) {
+function StatCard({
+  label,
+  value,
+  hint,
+  icon,
+  color = "neutral",
+}: {
+  label: string;
+  value: string;
+  hint?: string;
+  icon: LucideIcon;
+  color?: AccentColor;
+}) {
   return (
-    <Card className="p-4">
-      <p className="text-xs text-muted-foreground">{label}</p>
-      <p className="text-h2 text-foreground mt-1 tabular-nums">{value}</p>
-      {hint && <p className="text-xs text-muted-foreground mt-1">{hint}</p>}
+    <Card className="group p-4 flex items-start gap-3">
+      <ColorIconBadge icon={icon} color={color} />
+      <div className="min-w-0">
+        <p className="text-xs text-muted-foreground">{label}</p>
+        <p className="text-h2 text-foreground leading-tight tabular-nums">{value}</p>
+        {hint && <p className="text-xs text-muted-foreground mt-0.5">{hint}</p>}
+      </div>
     </Card>
   );
 }
 
 /** Barres empilées en CSS pur plutôt qu'une dépendance de graphique : la
  * donnée est une série de comptages sur une échelle unique, un histogramme
- * complet n'apporterait rien de plus qu'il faudrait ensuite rendre
- * accessible et thématisable. Les valeurs restent lisibles en texte. */
+ * complet n'apporterait rien qu'il faudrait ensuite rendre accessible et
+ * thématisable. Les valeurs restent lisibles en texte. */
 function Sparkbars({ points, label }: { points: TimeseriesPoint[]; label: string }) {
   const max = Math.max(1, ...points.map((p) => p.count));
   const total = points.reduce((sum, p) => sum + p.count, 0);
@@ -158,7 +209,9 @@ function Sparkbars({ points, label }: { points: TimeseriesPoint[]; label: string
         {points.map((point) => (
           <div
             key={point.date}
-            className="flex-1 min-w-[2px] rounded-t bg-primary/70"
+            className={`flex-1 min-w-[2px] rounded-t transition-colors ${
+              point.count > 0 ? "bg-primary/70 hover:bg-primary" : "bg-muted"
+            }`}
             style={{ height: `${Math.max(2, (point.count / max) * 100)}%` }}
             title={`${point.date} — ${point.count}`}
           />
@@ -173,7 +226,8 @@ function Sparkbars({ points, label }: { points: TimeseriesPoint[]; label: string
 }
 
 function PillarRow({ pillar }: { pillar: JobsByPillar }) {
-  const segments: { key: string; count: number; className: string; label: string }[] = [
+  const identity = JOB_PILLARS[pillar.pillar] ?? { icon: Gauge, color: "neutral" as AccentColor };
+  const segments = [
     { key: "completed", count: pillar.completed, className: "bg-success", label: "terminés" },
     { key: "running", count: pillar.running, className: "bg-primary", label: "en cours" },
     { key: "queued", count: pillar.queued, className: "bg-muted-foreground/50", label: "en file" },
@@ -182,26 +236,32 @@ function PillarRow({ pillar }: { pillar: JobsByPillar }) {
   const total = Math.max(1, pillar.total);
 
   return (
-    <div className="py-2.5">
-      <div className="flex items-baseline justify-between mb-1.5 gap-3">
-        <span className="text-sm text-foreground/90 truncate">{pillar.label}</span>
-        <span className="text-xs text-muted-foreground tabular-nums flex-shrink-0">
-          {pillar.total} job{pillar.total > 1 ? "s" : ""}
-          {pillar.failed > 0 && <span className="text-destructive"> · {pillar.failed} en échec</span>}
-        </span>
-      </div>
-      <div className="flex h-2 rounded-full overflow-hidden bg-muted" role="img"
-        aria-label={segments.map((s) => `${s.count} ${s.label}`).join(", ")}>
-        {segments.map((segment) =>
-          segment.count > 0 ? (
-            <div
-              key={segment.key}
-              className={segment.className}
-              style={{ width: `${(segment.count / total) * 100}%` }}
-              title={`${segment.count} ${segment.label}`}
-            />
-          ) : null,
-        )}
+    <div className="group py-3 flex items-center gap-3">
+      <ColorIconBadge icon={identity.icon} color={identity.color} size="sm" />
+      <div className="min-w-0 flex-1">
+        <div className="flex items-baseline justify-between mb-1.5 gap-3">
+          <span className="text-sm text-foreground/90 truncate">{pillar.label}</span>
+          <span className="text-xs text-muted-foreground tabular-nums flex-shrink-0">
+            {pillar.total} job{pillar.total > 1 ? "s" : ""}
+            {pillar.failed > 0 && <span className="text-destructive"> · {pillar.failed} en échec</span>}
+          </span>
+        </div>
+        <div
+          className="flex h-2 rounded-full overflow-hidden bg-muted"
+          role="img"
+          aria-label={segments.map((s) => `${s.count} ${s.label}`).join(", ")}
+        >
+          {segments.map((segment) =>
+            segment.count > 0 ? (
+              <div
+                key={segment.key}
+                className={segment.className}
+                style={{ width: `${(segment.count / total) * 100}%` }}
+                title={`${segment.count} ${segment.label}`}
+              />
+            ) : null,
+          )}
+        </div>
       </div>
     </div>
   );
@@ -221,18 +281,21 @@ function OverviewTab() {
   return (
     <div className="grid gap-5">
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <StatCard label="Organisations" value={String(c.organizations)} />
+        <StatCard icon={Building2} label="Organisations" value={String(c.organizations)} />
         <StatCard
+          icon={Users}
           label="Comptes"
           value={String(c.users_total)}
           hint={`${c.users_active} actifs · ${c.users_revoked} révoqués · ${c.users_anonymized} anonymisés`}
         />
         <StatCard
+          icon={Database}
           label="Datasets"
           value={String(c.datasets + c.vision_datasets)}
           hint={`${c.datasets} tabulaires (${formatBytes(c.datasets_bytes)}) · ${c.vision_datasets} vision`}
         />
         <StatCard
+          icon={ListChecks}
           label="Jobs lancés"
           value={String(data.jobs_total)}
           hint={
@@ -241,20 +304,34 @@ function OverviewTab() {
               : `${(data.failure_rate * 100).toFixed(1)} % d'échec sur les jobs terminés`
           }
         />
-        <StatCard label="Modèles produits" value={String(c.models)} />
-        <StatCard label="Prédictions servies" value={String(c.predictions)} />
+        <StatCard icon={Sparkles} label="Modèles produits" value={String(c.models)} />
+        <StatCard icon={Gauge} label="Prédictions servies" value={String(c.predictions)} />
+        {/* Couleur portée par la VALEUR, pas par la carte : un compteur à
+            zéro n'est pas une alerte et ne doit pas s'afficher comme telle. */}
         <StatCard
+          icon={KeyRound}
           label="Comptes en attente"
           value={String(c.users_pending_password)}
           hint="mot de passe provisoire non encore remplacé"
+          color={c.users_pending_password > 0 ? "amber" : "neutral"}
         />
-        <StatCard label="Jobs en échec" value={String(data.jobs_failed)} />
+        <StatCard
+          icon={TriangleAlert}
+          label="Jobs en échec"
+          value={String(data.jobs_failed)}
+          color={data.jobs_failed > 0 ? "rose" : "neutral"}
+        />
       </div>
 
       <Card className="p-5">
-        <div className="flex items-center justify-between mb-2 gap-3">
+        <div className="flex items-center justify-between mb-2 gap-3 flex-wrap">
           <h2 className="text-h3 text-foreground">Activité par pilier</h2>
-          <span className="text-xs text-muted-foreground">terminés · en cours · en file · en échec</span>
+          <div className="flex items-center gap-3 text-xs text-muted-foreground">
+            <span className="flex items-center gap-1.5"><i className="h-2 w-2 rounded-full bg-success" />terminés</span>
+            <span className="flex items-center gap-1.5"><i className="h-2 w-2 rounded-full bg-primary" />en cours</span>
+            <span className="flex items-center gap-1.5"><i className="h-2 w-2 rounded-full bg-muted-foreground/50" />en file</span>
+            <span className="flex items-center gap-1.5"><i className="h-2 w-2 rounded-full bg-destructive" />en échec</span>
+          </div>
         </div>
         <div className="divide-y divide-border">
           {data.jobs_by_pillar.map((pillar) => (
@@ -287,45 +364,53 @@ function OverviewTab() {
 function OrganizationsTab() {
   const { data, error, errorRef } = useAdminResource<OrganizationRow[]>(() => api.admin.organizations());
 
-  if (error) return <ErrorNote message={error} reference={errorRef} />;
-  if (!data) return <p className="text-sm text-muted-foreground">Chargement…</p>;
+  const columns: TableColumn<OrganizationRow>[] = [
+    { key: "name", header: "Organisation", sticky: true, sortable: true },
+    {
+      key: "members",
+      header: "Membres",
+      align: "right",
+      sortable: true,
+      sortValue: (r) => r.active_members,
+      render: (r) => (
+        <span className="tabular-nums">
+          {r.active_members}
+          {r.members !== r.active_members && <span className="text-muted-foreground"> / {r.members}</span>}
+        </span>
+      ),
+    },
+    { key: "datasets", header: "Datasets", align: "right", sortable: true },
+    { key: "jobs", header: "Jobs", align: "right", sortable: true },
+    {
+      key: "created_at",
+      header: "Créée le",
+      sortable: true,
+      render: (r) => <span className="text-muted-foreground">{formatDateTime(r.created_at)}</span>,
+    },
+    {
+      key: "last_activity_at",
+      header: "Dernière activité",
+      sortable: true,
+      sortValue: (r) => r.last_activity_at ?? "",
+      render: (r) => (
+        <span className="text-muted-foreground">
+          {r.last_activity_at ? formatDateTime(r.last_activity_at) : "—"}
+        </span>
+      ),
+    },
+  ];
 
+  if (error) return <ErrorNote message={error} reference={errorRef} />;
   return (
-    <Card className="p-0 overflow-x-auto">
-      <table className="w-full text-sm">
-        <caption className="sr-only">Organisations de la plateforme et leur volumétrie</caption>
-        <thead className="text-xs text-muted-foreground border-b border-border">
-          <tr>
-            <th scope="col" className="text-left font-medium px-4 py-2.5">Organisation</th>
-            <th scope="col" className="text-right font-medium px-4 py-2.5">Membres</th>
-            <th scope="col" className="text-right font-medium px-4 py-2.5">Datasets</th>
-            <th scope="col" className="text-right font-medium px-4 py-2.5">Jobs</th>
-            <th scope="col" className="text-left font-medium px-4 py-2.5">Créée le</th>
-            <th scope="col" className="text-left font-medium px-4 py-2.5">Dernière activité</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-border">
-          {data.map((org) => (
-            <tr key={org.id}>
-              <td className="px-4 py-2.5 text-foreground/90">{org.name}</td>
-              <td className="px-4 py-2.5 text-right tabular-nums">
-                {org.active_members}
-                {org.members !== org.active_members && (
-                  <span className="text-muted-foreground"> / {org.members}</span>
-                )}
-              </td>
-              <td className="px-4 py-2.5 text-right tabular-nums">{org.datasets}</td>
-              <td className="px-4 py-2.5 text-right tabular-nums">{org.jobs}</td>
-              <td className="px-4 py-2.5 text-muted-foreground">{formatDateTime(org.created_at)}</td>
-              <td className="px-4 py-2.5 text-muted-foreground">
-                {org.last_activity_at ? formatDateTime(org.last_activity_at) : "—"}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      {data.length === 0 && <p className="text-sm text-muted-foreground p-4">Aucune organisation.</p>}
-    </Card>
+    <Table
+      columns={columns}
+      rows={data ?? []}
+      rowKey={(r) => r.id}
+      loading={data === null}
+      caption="Organisations de la plateforme, avec leur volumétrie et leur dernière activité"
+      emptyMessage="Aucune organisation."
+      pageSize={15}
+    />
   );
 }
 
@@ -342,84 +427,114 @@ function AccountState({ user }: { user: PlatformUserRow }) {
 function UsersTab() {
   const { data, error, errorRef } = useAdminResource<PlatformUserRow[]>(() => api.admin.users());
 
-  if (error) return <ErrorNote message={error} reference={errorRef} />;
-  if (!data) return <p className="text-sm text-muted-foreground">Chargement…</p>;
+  const columns: TableColumn<PlatformUserRow>[] = [
+    {
+      key: "nom",
+      header: "Compte",
+      sticky: true,
+      sortable: true,
+      render: (r) => (
+        <div className="min-w-0">
+          <div className="text-foreground/90 truncate">{r.nom}</div>
+          <div className="text-xs text-muted-foreground truncate">{r.email}</div>
+        </div>
+      ),
+    },
+    {
+      key: "organization_name",
+      header: "Organisation",
+      sortable: true,
+      render: (r) => <span className="text-muted-foreground">{r.organization_name}</span>,
+    },
+    {
+      key: "role",
+      header: "Rôle",
+      sortable: true,
+      render: (r) => (
+        <div className="flex items-center gap-1.5">
+          <Badge variant={r.role === "owner" ? "accent" : "neutral"}>
+            {r.role === "owner" ? "Propriétaire" : "Membre"}
+          </Badge>
+          {r.is_platform_admin && <Badge variant="primary">Plateforme</Badge>}
+        </div>
+      ),
+    },
+    {
+      key: "etat",
+      header: "État",
+      sortable: true,
+      sortValue: (r) => (r.anonymized_at ? 3 : !r.actif ? 2 : r.must_change_password ? 1 : 0),
+      render: (r) => <AccountState user={r} />,
+    },
+    {
+      key: "last_login",
+      header: "Dernière connexion",
+      sortable: true,
+      sortValue: (r) => r.last_login ?? "",
+      render: (r) => (
+        <span className="text-muted-foreground">{r.last_login ? formatDateTime(r.last_login) : "jamais"}</span>
+      ),
+    },
+  ];
 
+  if (error) return <ErrorNote message={error} reference={errorRef} />;
   return (
-    <Card className="p-0 overflow-x-auto">
-      <table className="w-full text-sm">
-        <caption className="sr-only">Tous les comptes de la plateforme, toutes organisations confondues</caption>
-        <thead className="text-xs text-muted-foreground border-b border-border">
-          <tr>
-            <th scope="col" className="text-left font-medium px-4 py-2.5">Compte</th>
-            <th scope="col" className="text-left font-medium px-4 py-2.5">Organisation</th>
-            <th scope="col" className="text-left font-medium px-4 py-2.5">Rôle</th>
-            <th scope="col" className="text-left font-medium px-4 py-2.5">État</th>
-            <th scope="col" className="text-left font-medium px-4 py-2.5">Dernière connexion</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-border">
-          {data.map((row) => (
-            <tr key={row.id}>
-              <td className="px-4 py-2.5">
-                <div className="text-foreground/90">{row.nom}</div>
-                <div className="text-xs text-muted-foreground">{row.email}</div>
-              </td>
-              <td className="px-4 py-2.5 text-muted-foreground">{row.organization_name}</td>
-              <td className="px-4 py-2.5">
-                <div className="flex items-center gap-1.5">
-                  <Badge variant={row.role === "owner" ? "accent" : "neutral"}>
-                    {row.role === "owner" ? "Propriétaire" : "Membre"}
-                  </Badge>
-                  {row.is_platform_admin && <Badge variant="primary">Plateforme</Badge>}
-                </div>
-              </td>
-              <td className="px-4 py-2.5"><AccountState user={row} /></td>
-              <td className="px-4 py-2.5 text-muted-foreground">
-                {row.last_login ? formatDateTime(row.last_login) : "jamais"}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </Card>
+    <Table
+      columns={columns}
+      rows={data ?? []}
+      rowKey={(r) => r.id}
+      loading={data === null}
+      caption="Tous les comptes de la plateforme, toutes organisations confondues"
+      emptyMessage="Aucun compte."
+      pageSize={20}
+    />
   );
 }
 
 function ActivityTab() {
   const { data, error, errorRef } = useAdminResource<PlatformAuditRow[]>(() => api.admin.activity(150));
 
-  if (error) return <ErrorNote message={error} reference={errorRef} />;
-  if (!data) return <p className="text-sm text-muted-foreground">Chargement…</p>;
+  const columns: TableColumn<PlatformAuditRow>[] = [
+    {
+      key: "created_at",
+      header: "Quand",
+      sticky: true,
+      sortable: true,
+      render: (r) => (
+        <span className="text-muted-foreground whitespace-nowrap">{formatDateTime(r.created_at)}</span>
+      ),
+    },
+    {
+      key: "organization_name",
+      header: "Organisation",
+      sortable: true,
+      render: (r) => <span className="text-muted-foreground">{r.organization_name}</span>,
+    },
+    {
+      key: "actor_name",
+      header: "Auteur",
+      sortable: true,
+      sortValue: (r) => r.actor_name ?? "",
+      render: (r) => <span className="text-foreground/90">{r.actor_name ?? "—"}</span>,
+    },
+    {
+      key: "action",
+      header: "Action",
+      sortable: true,
+      render: (r) => <span className="font-mono text-xs text-foreground/90">{r.action}</span>,
+    },
+  ];
 
+  if (error) return <ErrorNote message={error} reference={errorRef} />;
   return (
-    <Card className="p-0 overflow-x-auto">
-      <table className="w-full text-sm">
-        <caption className="sr-only">Journal d'activité de toutes les organisations</caption>
-        <thead className="text-xs text-muted-foreground border-b border-border">
-          <tr>
-            <th scope="col" className="text-left font-medium px-4 py-2.5">Quand</th>
-            <th scope="col" className="text-left font-medium px-4 py-2.5">Organisation</th>
-            <th scope="col" className="text-left font-medium px-4 py-2.5">Auteur</th>
-            <th scope="col" className="text-left font-medium px-4 py-2.5">Action</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-border">
-          {data.map((entry) => (
-            <tr key={entry.id}>
-              <td className="px-4 py-2.5 text-muted-foreground whitespace-nowrap">
-                {formatDateTime(entry.created_at)}
-              </td>
-              <td className="px-4 py-2.5 text-muted-foreground">{entry.organization_name}</td>
-              <td className="px-4 py-2.5 text-foreground/90">{entry.actor_name ?? "—"}</td>
-              <td className="px-4 py-2.5">
-                <span className="font-mono text-xs text-foreground/90">{entry.action}</span>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      {data.length === 0 && <p className="text-sm text-muted-foreground p-4">Aucune activité enregistrée.</p>}
-    </Card>
+    <Table
+      columns={columns}
+      rows={data ?? []}
+      rowKey={(r) => r.id}
+      loading={data === null}
+      caption="Journal d'audit de toutes les organisations, du plus récent au plus ancien"
+      emptyMessage="Aucune activité enregistrée."
+      pageSize={25}
+    />
   );
 }
