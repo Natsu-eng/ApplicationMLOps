@@ -94,6 +94,14 @@ class User(Base):
     # une politique de rétention. Distinct de `actif`, qui ne dit que
     # l'état courant : réactiver remet cette date à NULL.
     deactivated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Date d'anonymisation (NULL = compte nominatif). Le compte n'est JAMAIS
+    # supprimé : ses datasets, entraînements et entrées d'audit appartiennent
+    # à l'organisation et doivent lui survivre. Seules les données
+    # personnelles sont effacées (email, nom), la ligne et ses clés
+    # étrangères restant en place — d'où une colonne plutôt qu'un DELETE.
+    # Irréversible par construction : rien ne permet de retrouver l'identité
+    # effacée, c'est précisément l'objet de l'opération.
+    anonymized_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
     organization: Mapped["Organization"] = relationship("Organization", back_populates="users")
 

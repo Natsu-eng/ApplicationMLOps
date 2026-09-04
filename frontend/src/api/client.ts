@@ -388,6 +388,9 @@ export interface TeamMember {
   created_at: string;
   /** Depuis quand l'accès est révoqué — null si le compte est actif. */
   deactivated_at: string | null;
+  /** Date d'anonymisation — null si le compte est encore nominatif. Une
+   *  fois posée, l'identité de la personne a été effacée définitivement. */
+  anonymized_at: string | null;
   /** Le membre utilise encore le mot de passe provisoire fixé par le
    *  propriétaire, qui le connaît donc toujours. */
   must_change_password: boolean;
@@ -1752,6 +1755,12 @@ export const api = {
         method: "PATCH",
         body: JSON.stringify({ role }),
       }),
+    // Efface DÉFINITIVEMENT les données personnelles d'un membre dont
+    // l'accès est déjà révoqué (droit à l'effacement). Anonymisation, pas
+    // suppression : ses datasets, entraînements et sa trace d'audit
+    // appartiennent à l'organisation et lui survivent. IRRÉVERSIBLE.
+    anonymizeMember: (memberId: number) =>
+      request<TeamMember>(`/auth/team/members/${memberId}/anonymize`, { method: "POST" }),
     // Lot 10 — journal d'audit (owner uniquement, 403 sinon).
     auditLog: () => request<AuditLogEntry[]>("/auth/team/audit-log"),
   },

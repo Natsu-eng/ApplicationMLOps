@@ -90,6 +90,7 @@ class ErrorCode(str, Enum):
     TROP_DE_REQUETES = "TROP_DE_REQUETES"
 
     # ── Authentification / équipe (domains/auth) ────────────────────────
+    AUTH_ANONYMISATION_COMPTE_ACTIF = "AUTH_ANONYMISATION_COMPTE_ACTIF"
     AUTH_AUTO_DESACTIVATION_INTERDITE = "AUTH_AUTO_DESACTIVATION_INTERDITE"
     AUTH_COMPTE_DESACTIVE = "AUTH_COMPTE_DESACTIVE"
     AUTH_DERNIER_PROPRIETAIRE = "AUTH_DERNIER_PROPRIETAIRE"
@@ -203,6 +204,12 @@ ERROR_CODE_DESCRIPTIONS: dict[str, str] = {
     ErrorCode.AUTH_COMPTE_DESACTIVE: (
         "Ce compte a été désactivé par le propriétaire de son organisation — l'accès est révoqué "
         "immédiatement, mais le compte et sa trace d'audit sont conservés."
+    ),
+    ErrorCode.AUTH_ANONYMISATION_COMPTE_ACTIF: (
+        "L'anonymisation est irreversible et ne s'applique qu'a un compte dont l'acces est deja "
+        "revoque — revoquez-le d'abord. Elle efface les donnees personnelles (email, nom, mot de "
+        "passe) sans supprimer le compte : ses datasets, entrainements et trace d'audit "
+        "appartiennent a l'organisation et lui survivent."
     ),
     ErrorCode.AUTH_MEMBRE_INTROUVABLE: (
         "Aucun membre de VOTRE organisation ne porte cet identifiant (un compte d'une autre "

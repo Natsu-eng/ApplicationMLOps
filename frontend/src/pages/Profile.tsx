@@ -29,6 +29,7 @@ const AUDIT_ACTION_LABELS: Record<string, string> = {
   "member.reactivated": "Accès d'un membre réactivé",
   "member.promoted": "Membre promu propriétaire",
   "member.demoted": "Propriétaire rétrogradé membre",
+  "member.anonymized": "Données personnelles d'un membre effacées",
   "dataset.deleted": "Dataset supprimé",
   "training_job.deleted": "Entraînement supprimé",
   "model.promoted": "Modèle promu",
@@ -189,6 +190,11 @@ function OrganizationTab() {
   // céder ses droits n'est pas anodin.
   const confirmRole = useConfirmAction<number>();
   const [roleChangingId, setRoleChangingId] = useState<number | null>(null);
+  // Anonymisation : effacement DÉFINITIF des données personnelles. Seule
+  // action irréversible de cette page — d'où une confirmation dont le
+  // libellé le dit explicitement, plutôt qu'un « Confirmer ? » anodin.
+  const confirmAnonymize = useConfirmAction<number>();
+  const [anonymizingId, setAnonymizingId] = useState<number | null>(null);
 
   const loadMembers = useCallback(async () => {
     try {
@@ -239,6 +245,21 @@ function OrganizationTab() {
     }
   }
 
+  async function anonymizeMember(member: TeamMember) {
+    setAnonymizingId(member.id);
+    try {
+      await api.team.anonymizeMember(member.id);
+      setMembersError(null);
+      setMembersErrorRef(undefined);
+      await loadMembers();
+    } catch (err) {
+      setMembersError(err instanceof ApiError ? err.message : "Impossible d'anonymiser ce compte");
+      setMembersErrorRef(apiErrorReference(err));
+    } finally {
+      setAnonymizingId(null);
+    }
+  }
+
   useEffect(() => {
     loadMembers();
   }, [loadMembers]);
@@ -281,12 +302,16 @@ function OrganizationTab() {
                   {member.must_change_password && member.actif && (
                     <Badge variant="warning">Mot de passe provisoire</Badge>
                   )}
-                  {!member.actif && (
-                    <Badge variant="danger">
-                      {member.deactivated_at
-                        ? `Accès révoqué le ${formatDateTime(member.deactivated_at)}`
-                        : "Accès révoqué"}
-                    </Badge>
+                  {member.anonymized_at ? (
+                    <Badge variant="neutral">Identité effacée le {formatDateTime(member.anonymized_at)}</Badge>
+                  ) : (
+                    !member.actif && (
+                      <Badge variant="danger">
+                        {member.deactivated_at
+                          ? `Accès révoqué le ${formatDateTime(member.deactivated_at)}`
+                          : "Accès révoqué"}
+                      </Badge>
+                    )
                   )}
                   <RoleBadge role={member.role} />
                   {/* Le propriétaire ne peut pas se désactiver lui-même : son
@@ -315,7 +340,7 @@ function OrganizationTab() {
                           : "Promouvoir propriétaire"}
                     </Button>
                   )}
-                  {user.role === "owner" && member.id !== user.id && (
+                  {user.role === "owner" && member.id !== user.id && !member.anonymized_at && (
                     <Button
                       variant={member.actif ? "destructive" : "secondary"}
                       size="sm"
@@ -330,6 +355,22 @@ function OrganizationTab() {
                         : member.actif
                           ? "Révoquer l'accès"
                           : "Réactiver"}
+                    </Button>
+                  )}
+                  {/* Effacement définitif — proposé UNIQUEMENT sur un compte
+                      déjà révoqué et pas encore anonymisé, ce que l'API
+                      impose aussi de son côté. */}
+                  {user.role === "owner" && member.id !== user.id && !member.actif && !member.anonymized_at && (
+                    <Button
+                      variant="destructive"
+                      size="sm"
+                      loading={anonymizingId === member.id}
+                      onClick={() => confirmAnonymize.trigger(member.id, () => anonymizeMember(member))}
+                      onMouseLeave={confirmAnonymize.reset}
+                    >
+                      {confirmAnonymize.isPending(member.id)
+                        ? "Effacer définitivement — irréversible ?"
+                        : "Effacer les données personnelles"}
                     </Button>
                   )}
                 </div>
@@ -348,6 +389,11 @@ function OrganizationTab() {
             Avant de quitter l'organisation, <strong>promouvez votre successeur propriétaire</strong>,
             puis rétrogradez-vous. Une organisation conserve toujours au moins un propriétaire actif :
             rétrograder le dernier est refusé, sans quoi plus personne ne pourrait gérer l'équipe.
+            <br />
+            « Effacer les données personnelles » (disponible une fois l'accès révoqué) supprime
+            définitivement l'e-mail et le nom, y compris dans le journal d'audit.{" "}
+            <strong>C'est irréversible.</strong> Ses datasets, entraînements et l'historique de ses
+            actions restent : ils appartiennent à l'organisation, pas à la personne.
           </p>
         )}
       </Card>

@@ -1,6 +1,7 @@
 """Tests du router auth (Lot 1) — inscription, connexion, équipe, isolation."""
 from __future__ import annotations
 
+import json
 import time
 from datetime import datetime, timezone
 
@@ -859,3 +860,121 @@ def test_invitation_refused_when_no_mail_service_is_configured(client, monkeypat
     )
     assert fallback.status_code == 201
     assert fallback.json()["must_change_password"] is True
+
+
+# ── Anonymisation d'un compte (droit à l'effacement) ────────────────────────
+# Anonymisation, jamais suppression : les datasets, entraînements et entrées
+# d'audit appartiennent à l'ORGANISATION, pas à la personne. Un DELETE en
+# cascade détruirait des livrables encore utilisés et la trace d'audit dont
+# c'est la raison d'être.
+
+
+def test_anonymization_erases_personal_data_but_keeps_the_account_row(client, db_session):
+    from api.core.models import User
+
+    owner_headers, member_id, _ = _owner_and_member(client)
+    client.patch(f"/api/auth/team/members/{member_id}", headers=owner_headers, json={"actif": False})
+
+    resp = client.post(f"/api/auth/team/members/{member_id}/anonymize", headers=owner_headers)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["nom"] == "Utilisateur supprimé"
+    assert "membre@bureau.fr" not in body["email"]
+    assert body["email"].endswith("@supprime.invalid")  # TLD réservé RFC 2606, jamais routable
+
+    # La LIGNE existe toujours, avec le même identifiant : c'est ce qui
+    # permet aux datasets, jobs et entrées d'audit de rester valides.
+    db_session.expire_all()
+    row = db_session.query(User).filter(User.id == member_id).first()
+    assert row is not None
+    assert row.anonymized_at is not None
+    assert row.actif is False
+
+
+def test_anonymization_scrubs_the_email_from_the_audit_log(client):
+    """Sans ce nettoyage, l'adresse resterait en clair dans les entrées
+    `member.added` / `member.deactivated` — l'exact contraire du but."""
+    owner_headers, member_id, _ = _owner_and_member(client)
+    client.patch(f"/api/auth/team/members/{member_id}", headers=owner_headers, json={"actif": False})
+
+    before = client.get("/api/auth/team/audit-log", headers=owner_headers).json()
+    assert any("membre@bureau.fr" in json.dumps(e.get("details") or {}) for e in before)
+
+    client.post(f"/api/auth/team/members/{member_id}/anonymize", headers=owner_headers)
+
+    after = client.get("/api/auth/team/audit-log", headers=owner_headers).json()
+    assert not any("membre@bureau.fr" in json.dumps(e.get("details") or {}) for e in after)
+    # Les entrées elles-mêmes survivent : qui a fait quoi, et quand, reste
+    # traçable — seul le « sur qui » nominatif disparaît.
+    actions = [e["action"] for e in after]
+    assert "member.added" in actions
+    assert "member.deactivated" in actions
+    assert "member.anonymized" in actions
+
+
+def test_anonymization_requires_the_access_to_be_revoked_first(client):
+    """Geste irréversible : jamais applicable à un collaborateur en activité.
+    Révoquer l'accès est le geste réversible, celui-ci ne l'est pas."""
+    owner_headers, member_id, member_headers = _owner_and_member(client)
+
+    refused = client.post(f"/api/auth/team/members/{member_id}/anonymize", headers=owner_headers)
+    assert refused.status_code == 400
+    assert refused.json()["detail"]["code"] == "AUTH_ANONYMISATION_COMPTE_ACTIF"
+    # Le membre est intact et travaille toujours.
+    assert client.get("/api/auth/me", headers=member_headers).json()["nom"] == "Membre"
+
+
+def test_anonymized_member_can_never_log_in_again(client):
+    owner_headers, member_id, _ = _owner_and_member(client)
+    client.patch(f"/api/auth/team/members/{member_id}", headers=owner_headers, json={"actif": False})
+    client.post(f"/api/auth/team/members/{member_id}/anonymize", headers=owner_headers)
+
+    # Ni avec son ancien mot de passe, ni via son ancienne adresse.
+    resp = client.post("/api/auth/login", data={"username": "membre@bureau.fr", "password": MDP_FINAL})
+    assert resp.status_code in (400, 403)
+    # Même réactivé par erreur, le compte reste inutilisable : le mot de
+    # passe a été remplacé par un secret aléatoire que personne ne détient.
+    client.patch(f"/api/auth/team/members/{member_id}", headers=owner_headers, json={"actif": True})
+    again = client.post("/api/auth/login", data={"username": "membre@bureau.fr", "password": MDP_FINAL})
+    assert again.status_code in (400, 403)
+
+
+def test_anonymization_is_idempotent_and_never_logs_twice(client):
+    """Rejouer l'opération ne doit pas laisser croire qu'une nouvelle donnée
+    a été effacée — le journal d'audit serait trompeur."""
+    owner_headers, member_id, _ = _owner_and_member(client)
+    client.patch(f"/api/auth/team/members/{member_id}", headers=owner_headers, json={"actif": False})
+
+    first = client.post(f"/api/auth/team/members/{member_id}/anonymize", headers=owner_headers)
+    second = client.post(f"/api/auth/team/members/{member_id}/anonymize", headers=owner_headers)
+    assert first.status_code == second.status_code == 200
+    assert first.json()["email"] == second.json()["email"]
+
+    entries = client.get("/api/auth/team/audit-log", headers=owner_headers).json()
+    assert len([e for e in entries if e["action"] == "member.anonymized"]) == 1
+
+
+def test_ordinary_member_cannot_anonymize_and_owner_cannot_anonymize_self(client):
+    owner_headers, member_id, member_headers = _owner_and_member(client)
+    owner_id = _owner_id_of(client, owner_headers)
+
+    refused = client.post(f"/api/auth/team/members/{member_id}/anonymize", headers=member_headers)
+    assert refused.status_code == 403
+    assert refused.json()["detail"]["code"] == "AUTH_OWNER_REQUIS"
+
+    own = client.post(f"/api/auth/team/members/{owner_id}/anonymize", headers=owner_headers)
+    assert own.status_code == 400
+    assert own.json()["detail"]["code"] == "AUTH_AUTO_DESACTIVATION_INTERDITE"
+
+
+def test_cannot_anonymize_a_member_of_another_organization(client):
+    _, member_a_id, _ = _owner_and_member(client)
+    headers_b = {
+        "Authorization": "Bearer " + client.post(
+            "/api/auth/register",
+            json={"email": "b@org-b.fr", "nom": "Bb", "password": MDP, "organization_name": "Org B"},
+        ).json()["access_token"]
+    }
+    resp = client.post(f"/api/auth/team/members/{member_a_id}/anonymize", headers=headers_b)
+    assert resp.status_code == 404
+    assert resp.json()["detail"]["code"] == "AUTH_MEMBRE_INTROUVABLE"

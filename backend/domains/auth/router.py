@@ -166,6 +166,10 @@ class TeamMemberProfile(BaseModel):
     # propriétaire qui l'a créé le connaît toujours. Affiché pour qu'il
     # puisse relancer l'intéressé.
     must_change_password: bool = False
+    # Identité effacée définitivement (None = compte encore nominatif).
+    # Exposé pour que l'interface n'offre pas une action déjà faite, et
+    # qu'elle distingue un départ d'un effacement.
+    anonymized_at: Optional[datetime] = None
 
     model_config = {"from_attributes": True}
 
@@ -909,6 +913,141 @@ class TeamMemberStatusUpdate(BaseModel):
 
 class TeamMemberRoleUpdate(BaseModel):
     role: Literal["owner", "member"]
+
+
+#: Champs de `AuditLog.details_json` qui identifient DIRECTEMENT une
+#: personne. Anonymiser la ligne `users` sans les effacer laisserait
+#: l'adresse e-mail en clair dans le journal — l'exact contraire du but
+#: recherché (voir `anonymize_team_member`).
+_IDENTIFYING_AUDIT_DETAIL_FIELDS = ("email", "nom")
+
+
+def _scrub_identifying_audit_details(db: Session, organization_id: int, member_id: int) -> int:
+    """Efface les identifiants directs des entrées d'audit qui CIBLENT ce
+    membre (`member.added`, `member.deactivated`, ...), en conservant
+    l'entrée elle-même : qui a fait quoi et quand reste traçable, seul le
+    « sur qui » nominatif disparaît.
+
+    Retourne le nombre d'entrées modifiées — journalisé, pour qu'une
+    anonymisation puisse être auditée dans son ampleur sans réexposer ce
+    qu'elle a effacé."""
+    entries = db.query(AuditLog).filter(
+        AuditLog.organization_id == organization_id,
+        AuditLog.target_type == "user",
+        AuditLog.target_id == member_id,
+        AuditLog.details_json.isnot(None),
+    ).all()
+
+    scrubbed = 0
+    for entry in entries:
+        try:
+            details = json.loads(entry.details_json or "{}")
+        except (ValueError, TypeError):
+            continue  # entrée illisible : laissée telle quelle, jamais devinée
+        if not isinstance(details, dict):
+            continue
+        touched = False
+        for field in _IDENTIFYING_AUDIT_DETAIL_FIELDS:
+            if field in details:
+                details[field] = "[anonymisé]"
+                touched = True
+        if touched:
+            entry.details_json = json.dumps(details)
+            scrubbed += 1
+    return scrubbed
+
+
+@router.post("/team/members/{member_id}/anonymize", response_model=TeamMemberProfile)
+def anonymize_team_member(
+    member_id: int,
+    owner: User = Depends(require_owner),
+    db: Session = Depends(get_db),
+):
+    """[Owner] Efface DÉFINITIVEMENT les données personnelles d'un membre
+    dont l'accès est déjà révoqué (droit à l'effacement).
+
+    Anonymisation, jamais suppression — et c'est un choix, pas une facilité.
+    Les datasets, entraînements et modèles produits par la personne
+    appartiennent à l'ORGANISATION, pas à elle : un `DELETE` en cascade
+    détruirait des livrables encore utilisés, et effacerait la trace d'audit
+    dont c'est précisément la raison d'être. La ligne `users` reste donc en
+    place, avec toutes ses clés étrangères valides ; seules les données
+    personnelles sont écrasées.
+
+    Ce qui disparaît : l'e-mail, le nom, le mot de passe, les jetons de
+    réinitialisation (ils portent l'IP de la demande), et les identifiants
+    directs dans les entrées d'audit qui ciblent la personne.
+
+    Ce qui reste, volontairement : ses productions, et le journal d'audit
+    de SES actions — désormais attribuées à un acteur anonyme. Limite à
+    connaître : les adresses IP figurant dans le détail de ses propres
+    connexions ne sont pas effacées, la traçabilité de sécurité l'emportant
+    ici sur une anonymisation totale. À revoir si votre analyse d'impact
+    conclut autrement.
+
+    Exigé : le compte doit déjà être désactivé. On n'efface pas l'identité
+    d'un collaborateur encore en activité par inadvertance — révoquer
+    l'accès est le geste réversible, celui-ci ne l'est pas."""
+    member = (
+        db.query(User)
+        .filter(User.id == member_id, User.organization_id == owner.organization_id)
+        .first()
+    )
+    if member is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": ErrorCode.AUTH_MEMBRE_INTROUVABLE, "message": "Membre introuvable"},
+        )
+    if member.id == owner.id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "code": ErrorCode.AUTH_AUTO_DESACTIVATION_INTERDITE,
+                "message": "Vous ne pouvez pas anonymiser votre propre compte de propriétaire",
+            },
+        )
+    if member.anonymized_at is not None:
+        # Déjà fait : rien à réécrire, et surtout aucune seconde entrée
+        # d'audit laissant croire qu'une nouvelle donnée a été effacée.
+        return member
+    if member.actif:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "code": ErrorCode.AUTH_ANONYMISATION_COMPTE_ACTIF,
+                "message": (
+                    "Révoquez d'abord l'accès de ce membre. L'anonymisation est irréversible : "
+                    "elle ne doit jamais s'appliquer à un collaborateur encore en activité"
+                ),
+            },
+        )
+
+    now = datetime.now(timezone.utc)
+    # Adresse en `.invalid` — TLD réservé par la RFC 2606, jamais routable :
+    # aucun risque d'écrire un jour à une adresse qui existerait. Suffixée
+    # par l'identifiant pour rester unique (contrainte sur `users.email`).
+    member.email = f"anonyme-{member.id}@supprime.invalid"
+    member.nom = "Utilisateur supprimé"
+    member.hashed_password = hash_password(secrets.token_urlsafe(32))
+    member.must_change_password = False
+    member.anonymized_at = now
+
+    # Les jetons de réinitialisation portent l'IP de la demande : supprimés,
+    # pas seulement invalidés.
+    db.query(PasswordResetToken).filter(PasswordResetToken.user_id == member.id).delete()
+    scrubbed = _scrub_identifying_audit_details(db, owner.organization_id, member.id)
+
+    log_action(
+        db, owner.organization_id, owner.id, "member.anonymized",
+        target_type="user", target_id=member.id,
+        # Jamais l'e-mail ni le nom ici : ce serait les réintroduire dans le
+        # journal au moment même où on les en retire.
+        details={"entrees_audit_nettoyees": scrubbed},
+    )
+    db.commit()
+    db.refresh(member)
+    revoke_all_refresh_tokens(redis_conn, member.id)
+    return member
 
 
 @router.patch("/team/members/{member_id}/role", response_model=TeamMemberProfile)
