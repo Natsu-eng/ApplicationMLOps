@@ -338,6 +338,10 @@ export interface UserProfile {
   actif: boolean;
   created_at: string;
   last_login: string | null;
+  /** Administrateur de la PLATEFORME (l'éditeur) — donne accès à /admin.
+   *  Lecture seule : aucun endpoint n'accepte ce champ en écriture, la
+   *  promotion passe par `scripts/grant_platform_admin.py`. */
+  is_platform_admin: boolean;
   /** Mot de passe provisoire non encore remplacé : l'API refuse tout appel
    *  hors profil / changement de mot de passe / déconnexion tant que c'est
    *  vrai (voir `get_current_user` côté backend). L'interface doit donc
@@ -401,6 +405,92 @@ export interface RegisterPayload {
   nom: string;
   password: string;
   organization_name: string;
+}
+
+
+// ── Administration de la plateforme (éditeur) ────────────────────────────────
+// Seul périmètre autorisé à lire au-delà d'une organisation, en LECTURE
+// SEULE. Réservé aux comptes `is_platform_admin` (403 sinon).
+
+export interface PlatformCounters {
+  organizations: number;
+  users_total: number;
+  users_active: number;
+  users_revoked: number;
+  users_anonymized: number;
+  users_pending_password: number;
+  datasets: number;
+  vision_datasets: number;
+  datasets_bytes: number;
+  models: number;
+  predictions: number;
+}
+
+export interface JobsByPillar {
+  pillar: string;
+  label: string;
+  total: number;
+  running: number;
+  queued: number;
+  failed: number;
+  completed: number;
+}
+
+export interface TimeseriesPoint {
+  date: string;
+  count: number;
+}
+
+export interface PlatformOverview {
+  counters: PlatformCounters;
+  jobs_by_pillar: JobsByPillar[];
+  jobs_total: number;
+  jobs_failed: number;
+  /** null (et non 0) quand aucun job n'est terminé : « rien à mesurer »
+   *  et « aucune panne » sont deux situations distinctes. */
+  failure_rate: number | null;
+  jobs_per_day: TimeseriesPoint[];
+  signups_per_day: TimeseriesPoint[];
+  window_days: number;
+}
+
+export interface OrganizationRow {
+  id: number;
+  name: string;
+  created_at: string;
+  members: number;
+  active_members: number;
+  datasets: number;
+  jobs: number;
+  last_activity_at: string | null;
+}
+
+export interface PlatformUserRow {
+  id: number;
+  email: string;
+  nom: string;
+  role: "owner" | "member";
+  organization_id: number;
+  organization_name: string;
+  actif: boolean;
+  is_platform_admin: boolean;
+  must_change_password: boolean;
+  created_at: string;
+  last_login: string | null;
+  deactivated_at: string | null;
+  anonymized_at: string | null;
+}
+
+export interface PlatformAuditRow {
+  id: number;
+  action: string;
+  organization_id: number;
+  organization_name: string;
+  actor_name: string | null;
+  target_type: string | null;
+  target_id: number | null;
+  details: Record<string, unknown> | null;
+  created_at: string;
 }
 
 export interface AddMemberPayload {
@@ -1763,6 +1853,14 @@ export const api = {
       request<TeamMember>(`/auth/team/members/${memberId}/anonymize`, { method: "POST" }),
     // Lot 10 — journal d'audit (owner uniquement, 403 sinon).
     auditLog: () => request<AuditLogEntry[]>("/auth/team/audit-log"),
+  },
+
+  admin: {
+    overview: (windowDays = 30) =>
+      request<PlatformOverview>(`/admin/overview?window_days=${windowDays}`),
+    organizations: () => request<OrganizationRow[]>("/admin/organizations"),
+    users: () => request<PlatformUserRow[]>("/admin/users"),
+    activity: (limit = 100) => request<PlatformAuditRow[]>(`/admin/activity?limit=${limit}`),
   },
 
   datasets: {

@@ -33,6 +33,7 @@ from api.core.observability import (
     configure_logging,
     metrics_response,
 )
+from domains.admin.router import router as admin_router
 from domains.anomalies.router import router as anomalies_router
 from domains.auth.feedback_router import router as feedback_router
 from domains.auth.preferences_router import router as users_router
@@ -254,6 +255,7 @@ app.include_router(auth_router, prefix="/api")
 app.include_router(users_router, prefix="/api")
 app.include_router(feedback_router, prefix="/api")
 app.include_router(datasets_router, prefix="/api")
+app.include_router(admin_router, prefix="/api")
 app.include_router(datasets_analysis_router, prefix="/api")
 app.include_router(training_router, prefix="/api")
 # Prédiction en lot et registre de modèles — extraits de `training_router`

@@ -110,6 +110,11 @@ class UserProfile(BaseModel):
     # dire clairement plutôt que de laisser l'utilisateur se heurter à des
     # 403 sans comprendre.
     must_change_password: bool = False
+    # Administrateur de la PLATEFORME (l'éditeur) — permet à l'interface
+    # d'afficher l'entrée de menu vers `/admin`. En LECTURE seule : aucun
+    # endpoint n'accepte ce champ en écriture, la promotion passe
+    # exclusivement par `scripts/grant_platform_admin.py`.
+    is_platform_admin: bool = False
 
     model_config = {"from_attributes": True}
 

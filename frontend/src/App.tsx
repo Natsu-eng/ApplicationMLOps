@@ -1,6 +1,7 @@
 import { lazy, Suspense } from "react";
 import { Navigate, Route, BrowserRouter as Router, Routes } from "react-router-dom";
 import ProtectedRoute from "./components/ProtectedRoute";
+import PlatformAdmin from "./pages/PlatformAdmin";
 import { AuthProvider, useAuth } from "./contexts/AuthContext";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import { ToastProvider } from "./components/ui/Toast";
@@ -85,6 +86,18 @@ export default function App() {
               element={
                 <ProtectedRoute>
                   <Dashboard />
+                </ProtectedRoute>
+              }
+            />
+            {/* Administration de la plateforme (éditeur). La page se
+                contente de ne rien afficher d'incompréhensible à qui n'y a
+                pas droit : la protection réelle est côté serveur, où chaque
+                route /admin renvoie 403 à un compte ordinaire. */}
+            <Route
+              path="/admin"
+              element={
+                <ProtectedRoute>
+                  <PlatformAdmin />
                 </ProtectedRoute>
               }
             />

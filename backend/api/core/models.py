@@ -102,6 +102,21 @@ class User(Base):
     # Irréversible par construction : rien ne permet de retrouver l'identité
     # effacée, c'est précisément l'objet de l'opération.
     anonymized_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Administrateur de la PLATEFORME (l'éditeur), par opposition au `role`
+    # qui décrit la place dans une organisation. Volontairement ORTHOGONAL à
+    # `role` plutôt qu'une troisième valeur de celui-ci : un administrateur
+    # plateforme reste membre ou propriétaire de sa propre organisation, et
+    # aucune logique métier existante (`is_owner`, quotas, isolation) n'a
+    # besoin de connaître ce concept.
+    #
+    # C'est le SEUL mécanisme du projet autorisé à lire au-delà de son
+    # organisation. Il ne relâche jamais les endpoints existants : les
+    # lectures inter-organisations passent par un router dédié
+    # (`domains/admin`), pour que la frontière reste visible dans
+    # l'arborescence et non dispersée en conditions.
+    is_platform_admin: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=false()
+    )
 
     organization: Mapped["Organization"] = relationship("Organization", back_populates="users")
 

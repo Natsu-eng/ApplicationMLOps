@@ -90,6 +90,7 @@ class ErrorCode(str, Enum):
     TROP_DE_REQUETES = "TROP_DE_REQUETES"
 
     # ── Authentification / équipe (domains/auth) ────────────────────────
+    AUTH_ADMIN_PLATEFORME_REQUIS = "AUTH_ADMIN_PLATEFORME_REQUIS"
     AUTH_ANONYMISATION_COMPTE_ACTIF = "AUTH_ANONYMISATION_COMPTE_ACTIF"
     AUTH_AUTO_DESACTIVATION_INTERDITE = "AUTH_AUTO_DESACTIVATION_INTERDITE"
     AUTH_COMPTE_DESACTIVE = "AUTH_COMPTE_DESACTIVE"
@@ -204,6 +205,11 @@ ERROR_CODE_DESCRIPTIONS: dict[str, str] = {
     ErrorCode.AUTH_COMPTE_DESACTIVE: (
         "Ce compte a été désactivé par le propriétaire de son organisation — l'accès est révoqué "
         "immédiatement, mais le compte et sa trace d'audit sont conservés."
+    ),
+    ErrorCode.AUTH_ADMIN_PLATEFORME_REQUIS: (
+        "Espace reserve a l'administration de la plateforme (l'editeur). C'est le seul perimetre "
+        "autorise a lire au-dela d'une organisation ; il est en lecture seule et ne permet jamais "
+        "d'agir sur les donnees d'une organisation cliente."
     ),
     ErrorCode.AUTH_ANONYMISATION_COMPTE_ACTIF: (
         "L'anonymisation est irreversible et ne s'applique qu'a un compte dont l'acces est deja "

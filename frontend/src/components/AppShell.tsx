@@ -1,6 +1,6 @@
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
-import { HelpCircle, History, LayoutDashboard, LogOut, Menu, Palette, Target, X } from "lucide-react";
+import { HelpCircle, History, LayoutDashboard, LogOut, Menu, Palette, ShieldCheck, Target, X } from "lucide-react";
 import { useAuth } from "../contexts/AuthContext";
 import { NotificationBell } from "./NotificationBell";
 import { Avatar } from "./ui/Avatar";
@@ -162,6 +162,20 @@ export default function AppShell({ children, pillarId }: { children: ReactNode; 
       </nav>
 
       <div className="border-t border-sidebar-border p-3 flex-shrink-0">
+        {/* Administration de la plateforme — hors des piliers, qui décrivent
+            les usages métier : superviser toutes les organisations n'en est
+            pas un. Masquée aux comptes ordinaires, pour qui elle mènerait à
+            un écran vide. */}
+        {user.is_platform_admin && (
+          <Link
+            to="/admin"
+            onClick={() => setMobileNavOpen(false)}
+            className="mb-2 flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm font-medium text-sidebar-muted-foreground hover:bg-sidebar-accent/50 hover:text-sidebar-foreground transition-colors"
+          >
+            <ShieldCheck size={16} strokeWidth={2} className="flex-shrink-0" />
+            Administration
+          </Link>
+        )}
         <div className="flex items-center gap-2.5 rounded-lg px-2 py-1.5">
           <Link
             to="/profile"
