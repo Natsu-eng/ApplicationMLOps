@@ -95,6 +95,7 @@ class ErrorCode(str, Enum):
     AUTH_DERNIER_PROPRIETAIRE = "AUTH_DERNIER_PROPRIETAIRE"
     AUTH_EMAIL_DEJA_UTILISE = "AUTH_EMAIL_DEJA_UTILISE"
     AUTH_IDENTIFIANTS_INCORRECTS = "AUTH_IDENTIFIANTS_INCORRECTS"
+    AUTH_INVITATION_IMPOSSIBLE = "AUTH_INVITATION_IMPOSSIBLE"
     AUTH_MDP_ACTUEL_INCORRECT = "AUTH_MDP_ACTUEL_INCORRECT"
     AUTH_MDP_PROVISOIRE = "AUTH_MDP_PROVISOIRE"
     AUTH_MDP_TROP_FAIBLE = "AUTH_MDP_TROP_FAIBLE"
@@ -215,6 +216,11 @@ ERROR_CODE_DESCRIPTIONS: dict[str, str] = {
         "Le compte utilise encore le mot de passe provisoire fixé par la personne qui l'a créé, qui "
         "le connaît donc. L'API reste fermée (hormis la consultation du profil, le changement de mot "
         "de passe et la déconnexion) jusqu'à ce que le titulaire choisisse le sien."
+    ),
+    ErrorCode.AUTH_INVITATION_IMPOSSIBLE: (
+        "Aucun service d'e-mail n'est configure sur ce serveur : le lien d'invitation ne peut pas "
+        "etre envoye. Fournissez un mot de passe provisoire, que le membre devra changer a sa "
+        "premiere connexion."
     ),
     ErrorCode.AUTH_DERNIER_PROPRIETAIRE: (
         "Action refusée : l'organisation se retrouverait sans aucun propriétaire actif, donc sans "

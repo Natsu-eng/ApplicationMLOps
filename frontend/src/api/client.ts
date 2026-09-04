@@ -403,7 +403,13 @@ export interface RegisterPayload {
 export interface AddMemberPayload {
   email: string;
   nom: string;
-  password: string;
+  /** OMIS (recommandé) : le membre reçoit un lien à usage unique et choisit
+   *  lui-même son mot de passe — personne, pas même le propriétaire, ne le
+   *  connaît jamais. FOURNI : mot de passe provisoire, à transmettre au
+   *  membre, qu'il devra remplacer à sa première connexion. Ce repli sert
+   *  aux déploiements sans service d'e-mail configuré, où l'API refuse
+   *  l'invitation (AUTH_INVITATION_IMPOSSIBLE). */
+  password?: string;
 }
 
 export interface ChangePasswordPayload {

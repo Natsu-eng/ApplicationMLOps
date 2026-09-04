@@ -31,6 +31,7 @@ from api.core.mailer import (
     mailer_configured,
     send_password_changed_notification_email,
     send_password_reset_email,
+    send_team_invitation_email,
 )
 from api.core.models import AuditLog, Organization, PasswordResetToken, User
 from api.core.password_policy import validate_password_strength
@@ -134,11 +135,20 @@ class ChangePasswordRequest(BaseModel):
 class TeamMemberCreate(BaseModel):
     email: EmailStr
     nom: str = Field(..., min_length=2, max_length=100)
-    password: str = Field(..., min_length=8)
+    # Optionnel depuis l'ajout de l'invitation par lien. ABSENT (recommandé) :
+    # le membre reçoit un lien à usage unique et choisit lui-même son mot de
+    # passe — personne, pas même le propriétaire, ne le connaît jamais.
+    # FOURNI : mot de passe provisoire, que le propriétaire doit transmettre
+    # et connaît donc ; le membre est alors contraint de le remplacer à sa
+    # première connexion (`must_change_password`). Ce second chemin est
+    # conservé pour les déploiements sans SMTP, où l'invitation est
+    # impossible — sans lui, ils ne pourraient plus créer aucun membre.
+    password: Optional[str] = Field(default=None, min_length=8)
 
     @model_validator(mode="after")
     def _password_strength(self) -> "TeamMemberCreate":
-        validate_password_strength(self.password, self.email)
+        if self.password is not None:
+            validate_password_strength(self.password, self.email)
         return self
 
 
@@ -563,7 +573,9 @@ def _purge_expired_password_reset_tokens(db: Session) -> int:
     return len(stale_ids)
 
 
-def _issue_password_reset_token(db: Session, user: User, requested_from_ip: str) -> str:
+def _issue_password_reset_token(
+    db: Session, user: User, requested_from_ip: str, expire_minutes: Optional[int] = None
+) -> str:
     """Invalide les jetons non utilisés existants de l'utilisateur, en émet
     un nouveau (un seul actif à la fois), le persiste HASHÉ et retourne le
     jeton EN CLAIR — à insérer uniquement dans le lien envoyé par e-mail,
@@ -579,7 +591,9 @@ def _issue_password_reset_token(db: Session, user: User, requested_from_ip: str)
     db.add(PasswordResetToken(
         user_id=user.id,
         token_hash=hashlib.sha256(raw_token.encode()).hexdigest(),
-        expires_at=now + timedelta(minutes=_settings.password_reset_expire_minutes),
+        expires_at=now + timedelta(
+            minutes=expire_minutes if expire_minutes is not None else _settings.password_reset_expire_minutes
+        ),
         requested_from_ip=requested_from_ip,
     ))
     return raw_token
@@ -599,6 +613,26 @@ def _send_password_reset_email_task(to_email: str, reset_link: str, requested_fr
         )
     except Exception:
         logger.exception("[PasswordReset] Échec de l'envoi du mail de réinitialisation")
+
+
+def _send_invitation_task(
+    to_email: str, nom: str, organization_name: str, invited_by: str, raw_token: str
+) -> None:
+    """Échec d'envoi journalisé, jamais propagé : le membre est déjà créé et
+    la réponse HTTP déjà partie. Le propriétaire voit d'ailleurs dans la
+    liste d'équipe que le compte reste en attente (`must_change_password`),
+    et peut réinviter — le jeton précédent est alors invalidé."""
+    try:
+        send_team_invitation_email(
+            to_email,
+            nom,
+            organization_name,
+            invited_by,
+            _build_reset_link(raw_token),
+            expires_hours=_settings.invitation_expire_minutes // 60,
+        )
+    except Exception:
+        logger.exception("[Invitation] Échec de l'envoi de l'invitation à %s", to_email)
 
 
 def _send_password_changed_notification_task(to_email: str, requested_from_ip: str) -> None:
@@ -761,37 +795,89 @@ def list_team_members(
 @router.post("/team/members", response_model=TeamMemberProfile, status_code=status.HTTP_201_CREATED)
 def add_team_member(
     body: TeamMemberCreate,
+    request: Request,
+    background_tasks: BackgroundTasks,
     owner: User = Depends(require_owner),
     db: Session = Depends(get_db),
 ):
-    """[Owner] Ajoute un membre directement à SON organisation."""
+    """[Owner] Ajoute un membre à SON organisation, de deux façons.
+
+    SANS `password` (recommandé) : le membre reçoit un lien à usage unique
+    et choisit lui-même son mot de passe. Personne ne le connaît jamais —
+    pas même le propriétaire, qui ne peut donc pas se connecter au compte de
+    son collaborateur. Le compte est créé avec un secret aléatoire que
+    personne ne détient : il n'est utilisable qu'en passant par le lien.
+
+    AVEC `password` : mot de passe provisoire, que le propriétaire doit
+    transmettre par un canal quelconque et connaît donc. Le membre est
+    contraint de le remplacer à sa première connexion
+    (`must_change_password`), ce qui rend cette connaissance sans valeur
+    dès qu'il s'est connecté — mais laisse une fenêtre entre la création et
+    cette première connexion. Chemin conservé pour les déploiements sans
+    SMTP : sans lui, ils ne pourraient plus créer aucun membre.
+    """
     if db.query(User).filter(User.email == body.email).first():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={"code": ErrorCode.AUTH_EMAIL_DEJA_UTILISE, "message": "Email déjà utilisé"},
         )
+    by_invitation = body.password is None
+    if by_invitation and not mailer_configured():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "code": ErrorCode.AUTH_INVITATION_IMPOSSIBLE,
+                "message": (
+                    "Aucun service d'e-mail n'est configuré sur ce serveur : l'invitation ne peut pas "
+                    "être envoyée. Fournissez un mot de passe provisoire, que le membre devra changer "
+                    "à sa première connexion."
+                ),
+            },
+        )
+
     member = User(
         email=body.email,
         nom=body.nom,
-        hashed_password=hash_password(body.password),
+        # Invitation : secret aléatoire que PERSONNE ne connaît ni ne reçoit
+        # — le compte n'est atteignable que par le lien. Mot de passe
+        # provisoire : celui du propriétaire, donc connu de lui.
+        hashed_password=hash_password(body.password if body.password is not None else secrets.token_urlsafe(32)),
         role="member",
         organization_id=owner.organization_id,
         actif=True,
-        # Le propriétaire choisit ce mot de passe, il le connaît donc. Sans
-        # cet indicateur il le connaissait indéfiniment et pouvait se
-        # connecter au compte de son collaborateur : l'intéressé doit en
-        # choisir un autre avant tout usage de la plateforme (voir
-        # `get_current_user`).
+        # Vrai dans les DEUX cas. Pour l'invitation, c'est une ceinture de
+        # sécurité : le secret aléatoire est déjà inutilisable, mais si le
+        # compte devenait accessible autrement, l'API resterait fermée tant
+        # qu'un mot de passe n'a pas été choisi par le titulaire. Levé par
+        # `confirm_password_reset` (le lien) comme par `change_own_password`.
         must_change_password=True,
     )
     db.add(member)
     db.flush()  # obtient member.id avant l'écriture du journal, même transaction
     log_action(
         db, owner.organization_id, owner.id, "member.added",
-        target_type="user", target_id=member.id, details={"email": member.email, "nom": member.nom},
+        target_type="user", target_id=member.id,
+        details={"email": member.email, "nom": member.nom, "par_invitation": by_invitation},
+    )
+
+    raw_token = (
+        _issue_password_reset_token(
+            db, member, get_client_ip(request), expire_minutes=_settings.invitation_expire_minutes
+        )
+        if by_invitation
+        else None
     )
     db.commit()
     db.refresh(member)
+
+    # APRÈS le commit : ne jamais envoyer un lien vers un compte dont la
+    # création aurait été annulée. En tâche de fond, comme les autres
+    # envois : la latence SMTP ne doit pas s'ajouter au temps de réponse.
+    if raw_token is not None:
+        background_tasks.add_task(
+            _send_invitation_task,
+            member.email, member.nom, owner.organization.name, owner.nom, raw_token,
+        )
     return member
 
 

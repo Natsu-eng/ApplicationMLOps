@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import time
+from datetime import datetime, timezone
 
 
 def test_register_creates_organization_and_owner(client):
@@ -541,6 +542,13 @@ def test_new_member_is_locked_out_of_the_api_until_they_choose_a_password(client
         json={"current_password": MDP, "new_password": MDP_FINAL, "new_password_confirm": MDP_FINAL},
     ).status_code == 204
 
+    # Attente d'une seconde AVANT de se reconnecter : un jeton émis dans la
+    # même seconde que la révocation est rejeté (granularité de `iat`, choix
+    # délibéré documenté dans `get_current_user`). Sans cette pause le test
+    # est INSTABLE — il ne passe que si l'exécution franchit par chance une
+    # frontière de seconde, ce qui a été le cas lors des premiers essais
+    # avant de finir par échouer.
+    time.sleep(1.05)
     relogin = client.post("/api/auth/login", data={"username": "neo@mdp.fr", "password": MDP_FINAL}).json()
     new_headers = {"Authorization": f"Bearer {relogin['access_token']}"}
     assert client.get("/api/datasets", headers=new_headers).status_code == 200
@@ -683,3 +691,171 @@ def test_successful_password_change_clears_the_counter(client):
     again = client.post("/api/auth/login", data={"username": "reset@bureau.fr", "password": MDP_FINAL}).json()
     new_headers = {"Authorization": f"Bearer {again['access_token']}"}
     assert _password_attempt(client, new_headers, "encore-faux").status_code == 401
+
+
+def _capture_reset_token(db_session, monkeypatch) -> dict:
+    """Le jeton en clair n'est jamais persiste ni renvoye par l'API : on
+    espionne `secrets.token_urlsafe` pour connaitre la valeur emise, plutot
+    que de contourner le hachage (qui doit rester teste tel qu'il s'execute
+    en production). Meme technique que dans test_password_reset.py.
+
+    Le chemin d'invitation appelle `token_urlsafe` DEUX fois — d'abord pour
+    le secret aleatoire du compte, ensuite pour le jeton du lien : c'est
+    donc bien le second, le jeton d'invitation, qui reste capture.
+    """
+    import domains.auth.router as auth_router
+
+    captured: dict = {}
+    original = auth_router.secrets.token_urlsafe
+
+    def _spy(*args, **kwargs):
+        raw = original(*args, **kwargs)
+        captured["token"] = raw
+        return raw
+
+    monkeypatch.setattr(auth_router.secrets, "token_urlsafe", _spy)
+    return captured
+
+
+# ── Invitation par lien à usage unique ──────────────────────────────────────
+# Sans `password`, le propriétaire n'en choisit aucun : le membre reçoit un
+# lien et choisit le sien. Personne — propriétaire compris — ne connaît
+# jamais ce mot de passe, ce qui ferme la fenêtre que le changement forcé
+# laissait ouverte entre la création du compte et la première connexion.
+
+
+def test_invitation_creates_a_member_nobody_can_log_in_as(client, db_session, monkeypatch):
+    """Le compte est créé avec un secret aléatoire que PERSONNE ne détient :
+    ni le propriétaire, ni le membre tant qu'il n'a pas suivi son lien."""
+    monkeypatch.setattr("domains.auth.router.mailer_configured", lambda: True)
+    sent: dict = {}
+    monkeypatch.setattr(
+        "domains.auth.router.send_team_invitation_email",
+        lambda to, nom, org, by, link, expires_hours: sent.update(
+            to=to, nom=nom, org=org, by=by, link=link, expires_hours=expires_hours
+        ),
+    )
+
+    owner = client.post(
+        "/api/auth/register",
+        json={"email": "chef@invit.fr", "nom": "La Chef", "password": MDP, "organization_name": "Bureau Invit"},
+    ).json()
+    created = client.post(
+        "/api/auth/team/members",
+        headers={"Authorization": f"Bearer {owner['access_token']}"},
+        json={"email": "nouveau@invit.fr", "nom": "Nouveau"},  # AUCUN mot de passe
+    )
+    assert created.status_code == 201, created.text
+    assert created.json()["must_change_password"] is True
+
+    # Le mail porte le contexte nécessaire pour ne pas passer pour un
+    # hameçonnage : qui invite, dans quelle organisation.
+    assert sent["to"] == "nouveau@invit.fr"
+    assert sent["org"] == "Bureau Invit"
+    assert sent["by"] == "La Chef"
+    assert "/reset-password?token=" in sent["link"]
+
+    # Aucun mot de passe devinable : ni celui du propriétaire, ni un vide.
+    for tentative in (MDP, "", "motdepasse"):
+        resp = client.post("/api/auth/login", data={"username": "nouveau@invit.fr", "password": tentative})
+        assert resp.status_code in (400, 422), (tentative, resp.status_code)
+
+
+def test_invited_member_sets_their_own_password_and_gets_full_access(client, db_session, monkeypatch):
+    """Le parcours complet : lien → mot de passe choisi par l'intéressé →
+    accès entier, sans second changement imposé."""
+    monkeypatch.setattr("domains.auth.router.mailer_configured", lambda: True)
+    monkeypatch.setattr("domains.auth.router.send_team_invitation_email", lambda *a, **k: None)
+
+    owner = client.post(
+        "/api/auth/register",
+        json={"email": "chef2@invit.fr", "nom": "Chef", "password": MDP, "organization_name": "Bureau"},
+    ).json()
+    captured = _capture_reset_token(db_session, monkeypatch)
+    client.post(
+        "/api/auth/team/members",
+        headers={"Authorization": f"Bearer {owner['access_token']}"},
+        json={"email": "invite@invit.fr", "nom": "Invite"},
+    )
+
+    resp = client.post(
+        "/api/auth/password-reset/confirm",
+        json={
+            "token": captured["token"],
+            "new_password": "monmotdepasse456",
+            "new_password_confirm": "monmotdepasse456",
+        },
+    )
+    assert resp.status_code == 204, resp.text
+
+    time.sleep(1.05)
+    login = client.post("/api/auth/login", data={"username": "invite@invit.fr", "password": "monmotdepasse456"})
+    assert login.status_code == 200
+    headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+    assert client.get("/api/auth/me", headers=headers).json()["must_change_password"] is False
+    assert client.get("/api/datasets", headers=headers).status_code == 200
+
+
+def test_invitation_link_is_valid_much_longer_than_a_password_reset(client, db_session, monkeypatch):
+    """Une réinitialisation est demandée par quelqu'un qui attend le mail ;
+    une invitation arrive sans prévenir chez un collègue peut-être absent.
+    30 minutes seraient une source de friction inutile."""
+    from api.core.config import get_settings
+    from api.core.models import PasswordResetToken
+
+    monkeypatch.setattr("domains.auth.router.mailer_configured", lambda: True)
+    monkeypatch.setattr("domains.auth.router.send_team_invitation_email", lambda *a, **k: None)
+
+    owner = client.post(
+        "/api/auth/register",
+        json={"email": "chef3@invit.fr", "nom": "Chef", "password": MDP, "organization_name": "Bureau"},
+    ).json()
+    client.post(
+        "/api/auth/team/members",
+        headers={"Authorization": f"Bearer {owner['access_token']}"},
+        json={"email": "duree@invit.fr", "nom": "Duree"},
+    )
+
+    settings = get_settings()
+    token_row = db_session.query(PasswordResetToken).order_by(PasswordResetToken.id.desc()).first()
+    # `PasswordResetToken` ne porte pas de date de création : on mesure la
+    # validité restante depuis maintenant, ce qui revient au même à la
+    # seconde près puisque le jeton vient d'être émis. SQLite (base de test)
+    # rend une date naïve là où PostgreSQL la rend avec fuseau — normalisée
+    # ici plutôt que de supposer l'un des deux.
+    expires_at = token_row.expires_at
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    remaining_minutes = (expires_at - datetime.now(timezone.utc)).total_seconds() / 60
+
+    assert remaining_minutes > settings.password_reset_expire_minutes
+    # Tolérance d'une minute : l'écart mesuré dépend de l'horodatage serveur.
+    assert abs(remaining_minutes - settings.invitation_expire_minutes) < 1
+
+
+def test_invitation_refused_when_no_mail_service_is_configured(client, monkeypatch):
+    """Refus EXPLICITE plutôt qu'un compte créé que personne ne pourrait
+    jamais atteindre. Le message dit quoi faire à la place."""
+    monkeypatch.setattr("domains.auth.router.mailer_configured", lambda: False)
+
+    owner = client.post(
+        "/api/auth/register",
+        json={"email": "chef4@invit.fr", "nom": "Chef", "password": MDP, "organization_name": "Bureau"},
+    ).json()
+    headers = {"Authorization": f"Bearer {owner['access_token']}"}
+
+    refused = client.post(
+        "/api/auth/team/members", headers=headers, json={"email": "sansmail@invit.fr", "nom": "Sans Mail"}
+    )
+    assert refused.status_code == 400
+    assert refused.json()["detail"]["code"] == "AUTH_INVITATION_IMPOSSIBLE"
+
+    # Le chemin de repli reste ouvert : sans SMTP, on peut toujours créer un
+    # membre avec un mot de passe provisoire.
+    fallback = client.post(
+        "/api/auth/team/members",
+        headers=headers,
+        json={"email": "sansmail@invit.fr", "nom": "Sans Mail", "password": MDP},
+    )
+    assert fallback.status_code == 201
+    assert fallback.json()["must_change_password"] is True

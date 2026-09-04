@@ -385,23 +385,30 @@ function AddMemberForm({ onMemberAdded }: { onMemberAdded: () => void }) {
   const [email, setEmail] = useState("");
   const [nom, setNom] = useState("");
   const [password, setPassword] = useState("");
+  // Invitation par défaut : c'est le mode sûr — aucun mot de passe n'est
+  // choisi ni connu par le propriétaire. Le repli « mot de passe
+  // provisoire » n'est proposé qu'explicitement, pour les déploiements sans
+  // service d'e-mail (l'API refuse alors l'invitation).
+  const [useTemporaryPassword, setUseTemporaryPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [errorRef, setErrorRef] = useState<string | undefined>(undefined);
-  const [success, setSuccess] = useState(false);
+  const [success, setSuccess] = useState<"invited" | "created" | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
     setError(null);
     setErrorRef(undefined);
-    setSuccess(false);
+    setSuccess(null);
     setIsSubmitting(true);
     try {
-      await api.team.addMember({ email, nom, password });
+      await api.team.addMember(
+        useTemporaryPassword ? { email, nom, password } : { email, nom },
+      );
       setEmail("");
       setNom("");
       setPassword("");
-      setSuccess(true);
+      setSuccess(useTemporaryPassword ? "created" : "invited");
       onMemberAdded();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Impossible d'ajouter ce membre");
@@ -414,23 +421,52 @@ function AddMemberForm({ onMemberAdded }: { onMemberAdded: () => void }) {
   return (
     <>
       <h2 className="text-h3 text-foreground mb-4">Ajouter un membre à l'équipe</h2>
-      <form onSubmit={handleSubmit} className="grid sm:grid-cols-3 gap-3 items-start">
+      <p className="text-sm text-muted-foreground mb-3">
+        Le membre reçoit un e-mail avec un lien personnel et choisit lui-même son mot de passe.
+        Vous ne le connaîtrez jamais — c'est voulu : personne ne doit pouvoir se connecter à sa place.
+      </p>
+      <form onSubmit={handleSubmit} className="grid sm:grid-cols-2 gap-3 items-start">
         <Input type="text" placeholder="Nom" required minLength={2} value={nom} onChange={(e) => setNom(e.target.value)} />
         <Input type="email" placeholder="Email" required value={email} onChange={(e) => setEmail(e.target.value)} />
-        <Input
-          type="password"
-          placeholder="Mot de passe temporaire"
-          required
-          minLength={8}
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-        />
-        <Button type="submit" disabled={isSubmitting} className="sm:col-span-3">
-          {isSubmitting ? "Ajout…" : "Ajouter"}
+        {useTemporaryPassword && (
+          <Input
+            type="password"
+            placeholder="Mot de passe temporaire"
+            required
+            minLength={8}
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            className="sm:col-span-2"
+          />
+        )}
+        <Button type="submit" disabled={isSubmitting} className="sm:col-span-2">
+          {isSubmitting ? "Ajout…" : useTemporaryPassword ? "Ajouter" : "Envoyer l'invitation"}
         </Button>
       </form>
+
+      <button
+        type="button"
+        onClick={() => setUseTemporaryPassword((v) => !v)}
+        className="mt-2 text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
+      >
+        {useTemporaryPassword
+          ? "Revenir à l'invitation par e-mail"
+          : "Pas de service d'e-mail ? Définir un mot de passe temporaire"}
+      </button>
+      {useTemporaryPassword && (
+        <p className="mt-2 text-xs text-muted-foreground">
+          Vous devrez transmettre ce mot de passe au membre, et vous le connaîtrez donc. Il sera
+          contraint de le remplacer à sa première connexion.
+        </p>
+      )}
+
       {error && <ErrorNote message={error} reference={errorRef} />}
-      {success && <p className="text-sm text-success mt-2">Membre ajouté.</p>}
+      {success === "invited" && (
+        <p className="text-sm text-success mt-2">Invitation envoyée — le membre apparaîtra comme en attente jusqu'à ce qu'il choisisse son mot de passe.</p>
+      )}
+      {success === "created" && (
+        <p className="text-sm text-success mt-2">Membre ajouté — transmettez-lui son mot de passe temporaire.</p>
+      )}
     </>
   );
 }

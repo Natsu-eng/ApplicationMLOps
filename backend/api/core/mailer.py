@@ -67,6 +67,39 @@ def send_password_reset_email(to_email: str, reset_link: str, expires_minutes: i
     logger.info("[Mailer] Lien de réinitialisation envoyé à %s", to_email)
 
 
+def send_team_invitation_email(
+    to_email: str, nom: str, organization_name: str, invited_by: str, invitation_link: str, expires_hours: int
+) -> None:
+    """Invitation à rejoindre une organisation — le destinataire choisit
+    LUI-MÊME son mot de passe via un lien à usage unique.
+
+    Raison d'être : jusqu'ici le propriétaire fixait un mot de passe
+    provisoire, qu'il devait ensuite transmettre par un canal quelconque
+    (messagerie, oral, e-mail en clair) et qu'il connaissait donc. Avec ce
+    lien, aucun mot de passe n'est choisi ni connu par un tiers — même
+    l'administrateur de l'organisation ne peut pas se connecter au compte
+    de son collaborateur.
+
+    Mentionne QUI invite et DANS QUELLE organisation : un lien reçu sans
+    contexte est indiscernable d'une tentative d'hameçonnage."""
+    email_msg = EmailMessage()
+    email_msg["Subject"] = f"[DataLab Pro] {invited_by} vous invite à rejoindre {organization_name}"
+    email_msg["From"] = get_settings().smtp_user
+    email_msg["To"] = to_email
+    email_msg.set_content(
+        f"Bonjour {nom},\n\n"
+        f"{invited_by} vous a ajouté à l'organisation « {organization_name} » sur DataLab Pro.\n\n"
+        f"Ouvrez ce lien dans les {expires_hours} heures pour choisir votre mot de passe :\n"
+        f"{invitation_link}\n\n"
+        "Ce mot de passe n'est connu que de vous : personne dans votre organisation, "
+        "administrateur compris, ne peut le consulter.\n"
+        "Ce lien est personnel et ne peut être utilisé qu'une seule fois.\n\n"
+        "Si vous ne vous attendiez pas à cette invitation, ignorez cet e-mail.\n"
+    )
+    _send_smtp(email_msg)
+    logger.info("[Mailer] Invitation envoyée à %s pour l'organisation %s", to_email, organization_name)
+
+
 def send_password_changed_notification_email(to_email: str, requested_from_ip: str) -> None:
     """Second mail, envoyé APRÈS un changement de mot de passe effectif
     (réinitialisation ou changement volontaire) — Phase 1B, point 6 : « le

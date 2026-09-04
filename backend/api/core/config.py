@@ -130,6 +130,14 @@ class Settings(BaseSettings):
     password_change_rate_limit_max_attempts: int = 5
     password_change_rate_limit_window_seconds: int = 900  # 15 minutes
 
+    # Validité du lien d'invitation d'un nouveau membre. Bien plus longue
+    # que celle d'une réinitialisation (30 min) : une réinitialisation est
+    # demandée par quelqu'un qui attend le mail, une invitation arrive sans
+    # prévenir chez un collègue qui peut être en congé ou simplement ne pas
+    # relever sa boîte le jour même. Un lien expiré n'est pas grave (le
+    # propriétaire réinvite), mais il crée une friction inutile.
+    invitation_expire_minutes: int = 10080  # 7 jours
+
     # Lot 1.4 (§C.2.7, AUDIT_DATALAB_2026-08-16.md) — POST /training/jobs/{id}/predict
     # acceptait un dictionnaire JSON arbitraire, sans aucune limite de
     # taille. 2 Mo est largement suffisant pour toute charge JSON légitime
