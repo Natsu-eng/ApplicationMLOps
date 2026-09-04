@@ -710,6 +710,14 @@ def confirm_password_reset(
 
     client_ip = get_client_ip(request)
     user.hashed_password = hash_password(body.new_password)
+    # Le mot de passe vient d'être choisi par le TITULAIRE du compte, via un
+    # lien envoyé à son adresse : celui que le propriétaire avait fixé n'a
+    # plus cours, et personne d'autre ne connaît le nouveau. L'indicateur
+    # doit donc tomber ici aussi — sans cela, un membre au mot de passe
+    # provisoire qui passe par « mot de passe oublié » restait bloqué
+    # derrière l'écran de changement obligatoire et devait en choisir un
+    # SECOND, sans comprendre pourquoi.
+    user.must_change_password = False
     # Mieux que CIAM (Phase 1B, point 1) : CIAM ne peut pas révoquer de
     # sessions (JWT stateless sans jti) — DataLab le peut depuis la Phase 1.
     # Un mot de passe réinitialisé qui laisse vivre les jetons émis avant

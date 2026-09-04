@@ -187,3 +187,46 @@ def test_voluntary_password_change_still_works_after_phase1b(client):
         },
     )
     assert resp.status_code == 204
+
+
+def test_password_reset_clears_the_provisional_password_flag(client, db_session, monkeypatch):
+    """Un membre au mot de passe provisoire qui passe par « mot de passe
+    oublié » choisit bien SON mot de passe, via un lien envoyé à son
+    adresse : le propriétaire ne le connaît plus. L'indicateur doit donc
+    tomber là aussi, sinon l'intéressé reste bloqué derrière l'écran de
+    changement obligatoire et doit en choisir un second sans comprendre."""
+    from api.core.models import User
+
+    owner = client.post(
+        "/api/auth/register",
+        json={"email": "chef@oubli.fr", "nom": "Chef", "password": "motdepasse123", "organization_name": "Bureau"},
+    ).json()
+    client.post(
+        "/api/auth/team/members",
+        headers={"Authorization": f"Bearer {owner['access_token']}"},
+        json={"email": "oublieux@oubli.fr", "nom": "Oublieux", "password": "motdepasse123"},
+    )
+    assert db_session.query(User).filter(User.email == "oublieux@oubli.fr").first().must_change_password is True
+
+    captured = _extract_raw_token_from_db(db_session, monkeypatch)
+    _request_reset(client, "oublieux@oubli.fr")
+    resp = client.post(
+        "/api/auth/password-reset/confirm",
+        json={
+            "token": captured["token"],
+            "new_password": "sonpropremdp456",
+            "new_password_confirm": "sonpropremdp456",
+        },
+    )
+    assert resp.status_code == 204
+
+    db_session.expire_all()
+    assert db_session.query(User).filter(User.email == "oublieux@oubli.fr").first().must_change_password is False
+
+    # Et concrètement : il accède à l'API sans repasser par un second
+    # changement de mot de passe.
+    time.sleep(1.05)
+    login = client.post("/api/auth/login", data={"username": "oublieux@oubli.fr", "password": "sonpropremdp456"})
+    assert login.status_code == 200
+    headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+    assert client.get("/api/datasets", headers=headers).status_code == 200
