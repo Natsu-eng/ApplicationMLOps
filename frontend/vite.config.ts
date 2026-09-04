@@ -18,22 +18,24 @@ import tailwindcss from "@tailwindcss/vite";
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   server: {
-    // 5300 et non le 5173 par défaut de Vite : sous Windows, Hyper-V/WSL
-    // réserve dynamiquement des plages de ports, et 5141-5240 (qui contient
-    // 5173) en fait partie sur ce poste — le démarrage échouait sur
-    // `EACCES: permission denied 127.0.0.1:5173`, un refus du système et non
-    // un port déjà occupé. Vérifiable par
-    // `netsh interface ipv4 show excludedportrange protocol=tcp`.
+    // Port par défaut de Vite — à garder aligné avec FRONTEND_URL
+    // (backend/.env), qui construit les liens d'invitation et de
+    // réinitialisation de mot de passe : un port désaccordé donnerait des
+    // liens morts sans aucune erreur visible.
     //
-    // Déplacer le port plutôt que libérer la plage (`net stop winnat`) :
-    // cette libération casse les mappages de ports Docker en cours — dont
-    // Redis, dont dépendent les limites de débit, la révocation de jetons et
-    // la file RQ. 5300 est franchement à l'écart des plages réservées
-    // observées, contrairement à 5241 qui les jouxte.
-    //
-    // À garder aligné avec FRONTEND_URL côté backend (backend/.env) : c'est
-    // lui qui construit les liens d'invitation et de réinitialisation.
-    port: 5300,
+    // Sous Windows, si le démarrage échoue sur `EACCES: permission denied
+    // 127.0.0.1:5173`, ce n'est PAS un port occupé (ce serait EADDRINUSE)
+    // mais une plage réservée dynamiquement par Hyper-V/WSL — 5141-5240
+    // contient 5173. Diagnostic :
+    //   netsh interface ipv4 show excludedportrange protocol=tcp
+    // Remède (PowerShell administrateur), qui libère le port et le réserve
+    // pour nous avant que Hyper-V ne le reprenne au prochain démarrage :
+    //   net stop winnat
+    //   netsh int ipv4 add excludedportrange protocol=tcp startport=5173 numberofports=1
+    //   net start winnat
+    // `winnat` coupe les mappages de ports Docker au passage : redémarrer
+    // les conteneurs ensuite (`docker restart datalab_redis`).
+    port: 5173,
     // IPv4 explicite — évite un bind ::1 uniquement qui rendrait le serveur
     // injoignable via 127.0.0.1 selon la résolution DNS locale de "localhost".
     host: "127.0.0.1",
