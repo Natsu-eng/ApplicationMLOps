@@ -591,3 +591,95 @@ def test_deactivation_records_the_date_and_reactivation_clears_it(client):
     restored = client.patch(f"/api/auth/team/members/{member_id}", headers=owner_headers, json={"actif": True})
     assert restored.status_code == 200
     assert restored.json()["deactivated_at"] is None
+
+
+# ── Limite de débit sur le changement de mot de passe ───────────────────────
+# `PATCH /auth/me/password` exige le mot de passe ACTUEL : c'est donc un
+# oracle de vérification, resté sans aucune limite alors que /login en a
+# une. Une session volée permettait d'y essayer des mots de passe sans
+# frein, et un succès livrait le mot de passe en clair de la victime —
+# réutilisable ailleurs.
+
+
+def _password_attempt(client, headers, current: str, new: str = "unautrepass789"):
+    return client.patch(
+        "/api/auth/me/password",
+        headers=headers,
+        json={"current_password": current, "new_password": new, "new_password_confirm": new},
+    )
+
+
+def test_password_change_is_rate_limited_after_repeated_wrong_current_password(client):
+    from api.core.config import get_settings
+
+    owner = client.post(
+        "/api/auth/register",
+        json={"email": "cible@bureau.fr", "nom": "Cible", "password": MDP, "organization_name": "Bureau"},
+    ).json()
+    headers = {"Authorization": f"Bearer {owner['access_token']}"}
+
+    limit = get_settings().password_change_rate_limit_max_attempts
+    refusals = [_password_attempt(client, headers, "mauvais-mdp") for _ in range(limit)]
+    assert all(r.status_code == 401 for r in refusals), [r.status_code for r in refusals]
+
+    blocked = _password_attempt(client, headers, "mauvais-mdp")
+    assert blocked.status_code == 429
+    assert blocked.json()["detail"]["code"] == "AUTH_TROP_DE_TENTATIVES"
+
+    # La limite s'applique AVANT la vérification : même avec le bon mot de
+    # passe, l'attaquant reste bloqué. Sans cela il lui suffirait de tomber
+    # juste au dernier essai pour passer malgré la limite atteinte.
+    still_blocked = _password_attempt(client, headers, MDP)
+    assert still_blocked.status_code == 429
+
+
+def test_password_change_limit_is_per_account_not_per_ip(client):
+    """Clé sur le compte, pas sur l'IP : l'appelant est déjà authentifié,
+    changer d'IP (ou de machine) ne doit rien lui redonner. Le corollaire
+    utile est qu'un utilisateur épuisant sa limite n'en bloque jamais un
+    autre — vérifié ici, les deux comptes partageant la même IP de test."""
+    from api.core.config import get_settings
+
+    a = client.post(
+        "/api/auth/register",
+        json={"email": "a@bureau.fr", "nom": "Aa", "password": MDP, "organization_name": "Bureau A"},
+    ).json()
+    b = client.post(
+        "/api/auth/register",
+        json={"email": "b@bureau.fr", "nom": "Bb", "password": MDP, "organization_name": "Bureau B"},
+    ).json()
+    headers_a = {"Authorization": f"Bearer {a['access_token']}"}
+    headers_b = {"Authorization": f"Bearer {b['access_token']}"}
+
+    limit = get_settings().password_change_rate_limit_max_attempts
+    for _ in range(limit + 1):
+        _password_attempt(client, headers_a, "mauvais-mdp")
+    assert _password_attempt(client, headers_a, "mauvais-mdp").status_code == 429
+
+    # B, même IP, compteur intact : il peut encore se tromper puis réussir.
+    assert _password_attempt(client, headers_b, "mauvais-mdp").status_code == 401
+    assert _password_attempt(client, headers_b, MDP).status_code == 204
+
+
+def test_successful_password_change_clears_the_counter(client):
+    """Se tromper deux fois avant de réussir ne doit pas laisser de
+    pénalité — même geste qu'après une connexion réussie."""
+    from api.core.config import get_settings
+
+    owner = client.post(
+        "/api/auth/register",
+        json={"email": "reset@bureau.fr", "nom": "Reset", "password": MDP, "organization_name": "Bureau"},
+    ).json()
+    headers = {"Authorization": f"Bearer {owner['access_token']}"}
+
+    limit = get_settings().password_change_rate_limit_max_attempts
+    for _ in range(limit - 1):
+        assert _password_attempt(client, headers, "mauvais-mdp").status_code == 401
+    assert _password_attempt(client, headers, MDP, new=MDP_FINAL).status_code == 204
+
+    # Compteur remis à zéro : on se reconnecte et on dispose de nouveau de
+    # toute la marge, au lieu d'être bloqué au premier faux pas suivant.
+    time.sleep(1.05)
+    again = client.post("/api/auth/login", data={"username": "reset@bureau.fr", "password": MDP_FINAL}).json()
+    new_headers = {"Authorization": f"Bearer {again['access_token']}"}
+    assert _password_attempt(client, new_headers, "encore-faux").status_code == 401

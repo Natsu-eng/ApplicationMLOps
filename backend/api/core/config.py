@@ -115,6 +115,21 @@ class Settings(BaseSettings):
     explain_rate_limit_max_attempts: int = 20
     explain_rate_limit_window_seconds: int = 3600  # 1 heure
 
+    # `PATCH /auth/me/password` exige le mot de passe ACTUEL : c'est donc un
+    # oracle de vérification de mot de passe, resté sans aucune limite alors
+    # que /login en a une. Quiconque détient une session volée pouvait y
+    # essayer autant de mots de passe qu'il voulait, sans bruit et sans
+    # frein — et un succès lui livrait le mot de passe en clair de la
+    # victime, réutilisable ailleurs.
+    #
+    # Compteur indexé sur l'IDENTIFIANT DU COMPTE, pas sur l'IP : ici
+    # l'attaquant est déjà authentifié, changer d'IP ne doit rien lui
+    # redonner. Limite plus basse que /login (5 contre 10) : se tromper de
+    # mot de passe actuel alors qu'on est déjà connecté est bien plus rare
+    # que se tromper en se connectant.
+    password_change_rate_limit_max_attempts: int = 5
+    password_change_rate_limit_window_seconds: int = 900  # 15 minutes
+
     # Lot 1.4 (§C.2.7, AUDIT_DATALAB_2026-08-16.md) — POST /training/jobs/{id}/predict
     # acceptait un dictionnaire JSON arbitraire, sans aucune limite de
     # taille. 2 Mo est largement suffisant pour toute charge JSON légitime

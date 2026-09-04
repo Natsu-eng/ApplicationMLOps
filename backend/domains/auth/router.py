@@ -427,6 +427,26 @@ def change_own_password(
     passe parce qu'il se sait/croit compromis doit pouvoir chasser
     quiconque détiendrait déjà un jeton — sans ça, un jeton volé restait
     valide jusqu'à 24h après ce geste de protection."""
+    # Limite AVANT la vérification, jamais après : appliquée seulement en
+    # cas d'échec, elle laisserait passer autant d'essais que voulu tant que
+    # le compteur n'a pas été incrémenté. Clé sur l'identifiant du COMPTE et
+    # non sur l'IP — l'appelant est déjà authentifié ici, changer d'IP ne
+    # doit rien lui redonner. Échec ouvert (comme /login) : si Redis tombe,
+    # on ne bloque pas quelqu'un qui change légitimement son mot de passe.
+    password_rate_limit_key = f"rate_limit:password_change:{current_user.id}"
+    if is_rate_limited(
+        redis_conn,
+        password_rate_limit_key,
+        _settings.password_change_rate_limit_max_attempts,
+        _settings.password_change_rate_limit_window_seconds,
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail={
+                "code": ErrorCode.AUTH_TROP_DE_TENTATIVES,
+                "message": "Trop de tentatives de changement de mot de passe — réessayez dans quelques minutes.",
+            },
+        )
     if not verify_password(body.current_password, current_user.hashed_password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -443,6 +463,10 @@ def change_own_password(
             detail={"code": ErrorCode.AUTH_MDP_TROP_FAIBLE, "message": str(exc)},
         ) from exc
     client_ip = get_client_ip(request)
+    # Changement réussi : on efface le compteur, pour qu'un utilisateur
+    # légitime qui s'est trompé deux fois avant de réussir ne reste pas
+    # pénalisé (même geste qu'après une connexion réussie).
+    reset_rate_limit(redis_conn, password_rate_limit_key)
     current_user.hashed_password = hash_password(body.new_password)
     current_user.token_valid_after = datetime.now(timezone.utc)
     # Le mot de passe provisoire choisi par le propriétaire vient d'être
